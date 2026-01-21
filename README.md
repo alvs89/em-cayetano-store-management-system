@@ -32,11 +32,11 @@ The application follows a logical flow designed around the user's daily tasks:
 
 We chose a modern tech stack to ensure the system is fast, responsive, and easy to maintain:
 
-> **Technologies, Tools, and Languages**
-> * **HTML5:** Used for the semantic structure of the web application, integrated through JSX to create dynamic, data-driven interfaces.
-> * **CSS3:** Handled via Tailwind CSS and global stylesheets to ensure a professional, responsive design that adapts to different business needs.
-> * **React v19 (JavaScript ES2024):** The primary engine used to build the component-based architecture and handle the system's interactive logic.
-> * **Express.js v5.1.0 & PostgreSQL v18:** The backend and database tier that securely manages store records and user credentials.
+**Technologies, Tools, and Languages**
+* **HTML5:** Used for the semantic structure of the web application, integrated through JSX to create dynamic, data-driven interfaces.
+* **CSS3:** Handled via Tailwind CSS and global stylesheets to ensure a professional, responsive design that adapts to different business needs.
+* **React v19 (JavaScript ES2024):** The primary engine used to build the component-based architecture and handle the system's interactive logic.
+* **Express.js v5.1.0 & PostgreSQL v18:** The backend and database tier that securely manages store records and user credentials.
 
 ## Project Structure and Logic
 
