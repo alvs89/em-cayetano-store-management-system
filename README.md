@@ -32,10 +32,11 @@ The application follows a logical flow designed around the user's daily tasks:
 
 We chose a modern tech stack to ensure the system is fast, responsive, and easy to maintain:
 
-* **Frontend:** React v19 (JavaScript ES2024) – We used the latest version of React to take advantage of improved performance and cleaner component structures.
-* **Backend:** Express.js v5.1.0 – Handles the logic and communication between the interface and the database.
-* **Database:** PostgreSQL v18 – A reliable relational database used to store all product and user information securely.
-* **Styling:** Tailwind CSS & Lucide Icons – Used to create a clean, professional-looking interface that works well on different screen sizes.
+> **Technologies, Tools, and Languages**
+> * **HTML5:** Used for the semantic structure of the web application, integrated through JSX to create dynamic, data-driven interfaces.
+> * **CSS3:** Handled via Tailwind CSS and global stylesheets to ensure a professional, responsive design that adapts to different business needs.
+> * **React v19 (JavaScript ES2024):** The primary engine used to build the component-based architecture and handle the system's interactive logic.
+> * **Express.js v5.1.0 & PostgreSQL v18:** The backend and database tier that securely manages store records and user credentials.
 
 ## Project Structure and Logic
 
