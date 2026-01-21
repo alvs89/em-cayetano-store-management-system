@@ -21,7 +21,7 @@ The application follows a logical flow designed around the user's daily tasks:
 
 1. **Authentication:** Users start at a secure login screen. For added security, we've included flows for "Forgot Password" and Two-Factor Authentication (2FA).
 2. **The Dashboard:** Once logged in, the user sees a high-level overview of the system. From here, they can navigate to different specialized modules.
-3. **Core Modules:** * **Inventory:** Where products are added, updated, or tracked.
+3. **Core Modules:** **Inventory:** Where products are added, updated, or tracked.
 * **User Management:** For controlling who has access to the system.
 * **Reports:** A section dedicated to viewing data trends and business summaries.
 * **Maintenance:** Tools for system backups and archiving old data to keep the system running fast.
