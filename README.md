@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This project is a dedicated management platform developed for **E.M. Cayetano Trading**. As part of our Software Engineering 1 requirements at the Technological Institute of the Philippines, we designed this system to transition the shop’s manual record-keeping into a digital, streamlined process.
+This project is a dedicated management platform developed for **E.M. Cayetano Trading**. As part of our Software Engineering 1 requirements at the Technological Institute of the Philippines (Quezon City), we designed this system to transition the shop’s manual record-keeping into a digital, streamlined process.
 
 The system acts as a "one-stop shop" for the business, allowing them to manage their inventory, track sales through reporting modules, and ensure that only authorized personnel can access sensitive business data.
 
@@ -83,12 +83,11 @@ This project was a significant learning experience for our team. We learned how 
 
 * The system is currently optimized for desktop use; mobile responsiveness is still a work in progress.
 * The backend integration for real-time alerts is in the early stages.
+* No database yet.
 
 **Future Goals:**
 
 * Adding a barcode scanning feature for faster inventory entry.
-* Implementing an automated email notification system for low-stock alerts.
-
 ---
 
 *Created by the E.M. Cayetano Trading System Proponents - T.I.P. Quezon City (2025)*
