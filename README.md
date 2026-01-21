@@ -90,4 +90,4 @@ This project was a significant learning experience for our team. We learned how 
 * Adding a barcode scanning feature for faster inventory entry.
 ---
 
-*Created by the E.M. Cayetano Trading System Proponents - T.I.P. Quezon City (2025)*
+*Created by the E.M. Cayetano Trading System Proponents from T.I.P. Quezon City—Raymond B. Donato, Alvin J. Guillermo, and John Alces B. Niez (2025–2026)*
