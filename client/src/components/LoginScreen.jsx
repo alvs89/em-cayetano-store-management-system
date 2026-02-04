@@ -7,8 +7,9 @@ import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Card, CardContent } from "./ui/card";
 import { toast } from "sonner";
+
+import { Link, useNavigate } from 'react-router-dom';
 import { useData } from "./DataContext";
-import { verifyPassword, linearSearch } from "../utils/algorithms";
 
 const emcLogoSrc = "/emc-logo.png";
 
@@ -19,17 +20,25 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
   const [branch, setBranch] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const navigate = useNavigate();
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    if (!username || !password) return alert("Please fill in all fields");
+    
+    if (!username || !password || !branch) {
+      alert("Please fill in all fields, including branch"); 
+      return;
+    }
 
     setIsLoggingIn(true);
 
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/login', { username, password });
+      const response = await axios.post('http://localhost:5000/api/auth/login', {
+        username,
+        password,
+        branch // This must match the selected branch in your dropdown
+      });
 
-      // CASE 1: Instant Login (Dev Admin)
       if (response.data.token) {
         localStorage.setItem('token', response.data.token);
         localStorage.setItem('user', JSON.stringify(response.data.user));
@@ -37,25 +46,16 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
         return;
       }
 
-      // CASE 2: 2FA Required (Everyone else)
       if (response.data.require2fa) {
-        // Trigger the email sending now
         await axios.post('http://localhost:5000/api/auth/send-otp', { username });
-        
-        // SAVE USERNAME PERMANENTLY (The Fix)
         localStorage.setItem('temp_username', response.data.username);
         localStorage.setItem('temp_email', response.data.email);
-
-        // Navigate via parent state to show 2FA screen
-        onNavigateTo2FA({
-          username: response.data.username,
-          email: response.data.email,
-        });
+        navigate('/2fa');
       }
 
     } catch (error) {
-      console.error(error);
-      alert(error.response?.data?.error || "Login Failed");
+      // This will now catch the 403 Access Denied error if branches don't match
+      alert(error.response?.data?.error || "Login failed");
     } finally {
       setIsLoggingIn(false);
     }
@@ -146,21 +146,13 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
                 )}
               </Button>
 
-              <div className="flex justify-between">
-                <button
-                  type="button"
-                  onClick={onForgotPassword}
-                  className="text-[#FF0000] hover:text-[#cc0000] hover:underline transition-all"
-                >
-                  Forgot Password?
-                </button>
-                <button
-                  type="button"
-                  onClick={onRegister}
-                  className="text-[#FF0000] hover:text-[#cc0000] hover:underline transition-all"
-                >
-                  Create Account
-                </button>
+              <div className="mt-4 text-center text-sm">
+                <p>
+                  <Link to="/forgot-password" className="text-blue-600 hover:underline">Forgot Password?</Link>
+                </p>
+                <p className="mt-2">
+                  Don't have an account? <Link to="/register" className="text-blue-600 hover:underline">Register here</Link>
+                </p>
               </div>
             </form>
           </CardContent>

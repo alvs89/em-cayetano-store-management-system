@@ -11,6 +11,8 @@ export function TwoFactorAuthScreen() {
   // THE FIX: Retrieve from Local Storage instead of Navigation State
   const username = localStorage.getItem('temp_username');
   const email = localStorage.getItem('temp_email');
+  const selectedBranch = localStorage.getItem('temp_branch_selected');
+  const accountBranch = localStorage.getItem('temp_account_branch');
 
   useEffect(() => {
     // Debugging Log (Check your Console F12 if this fails!)
@@ -50,12 +52,27 @@ export function TwoFactorAuthScreen() {
 
       // 2. Success: Save Token
       const { token, user } = response.data;
+
+      // Branch guard: block if selected branch mismatches account branch
+      const resolvedBranch = user?.branch || accountBranch;
+      if (selectedBranch && resolvedBranch && selectedBranch !== resolvedBranch) {
+        alert("Selected branch does not match your account");
+        localStorage.removeItem('temp_username');
+        localStorage.removeItem('temp_email');
+        localStorage.removeItem('temp_branch_selected');
+        localStorage.removeItem('temp_account_branch');
+        navigate('/');
+        return;
+      }
+
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(user));
 
       // 3. CLEANUP (Remove temporary 2FA data)
       localStorage.removeItem('temp_username');
       localStorage.removeItem('temp_email');
+      localStorage.removeItem('temp_branch_selected');
+      localStorage.removeItem('temp_account_branch');
       
       alert("Verification Successful!");
       window.location.href = '/dashboard'; // Hard reload to ensure state updates

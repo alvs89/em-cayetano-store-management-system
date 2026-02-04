@@ -12,8 +12,9 @@ import {
 } from "lucide-react";
 import { LoginScreen } from "./components/LoginScreen";
 import { TwoFactorAuthScreen } from "./components/TwoFactorAuthScreen";
-import { ForgotPasswordScreen } from "./components/ForgotPasswordScreen";
-import { SetPasswordScreen } from "./components/SetPasswordScreen";
+import RegistrationScreen from './components/RegistrationScreen';
+import ForgotPasswordScreen from './components/ForgotPasswordScreen';
+import SetPasswordScreen from './components/SetPasswordScreen';
 import { Dashboard } from "./components/Dashboard";
 import { InventoryModule } from "./components/InventoryModule";
 import { ArchiveModule } from "./components/ArchiveModule";
@@ -23,7 +24,6 @@ import { UserManagementModule } from "./components/UserManagementModule";
 import { SearchModule } from "./components/SearchModule";
 import { HelpModule } from "./components/HelpModule";
 import { AlertsModule } from "./components/AlertsModule";
-import { RegistrationScreen } from "./components/RegistrationScreen";
 import { Button } from "./components/ui/button";
 import { Avatar, AvatarFallback } from "./components/ui/avatar";
 import { Separator } from "./components/ui/separator";
@@ -39,10 +39,12 @@ import {
 } from "./components/ui/alert-dialog";
 import { toast, Toaster } from "sonner";
 import { DataProvider } from "./components/DataContext";
+import { Routes, Route, useNavigate } from 'react-router-dom';
 
 const emcLogoSrc = "/emc-logo.png"; // Place the logo file in public/emc-logo.png
 
 function AppContent() {
+  const navigate = useNavigate();
   const [currentScreen, setCurrentScreen] = useState("login");
   const normalizeUser = (user) => {
     if (!user) return null;
@@ -77,9 +79,11 @@ function AppContent() {
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
 
   const handleLogin = (user) => {
-    setCurrentUser(user);
+    const normalized = normalizeUser(user);
+    setCurrentUser(normalized);
     setCurrentScreen("dashboard");
-    toast.success(`Welcome back, ${user.fullName}!`);
+    navigate("/");
+    toast.success(`Welcome back, ${normalized.fullName}!`);
   };
 
   const handleNavigateTo2FA = (user) => {
@@ -88,10 +92,12 @@ function AppContent() {
   };
 
   const handle2FASuccess = (user) => {
-    setCurrentUser(user);
+    const normalized = normalizeUser(user);
+    setCurrentUser(normalized);
     setPendingUser(null);
     setCurrentScreen("dashboard");
-    toast.success(`Welcome back, ${user.fullName}!`);
+    navigate("/");
+    toast.success(`Welcome back, ${normalized.fullName}!`);
   };
 
   const handleBackToLogin = () => {
@@ -100,8 +106,13 @@ function AppContent() {
   };
 
   const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    localStorage.removeItem('temp_username');
+    localStorage.removeItem('temp_email');
     setCurrentUser(null);
     setCurrentScreen("login");
+    navigate("/");
     setShowLogoutDialog(false);
     toast.success("Logged out successfully");
   };
@@ -115,6 +126,15 @@ function AppContent() {
     const tempUser = localStorage.getItem('temp_username');
     if (!currentUser && tempUser) {
       setCurrentScreen("2fa");
+    }
+  }, [currentUser]);
+
+  // Ensure a logged-in user lands on the dashboard without needing a manual refresh
+  useEffect(() => {
+    if (currentUser) {
+      setCurrentScreen("dashboard");
+    } else {
+      setCurrentScreen("login");
     }
   }, [currentUser]);
 
@@ -323,7 +343,30 @@ export default function App() {
   return (
     <DataProvider>
       <div className="min-h-screen bg-slate-50">
-        <AppContent />
+        <Routes>
+          {/* Public Routes */}
+          <Route path="/" element={<AppContent />} />
+          <Route path="/register" element={<RegistrationScreen />} />
+          <Route path="/forgot-password" element={<ForgotPasswordScreen />} />
+          <Route path="/set-password" element={<SetPasswordScreen />} />
+          
+          {/* ✅ THIS IS THE MISSING ROUTE */}
+          <Route path="/2fa" element={<TwoFactorAuthScreen />} />
+
+          {/* Protected Routes (Optional - depends if you want direct URL access) */}
+          <Route path="/dashboard" element={<AppContent />} />
+          <Route path="/inventory" element={<AppContent />} />
+          <Route path="/archive" element={<AppContent />} />
+          <Route path="/reports" element={<AppContent />} />
+          <Route path="/maintenance" element={<AppContent />} />
+          <Route path="/user-management" element={<AppContent />} />
+          <Route path="/search" element={<AppContent />} />
+          <Route path="/help" element={<AppContent />} />
+          <Route path="/alerts" element={<AppContent />} />
+
+          {/* Catch-all */}
+          <Route path="*" element={<AppContent />} />
+        </Routes>
         <Toaster richColors position="top-right" />
       </div>
     </DataProvider>
