@@ -22,43 +22,38 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    
-    if (!username || !password) {
-      alert("Please fill in all fields"); 
-      return;
-    }
+    if (!username || !password) return alert("Please fill in all fields");
+
+    setIsLoggingIn(true);
 
     try {
-      // This sends the username/password to your new Server
-      const response = await axios.post('http://localhost:5000/api/auth/login', {
-        username: username,
-        password: password
-      });
+      const response = await axios.post('http://localhost:5000/api/auth/login', { username, password });
 
-      // If successful, normalize and save the token/user for app to rehydrate
-      const { token, user } = response.data;
-      const normalizedUser = {
-        id: user.id || user.user_id,
-        username: user.username,
-        fullName: user.fullName || user.full_name || user.username,
-        role: user.role || "User",
-        branch: user.branch || branch || "Branch",
-        email: user.email || "",
-      };
+      // CASE 1: Instant Login (Dev Admin)
+      if (response.data.token) {
+        localStorage.setItem('token', response.data.token);
+        localStorage.setItem('user', JSON.stringify(response.data.user));
+        window.location.reload(); 
+        return;
+      }
 
-      localStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify(normalizedUser));
-
-      // Force reload to update the app state (Temporary simple fix)
-      window.location.reload(); 
+      // CASE 2: 2FA Required (Everyone else)
+      if (response.data.require2fa) {
+        // Trigger the email sending now
+        await axios.post('http://localhost:5000/api/auth/send-otp', { username });
+        
+        // Navigate to 2FA screen and pass the username/email
+        onNavigateTo2FA({
+          username: response.data.username,
+          email: response.data.email,
+        });
+      }
 
     } catch (error) {
-      console.error("Login Error:", error);
-      if (error.response) {
-        alert(error.response.data.error || "Login failed");
-      } else {
-        alert("Cannot connect to server. Is it running?");
-      }
+      console.error(error);
+      alert(error.response?.data?.error || "Login Failed");
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
