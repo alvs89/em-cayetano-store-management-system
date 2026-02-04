@@ -1,0 +1,22 @@
+node_modules/
+.env
+dist/
+build/
+.DS_Store
+
+# Dependency folders
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Production Build
+dist/
+build/
+
+# Security - NEVER COMMIT THESE
+.env
+server/.env
+client/.env
+
+# System Files
+.DS_Store
