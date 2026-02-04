@@ -57,7 +57,7 @@ app.post('/api/auth/login', async (req, res) => {
 
     // 2. Validate Password
     // Special Dev Backdoor for 'admin' (Keep this for now!)
-    const isDevAdmin = (username === 'admin' && password === 'admin123');
+    const isDevAdmin = false; // (username === 'admin' && password === 'admin123');
     const validPassword = await bcrypt.compare(password, user.password_hash);
 
     if (!validPassword && !isDevAdmin) return res.status(401).json({ error: "Invalid credentials" });

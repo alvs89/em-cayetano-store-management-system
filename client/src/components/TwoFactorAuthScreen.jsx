@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { ShieldCheck, Mail } from 'lucide-react';
 
@@ -7,14 +7,20 @@ export function TwoFactorAuthScreen() {
   const [code, setCode] = useState(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
-  const location = useLocation();
-  
-  // Get data passed from Login Screen
-  const { username, email } = location.state || {};
+
+  // THE FIX: Retrieve from Local Storage instead of Navigation State
+  const username = localStorage.getItem('temp_username');
+  const email = localStorage.getItem('temp_email');
 
   useEffect(() => {
-    // Security: If no username is passed, kick them back to login
-    if (!username) navigate('/');
+    // Debugging Log (Check your Console F12 if this fails!)
+    console.log("2FA Screen loaded for user:", username);
+
+    // Security: If no username is found, kick them back to login
+    if (!username) {
+      alert("Session lost. Please login again.");
+      navigate('/');
+    }
   }, [username, navigate]);
 
   const handleChange = (index, value) => {
@@ -42,10 +48,14 @@ export function TwoFactorAuthScreen() {
         code: fullCode
       });
 
-      // 2. Success: Save Token and Login
+      // 2. Success: Save Token
       const { token, user } = response.data;
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(user));
+
+      // 3. CLEANUP (Remove temporary 2FA data)
+      localStorage.removeItem('temp_username');
+      localStorage.removeItem('temp_email');
       
       alert("Verification Successful!");
       window.location.href = '/dashboard'; // Hard reload to ensure state updates

@@ -42,7 +42,11 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
         // Trigger the email sending now
         await axios.post('http://localhost:5000/api/auth/send-otp', { username });
         
-        // Navigate to 2FA screen and pass the username/email
+        // SAVE USERNAME PERMANENTLY (The Fix)
+        localStorage.setItem('temp_username', response.data.username);
+        localStorage.setItem('temp_email', response.data.email);
+
+        // Navigate via parent state to show 2FA screen
         onNavigateTo2FA({
           username: response.data.username,
           email: response.data.email,

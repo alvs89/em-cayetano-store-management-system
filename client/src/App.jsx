@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Package,
   FileText,
@@ -83,7 +83,7 @@ function AppContent() {
   };
 
   const handleNavigateTo2FA = (user) => {
-    setPendingUser(user);
+    setPendingUser(user || null);
     setCurrentScreen("2fa");
   };
 
@@ -110,6 +110,14 @@ function AppContent() {
     setCurrentScreen(screen);
   };
 
+  // If a temp username exists from login, force the 2FA screen
+  useEffect(() => {
+    const tempUser = localStorage.getItem('temp_username');
+    if (!currentUser && tempUser) {
+      setCurrentScreen("2fa");
+    }
+  }, [currentUser]);
+
   if (!currentUser) {
     return (
       <main className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
@@ -121,7 +129,7 @@ function AppContent() {
             onRegister={() => setCurrentScreen("registration")}
           />
         )}
-        {currentScreen === "2fa" && pendingUser && (
+        {currentScreen === "2fa" && (
           <TwoFactorAuthScreen
             pendingUser={pendingUser}
             onSuccess={handle2FASuccess}
