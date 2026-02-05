@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+// 2FA UI: collects OTP, verifies with backend, and finalizes login session.
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import { ShieldCheck, Mail } from 'lucide-react';
@@ -11,20 +12,22 @@ import { Label } from './ui/label';
 export function TwoFactorAuthScreen() {
   const [code, setCode] = useState(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
-  const [secondsLeft, setSecondsLeft] = useState(120);
+  const [remainingMs, setRemainingMs] = useState(120000);
   const navigate = useNavigate();
 
+  const expiryToastShown = useRef(false);
+
   // THE FIX: Retrieve from Local Storage instead of Navigation State
+  // Temp values set during login -> 2FA step
   const username = localStorage.getItem('temp_username');
   const email = localStorage.getItem('temp_email');
   const selectedBranch = localStorage.getItem('temp_branch_selected');
   const accountBranch = localStorage.getItem('temp_account_branch');
+  const serverIssuedAt = Number(localStorage.getItem('otp_issued_at')); // server time (ms)
+  const otpExpiresAtIso = localStorage.getItem('otp_expires_at');
 
   useEffect(() => {
-    // Debugging Log (Check your Console F12 if this fails!)
-    console.log("2FA Screen loaded for user:", username);
-
-    // Security: If no username is found, kick them back to login
+    // If no username is found, redirect to login (lost session)
     if (!username) {
       toast.error("Session lost. Please login again.", {
         classNames: {
@@ -34,25 +37,36 @@ export function TwoFactorAuthScreen() {
       navigate('/');
     }
 
-    const issuedAt = Number(localStorage.getItem('otp_issued_at')) || Date.now();
-    localStorage.setItem('otp_issued_at', issuedAt.toString());
-    const endTime = issuedAt + 120000;
+    // Align countdown with server-issued timestamps to avoid drift
+    const clientAnchor = Date.now();
+    const expiresAtMs = otpExpiresAtIso ? new Date(otpExpiresAtIso).getTime() : (serverIssuedAt || clientAnchor) + 120000;
+    const skewMs = serverIssuedAt ? serverIssuedAt - clientAnchor : 0; // adjust for client/server clock drift
 
-    const timer = setInterval(() => {
-      const remaining = Math.max(0, Math.floor((endTime - Date.now()) / 1000));
-      setSecondsLeft(remaining);
-      if (remaining <= 0) {
-        clearInterval(timer);
+    let timerId;
+    const tick = () => {
+      const nowAligned = Date.now() + skewMs;
+      const remaining = expiresAtMs - nowAligned; // raw remaining in ms
+      setRemainingMs(Math.max(0, remaining));
+
+      // Show expiry toast exactly when the countdown hits 0:00; only once
+      if (remaining <= 0 && !expiryToastShown.current) {
+        expiryToastShown.current = true;
         toast.error("The verification code has expired. Please login again to request a new code.", {
           classNames: {
             toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
           },
         });
+        if (timerId) {
+          clearInterval(timerId);
+        }
       }
-    }, 1000);
+    };
 
-    return () => clearInterval(timer);
-  }, [username, navigate]);
+    timerId = setInterval(tick, 500);
+    tick(); // set initial value immediately for sync with backend expiry
+
+    return () => clearInterval(timerId);
+  }, [username, navigate, serverIssuedAt, otpExpiresAtIso]);
 
   const handleChange = (index, value) => {
     if (isNaN(value)) return;
@@ -75,16 +89,6 @@ export function TwoFactorAuthScreen() {
           toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
         },
       });
-      return;
-    }
-
-    if (secondsLeft <= 0) {
-      toast.error("The verification code has expired. Please login again to request a new code.", {
-        classNames: {
-          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
-        },
-      });
-      navigate('/');
       return;
     }
 
@@ -134,7 +138,7 @@ export function TwoFactorAuthScreen() {
           toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
         },
       });
-      window.location.href = '/dashboard'; // Hard reload to ensure state updates
+      navigate('/dashboard', { replace: true }); // Smooth SPA transition to dashboard
 
     } catch (error) {
       toast.error(error.response?.data?.error || "Invalid Code", {
@@ -146,6 +150,13 @@ export function TwoFactorAuthScreen() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const formatTime = (ms) => {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return `${minutes.toString()}:${seconds.toString().padStart(2, '0')}`;
   };
 
   return (
@@ -165,7 +176,7 @@ export function TwoFactorAuthScreen() {
                 <Mail className="w-4 h-4" />
                 Code sent to <span className="font-semibold text-gray-900">{email || "your email"}</span>
               </p>
-              <p className="text-sm text-red-600 font-semibold">Expires in {String(Math.floor(secondsLeft / 60)).padStart(2, '0')}:{String(secondsLeft % 60).padStart(2, '0')}</p>
+              <p className="text-sm text-red-600 font-semibold">Expires in {formatTime(remainingMs)}</p>
             </div>
 
             <form onSubmit={handleVerify} className="space-y-6">

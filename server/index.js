@@ -1,4 +1,5 @@
 // server/index.js
+// Express API for auth (login + 2FA), registration, password reset, and email delivery.
 require('dotenv').config();
 const nodemailer = require('nodemailer');
 const crypto = require('crypto'); // Built-in Node module for random numbers
@@ -11,18 +12,26 @@ const path = require('path');
 
 const app = express();
 const OTP_TTL_MS = 120 * 1000; // 2 minutes
+const OTP_GRACE_MS = 10 * 1000; // +10s network/drift buffer (total acceptance ~130s)
 
 // 1. MIDDLEWARE (Security & Data Parsing)
 app.use(cors()); // Allows your React client to talk to this server
 app.use(express.json()); // Allows server to read JSON body from requests
 app.use(express.static(path.join(__dirname, '../client/public'))); // Serve logo and other public assets
 
-// 2. DATABASE CONNECTION (Updated for Cloud/Neon)
+// 2. DATABASE CONNECTION (Neon/Postgres over SSL)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
-    rejectUnauthorized: false 
+    rejectUnauthorized: false // Required for Neon/Cloud providers
   }
+});
+
+// ✅ ADD THIS BLOCK: Global Error Listener
+// This prevents the server from crashing when the database connection drops momentarily
+pool.on('error', (err) => {
+  console.error('❌ Unexpected error on idle database client', err);
+  // Do not process.exit() here; just log it so the server keeps running
 });
 
 // EMAIL TRANSPORTER
@@ -35,13 +44,30 @@ const transporter = nodemailer.createTransport({
 });
 
 
-// Test DB Connection on Startup
+// Test DB Connection on Startup and ensure OTP columns exist for fresh databases
 async function ensureSchema() {
   // Add any missing columns when deploying to a fresh Neon database
   await pool.query(`
     ALTER TABLE users
     ADD COLUMN IF NOT EXISTS otp_code VARCHAR(10),
     ADD COLUMN IF NOT EXISTS otp_expires TIMESTAMP
+  `);
+
+  // Normalize otp_expires to TIMESTAMPTZ to avoid timezone drift between server/client
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'users' 
+          AND column_name = 'otp_expires' 
+          AND data_type = 'timestamp without time zone'
+      ) THEN
+        ALTER TABLE users
+          ALTER COLUMN otp_expires TYPE TIMESTAMPTZ
+          USING (CASE WHEN otp_expires IS NULL THEN NULL ELSE otp_expires AT TIME ZONE 'UTC' END);
+      END IF;
+    END $$;
   `);
 }
 
@@ -73,15 +99,14 @@ app.post('/api/auth/login', async (req, res) => {
 
     const user = userQuery.rows[0];
 
-    // 2. UPDATED BRANCH VALIDATION (Admin Exception)
-    // If the user is NOT an Admin, enforce the branch check.
+    // Enforce branch match for non-admin users (admins can pick any branch)
     if (user.role !== 'Admin' && user.branch !== branch) {
       return res.status(403).json({ 
         error: `Access Denied: You are registered at the ${user.branch} branch.` 
       });
     }
 
-    // 3. Validate Password
+    // Validate password (and allow seeded dev backdoor for admin/admin123)
     const isDevAdmin = (username === 'admin' && password === 'admin123');
     const validPassword = await bcrypt.compare(password, user.password_hash);
 
@@ -89,8 +114,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: "Invalid username or password" });
     }
 
-    // 4. Handle 2FA Flow
-    // Even if it's a real Admin, we still send a 2FA code for security unless it's the dev backdoor
+    // 2FA: only skip sending email when using the dev backdoor
     if (isDevAdmin) {
       const token = jwt.sign({ id: user.user_id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '8h' });
       return res.json({ 
@@ -112,7 +136,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// ROUTE: Register New User
+// ROUTE: Register New User (hashes password and rejects duplicates)
 app.post('/api/auth/register', async (req, res) => {
   const { fullName, username, email, password, role, branch } = req.body;
 
@@ -141,7 +165,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// ROUTE: Request Password Reset (Send OTP)
+// ROUTE: Request Password Reset (email a short-lived OTP)
 app.post('/api/auth/forgot-password', async (req, res) => {
   const { email } = req.body;
   try {
@@ -151,8 +175,9 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const user = userResult.rows[0];
 
     // Generate Code
+    const issuedAt = Date.now();
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + OTP_TTL_MS); // 2 mins TTL
+    const expiresAt = new Date(issuedAt + OTP_TTL_MS); // 2 mins TTL
 
     // Save to DB
     await pool.query('UPDATE users SET otp_code = $1, otp_expires = $2 WHERE email = $3', [otp, expiresAt, email]);
@@ -195,14 +220,14 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 
     await transporter.sendMail(mailOptions);
 
-    res.json({ message: "OTP sent" });
+    res.json({ message: "OTP sent", expiresAt: expiresAt.toISOString(), serverTime: issuedAt });
   } catch (err) {
     console.error('Forgot password error:', err);
     res.status(500).json({ error: "Failed to send code" });
   }
 });
 
-// ROUTE: Reset Password (Verify OTP & Update)
+// ROUTE: Reset Password (validate OTP then store new bcrypt hash)
 app.post('/api/auth/reset-password', async (req, res) => {
   const { email, otp, newPassword } = req.body;
   try {
@@ -211,8 +236,12 @@ app.post('/api/auth/reset-password', async (req, res) => {
     if (userResult.rows.length === 0) return res.status(404).json({ error: "User not found" });
     
     const user = userResult.rows[0];
-    if (user.otp_code !== otp || new Date() > new Date(user.otp_expires)) {
-        return res.status(400).json({ error: "Invalid or expired code" });
+    const expiresMs = new Date(user.otp_expires).getTime();
+    const nowMs = Date.now();
+    const expired = nowMs > expiresMs + OTP_GRACE_MS;
+    // Grace window to tolerate clock drift/network latency
+    if (user.otp_code !== otp || expired) {
+      return res.status(400).json({ error: "Invalid or expired code" });
     }
 
     // Hash New Password
@@ -235,7 +264,7 @@ app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
 
-// ROUTE: Send OTP
+// ROUTE: Send OTP (after password check; sends login 2FA code)
 app.post('/api/auth/send-otp', async (req, res) => {
   const { username } = req.body;
 
@@ -246,10 +275,11 @@ app.post('/api/auth/send-otp', async (req, res) => {
     const user = userResult.rows[0];
 
     // 2. Generate 6-digit Code
+    const issuedAt = Date.now();
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     
-    // 3. Save to DB (Valid for 5 minutes)
-    const expiresAt = new Date(Date.now() + OTP_TTL_MS); // Now + 2 mins
+    // 3. Save to DB (Valid for 2 minutes)
+    const expiresAt = new Date(issuedAt + OTP_TTL_MS); // Now + 2 mins
     await pool.query('UPDATE users SET otp_code = $1, otp_expires = $2 WHERE user_id = $3', [otp, expiresAt, user.user_id]);
 
     // 4. Send Professional HTML Email
@@ -289,9 +319,8 @@ app.post('/api/auth/send-otp', async (req, res) => {
       `
     };
 
-    // ... rest of the code (await transporter.sendMail) ...
     await transporter.sendMail(mailOptions);
-    res.json({ message: "OTP sent successfully to email" });
+    res.json({ message: "OTP sent successfully to email", expiresAt: expiresAt.toISOString(), serverTime: issuedAt });
 
   } catch (err) {
     console.error(err);
@@ -299,7 +328,7 @@ app.post('/api/auth/send-otp', async (req, res) => {
   }
 });
 
-// ROUTE: Verify OTP
+// ROUTE: Verify OTP (finalize login, clear OTP, issue JWT)
 app.post('/api/auth/verify-otp', async (req, res) => {
   const { username, code, branch } = req.body;
 
@@ -309,11 +338,13 @@ app.post('/api/auth/verify-otp', async (req, res) => {
     const user = result.rows[0];
 
     // Check Logic
-    const now = new Date();
+    const nowMs = Date.now();
+    const expiresMs = new Date(user.otp_expires).getTime();
     if (user.otp_code !== code) {
       return res.status(400).json({ error: "Invalid code" });
     }
-    if (new Date(user.otp_expires) < now) {
+    // Grace window to tolerate drift/latency between UI timer and DB timestamp
+    if (nowMs > expiresMs + OTP_GRACE_MS) {
       return res.status(400).json({ error: "Code expired" });
     }
 

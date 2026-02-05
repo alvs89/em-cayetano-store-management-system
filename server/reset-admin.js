@@ -2,7 +2,7 @@ require('dotenv').config();
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 
-// Use the Cloud URL from your .env
+// Use the Cloud URL from your .env (Neon/Postgres)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
@@ -10,6 +10,7 @@ const pool = new Pool({
   }
 });
 
+// One-time helper: reset the seeded admin user's password to admin123
 async function resetAdmin() {
   const username = 'admin';
   const newPassword = 'admin123';

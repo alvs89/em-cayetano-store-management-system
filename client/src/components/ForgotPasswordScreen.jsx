@@ -18,8 +18,10 @@ const ForgotPasswordScreen = () => {
     e.preventDefault();
     setLoading(true);
     try {
-      await axios.post('http://localhost:5000/api/auth/forgot-password', { email });
-      navigate('/set-password', { state: { email, otpIssuedAt: Date.now() } });
+      const response = await axios.post('http://localhost:5000/api/auth/forgot-password', { email });
+      const serverTime = response.data.serverTime || Date.now();
+      const expiresAt = response.data.expiresAt || new Date(Date.now() + 120000).toISOString();
+      navigate('/set-password', { state: { email, otpIssuedAt: serverTime, otpExpiresAt: expiresAt } });
     } catch (error) {
       toast.error(error.response?.data?.error || "Failed to send code", {
         classNames: {

@@ -1,3 +1,4 @@
+// Login UI: validates inputs, calls backend login, and kicks off 2FA.
 import axios from 'axios';
 import { useState } from "react";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
@@ -22,6 +23,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const navigate = useNavigate();
 
+  // Submit credentials; on success either receive token or trigger 2FA flow
   const handleLogin = async (e) => {
     e.preventDefault();
     
@@ -52,8 +54,11 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
       }
 
       if (response.data.require2fa) {
-        await axios.post('http://localhost:5000/api/auth/send-otp', { username });
-        localStorage.setItem('otp_issued_at', Date.now().toString());
+        const otpResponse = await axios.post('http://localhost:5000/api/auth/send-otp', { username });
+        const serverTime = otpResponse.data.serverTime || Date.now();
+        const expiresAt = otpResponse.data.expiresAt || new Date(Date.now() + 120000).toISOString();
+        localStorage.setItem('otp_issued_at', serverTime.toString());
+        localStorage.setItem('otp_expires_at', expiresAt);
         localStorage.setItem('temp_username', response.data.username);
         localStorage.setItem('temp_email', response.data.email);
         localStorage.setItem('temp_branch_selected', branch);
@@ -61,7 +66,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
       }
 
     } catch (error) {
-      toast.error(error.response?.data?.error || "Login failed", {
+      toast.error(error.response?.data?.error || "Invalid username or password", {
         classNames: {
           toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
         },

@@ -9,16 +9,17 @@ import { ShieldCheck, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 
 const emcLogoSrc = "/emc-logo.png";
-const OTP_TTL_MS = 120000; // 2 minutes
-
 const SetPasswordScreen = () => {
   const [otp, setOtp] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [remainingMs, setRemainingMs] = useState(OTP_TTL_MS);
+  const [remainingMs, setRemainingMs] = useState(120000);
   const navigate = useNavigate();
   const location = useLocation();
   const email = location.state?.email;
-  const otpIssuedAtRef = useRef(location.state?.otpIssuedAt ?? Date.now());
+  const issuedAt = useRef(Number(location.state?.otpIssuedAt) || Date.now());
+  const expiresAt = useRef(location.state?.otpExpiresAt ? new Date(location.state.otpExpiresAt).getTime() : (issuedAt.current + 120000));
+  const skewRef = useRef(issuedAt.current - Date.now());
+  const expiryToastShown = useRef(false);
 
   useEffect(() => {
     if (!email) navigate('/forgot-password');
@@ -26,8 +27,18 @@ const SetPasswordScreen = () => {
 
   useEffect(() => {
     const tick = () => {
-      const elapsed = Date.now() - otpIssuedAtRef.current;
-      setRemainingMs(Math.max(0, OTP_TTL_MS - elapsed));
+      const nowAligned = Date.now() + skewRef.current;
+      const remaining = expiresAt.current - nowAligned;
+      setRemainingMs(Math.max(0, remaining));
+
+      if (remaining <= 0 && !expiryToastShown.current) {
+        expiryToastShown.current = true;
+        toast.error("The verification code has expired. Please request a new code.", {
+          classNames: {
+            toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+          },
+        });
+      }
     };
 
     tick(); // initialize immediately
@@ -42,18 +53,11 @@ const SetPasswordScreen = () => {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  const isExpired = remainingMs <= 0;
+  // Allow a 10s negative window so the backend grace still accepts submissions
+  const isExpired = remainingMs < -10000;
 
   const handleReset = async (e) => {
     e.preventDefault();
-    if (isExpired) {
-      toast.error("Code expired. Please request a new one.", {
-        classNames: {
-          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
-        },
-      });
-      return;
-    }
     try {
       await axios.post('http://localhost:5000/api/auth/reset-password', {
         email,

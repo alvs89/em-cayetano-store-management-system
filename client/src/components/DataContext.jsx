@@ -1,7 +1,9 @@
+// Simple in-memory data store for demo inventory/users.
 import { createContext, useContext, useState } from "react";
 
 const DataContext = createContext(undefined);
 
+// Demo inventory rows (UI uses these; not synced to server)
 const initialInventory = [
   { id: "P001", name: "Premium Paint - White", category: "Paint", quantity: 150, reorderLevel: 20, status: "In Stock", lastUpdated: "2025-10-10" },
   { id: "P002", name: "Premium Paint - Blue", category: "Paint", quantity: 8, reorderLevel: 20, status: "Low Stock", lastUpdated: "2025-10-12" },
@@ -14,6 +16,7 @@ const initialInventory = [
 ];
 
 // Pre-generated demo bcrypt hashes (see notes in original TS file)
+// Demo users for UI prototyping (not used by server auth)
 const initialUsers = [
   {
     id: "1",
@@ -53,6 +56,7 @@ const initialUsers = [
   },
 ];
 
+// Provides demo data via React context
 export function DataProvider({ children }) {
   const [inventory, setInventory] = useState(initialInventory);
   const [archivedInventory, setArchivedInventory] = useState([]);

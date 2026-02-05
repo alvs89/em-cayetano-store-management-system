@@ -1,3 +1,4 @@
+// App shell: handles routing, auth state (login/2FA), and module navigation.
 import { useEffect, useState } from "react";
 import {
   Package,
@@ -46,6 +47,7 @@ const emcLogoSrc = "/emc-logo.png"; // Place the logo file in public/emc-logo.pn
 function AppContent() {
   const navigate = useNavigate();
   const [currentScreen, setCurrentScreen] = useState("login");
+  // Normalize user fields coming from localStorage/server to a consistent shape
   const normalizeUser = (user) => {
     if (!user) return null;
     return {
@@ -59,6 +61,7 @@ function AppContent() {
   };
 
   // SAFER INITIALIZATION
+  // Pull persisted session from localStorage defensively
   const [currentUser, setCurrentUser] = useState(() => {
     try {
       const savedUser = localStorage.getItem('user');
@@ -78,6 +81,7 @@ function AppContent() {
   const [alertCount, setAlertCount] = useState(3);
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
 
+  // Called after password+2FA success to enter the app
   const handleLogin = (user) => {
     const normalized = normalizeUser(user);
     setCurrentUser(normalized);
@@ -86,11 +90,13 @@ function AppContent() {
     toast.success(`Welcome back, ${normalized.fullName}!`);
   };
 
+  // Transition to 2FA screen after password check
   const handleNavigateTo2FA = (user) => {
     setPendingUser(user || null);
     setCurrentScreen("2fa");
   };
 
+  // Finalize 2FA: store user and land on dashboard
   const handle2FASuccess = (user) => {
     const normalized = normalizeUser(user);
     setCurrentUser(normalized);
@@ -100,11 +106,13 @@ function AppContent() {
     toast.success(`Welcome back, ${normalized.fullName}!`);
   };
 
+  // Reset pending 2FA state and return to login
   const handleBackToLogin = () => {
     setPendingUser(null);
     setCurrentScreen("login");
   };
 
+  // Clear all auth-related storage and return to login
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
@@ -120,6 +128,7 @@ function AppContent() {
     toast.success("Logged out successfully");
   };
 
+  // Sidebar navigation handler
   const navigateTo = (screen) => {
     setCurrentScreen(screen);
   };
@@ -127,6 +136,7 @@ function AppContent() {
   const activeBranch = localStorage.getItem('active_branch') || currentUser?.branch || '';
 
   // If a temp username exists from login, force the 2FA screen
+  // If OTP flow is in progress, force 2FA screen
   useEffect(() => {
     const tempUser = localStorage.getItem('temp_username');
     if (!currentUser && tempUser) {
@@ -135,6 +145,7 @@ function AppContent() {
   }, [currentUser]);
 
   // Ensure a logged-in user lands on the dashboard without needing a manual refresh
+  // Keep currentScreen synced to login/dashboard based on auth
   useEffect(() => {
     if (currentUser) {
       setCurrentScreen("dashboard");
@@ -354,8 +365,6 @@ export default function App() {
           <Route path="/register" element={<RegistrationScreen />} />
           <Route path="/forgot-password" element={<ForgotPasswordScreen />} />
           <Route path="/set-password" element={<SetPasswordScreen />} />
-          
-          {/* ✅ THIS IS THE MISSING ROUTE */}
           <Route path="/2fa" element={<TwoFactorAuthScreen />} />
 
           {/* Protected Routes (Optional - depends if you want direct URL access) */}
