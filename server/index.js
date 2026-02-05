@@ -106,21 +106,11 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
 
-    // Validate password (and allow seeded dev backdoor for admin/admin123)
-    const isDevAdmin = (username === 'admin' && password === 'admin123');
+    // Validate password (2FA enforced for all roles, including Admin)
     const validPassword = await bcrypt.compare(password, user.password_hash);
 
-    if (!validPassword && !isDevAdmin) {
+    if (!validPassword) {
       return res.status(401).json({ error: "Invalid username or password" });
-    }
-
-    // 2FA: only skip sending email when using the dev backdoor
-    if (isDevAdmin) {
-      const token = jwt.sign({ id: user.user_id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '8h' });
-      return res.json({ 
-        token, 
-        user: { id: user.user_id, username: user.username, role: user.role } 
-      });
     }
 
     res.json({ 

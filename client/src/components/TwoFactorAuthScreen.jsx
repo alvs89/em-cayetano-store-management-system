@@ -172,9 +172,12 @@ export function TwoFactorAuthScreen() {
 
             <div className="text-center space-y-2">
               <h2 className="text-3xl text-gray-900">Two-Factor Authentication</h2>
-              <p className="text-lg text-gray-600 flex items-center justify-center gap-2">
-                <Mail className="w-4 h-4" />
-                Code sent to <span className="font-semibold text-gray-900">{email || "your email"}</span>
+              <p className="text-lg text-gray-600 flex flex-wrap items-center justify-center gap-2 text-center leading-snug">
+                <Mail className="w-4 h-4 shrink-0" />
+                <span className="whitespace-pre">Code sent to</span>
+                <span className="font-semibold text-gray-900 break-all text-center max-w-full">
+                  {email || "your email"}
+                </span>
               </p>
               <p className="text-sm text-red-600 font-semibold">Expires in {formatTime(remainingMs)}</p>
             </div>
