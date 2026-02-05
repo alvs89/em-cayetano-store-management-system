@@ -93,7 +93,8 @@ export function TwoFactorAuthScreen() {
       // 1. Verify with Backend
       const response = await axios.post('http://localhost:5000/api/auth/verify-otp', {
         username,
-        code: fullCode
+        code: fullCode,
+        branch: selectedBranch
       });
 
       // 2. Success: Save Token

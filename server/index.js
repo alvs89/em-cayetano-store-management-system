@@ -289,7 +289,7 @@ app.post('/api/auth/send-otp', async (req, res) => {
 
 // ROUTE: Verify OTP
 app.post('/api/auth/verify-otp', async (req, res) => {
-  const { username, code } = req.body;
+  const { username, code, branch } = req.body;
 
   try {
     const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
@@ -309,13 +309,23 @@ app.post('/api/auth/verify-otp', async (req, res) => {
     await pool.query('UPDATE users SET otp_code = NULL WHERE user_id = $1', [user.user_id]);
 
     // Issue the real Token here (Moved from Login route)
+    const selectedBranch = branch && branch.trim() ? branch.trim() : null;
+
+    // If not admin, ensure branch (if provided) matches account branch
+    if (user.role !== 'Admin' && selectedBranch && selectedBranch !== user.branch) {
+      return res.status(403).json({ error: "Selected branch does not match your account" });
+    }
+
+    const sessionBranch = user.role === 'Admin' && selectedBranch ? selectedBranch : user.branch;
+    const userResponse = { ...user, branch: sessionBranch };
+
     const token = jwt.sign(
-        { id: user.user_id, role: user.role, branch: user.branch },
+        { id: user.user_id, role: user.role, branch: sessionBranch },
         process.env.JWT_SECRET,
         { expiresIn: '8h' }
     );
 
-    res.json({ message: "Login Verified", token, user });
+    res.json({ message: "Login Verified", token, user: userResponse });
 
   } catch (err) {
     console.error(err);

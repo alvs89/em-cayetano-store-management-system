@@ -205,7 +205,7 @@ function AppContent() {
               <p className="text-xs text-gray-600">{currentUser.role}</p>
             </div>
           </div>
-          <p className="text-xs text-gray-600 mt-2">📍 {currentUser.branch}</p>
+          <p className="text-xs text-gray-600 mt-2">📍 {activeBranch || currentUser.branch}</p>
         </section>
 
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto" aria-label="Primary">
