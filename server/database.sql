@@ -12,6 +12,8 @@ CREATE TABLE users (
     role VARCHAR(20) CHECK (role IN ('Admin', 'Employee')) NOT NULL,
     branch VARCHAR(50),
     status VARCHAR(20) DEFAULT 'Active',
+    otp_code VARCHAR(10),
+    otp_expires TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

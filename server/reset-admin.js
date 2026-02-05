@@ -1,43 +1,39 @@
-// server/reset-admin.js
 require('dotenv').config();
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 
+// Use the Cloud URL from your .env
 const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT,
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
 
-const updateAdminPassword = async () => {
+async function resetAdmin() {
+  const username = 'admin';
+  const newPassword = 'admin123';
+
   try {
-    const password = 'admin123'; // The password we want to use
-    console.log(`🔐 Hashing password: ${password}...`);
-
-    // 1. Generate a secure hash
+    console.log(`🔐 Hashing password for user: ${username}...`);
     const salt = await bcrypt.genSalt(10);
-    const hash = await bcrypt.hash(password, salt);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-    // 2. Update the database
-    const res = await pool.query(
-      "UPDATE users SET password_hash = $1 WHERE username = 'admin' RETURNING *",
-      [hash]
+    const result = await pool.query(
+      "UPDATE users SET password_hash = $1, status = 'Active', role = 'Admin' WHERE username = $2 RETURNING username",
+      [hashedPassword, username]
     );
 
-    if (res.rows.length > 0) {
-      console.log("✅ SUCCESS: Admin password updated.");
-      console.log(`   New Hash: ${hash.substring(0, 20)}...`);
+    if (result.rows.length > 0) {
+      console.log(`✅ SUCCESS: Password for '${username}' has been updated to 'admin123'.`);
     } else {
-      console.log("❌ ERROR: User 'admin' not found in database.");
+      console.error(`❌ ERROR: User '${username}' not found in the database. Please run the INSERT SQL in Neon first.`);
     }
-
   } catch (err) {
-    console.error("❌ Database Error:", err.message);
+    console.error('❌ Database Error:', err.message);
   } finally {
-    pool.end();
+    await pool.end();
   }
-};
+}
 
-updateAdminPassword();
+resetAdmin();

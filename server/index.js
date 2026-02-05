@@ -17,13 +17,12 @@ app.use(cors()); // Allows your React client to talk to this server
 app.use(express.json()); // Allows server to read JSON body from requests
 app.use(express.static(path.join(__dirname, '../client/public'))); // Serve logo and other public assets
 
-// 2. DATABASE CONNECTION
+// 2. DATABASE CONNECTION (Updated for Cloud/Neon)
 const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT,
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false 
+  }
 });
 
 // EMAIL TRANSPORTER
@@ -37,8 +36,21 @@ const transporter = nodemailer.createTransport({
 
 
 // Test DB Connection on Startup
+async function ensureSchema() {
+  // Add any missing columns when deploying to a fresh Neon database
+  await pool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS otp_code VARCHAR(10),
+    ADD COLUMN IF NOT EXISTS otp_expires TIMESTAMP
+  `);
+}
+
 pool.connect()
-  .then(() => console.log('✅ Connected to PostgreSQL Database'))
+  .then(async () => {
+    console.log('✅ Connected to PostgreSQL Database');
+    await ensureSchema();
+    console.log('🛠️  Verified users table has otp columns');
+  })
   .catch(err => console.error('❌ Database Connection Error:', err.message));
 
 // 3. API ROUTES
