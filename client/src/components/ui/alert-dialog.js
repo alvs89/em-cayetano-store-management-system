@@ -32,7 +32,7 @@ const AlertDialogOverlay = /*#__PURE__*/React.forwardRef(({
 }, ref) => /*#__PURE__*/React.createElement(AlertDialogPrimitive.Overlay, _extends({
   ref: ref,
   "data-slot": "alert-dialog-overlay",
-  className: cn("data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/50", className)
+  className: cn("data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-gradient-to-br from-black/50 via-black/40 to-black/50 backdrop-blur-sm", className)
 }, props)));
 AlertDialogOverlay.displayName = AlertDialogPrimitive.Overlay.displayName;
 const AlertDialogContent = /*#__PURE__*/React.forwardRef(({
@@ -41,17 +41,28 @@ const AlertDialogContent = /*#__PURE__*/React.forwardRef(({
 }, ref) => /*#__PURE__*/React.createElement(AlertDialogPortal, null, /*#__PURE__*/React.createElement(AlertDialogOverlay, null), /*#__PURE__*/React.createElement(AlertDialogPrimitive.Content, _extends({
   ref: ref,
   "data-slot": "alert-dialog-content",
-  className: cn("bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 sm:max-w-lg", className)
+  className: cn("bg-white/95 backdrop-blur-xl overflow-hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-5 rounded-3xl border border-gray-100/80 p-0 shadow-2xl ring-1 ring-[#FFFF00]/60 duration-200 sm:max-w-xl before:absolute before:top-0 before:left-0 before:w-full before:h-2 before:bg-gradient-to-r before:from-[#FFFF00] before:to-[#FF0000]", className)
 }, props))));
 AlertDialogContent.displayName = AlertDialogPrimitive.Content.displayName;
 function AlertDialogHeader({
   className,
+  children,
+  showBrand = true,
   ...props
 }) {
+  const brandTitle = "E.M. Cayetano Trading";
+  const brandSubtitle = "Inventory Management System";
+
   return /*#__PURE__*/React.createElement("div", _extends({
     "data-slot": "alert-dialog-header",
-    className: cn("flex flex-col gap-2 text-center sm:text-left", className)
-  }, props));
+    className: cn("flex flex-col gap-2 text-center sm:text-left px-8 pt-8", className)
+  }, props), showBrand && /*#__PURE__*/React.createElement("div", {
+    className: "space-y-1"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "text-sm font-semibold text-gray-900"
+  }, brandTitle), /*#__PURE__*/React.createElement("div", {
+    className: "text-xs text-gray-500"
+  }, brandSubtitle)), children);
 }
 function AlertDialogFooter({
   className,
@@ -59,7 +70,7 @@ function AlertDialogFooter({
 }) {
   return /*#__PURE__*/React.createElement("div", _extends({
     "data-slot": "alert-dialog-footer",
-    className: cn("flex flex-col-reverse gap-2 sm:flex-row sm:justify-end", className)
+        className: cn("flex flex-col-reverse gap-2 sm:flex-row sm:justify-end px-8 pb-8", className)
   }, props));
 }
 const AlertDialogTitle = /*#__PURE__*/React.forwardRef(({
@@ -68,7 +79,7 @@ const AlertDialogTitle = /*#__PURE__*/React.forwardRef(({
 }, ref) => /*#__PURE__*/React.createElement(AlertDialogPrimitive.Title, _extends({
   ref: ref,
   "data-slot": "alert-dialog-title",
-  className: cn("text-lg font-semibold", className)
+  className: cn("text-2xl font-semibold text-gray-900", className)
 }, props)));
 AlertDialogTitle.displayName = AlertDialogPrimitive.Title.displayName;
 const AlertDialogDescription = /*#__PURE__*/React.forwardRef(({
@@ -77,7 +88,7 @@ const AlertDialogDescription = /*#__PURE__*/React.forwardRef(({
 }, ref) => /*#__PURE__*/React.createElement(AlertDialogPrimitive.Description, _extends({
   ref: ref,
   "data-slot": "alert-dialog-description",
-  className: cn("text-muted-foreground text-sm", className)
+  className: cn("text-muted-foreground text-base leading-relaxed", className)
 }, props)));
 AlertDialogDescription.displayName = AlertDialogPrimitive.Description.displayName;
 const AlertDialogAction = /*#__PURE__*/React.forwardRef(({

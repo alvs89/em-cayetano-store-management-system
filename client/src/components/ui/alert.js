@@ -2,11 +2,11 @@ function _extends() { return _extends = Object.assign ? Object.assign.bind() : f
 import * as React from "react";
 import { cva } from "class-variance-authority@0.7.1";
 import { cn } from "./utils";
-const alertVariants = cva("relative w-full rounded-lg border px-4 py-3 text-sm grid has-[>svg]:grid-cols-[calc(var(--spacing)*4)_1fr] grid-cols-[0_1fr] has-[>svg]:gap-x-3 gap-y-0.5 items-start [&>svg]:size-4 [&>svg]:translate-y-0.5 [&>svg]:text-current", {
+const alertVariants = cva("relative w-full overflow-hidden rounded-2xl border border-gray-200/90 bg-white/90 px-4 py-4 text-sm shadow-lg backdrop-blur-sm grid has-[>svg]:grid-cols-[calc(var(--spacing)*4)_1fr] grid-cols-[0_1fr] has-[>svg]:gap-x-3 gap-y-1 items-start [&>svg]:size-4 [&>svg]:translate-y-0.5 [&>svg]:text-current before:absolute before:left-0 before:top-0 before:h-full before:w-1 before:bg-gradient-to-b before:from-[#FFFF00] before:to-[#FF0000]", {
   variants: {
     variant: {
-      default: "bg-card text-card-foreground",
-      destructive: "text-destructive bg-card [&>svg]:text-current *:data-[slot=alert-description]:text-destructive/90"
+      default: "text-gray-900",
+      destructive: "text-destructive bg-white [&>svg]:text-destructive *:data-[slot=alert-description]:text-destructive/90 before:from-[#FF0000] before:to-[#b30000]"
     }
   },
   defaultVariants: {

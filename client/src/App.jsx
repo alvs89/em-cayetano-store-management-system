@@ -110,6 +110,9 @@ function AppContent() {
     localStorage.removeItem('user');
     localStorage.removeItem('temp_username');
     localStorage.removeItem('temp_email');
+    localStorage.removeItem('temp_branch_selected');
+    localStorage.removeItem('temp_account_branch');
+    localStorage.removeItem('active_branch');
     setCurrentUser(null);
     setCurrentScreen("login");
     navigate("/");
@@ -120,6 +123,8 @@ function AppContent() {
   const navigateTo = (screen) => {
     setCurrentScreen(screen);
   };
+
+  const activeBranch = localStorage.getItem('active_branch') || currentUser?.branch || '';
 
   // If a temp username exists from login, force the 2FA screen
   useEffect(() => {
@@ -283,8 +288,8 @@ function AppContent() {
       </aside>
 
       <AlertDialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
+        <AlertDialogContent className="bg-white rounded-lg border border-gray-200 p-6 shadow-lg max-w-lg">
+          <AlertDialogHeader showBrand={false}>
             <AlertDialogTitle>Confirm Logout</AlertDialogTitle>
             <AlertDialogDescription>
               Are you sure you want to logout? You will need to login again to access the system.
@@ -300,7 +305,7 @@ function AppContent() {
       </AlertDialog>
 
       <main className="flex-1 overflow-auto" aria-live="polite">
-        {currentScreen === "dashboard" && <Dashboard onNavigate={navigateTo} user={currentUser} />}
+        {currentScreen === "dashboard" && <Dashboard onNavigate={navigateTo} user={currentUser} activeBranch={activeBranch} />}
         {currentScreen === "inventory" && <InventoryModule user={currentUser} onNavigate={navigateTo} />}
         {currentScreen === "archive" && <ArchiveModule user={currentUser} />}
         {currentScreen === "reports" && <ReportsModule user={currentUser} />}

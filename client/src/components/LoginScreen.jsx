@@ -26,7 +26,11 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
     e.preventDefault();
     
     if (!username || !password || !branch) {
-      alert("Please fill in all fields, including branch"); 
+      toast.error("Please fill in all fields, including branch", {
+        classNames: {
+          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+        },
+      });
       return;
     }
 
@@ -42,20 +46,26 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
       if (response.data.token) {
         localStorage.setItem('token', response.data.token);
         localStorage.setItem('user', JSON.stringify(response.data.user));
+        localStorage.setItem('active_branch', branch);
         window.location.reload(); 
         return;
       }
 
       if (response.data.require2fa) {
         await axios.post('http://localhost:5000/api/auth/send-otp', { username });
+        localStorage.setItem('otp_issued_at', Date.now().toString());
         localStorage.setItem('temp_username', response.data.username);
         localStorage.setItem('temp_email', response.data.email);
+        localStorage.setItem('temp_branch_selected', branch);
         navigate('/2fa');
       }
 
     } catch (error) {
-      // This will now catch the 403 Access Denied error if branches don't match
-      alert(error.response?.data?.error || "Login failed");
+      toast.error(error.response?.data?.error || "Login failed", {
+        classNames: {
+          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+        },
+      });
     } finally {
       setIsLoggingIn(false);
     }
@@ -77,9 +87,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
 
             <form onSubmit={handleLogin} className="space-y-6">
               <div className="space-y-2">
-                <Label htmlFor="username" className="text-gray-800">
-                  Username
-                </Label>
+                <Label htmlFor="username" className="text-gray-800">Username</Label>
                 <Input
                   id="username"
                   type="text"
@@ -91,9 +99,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="password" className="text-gray-800">
-                  Password
-                </Label>
+                <Label htmlFor="password" className="text-gray-800">Password</Label>
                 <div className="relative">
                   <Input
                     id="password"
@@ -114,9 +120,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="branch" className="text-gray-800">
-                  Branch
-                </Label>
+                <Label htmlFor="branch" className="text-gray-800">Branch</Label>
                 <Select value={branch} onValueChange={setBranch}>
                   <SelectTrigger
                     id="branch"

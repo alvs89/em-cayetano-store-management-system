@@ -7,12 +7,15 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const path = require('path');
 
 const app = express();
+const OTP_TTL_MS = 120 * 1000; // 2 minutes
 
 // 1. MIDDLEWARE (Security & Data Parsing)
 app.use(cors()); // Allows your React client to talk to this server
 app.use(express.json()); // Allows server to read JSON body from requests
+app.use(express.static(path.join(__dirname, '../client/public'))); // Serve logo and other public assets
 
 // 2. DATABASE CONNECTION
 const pool = new Pool({
@@ -31,6 +34,7 @@ const transporter = nodemailer.createTransport({
     pass: process.env.EMAIL_PASS
   }
 });
+
 
 // Test DB Connection on Startup
 pool.connect()
@@ -129,12 +133,14 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/forgot-password', async (req, res) => {
   const { email } = req.body;
   try {
-    const user = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-    if (user.rows.length === 0) return res.status(404).json({ error: "Email not found" });
+    const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (userResult.rows.length === 0) return res.status(404).json({ error: "Email not found" });
+
+    const user = userResult.rows[0];
 
     // Generate Code
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 10 * 60000); // 10 mins
+    const expiresAt = new Date(Date.now() + OTP_TTL_MS); // 2 mins TTL
 
     // Save to DB
     await pool.query('UPDATE users SET otp_code = $1, otp_expires = $2 WHERE email = $3', [otp, expiresAt, email]);
@@ -142,15 +148,35 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     // Send Email
     const mailOptions = {
       // The format is: "DISPLAY NAME" <email_address>
-      from: `"E.M. Cayetano Security" <${process.env.EMAIL_USER}>`, 
+      from: `"E.M. Cayetano Trading - Security" <${process.env.EMAIL_USER}>`,
       to: user.email,
-      subject: '🔐 2FA Login Verification',
+      subject: 'Password Reset Verification',
       html: `
-        <div style="font-family: Arial, sans-serif; padding: 20px;">
-          <h2>Reset Your Password</h2>
-          <p>Your password reset code is:</p>
-          <h1 style="color: #2563eb; letter-spacing: 5px;">${otp}</h1>
-          <p>If you did not request this, please ignore this email.</p>
+        <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 620px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 16px; overflow: hidden; background: #ffffff;">
+          <div style="background: linear-gradient(135deg, #FFFF00, #FF0000); padding: 24px; text-align: center;">
+            <div style="font-size: 20px; font-weight: 700; color: #111827;">E.M. Cayetano Trading</div>
+            <div style="font-size: 13px; color: #111827; opacity: 0.9; margin-top: 4px;">Inventory Management System</div>
+          </div>
+
+          <div style="padding: 28px 32px 32px;">
+            <h2 style="margin: 0 0 8px; color: #111827; font-size: 22px;">Reset Your Password</h2>
+            <p style="margin: 0 0 12px; color: #4b5563;">Hello <strong>${user.full_name || user.username || 'there'}</strong>,</p>
+            <p style="margin: 0 0 16px; color: #4b5563;">Use the verification code below to finish resetting your password.</p>
+
+            <div style="background: #f9fafb; border: 1px dashed #e5e7eb; border-radius: 12px; padding: 16px; text-align: center;">
+              <div style="font-size: 32px; letter-spacing: 8px; font-weight: 700; color: #111827;">${otp}</div>
+              <div style="margin-top: 8px; font-size: 14px; color: #dc2626; font-weight: 600;">Expires in 2 minutes</div>
+              <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">For your security, this verification code will expire in 2 minutes.</div>
+            </div>
+
+            <p style="margin: 18px 0 0; color: #4b5563; font-size: 14px;">If you did not request this reset, please secure your account and ignore this email.</p>
+          </div>
+
+          <div style="background: #f9fafb; padding: 16px; text-align: center; font-size: 12px; color: #6b7280; border-top: 1px solid #e5e7eb;">
+            <div style="font-weight: 600; color: #111827;">E.M. Cayetano Trading</div>
+            <div>Rodriguez, Rizal • Manggahan & San Rafael Branches</div>
+            <div style="margin-top: 6px;">This is an automated message. Please do not reply.</div>
+          </div>
         </div>
       `
     };
@@ -159,8 +185,8 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 
     res.json({ message: "OTP sent" });
   } catch (err) {
-    console.error(err);
-    res.status(500).send("Server Error");
+    console.error('Forgot password error:', err);
+    res.status(500).json({ error: "Failed to send code" });
   }
 });
 
@@ -211,7 +237,7 @@ app.post('/api/auth/send-otp', async (req, res) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     
     // 3. Save to DB (Valid for 5 minutes)
-    const expiresAt = new Date(Date.now() + 5 * 60000); // Now + 5 mins
+    const expiresAt = new Date(Date.now() + OTP_TTL_MS); // Now + 2 mins
     await pool.query('UPDATE users SET otp_code = $1, otp_expires = $2 WHERE user_id = $3', [otp, expiresAt, user.user_id]);
 
     // 4. Send Professional HTML Email
@@ -219,28 +245,33 @@ app.post('/api/auth/send-otp', async (req, res) => {
       // "Display Name" <actual-email-for-auth>
       from: `"E.M. Cayetano Trading - Security" <${process.env.EMAIL_USER}>`, 
       to: user.email,
-      subject: '🔐 2FA Login Verification',
+      subject: '2FA Login Verification',
       html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
-          <div style="background-color: #2563eb; padding: 20px; text-align: center;">
-            <h1 style="color: white; margin: 0; font-size: 20px;">E.M. Cayetano Trading</h1>
+        <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 620px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 16px; overflow: hidden; background: #ffffff;">
+          <div style="background: linear-gradient(135deg, #FFFF00, #FF0000); padding: 24px; text-align: center;">
+            <div style="font-size: 20px; font-weight: 700; color: #111827;">E.M. Cayetano Trading</div>
+            <div style="font-size: 13px; color: #111827; opacity: 0.9; margin-top: 4px;">Inventory Management System</div>
           </div>
           
-          <div style="padding: 30px; background-color: #ffffff;">
-            <h2 style="color: #1f2937; margin-top: 0;">Security Verification</h2>
-            <p style="color: #4b5563;">Hello <strong>${user.username}</strong>,</p>
-            <p style="color: #4b5563;">A login attempt was detected for your account. Please use the verification code below to complete your sign-in:</p>
+          <div style="padding: 28px 32px 32px;">
+            <h2 style="color: #111827; margin: 0 0 8px;">Security Verification</h2>
+            <p style="color: #4b5563; margin: 0 0 12px;">Hello <strong>${user.username}</strong>,</p>
+            <p style="color: #4b5563; margin: 0 0 16px;">A login attempt was detected for your account. Use the code below to continue.</p>
             
-            <div style="background-color: #f3f4f6; padding: 15px; margin: 20px 0; text-align: center; border-radius: 6px;">
-              <span style="font-size: 28px; font-weight: bold; letter-spacing: 6px; color: #111827;">${otp}</span>
+            <div style="background: #f9fafb; border: 1px dashed #e5e7eb; border-radius: 12px; padding: 16px; text-align: center;">
+              <span style="font-size: 32px; font-weight: 700; letter-spacing: 8px; color: #111827;">${otp}</span>
+              <div style="margin-top: 8px; font-size: 14px; color: #dc2626; font-weight: 600;">Expires in 2 minutes</div>
+              <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">For your security, this verification code will expire in 2 minutes.</div>
             </div>
 
-            <p style="color: #4b5563; font-size: 14px;">This code expires in <strong>5 minutes</strong>.</p>
+            <p style="color: #4b5563; font-size: 14px; margin: 18px 0 0;">If this wasn't you, please secure your account immediately.</p>
           </div>
 
-          <div style="background-color: #f9fafb; padding: 15px; text-align: center; font-size: 12px; color: #6b7280; border-top: 1px solid #e5e7eb;">
-            <p style="margin: 0;">This is an automated message. Please do not reply to this email.</p>
-            <p style="margin: 5px 0 0;">&copy; 2026 E.M. Cayetano Trading System</p>
+          <div style="background: #f9fafb; padding: 16px; text-align: center; font-size: 12px; color: #6b7280; border-top: 1px solid #e5e7eb;">
+            <div style="font-weight: 600; color: #111827;">E.M. Cayetano Trading</div>
+            <div>Rodriguez, Rizal • Manggahan & San Rafael Branches</div>
+            <div style="margin-top: 6px;">This is an automated message. Please do not reply.</div>
+            <div style="margin-top: 4px;">© 2026 E.M. Cayetano Trading System</div>
           </div>
         </div>
       `

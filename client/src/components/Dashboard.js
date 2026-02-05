@@ -7,7 +7,8 @@ import { useData } from './DataContext';
 import { PageHeader } from './PageHeader';
 export function Dashboard({
   onNavigate,
-  user
+  user,
+  activeBranch
 }) {
   const {
     inventory,
@@ -32,7 +33,7 @@ export function Dashboard({
     title: "Dashboard",
     subtitle: "Welcome back,",
     userName: user.fullName,
-    userBranch: user.branch,
+    userBranch: activeBranch || user.branch,
     userRole: user.role,
     onNavigate: onNavigate,
     showQuickActions: true,
