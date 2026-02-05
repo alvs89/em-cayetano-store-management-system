@@ -1,14 +1,10 @@
-Here is a professional, comprehensive `README.md` file tailored for your team. You can copy this directly into the root of your project folder.
-
----
-
 # 🏗️ E.M. Cayetano Trading | Web-Based Store Management System
 
 ## 📖 Introduction
 
 This project is a dedicated **Web-Based Store Management System** developed for **E.M. Cayetano Trading**.
 
-The system is designed to modernize the hardware trading operations by replacing manual logbooks with a digital solution. It addresses critical business needs including **real-time inventory tracking** across multiple branches (Manggahan & San Rafael), **Point of Sale (POS)** automation, and secure **Employee Management**. Our goal is to minimize data discrepancy, prevent stockouts, and provide the administration with accurate sales reports.
+The system is designed to modernize the hardware trading operations by replacing manual logbooks with a digital solution. It addresses critical business needs, including **real-time inventory tracking** across multiple branches (Manggahan & San Rafael) and secure **Employee Management**. Our goal is to minimize data discrepancies, prevent stockouts, and provide the administration with accurate sales reports.
 
 ---
 
