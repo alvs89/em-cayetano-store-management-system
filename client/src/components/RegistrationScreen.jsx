@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
-import { UserPlus, User, Lock, Building } from 'lucide-react';
+import { UserPlus, User, Lock, Building, Eye, EyeOff } from 'lucide-react';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -21,6 +21,8 @@ const RegistrationScreen = () => {
     branch: 'Manggahan'
   });
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const navigate = useNavigate();
 
   const handleChange = (field) => (value) => {
@@ -124,27 +126,45 @@ const RegistrationScreen = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="password" className="text-gray-800 flex items-center gap-1">Password <span className="text-red-600">*</span></Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    value={formData.password}
-                    onChange={(e) => handleChange('password')(e.target.value)}
-                    placeholder="Password"
-                    className="rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm"
-                    required
-                  />
+                  <div className="relative">
+                    <Input
+                      id="password"
+                      type={showPassword ? "text" : "password"}
+                      value={formData.password}
+                      onChange={(e) => handleChange('password')(e.target.value)}
+                      placeholder="Password"
+                      className="rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm pr-10"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 transition-colors"
+                    >
+                      {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="confirmPassword" className="text-gray-800 flex items-center gap-1">Confirm Password <span className="text-red-600">*</span></Label>
-                  <Input
-                    id="confirmPassword"
-                    type="password"
-                    value={formData.confirmPassword}
-                    onChange={(e) => handleChange('confirmPassword')(e.target.value)}
-                    placeholder="Confirm Password"
-                    className="rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm"
-                    required
-                  />
+                  <div className="relative">
+                    <Input
+                      id="confirmPassword"
+                      type={showConfirmPassword ? "text" : "password"}
+                      value={formData.confirmPassword}
+                      onChange={(e) => handleChange('confirmPassword')(e.target.value)}
+                      placeholder="Confirm Password"
+                      className="rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm pr-10"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 transition-colors"
+                    >
+                      {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -188,17 +208,17 @@ const RegistrationScreen = () => {
 
         <div className="max-w-xl space-y-8 relative z-10">
           <div className="inline-block">
-            <h2 className="text-5xl mb-2 text-gray-900">E.M. Cayetano Trading</h2>
+            <h2 className="text-5xl mb-2 text-gray-900">Join Our Team</h2>
             <div className="h-1 w-32 bg-gradient-to-r from-[#FFFF00] to-[#FF0000] rounded-full" />
           </div>
 
           <p className="text-xl text-gray-700 leading-relaxed">
-            Create your employee account to manage inventory, sales, and reporting across branches.
+            Register for access to the E.M. Cayetano Trading Inventory System. Your account will be reviewed by our administrators before activation.
           </p>
 
           <div className="border-l-4 border-[#FF0000] pl-6 py-4 bg-white/40 rounded-r-lg">
             <p className="italic text-lg text-gray-800">
-              "Built for reliable operations from Manggahan to San Rafael."
+              "Become part of a reliable, professional team dedicated to excellence."
             </p>
           </div>
         </div>

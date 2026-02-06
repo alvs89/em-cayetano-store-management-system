@@ -9,17 +9,22 @@ import { ShieldCheck, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 
 const emcLogoSrc = "/emc-logo.png";
+const EXPIRY_TOLERANCE_MS = 15000; // 15s grace to match backend acceptance
+const EXPIRED_MESSAGE = "Your code is no longer valid. Please click the resend button.";
+
 const SetPasswordScreen = () => {
   const [otp, setOtp] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [remainingMs, setRemainingMs] = useState(120000);
+  const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const email = location.state?.email;
   const issuedAt = useRef(Number(location.state?.otpIssuedAt) || Date.now());
   const expiresAt = useRef(location.state?.otpExpiresAt ? new Date(location.state.otpExpiresAt).getTime() : (issuedAt.current + 120000));
   const skewRef = useRef(issuedAt.current - Date.now());
-  const expiryToastShown = useRef(false);
+  const timerIdRef = useRef(null);
 
   useEffect(() => {
     if (!email) navigate('/forgot-password');
@@ -28,40 +33,55 @@ const SetPasswordScreen = () => {
   useEffect(() => {
     const tick = () => {
       const nowAligned = Date.now() + skewRef.current;
-      const remaining = expiresAt.current - nowAligned;
-      setRemainingMs(Math.max(0, remaining));
-
-      if (remaining <= 0 && !expiryToastShown.current) {
-        expiryToastShown.current = true;
-        toast.error("The verification code has expired. Please request a new code.", {
-          classNames: {
-            toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
-          },
-        });
-      }
+      const remaining = expiresAt.current - nowAligned; // raw ms, can go negative during grace
+      setRemainingMs(remaining);
     };
 
-    tick(); // initialize immediately
-    const interval = setInterval(tick, 500);
-    return () => clearInterval(interval);
+    if (!timerIdRef.current) {
+      timerIdRef.current = setInterval(tick, 500);
+      tick();
+    }
+
+    return () => {
+      if (timerIdRef.current) {
+        clearInterval(timerIdRef.current);
+        timerIdRef.current = null;
+      }
+    };
   }, []);
 
   const formatTime = (ms) => {
-    const total = Math.max(0, Math.floor(ms / 1000));
+    const total = Math.max(0, Math.ceil(ms / 1000));
     const minutes = Math.floor(total / 60);
     const seconds = total % 60;
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  // Allow a 10s negative window so the backend grace still accepts submissions
-  const isExpired = remainingMs < -10000;
-
   const handleReset = async (e) => {
     e.preventDefault();
+    const isPastGrace = remainingMs < -EXPIRY_TOLERANCE_MS;
+    if (isPastGrace) {
+      toast.error(EXPIRED_MESSAGE, {
+        classNames: {
+          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+        },
+      });
+      return;
+    }
+    const sanitizedOtp = otp.replace(/\s+/g, '');
+    if (sanitizedOtp.length !== 6) {
+      toast.error("Please enter the full 6-digit code", {
+        classNames: {
+          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+        },
+      });
+      return;
+    }
+    setLoading(true);
     try {
       await axios.post('http://localhost:5000/api/auth/reset-password', {
         email,
-        otp,
+        otp: sanitizedOtp,
         newPassword
       });
       toast.success("Password reset successfully! Please login.", {
@@ -71,11 +91,53 @@ const SetPasswordScreen = () => {
       });
       navigate('/');
     } catch (error) {
-      toast.error(error.response?.data?.error || "Reset failed", {
+      const apiMessage = error.response?.data?.error;
+      const normalized = typeof apiMessage === 'string' ? apiMessage.toLowerCase() : '';
+      const hasInvalid = normalized.includes('invalid');
+      const hasExpire = normalized.includes('expire');
+      const message = hasInvalid ? "Invalid code" : (hasExpire ? EXPIRED_MESSAGE : (apiMessage || "Invalid code"));
+      toast.error(message, {
         classNames: {
           toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
         },
       });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResend = async () => {
+    if (!email) return;
+    setResending(true);
+    try {
+      const resp = await axios.post('http://localhost:5000/api/auth/forgot-password', { email });
+      const serverTime = resp.data.serverTime || Date.now();
+      const newExpires = resp.data.expiresAt ? new Date(resp.data.expiresAt).getTime() : serverTime + 120000;
+
+      // Update alignment refs for fresh countdown
+      issuedAt.current = serverTime;
+      expiresAt.current = newExpires;
+      skewRef.current = serverTime - Date.now();
+
+      const alignedNow = Date.now() + skewRef.current;
+      setRemainingMs(newExpires - alignedNow);
+
+      // Clear input to avoid stale code entry
+      setOtp('');
+
+      toast.success('A new verification code was sent.', {
+        classNames: {
+          toast: 'rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900',
+        },
+      });
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Failed to resend code', {
+        classNames: {
+          toast: 'rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900',
+        },
+      });
+    } finally {
+      setResending(false);
     }
   };
 
@@ -92,9 +154,10 @@ const SetPasswordScreen = () => {
 
             <div className="text-center space-y-2">
               <h2 className="text-3xl text-gray-900">Set New Password</h2>
-              <p className="text-lg text-gray-600 flex items-center justify-center gap-2">
+              <p className="text-lg text-gray-600 flex flex-wrap items-center justify-center gap-2 text-center leading-snug">
                 <Mail className="w-4 h-4" />
-                Code sent to <span className="font-semibold text-gray-900">{email || 'your email'}</span>
+                <span className="whitespace-pre">Code sent to</span>
+                <span className="font-semibold text-gray-900 break-all text-center max-w-full">{email || 'your email'}</span>
               </p>
               <p className="text-sm text-red-600 font-semibold">
                 Expires in {formatTime(remainingMs)}
@@ -132,9 +195,18 @@ const SetPasswordScreen = () => {
               <Button
                 type="submit"
                 className="w-full py-6 rounded-xl bg-[#FFFF00] hover:bg-[#e6e600] text-black shadow-lg transition-all duration-300"
-                disabled={!otp || !newPassword || isExpired}
+                disabled={!otp || !newPassword || loading}
               >
-                Reset Password
+                {loading ? "Submitting..." : "Reset Password"}
+              </Button>
+
+              <Button
+                type="button"
+                onClick={handleResend}
+                disabled={loading || resending}
+                className="w-full py-5 rounded-xl border-2 border-[#FF0000] text-[#FF0000] bg-white hover:bg-red-50 shadow-sm transition-all duration-300 disabled:opacity-70"
+              >
+                {resending ? "Sending new code..." : "Resend Code"}
               </Button>
 
               <div className="text-center text-sm text-gray-600">
@@ -153,7 +225,7 @@ const SetPasswordScreen = () => {
 
         <div className="max-w-xl space-y-8 relative z-10">
           <div className="inline-block">
-            <h2 className="text-5xl mb-2 text-gray-900">E.M. Cayetano Trading</h2>
+            <h2 className="text-5xl mb-2 text-gray-900">Set A New Password</h2>
             <div className="h-1 w-32 bg-gradient-to-r from-[#FFFF00] to-[#FF0000] rounded-full" />
           </div>
 

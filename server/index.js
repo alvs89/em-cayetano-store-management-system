@@ -12,7 +12,6 @@ const path = require('path');
 
 const app = express();
 const OTP_TTL_MS = 120 * 1000; // 2 minutes
-const OTP_GRACE_MS = 10 * 1000; // +10s network/drift buffer (total acceptance ~130s)
 
 // 1. MIDDLEWARE (Security & Data Parsing)
 app.use(cors()); // Allows your React client to talk to this server
@@ -44,39 +43,9 @@ const transporter = nodemailer.createTransport({
 });
 
 
-// Test DB Connection on Startup and ensure OTP columns exist for fresh databases
-async function ensureSchema() {
-  // Add any missing columns when deploying to a fresh Neon database
-  await pool.query(`
-    ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS otp_code VARCHAR(10),
-    ADD COLUMN IF NOT EXISTS otp_expires TIMESTAMP
-  `);
-
-  // Normalize otp_expires to TIMESTAMPTZ to avoid timezone drift between server/client
-  await pool.query(`
-    DO $$
-    BEGIN
-      IF EXISTS (
-        SELECT 1 FROM information_schema.columns 
-        WHERE table_name = 'users' 
-          AND column_name = 'otp_expires' 
-          AND data_type = 'timestamp without time zone'
-      ) THEN
-        ALTER TABLE users
-          ALTER COLUMN otp_expires TYPE TIMESTAMPTZ
-          USING (CASE WHEN otp_expires IS NULL THEN NULL ELSE otp_expires AT TIME ZONE 'UTC' END);
-      END IF;
-    END $$;
-  `);
-}
-
+// Test DB Connection on Startup
 pool.connect()
-  .then(async () => {
-    console.log('✅ Connected to PostgreSQL Database');
-    await ensureSchema();
-    console.log('🛠️  Verified users table has otp columns');
-  })
+  .then(() => console.log('✅ Connected to PostgreSQL Database'))
   .catch(err => console.error('❌ Database Connection Error:', err.message));
 
 // 3. API ROUTES
@@ -219,7 +188,9 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 
 // ROUTE: Reset Password (validate OTP then store new bcrypt hash)
 app.post('/api/auth/reset-password', async (req, res) => {
-  const { email, otp, newPassword } = req.body;
+  const email = req.body.email;
+  const otp = (req.body.otp || '').replace(/\s+/g, '');
+  const newPassword = req.body.newPassword;
   try {
     // Verify OTP
     const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
@@ -228,9 +199,8 @@ app.post('/api/auth/reset-password', async (req, res) => {
     const user = userResult.rows[0];
     const expiresMs = new Date(user.otp_expires).getTime();
     const nowMs = Date.now();
-    const expired = nowMs > expiresMs + OTP_GRACE_MS;
-    // Grace window to tolerate clock drift/network latency
-    if (user.otp_code !== otp || expired) {
+    // Grace window (15s) to tolerate clock drift/network latency
+    if (user.otp_code !== otp || nowMs - expiresMs > 15000) {
       return res.status(400).json({ error: "Invalid or expired code" });
     }
 
@@ -268,7 +238,7 @@ app.post('/api/auth/send-otp', async (req, res) => {
     const issuedAt = Date.now();
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     
-    // 3. Save to DB (Valid for 2 minutes)
+    // 3. Save to DB (Valid for 5 minutes)
     const expiresAt = new Date(issuedAt + OTP_TTL_MS); // Now + 2 mins
     await pool.query('UPDATE users SET otp_code = $1, otp_expires = $2 WHERE user_id = $3', [otp, expiresAt, user.user_id]);
 
@@ -320,7 +290,9 @@ app.post('/api/auth/send-otp', async (req, res) => {
 
 // ROUTE: Verify OTP (finalize login, clear OTP, issue JWT)
 app.post('/api/auth/verify-otp', async (req, res) => {
-  const { username, code, branch } = req.body;
+  const username = req.body.username;
+  const code = (req.body.code || '').replace(/\s+/g, '');
+  const branch = req.body.branch;
 
   try {
     const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
@@ -328,13 +300,12 @@ app.post('/api/auth/verify-otp', async (req, res) => {
     const user = result.rows[0];
 
     // Check Logic
-    const nowMs = Date.now();
-    const expiresMs = new Date(user.otp_expires).getTime();
+    const now = new Date();
     if (user.otp_code !== code) {
       return res.status(400).json({ error: "Invalid code" });
     }
-    // Grace window to tolerate drift/latency between UI timer and DB timestamp
-    if (nowMs > expiresMs + OTP_GRACE_MS) {
+    // Grace window (15s) to tolerate drift/latency
+    if (new Date(user.otp_expires).getTime() + 15000 < now.getTime()) {
       return res.status(400).json({ error: "Code expired" });
     }
 

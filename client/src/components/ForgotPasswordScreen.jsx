@@ -85,17 +85,17 @@ const ForgotPasswordScreen = () => {
 
         <div className="max-w-xl space-y-8 relative z-10">
           <div className="inline-block">
-            <h2 className="text-5xl mb-2 text-gray-900">E.M. Cayetano Trading</h2>
+            <h2 className="text-5xl mb-2 text-gray-900">Password Recovery</h2>
             <div className="h-1 w-32 bg-gradient-to-r from-[#FFFF00] to-[#FF0000] rounded-full" />
           </div>
 
           <p className="text-xl text-gray-700 leading-relaxed">
-            Securely regain access to your account. We will send a verification code to your registered email.
+            We'll help you recover your account quickly and securely. Please ensure you have access to your registered email address.
           </p>
 
           <div className="border-l-4 border-[#FF0000] pl-6 py-4 bg-white/40 rounded-r-lg">
             <p className="italic text-lg text-gray-800">
-              "Keeping your account safe while you manage hardware and construction supplies."
+              "Your security is our priority. We're here to help you regain access."
             </p>
           </div>
         </div>
