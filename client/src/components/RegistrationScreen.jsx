@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
-import { UserPlus, User, Lock, Building, Eye, EyeOff } from 'lucide-react';
+import { UserPlus, Eye, EyeOff, AlertCircle } from 'lucide-react';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -51,7 +51,7 @@ const RegistrationScreen = () => {
         branch: formData.branch
       });
 
-      toast.success("Account created successfully! Please login.", {
+      toast.success("Registration submitted! Pending admin approval!", {
         classNames: {
           toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
         },
@@ -182,6 +182,14 @@ const RegistrationScreen = () => {
                     <SelectItem value="San Rafael">San Rafael</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              {/* Updated notice box: yellow-themed with centered icon and equal spacing */}
+              <div className="flex items-center gap-4 rounded-2xl border-2 border-yellow-400 bg-yellow-100 px-6 py-4 text-gray-800 shadow-sm">
+                <AlertCircle className="h-6 w-6 text-yellow-600 flex-shrink-0" />
+                <p className="text-sm font-medium leading-relaxed">
+                  Your account will be pending until approved by an administrator. You will receive an email once your account is activated.
+                </p>
               </div>
 
               <Button

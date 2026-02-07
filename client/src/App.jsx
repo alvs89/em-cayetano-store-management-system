@@ -80,6 +80,8 @@ function AppContent() {
   const [pendingUser, setPendingUser] = useState(null);
   const [alertCount, setAlertCount] = useState(3);
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
+  const [hasShownInvalidationToast, setHasShownInvalidationToast] = useState(false);
+  const POST_LOGOUT_MSG_KEY = 'postLogoutToast';
 
   // Called after password+2FA success to enter the app
   const handleLogin = (user) => {
@@ -153,6 +155,45 @@ function AppContent() {
       setCurrentScreen("login");
     }
   }, [currentUser]);
+
+  // Show any post-logout toast after redirect to login
+  useEffect(() => {
+    if (currentUser) return;
+    const pending = localStorage.getItem(POST_LOGOUT_MSG_KEY);
+    if (pending) {
+      try {
+        const parsed = JSON.parse(pending);
+        toast.info(parsed.title || "Notice", { description: parsed.description || "" });
+      } catch {
+        toast.info(pending);
+      }
+      localStorage.removeItem(POST_LOGOUT_MSG_KEY);
+    }
+  }, [currentUser]);
+
+  // Global 401 handler: invalidate session on token version change
+  useEffect(() => {
+    if (window.__auth401Patched) return;
+    window.__auth401Patched = true;
+
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (...args) => {
+      const response = await originalFetch(...args);
+      if (response.status === 401) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        localStorage.removeItem('active_branch');
+        setCurrentUser(null);
+        setCurrentScreen("login");
+        navigate("/");
+        if (!hasShownInvalidationToast) {
+          toast.info("Your permissions have been updated by the Admin. Please log in again to see your new features.");
+          setHasShownInvalidationToast(true);
+        }
+      }
+      return response;
+    };
+  }, [navigate, hasShownInvalidationToast]);
 
   if (!currentUser) {
     return (

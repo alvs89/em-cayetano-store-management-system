@@ -1,6 +1,6 @@
 // Login UI: validates inputs, calls backend login, and kicks off 2FA.
 import axios from 'axios';
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -19,16 +19,35 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [branch, setBranch] = useState("");
+  const [branchHintShown, setBranchHintShown] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const navigate = useNavigate();
 
+  // Show a hint if branch is chosen before username/password
+  useEffect(() => {
+    if (branch && (!username || !password) && !branchHintShown) {
+      toast.error("Please fill the other fields", {
+        id: "login-fill-other-fields",
+        classNames: {
+          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+        },
+      });
+      setBranchHintShown(true);
+    }
+
+    // Reset hint once all fields are provided or branch cleared
+    if (!branch || (username && password)) {
+      setBranchHintShown(false);
+    }
+  }, [branch, username, password, branchHintShown]);
+
   // Submit credentials; on success either receive token or trigger 2FA flow
   const handleLogin = async (e) => {
     e.preventDefault();
-    
+
     if (!username || !password || !branch) {
-      toast.error("Please fill in all fields, including branch", {
+      toast.error(!branch ? "Please fill in all fields, including branch" : "Please fill the other fields", {
         classNames: {
           toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
         },
@@ -126,7 +145,21 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
 
               <div className="space-y-2">
                 <Label htmlFor="branch" className="text-gray-800">Branch</Label>
-                <Select value={branch} onValueChange={setBranch}>
+                <Select
+                  value={branch}
+                  onValueChange={(value) => {
+                    setBranch(value);
+                    if (!username || !password) {
+                      toast.error("Please fill the other fields", {
+                        id: "login-fill-other-fields",
+                        classNames: {
+                          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+                        },
+                      });
+                      setBranchHintShown(true);
+                    }
+                  }}
+                >
                   <SelectTrigger
                     id="branch"
                     className="rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm"
