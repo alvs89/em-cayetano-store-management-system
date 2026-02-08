@@ -1,170 +1,217 @@
-# 🏗️ E.M. Cayetano Trading | Web-Based Store Management System
+# Web-Based Store Management System for E.M. Cayetano Trading
 
-## 📖 Introduction
+A comprehensive web application designed to streamline business operations, inventory management, and sales tracking for E.M. Cayetano Trading. This system provides a robust interface for managing stock, generating reports, and maintaining user access control.
 
-This project is a dedicated **Web-Based Store Management System** developed for **E.M. Cayetano Trading**.
+## 📋 Table of Contents
 
-The system is designed to modernize the hardware trading operations by replacing manual logbooks with a digital solution. It addresses critical business needs, including **real-time inventory tracking** across multiple branches (Manggahan & San Rafael) and secure **Employee Management**. Our goal is to minimize data discrepancies, prevent stockouts, and provide the administration with accurate sales reports.
+* [Tech Stack](https://www.google.com/search?q=%23-tech-stack)
+* [Project Overview](https://www.google.com/search?q=%23-project-overview)
+* [Project Structure](https://www.google.com/search?q=%23-project-structure)
+* [Prerequisites](https://www.google.com/search?q=%23-prerequisites)
+* [Installation & Setup](https://www.google.com/search?q=%23-installation--setup)
+* [Database Configuration (Neon)](https://www.google.com/search?q=%23-database-configuration-neon)
+* [Running the Application](https://www.google.com/search?q=%23-running-the-application)
+* [Security & Git Guidelines](https://www.google.com/search?q=%23-security--git-guidelines)
+* [Authors](https://www.google.com/search?q=%23-authors)
 
 ---
 
-## 🛠️ Tech Stack
+## 🛠 Tech Stack
 
-We are using the **PERN Stack** (PostgreSQL, Express, React, Node) with a modern Cloud Database approach.
+**Frontend**
 
-| Component | Technology | Description |
-| --- | --- | --- |
-| **Frontend** |  | Built with **Vite**. Handles UI, Login Screens, and Dashboard logic. |
-| **Backend** |  | REST API handling authentication (2FA), database queries, and email alerts. |
-| **Database** |  | **Cloud-hosted database.** Accessible by all team members in real-time. |
-| **Security** | `bcryptjs`, `jsonwebtoken` | Encryption for passwords and secure session tokens. |
-| **Email** | `Nodemailer` | Automated OTPs for 2FA and Password Recovery. |
+* **Framework:** React.js (via Vite)
+* **Styling:** Tailwind CSS (inferred), CSS Modules
+* **Components:** Custom UI components (located in `client/src/components/ui`)
+* **State Management:** React Context API (`DataContext.jsx`)
+
+**Backend**
+
+* **Runtime:** Node.js
+* **Framework:** Express.js
+* **Authentication:** JSON Web Tokens (JWT), Bcrypt.js
+* **Utilities:** Nodemon, Dotenv, CORS
+
+**Database**
+
+* **Database:** PostgreSQL (hosted on Neon)
+* **Driver:** `pg` (node-postgres)
+
+---
+
+## 📖 Project Overview
+
+This system is engineered to modernize the manual processes of E.M. Cayetano Trading. It serves as a central hub for business data, ensuring data integrity and accessibility.
+
+### Key Modules
+
+* **Dashboard:** specialized views for quick insights into daily operations.
+* **Inventory Management:** Track stock levels, add new items, and manage product details.
+* **Search Module:** efficient lookup for products and records.
+* **Reports Module:** Generate actionable insights and sales reports.
+* **User Management:** Admin controls for managing staff accounts and permissions.
+* **Archive & Maintenance:** Tools for data archiving and system health checks.
+* **Alerts:** Notifications for low stock or critical system events.
 
 ---
 
 ## 📂 Project Structure
 
-Understanding the folder structure is critical for collaboration. We have two main workspaces:
-
 ```bash
-em-cayetano-trading/
-├── 📂 client/               # THE FRONTEND (The Website)
-│   ├── 📂 src/
-│   │   ├── 📂 components/   # All screens (Login, Inventory, Dashboard, etc.)
-│   │   ├── 📂 ui/           # Reusable buttons, cards, inputs
-│   │   └── App.jsx          # Main Router (Navigation logic)
-│   └── package.json         # Frontend dependencies
+em-cayetano-store-management-system/
+├── client/                 # Frontend Application (React + Vite)
+│   ├── public/             # Static assets
+│   ├── src/
+│   │   ├── assets/         # Images and icons
+│   │   ├── components/     # Reusable UI components & Feature Modules
+│   │   │   ├── ui/         # Generic UI elements (Buttons, Inputs, etc.)
+│   │   │   ├── Dashboard.jsx
+│   │   │   ├── InventoryModule.jsx
+│   │   │   └── ... (Other modules)
+│   │   ├── styles/         # Global styles and CSS
+│   │   ├── utils/          # Utility functions and algorithms
+│   │   ├── App.jsx         # Main Application Component
+│   │   └── main.jsx        # Entry point
+│   ├── .env.example        # Client-side environment variable template
+│   ├── vite.config.js      # Vite configuration
+│   └── package.json        # Frontend dependencies
 │
-├── 📂 server/               # THE BACKEND (The API)
-│   ├── index.js             # MAIN SERVER FILE (Routes for login, inventory, etc.)
-│   ├── database.sql         # SQL commands used to create tables
-│   ├── .env                 # 🔒 SECRETS (Not on GitHub - See Setup Guide)
-│   └── package.json         # Backend dependencies
+├── server/                 # Backend Application (Node + Express)
+│   ├── node_modules/       # Backend dependencies
+│   ├── database.sql        # SQL Schema for Database initialization
+│   ├── index.js            # Server entry point
+│   ├── .env                # Server-side environment variables (GitIgnored)
+│   └── package.json        # Backend dependencies
 │
-└── README.md                # This documentation
+└── README.md               # Project Documentation
 
 ```
 
 ---
 
-## 🚀 Collaborator Setup Guide
+## ✅ Prerequisites
 
-**Attention Team:** Since we are using a **Shared Cloud Database (Neon)**, you do *not* need to install PostgreSQL locally on your laptop. You just need to connect the code to the cloud.
+Before you begin, ensure you have the following installed:
 
-Follow these steps exactly to get the project running on your local machine.
+* [Node.js](https://www.google.com/search?q=https://nodejs.org/) (v16 or higher)
+* [Git](https://www.google.com/search?q=https://git-scm.com/)
+* A [Neon](https://www.google.com/search?q=https://neon.tech/) account (for the Serverless PostgreSQL database)
 
-### **Prerequisites**
+---
 
-* Download and Install **Node.js** (LTS Version).
-* Install **VS Code**.
-* Install **Git**.
+## ⚙️ Installation & Setup
 
-### **Step 1: Clone the Repository**
-
-Open your terminal/command prompt and run:
+### 1. Clone the Repository
 
 ```bash
-git clone <PASTE_REPO_URL_HERE>
-cd em-cayetano-trading
+git clone https://github.com/alvs89/em-cayetano-store-management-system.git
+cd em-cayetano-store-management-system
 
 ```
 
-### **Step 2: Install Backend Dependencies**
+### 2. Frontend Setup
 
-We need to install the libraries for the server first.
-
-1. Open VS Code in the project folder.
-2. Open the Terminal (`Ctrl + ~`).
-3. Run:
+Navigate to the client directory and install dependencies:
 
 ```bash
-cd server
+cd client
 npm install
 
 ```
 
-### **Step 3: Configure Environment Variables (CRITICAL)**
+* Create a `.env` file in the `client/` folder based on `.env.example`.
+* Configure your API base URL (e.g., `VITE_API_URL=http://localhost:5000`).
 
-The system will **crash** if you skip this. The `.env` file contains our database passwords and is hidden from GitHub for security.
+### 3. Backend Setup
 
-1. Inside the `server/` folder, create a new file named `.env`.
-2. Paste the following template into it:
-3. **Ask Alvin** for the actual values to fill in the blanks.
+Navigate to the server directory and install dependencies:
 
+```bash
+cd ../server
+npm install
+
+```
+
+* Create a `.env` file in the `server/` folder.
+* Add the following variables:
 ```env
-# server/.env
-
-# SERVER PORT
 PORT=5000
-NODE_ENV=development
-
-# CLOUD DATABASE CONNECTION (Ask Alvin for the Link)
-DATABASE_URL=postgres://neondb_owner:...........@ep-solitary-hat.....neon.tech/neondb?sslmode=require
-
-# SECURITY KEYS
-JWT_SECRET=em_cayetano_trading_secure_key_2026
-
-# EMAIL SYSTEM (For 2FA)
-EMAIL_USER=emcayetano.notifications@gmail.com
-EMAIL_PASS=pjvhotebmfljuxty
+DATABASE_URL=your_neon_connection_string
+JWT_SECRET=your_secure_random_string
 
 ```
 
-### **Step 4: Install Frontend Dependencies**
 
-Now, set up the React website.
-
-1. Open a **new** terminal (keep the server one open, click the `+` button in VS Code terminal).
-2. Run:
-
-```bash
-cd client
-npm install
-
-```
 
 ---
 
-## ▶️ How to Run the Project
+## 🗄 Database Configuration (Neon)
 
-To work on the system, you must run **both** the Server and the Client at the same time in two separate terminals.
+This project uses **Neon**, a serverless PostgreSQL platform.
 
-**Terminal 1 (Backend):**
+1. **Create a Project:** Log in to [Neon Console](https://www.google.com/search?q=https://console.neon.tech/) and create a new project.
+2. **Get Connection String:** Copy the "Direct Connection" string from your Neon dashboard. It should look like `postgres://user:password@ep-xyz.aws.neon.tech/dbname?sslmode=require`.
+3. **Configure Server:** Paste this string into your `server/.env` file as `DATABASE_URL`.
+4. **Initialize Schema:**
+* Locate the file `server/database.sql` in this repository.
+* Run the SQL commands inside this file using the Neon SQL Editor or a local tool like pgAdmin connected to your Neon instance. This will create the necessary tables and relationships.
+
+
+
+---
+
+## 🚀 Running the Application
+
+To run the full stack locally, you need two terminal windows.
+
+**Terminal 1: Backend**
 
 ```bash
 cd server
+npm start
+# OR if using nodemon for development:
 npm run dev
-# You should see: "🚀 Server running on port 5000" and "✅ Connected to PostgreSQL"
 
 ```
 
-**Terminal 2 (Frontend):**
+*The server should start on port 5000 (or your defined port).*
+
+**Terminal 2: Frontend**
 
 ```bash
 cd client
 npm run dev
-# You should see: "➜ Local: http://localhost:5173/"
 
 ```
 
-👉 **Ctrl + Click** the localhost link to open the app!
+*Vite will start the development server, typically at `http://localhost:5173`.*
 
 ---
 
-## 🔒 Security & Git Rules
+## 🔒 Security & Git Guidelines
 
-> ⚠️ **IMPORTANT:** Never commit your `.env` file to GitHub.
+### Secure Coding Practices
 
-1. **Environment Variables:** If you change the database password or add an API key, update your local `.env`, but **DO NOT** upload it. Send the new keys to the group chat instead.
-2. **Pull Updates:** Always run `git pull` before you start coding to get the latest changes from the team.
-3. **Branching:** If working on a major feature, create a branch: `git checkout -b feature-name`.
+* **Never commit `.env` files.** Ensure `.env` is listed in your `.gitignore`.
+* **Sanitize Inputs:** Always validate and sanitize user inputs on the backend to prevent SQL injection (handled by parameterized queries in `pg`).
+* **Secrets:** Keep `JWT_SECRET` and database credentials distinct for production and development.
+
+### Git Workflow
+
+* **Main Branch (`main`):** Stable, production-ready code only. Direct commits are restricted.
+* **Development Branch (`dev` or `develop`):** Integration branch for ongoing work.
+* **Feature Branches:** Create a new branch for every feature or bug fix.
+* Naming convention: `feature/feature-name` or `fix/bug-description`.
+
+
+* **Pull Requests:** All changes must go through a Pull Request (PR) from a feature branch to `dev`, then `dev` to `main`. Code review is required before merging.
 
 ---
 
-## 🤝 Collaboration Features
+## 👥 Authors
 
-* **Database:** We are all connected to the **same** Neon database. If Ray adds an item to the inventory, Alvin and the rest of the team will see it instantly after refreshing.
-* **Admin Access:**
-* **User:** `admin`
-* **Pass:** `admin123`
-* *Note: Admin can access any branch (Manggahan/San Rafael).*
+* **Donato, Raymond B.**
+* **Guillermo, Alvin J.**
+* **Niez, John Alces B.**
+
+*Submitted to the Computer Science Department, Technological Institute of the Philippines.*
