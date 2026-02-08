@@ -1,6 +1,5 @@
-import React from 'react';
-import { useEffect, useState } from "react";
-import { UserCheck, UserX, Edit, Mail, Search, MapPin } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { ArrowDown, ArrowUp, Edit, Mail, MapPin, Search, UserCheck, UserX } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -14,6 +13,7 @@ import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { useData } from "./DataContext";
 import { PageHeader } from "./PageHeader";
+import { mergeSort } from "../utils/algorithms";
 
 export function UserManagementModule() {
   const { users, setUsers } = useData();
@@ -35,10 +35,16 @@ export function UserManagementModule() {
   const [showApproveDialog, setShowApproveDialog] = useState(false);
   const [showRoleChangeDialog, setShowRoleChangeDialog] = useState(false);
   const [showDeactivateDialog, setShowDeactivateDialog] = useState(false);
+  const [showReactivateDialog, setShowReactivateDialog] = useState(false);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [newRole, setNewRole] = useState("");
   const [newBranch, setNewBranch] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [pendingSearchQuery, setPendingSearchQuery] = useState("");
+  const [inactiveSearchQuery, setInactiveSearchQuery] = useState("");
+  const [activeSort, setActiveSort] = useState({ key: "fullName", direction: "asc" });
+  const [pendingSort, setPendingSort] = useState({ key: "fullName", direction: "asc" });
+  const [inactiveSort, setInactiveSort] = useState({ key: "fullName", direction: "asc" });
 
   const normalizeUser = apiUser => ({
     id: (apiUser.user_id || apiUser.id || "").toString(),
@@ -82,12 +88,148 @@ export function UserManagementModule() {
   const pendingUsers = users.filter(u => u.status === "Pending");
   const inactiveUsers = users.filter(u => u.status === "Inactive");
 
-  const filteredActiveUsers = activeUsers.filter(user =>
-    user.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    user.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    user.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    user.branch.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const makeComparator = sortCfg => (a, b) => {
+    const key = sortCfg.key;
+    if (key === "createdDate") {
+      const aTime = new Date(a?.[key] ?? "").getTime() || 0;
+      const bTime = new Date(b?.[key] ?? "").getTime() || 0;
+      const baseNum = aTime - bTime;
+      return sortCfg.direction === "asc" ? baseNum : -baseNum;
+    }
+    const aVal = (a?.[key] ?? "").toString().toLowerCase();
+    const bVal = (b?.[key] ?? "").toString().toLowerCase();
+    const base = aVal.localeCompare(bVal);
+    return sortCfg.direction === "asc" ? base : -base;
+  };
+
+  const activeComparator = useMemo(() => makeComparator(activeSort), [activeSort]);
+  const pendingComparator = useMemo(() => makeComparator(pendingSort), [pendingSort]);
+  const inactiveComparator = useMemo(() => makeComparator(inactiveSort), [inactiveSort]);
+
+  // Ensure user updates immediately reflect across tabs without requiring a reload.
+  const upsertUser = updatedUser => {
+    setUsers(prev => {
+      const existing = prev.find(u => u.id === updatedUser.id);
+      if (!existing) return [...prev, updatedUser];
+
+      // Preserve any fields the API did not return (e.g., role or role) to keep badges visible.
+      const merged = {
+        ...existing,
+        ...updatedUser,
+        role: updatedUser.role ?? existing.role,
+        branch: updatedUser.branch ?? existing.branch,
+        email: updatedUser.email ?? existing.email,
+        username: updatedUser.username ?? existing.username,
+        fullName: updatedUser.fullName ?? existing.fullName,
+        status: updatedUser.status ?? existing.status,
+        createdDate: updatedUser.createdDate ?? existing.createdDate
+      };
+
+      return prev.map(u => (u.id === merged.id ? merged : u));
+    });
+  };
+
+  const handleSort = (scope, key, forcedDirection) => {
+    const nextState = prev => {
+      if (forcedDirection) return { key, direction: forcedDirection };
+      return prev.key === key
+        ? { key, direction: prev.direction === "asc" ? "desc" : "asc" }
+        : { key, direction: "asc" };
+    };
+
+    if (scope === "active") setActiveSort(nextState);
+    if (scope === "pending") setPendingSort(nextState);
+    if (scope === "inactive") setInactiveSort(nextState);
+  };
+
+  const getSortState = scope => {
+    if (scope === "active") return activeSort;
+    if (scope === "pending") return pendingSort;
+    return inactiveSort;
+  };
+
+  const renderSortableHeader = (scope, key, label) => {
+    const cfg = getSortState(scope);
+    const isActive = cfg.key === key;
+    const titles = key === "createdDate"
+      ? {
+          asc: `Sort by ${label} (Oldest First)`,
+          desc: `Sort by ${label} (Newest First)`
+        }
+      : {
+          asc: `Sort by ${label} (A-Z)`,
+          desc: `Sort by ${label} (Z-A)`
+        };
+
+    return (
+      <div className="flex items-center gap-1 text-left font-medium text-slate-700">
+        <button
+          type="button"
+          onClick={() => handleSort(scope, key)}
+          className="flex items-center gap-1 hover:text-slate-900"
+        >
+          <span>{label}</span>
+        </button>
+        <div className="flex items-center gap-1" aria-label={`Sort by ${label}`}>
+          <button
+            type="button"
+            onClick={e => {
+              e.stopPropagation();
+              handleSort(scope, key, "asc");
+            }}
+            className="p-0.5"
+            title={titles.asc}
+          >
+            <ArrowUp className={`w-3.5 h-3.5 ${isActive && cfg.direction === "asc" ? "text-blue-800" : "text-slate-400"}`} />
+          </button>
+          <button
+            type="button"
+            onClick={e => {
+              e.stopPropagation();
+              handleSort(scope, key, "desc");
+            }}
+            className="p-0.5"
+            title={titles.desc}
+          >
+            <ArrowDown className={`w-3.5 h-3.5 ${isActive && cfg.direction === "desc" ? "text-blue-800" : "text-slate-400"}`} />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const filteredActiveUsers = useMemo(() => {
+    const lowerQuery = searchQuery.toLowerCase();
+    const filtered = activeUsers.filter(user =>
+      (user.fullName || "").toLowerCase().includes(lowerQuery) ||
+      (user.username || "").toLowerCase().includes(lowerQuery) ||
+      (user.email || "").toLowerCase().includes(lowerQuery) ||
+      (user.branch || "").toLowerCase().includes(lowerQuery)
+    );
+    return mergeSort(filtered, activeComparator);
+  }, [activeUsers, activeComparator, searchQuery]);
+
+  const filteredPendingUsers = useMemo(() => {
+    const lowerQuery = pendingSearchQuery.toLowerCase();
+    const filtered = pendingUsers.filter(user =>
+      (user.fullName || "").toLowerCase().includes(lowerQuery) ||
+      (user.username || "").toLowerCase().includes(lowerQuery) ||
+      (user.email || "").toLowerCase().includes(lowerQuery) ||
+      (user.branch || "").toLowerCase().includes(lowerQuery)
+    );
+    return mergeSort(filtered, pendingComparator);
+  }, [pendingUsers, pendingComparator, pendingSearchQuery]);
+
+  const filteredInactiveUsers = useMemo(() => {
+    const lowerQuery = inactiveSearchQuery.toLowerCase();
+    const filtered = inactiveUsers.filter(user =>
+      (user.fullName || "").toLowerCase().includes(lowerQuery) ||
+      (user.username || "").toLowerCase().includes(lowerQuery) ||
+      (user.email || "").toLowerCase().includes(lowerQuery) ||
+      (user.branch || "").toLowerCase().includes(lowerQuery)
+    );
+    return mergeSort(filtered, inactiveComparator);
+  }, [inactiveUsers, inactiveComparator, inactiveSearchQuery]);
 
   const handleApprove = async user => {
     if (!user) return false;
@@ -106,7 +248,7 @@ export function UserManagementModule() {
       }
       const data = await res.json();
       const updated = normalizeUser(data.user);
-      setUsers(users.map(u => u.id === updated.id ? updated : u));
+      upsertUser(updated);
       toast.success(`User ${updated.fullName} is now Active`, {
         description: "Activation email sent to the employee"
       });
@@ -128,6 +270,19 @@ export function UserManagementModule() {
     }
   };
 
+  const handleInitiateReactivate = user => {
+    setSelectedUser(user);
+    setShowReactivateDialog(true);
+  };
+
+  const handleConfirmReactivate = async () => {
+    const success = await handleApprove(selectedUser);
+    if (success) {
+      setShowReactivateDialog(false);
+      setSelectedUser(null);
+    }
+  };
+
   const handleReject = async () => {
     if (!selectedUser) return;
     setIsActionLoading(true);
@@ -145,7 +300,7 @@ export function UserManagementModule() {
       }
       const data = await res.json();
       const updated = normalizeUser(data.user);
-      setUsers(users.map(u => u.id === updated.id ? updated : u));
+      upsertUser(updated);
       toast.error(`${updated.fullName} set to Inactive`, {
         description: "User can no longer access the system"
       });
@@ -181,7 +336,7 @@ export function UserManagementModule() {
       }
       const data = await res.json();
       const updated = normalizeUser(data.user);
-      setUsers(users.map(u => u.id === updated.id ? updated : u));
+      upsertUser(updated);
       toast.warning(`${updated.fullName}'s account deactivated`, {
         description: 'User will no longer have system access'
       });
@@ -235,7 +390,7 @@ export function UserManagementModule() {
 
       const data = await res.json();
       const updated = normalizeUser(data.user);
-      setUsers(users.map(u => u.id === updated.id ? updated : u));
+      upsertUser(updated);
 
       const actingUserId = (sessionUser?.id ?? sessionUser?.user_id ?? "").toString();
       const targetUserId = (updated?.id ?? "").toString();
@@ -317,7 +472,7 @@ export function UserManagementModule() {
       if (updated.branch !== sessionUser.branch) {
         setUsers(users.filter(u => u.id !== updated.id));
       } else {
-        setUsers(users.map(u => u.id === updated.id ? updated : u));
+        upsertUser(updated);
       }
 
       toast.success(`Branch transfer completed`, {
@@ -401,211 +556,280 @@ export function UserManagementModule() {
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                     <Input
-                      placeholder="Search by name, username, email, or branch..."
+                      placeholder="Search by name, username, email, or role..."
                       value={searchQuery}
                       onChange={e => setSearchQuery(e.target.value)}
-                      className="pl-10"
+                      className="pl-10 border-[#7a4b00] ring-1 ring-[#7a4b00] focus:border-[#593500] focus:ring-[#593500]"
+                    />
+                  </div>
+                </div>
+                <div className="border border-slate-200 rounded-lg">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[18%]">
+                          {renderSortableHeader("active", "fullName", "Full Name")}
+                        </TableHead>
+                        <TableHead className="w-[14%]">
+                          {renderSortableHeader("active", "username", "Username")}
+                        </TableHead>
+                        <TableHead className="w-[24%]">
+                          {renderSortableHeader("active", "email", "Email")}
+                        </TableHead>
+                        <TableHead className="w-[12%]">
+                          {renderSortableHeader("active", "role", "Role")}
+                        </TableHead>
+                        <TableHead className="w-[12%]">Branch</TableHead>
+                        <TableHead className="w-[10%]">Status</TableHead>
+                        <TableHead className="w-[10%]">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredActiveUsers.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center text-slate-400 py-8">
+                            No active users found
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        filteredActiveUsers.map(user => (
+                          <TableRow key={user.id}>
+                            <TableCell className="truncate" title={user.fullName}>
+                              {user.fullName}
+                            </TableCell>
+                            <TableCell className="font-mono text-sm truncate" title={user.username}>
+                              {user.username}
+                            </TableCell>
+                            <TableCell className="text-sm truncate" title={user.email}>
+                              {user.email}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{user.role}</Badge>
+                            </TableCell>
+                            <TableCell className="text-sm">{user.branch}</TableCell>
+                            <TableCell>
+                              <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
+                                Active
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setSelectedUser(user);
+                                    setNewRole(user.role);
+                                    setIsEditDialogOpen(true);
+                                  }}
+                                  title="Edit Role"
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={isActionLoading}
+                                  onClick={() => handleOpenEditBranch(user)}
+                                  title="Edit Branch"
+                                >
+                                  <MapPin className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={isActionLoading}
+                                  onClick={() => handleInitiateDeactivate(user)}
+                                  title="Deactivate User"
+                                >
+                                  <UserX className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="pending">
+                <div className="mb-4">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <Input
+                      placeholder="Search by name, username, email, or role..."
+                      value={pendingSearchQuery}
+                      onChange={e => setPendingSearchQuery(e.target.value)}
+                      className="pl-10 border-[#7a4b00] ring-1 ring-[#7a4b00] focus:border-[#593500] focus:ring-[#593500]"
                     />
                   </div>
                 </div>
 
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[18%]">Full Name</TableHead>
-                      <TableHead className="w-[14%]">Username</TableHead>
-                      <TableHead className="w-[24%]">Email</TableHead>
-                      <TableHead className="w-[12%]">Role</TableHead>
-                      <TableHead className="w-[12%]">Branch</TableHead>
-                      <TableHead className="w-[10%]">Status</TableHead>
-                      <TableHead className="w-[10%]">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredActiveUsers.length === 0 ? (
+                <div className="border border-slate-200 rounded-lg">
+                  <Table>
+                    <TableHeader>
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center text-slate-400 py-8">
-                          No active users found
-                        </TableCell>
+                        <TableHead className="w-[18%]">
+                          {renderSortableHeader("pending", "fullName", "Full Name")}
+                        </TableHead>
+                        <TableHead className="w-[14%]">
+                          {renderSortableHeader("pending", "username", "Username")}
+                        </TableHead>
+                        <TableHead className="w-[22%]">
+                          {renderSortableHeader("pending", "email", "Email")}
+                        </TableHead>
+                        <TableHead className="w-[12%]">
+                          {renderSortableHeader("pending", "role", "Role")}
+                        </TableHead>
+                        <TableHead className="w-[12%]">Branch</TableHead>
+                        <TableHead className="w-[10%]">Status</TableHead>
+                        <TableHead className="w-[8%]">
+                          {renderSortableHeader("pending", "createdDate", "Created")}
+                        </TableHead>
+                        <TableHead className="w-[6%]">Actions</TableHead>
                       </TableRow>
-                    ) : (
-                      filteredActiveUsers.map(user => (
-                        <TableRow key={user.id}>
-                          <TableCell className="truncate" title={user.fullName}>
-                            {user.fullName}
-                          </TableCell>
-                          <TableCell className="font-mono text-sm truncate" title={user.username}>
-                            {user.username}
-                          </TableCell>
-                          <TableCell className="text-sm truncate" title={user.email}>
-                            {user.email}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{user.role}</Badge>
-                          </TableCell>
-                          <TableCell className="text-sm">{user.branch}</TableCell>
-                          <TableCell>
-                            <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
-                              Active
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex gap-2">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => {
-                                  setSelectedUser(user);
-                                  setNewRole(user.role);
-                                  setIsEditDialogOpen(true);
-                                }}
-                                title="Edit Role"
-                              >
-                                <Edit className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={isActionLoading}
-                                onClick={() => handleOpenEditBranch(user)}
-                                title="Edit Branch"
-                              >
-                                <MapPin className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={isActionLoading}
-                                onClick={() => handleInitiateDeactivate(user)}
-                                title="Deactivate User"
-                              >
-                                <UserX className="w-4 h-4" />
-                              </Button>
-                            </div>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredPendingUsers.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={8} className="text-center text-slate-400 py-8">
+                            No pending users
                           </TableCell>
                         </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </TabsContent>
-
-              <TabsContent value="pending">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[22%]">Full Name</TableHead>
-                      <TableHead className="w-[16%]">Username</TableHead>
-                      <TableHead className="w-[22%]">Email</TableHead>
-                      <TableHead className="w-[16%]">Branch</TableHead>
-                      <TableHead className="w-[14%]">Created Date</TableHead>
-                      <TableHead className="w-[10%]">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pendingUsers.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={6} className="text-center text-slate-400 py-8">
-                          No pending users
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      pendingUsers.map(user => (
-                        <TableRow key={user.id}>
-                          <TableCell className="truncate" title={user.fullName}>
-                            {user.fullName}
-                          </TableCell>
-                          <TableCell className="font-mono text-sm truncate" title={user.username}>
-                            {user.username}
-                          </TableCell>
-                          <TableCell className="text-sm truncate" title={user.email}>
-                            {user.email}
-                          </TableCell>
-                          <TableCell className="text-sm">{user.branch}</TableCell>
-                          <TableCell className="text-sm">{user.createdDate}</TableCell>
-                          <TableCell>
-                            <div className="flex gap-2">
-                              <Button
-                                size="sm"
-                                disabled={isActionLoading}
-                                onClick={() => {
-                                  setSelectedUser(user);
-                                  setShowApproveDialog(true);
-                                }}
-                              >
-                                <UserCheck className="w-4 h-4 mr-1" />
-                                Approve
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={isActionLoading}
-                                onClick={() => {
-                                  setSelectedUser(user);
-                                  setShowRejectDialog(true);
-                                }}
-                              >
-                                <UserX className="w-4 h-4 mr-1" />
-                                Reject
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
+                      ) : (
+                        filteredPendingUsers.map(user => (
+                          <TableRow key={user.id}>
+                            <TableCell className="truncate" title={user.fullName}>
+                              {user.fullName}
+                            </TableCell>
+                            <TableCell className="font-mono text-sm truncate" title={user.username}>
+                              {user.username}
+                            </TableCell>
+                            <TableCell className="text-sm truncate" title={user.email}>
+                              {user.email}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{user.role || "Pending"}</Badge>
+                            </TableCell>
+                            <TableCell className="text-sm">{user.branch}</TableCell>
+                            <TableCell>
+                              <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100">
+                                {user.status || "Pending"}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-sm">{user.createdDate}</TableCell>
+                            <TableCell>
+                              <div className="flex gap-2">
+                                <Button
+                                  size="sm"
+                                  disabled={isActionLoading}
+                                  onClick={() => {
+                                    setSelectedUser(user);
+                                    setShowApproveDialog(true);
+                                  }}
+                                >
+                                  <UserCheck className="w-4 h-4 mr-1" />
+                                  Approve
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={isActionLoading}
+                                  onClick={() => {
+                                    setSelectedUser(user);
+                                    setShowRejectDialog(true);
+                                  }}
+                                >
+                                  <UserX className="w-4 h-4 mr-1" />
+                                  Reject
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
               </TabsContent>
 
               <TabsContent value="inactive">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[22%]">Full Name</TableHead>
-                      <TableHead className="w-[16%]">Username</TableHead>
-                      <TableHead className="w-[22%]">Email</TableHead>
-                      <TableHead className="w-[14%]">Role</TableHead>
-                      <TableHead className="w-[14%]">Branch</TableHead>
-                      <TableHead className="w-[12%]">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {inactiveUsers.length === 0 ? (
+                <div className="mb-4">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <Input
+                      placeholder="Search by name, username, email, or role..."
+                      value={inactiveSearchQuery}
+                      onChange={e => setInactiveSearchQuery(e.target.value)}
+                      className="pl-10 border-[#7a4b00] ring-1 ring-[#7a4b00] focus:border-[#593500] focus:ring-[#593500]"
+                    />
+                  </div>
+                </div>
+
+                <div className="border border-slate-200 rounded-lg">
+                  <Table>
+                    <TableHeader>
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center text-slate-400 py-8">
-                          No inactive users
-                        </TableCell>
+                        <TableHead className="w-[22%]">
+                          {renderSortableHeader("inactive", "fullName", "Full Name")}
+                        </TableHead>
+                        <TableHead className="w-[14%]">
+                          {renderSortableHeader("inactive", "username", "Username")}
+                        </TableHead>
+                        <TableHead className="w-[22%]">
+                          {renderSortableHeader("inactive", "email", "Email")}
+                        </TableHead>
+                        <TableHead className="w-[12%]">
+                          {renderSortableHeader("inactive", "role", "Role")}
+                        </TableHead>
+                        <TableHead className="w-[12%]">Branch</TableHead>
+                        <TableHead className="w-[10%]">Status</TableHead>
+                        <TableHead className="w-[8%]">Actions</TableHead>
                       </TableRow>
-                    ) : (
-                      inactiveUsers.map(user => (
-                        <TableRow key={user.id}>
-                          <TableCell className="truncate" title={user.fullName}>
-                            {user.fullName}
-                          </TableCell>
-                          <TableCell className="font-mono text-sm truncate" title={user.username}>
-                            {user.username}
-                          </TableCell>
-                          <TableCell className="text-sm truncate" title={user.email}>
-                            {user.email}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{user.role}</Badge>
-                          </TableCell>
-                          <TableCell className="text-sm">{user.branch}</TableCell>
-                          <TableCell>
-                            <Button
-                              size="sm"
-                              disabled={isActionLoading}
-                              onClick={() => handleApprove(user)}
-                            >
-                              Reactivate
-                            </Button>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredInactiveUsers.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center text-slate-400 py-8">
+                            No inactive users
                           </TableCell>
                         </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
+                      ) : (
+                        filteredInactiveUsers.map(user => (
+                          <TableRow key={user.id}>
+                            <TableCell className="truncate" title={user.fullName}>
+                              {user.fullName}
+                            </TableCell>
+                            <TableCell className="font-mono text-sm truncate" title={user.username}>
+                              {user.username}
+                            </TableCell>
+                            <TableCell className="text-sm truncate" title={user.email}>
+                              {user.email}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{user.role}</Badge>
+                            </TableCell>
+                            <TableCell className="text-sm">{user.branch}</TableCell>
+                            <TableCell>
+                              <Badge className="bg-red-100 text-red-700 hover:bg-red-100">{user.status || "Inactive"}</Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                size="sm"
+                                disabled={isActionLoading}
+                                onClick={() => handleInitiateReactivate(user)}
+                              >
+                                Reactivate
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
               </TabsContent>
             </Tabs>
           </CardContent>
@@ -828,6 +1052,30 @@ export function UserManagementModule() {
               <AlertDialogCancel onClick={() => setSelectedUser(null)}>Cancel</AlertDialogCancel>
               <AlertDialogAction onClick={handleReject} className="bg-[#FF0000] hover:bg-[#cc0000]">
                 Reject User
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog open={showReactivateDialog} onOpenChange={setShowReactivateDialog}>
+          <AlertDialogContent className="bg-white rounded-lg border border-gray-200 p-6 shadow-lg max-w-lg">
+            <AlertDialogHeader showBrand={false}>
+              <AlertDialogTitle>Reactivate User Account</AlertDialogTitle>
+              <AlertDialogDescription>
+                Reactivate <strong className="text-gray-900">{selectedUser?.fullName}</strong>? They will regain system access as an Active user.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter className="mt-4">
+              <AlertDialogCancel
+                onClick={() => {
+                  setShowReactivateDialog(false);
+                  setSelectedUser(null);
+                }}
+              >
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction onClick={handleConfirmReactivate} className="bg-[#FFFF00] text-black hover:bg-[#e6e600]">
+                Confirm Reactivation
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

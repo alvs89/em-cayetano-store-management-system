@@ -444,6 +444,51 @@ async function sendBranchTransferEmail(toEmail, fullName, fromBranch, toBranch) 
   await transporter.sendMail(mailOptions);
 }
 
+// Helper: notify user that their registration was not approved
+async function sendRejectionEmail(toEmail, fullName, branch) {
+  const safeName = fullName || 'Team Member';
+  const safeBranch = branch || 'your selected branch';
+
+  const mailOptions = {
+    from: `"E.M. Cayetano Trading Notifications" <${process.env.EMAIL_USER}>`,
+    to: toEmail,
+    subject: 'Update on your registration request',
+    html: `
+      <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 640px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 16px; overflow: hidden; background: #ffffff;">
+        <div style="background: linear-gradient(135deg, #FFFF00, #FF0000); padding: 22px; text-align: center;">
+          <div style="font-size: 20px; font-weight: 700; color: #111827;">E.M. Cayetano Trading</div>
+          <div style="font-size: 13px; color: #111827; opacity: 0.9; margin-top: 4px;">Inventory Management System</div>
+        </div>
+
+        <div style="padding: 28px 30px 30px;">
+          <h2 style="margin: 0 0 10px; color: #111827; font-size: 22px;">Registration status update</h2>
+          <p style="margin: 0 0 12px; color: #4b5563;">Hello <strong>${safeName}</strong>,</p>
+          <p style="margin: 0 0 12px; color: #4b5563;">Thank you for applying to join <strong>E.M. Cayetano Trading</strong>. After review, we were not able to approve your registration at this time.</p>
+
+          <div style="margin: 16px 0; padding: 14px 16px; border-radius: 12px; background: #f9fafb; border: 1px dashed #e5e7eb; color: #111827;">
+            <div style="font-weight: 600;">Summary</div>
+            <ul style="margin: 8px 0 0 18px; color: #4b5563;">
+              <li><strong>Branch:</strong> ${safeBranch}</li>
+              <li>Status: Registration not approved</li>
+            </ul>
+          </div>
+
+          <p style="margin: 0 0 10px; color: #4b5563;">If you believe this was a mistake or have questions, please reach out to your branch administrator so we can review your request together.</p>
+          <p style="margin: 0; color: #4b5563;">You may submit a new registration in the future if circumstances change.</p>
+        </div>
+
+        <div style="background: #f9fafb; padding: 14px; text-align: center; font-size: 12px; color: #6b7280; border-top: 1px solid #e5e7eb;">
+          <div style="font-weight: 600; color: #111827;">E.M. Cayetano Trading</div>
+          <div>Rodriguez, Rizal • Manggahan & San Rafael Branches</div>
+          <div style="margin-top: 6px;">This is an automated message. Please do not reply.</div>
+        </div>
+      </div>
+    `
+  };
+
+  await transporter.sendMail(mailOptions);
+}
+
 // ADMIN ROUTES (RBAC + branch isolation)
 app.get('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
   try {
@@ -505,6 +550,12 @@ app.post('/api/admin/users/:id/reject', authenticate, requireAdmin, async (req, 
     }
 
     const user = update.rows[0];
+    try {
+      await sendRejectionEmail(user.email, user.full_name, user.branch);
+    } catch (mailErr) {
+      console.error('Rejection email failed:', mailErr);
+    }
+
     return res.json({ message: 'User rejected/deactivated', user });
   } catch (err) {
     console.error('Reject user error:', err);

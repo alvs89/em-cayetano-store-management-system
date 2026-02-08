@@ -14,26 +14,29 @@ import { PageHeader } from "./PageHeader";
 export function ArchiveModule({
   user
 }) {
+  // Access shared inventories so this module can move items between active and archived lists.
   const {
     inventory,
     setInventory,
     archivedInventory,
     setArchivedInventory
   } = useData();
+  // Local UI state for filtering, selection, and confirmation flow.
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [selectedItem, setSelectedItem] = useState(null);
   const [showUnarchiveDialog, setShowUnarchiveDialog] = useState(false);
+  // Build category list on the fly so dropdown reflects current archive contents.
   const categories = Array.from(new Set(archivedInventory.map(item => item.category)));
 
-  // 🔍 Filtered archived inventory
+  // Apply search and category filters so users can quickly narrow archived items.
   const filteredArchive = archivedInventory.filter(item => {
     const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) || item.id.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = categoryFilter === "all" || item.category === categoryFilter;
     return matchesSearch && matchesCategory;
   });
 
-  // 🔄 Unarchive Item
+  // Restore a selected item back to active inventory after confirmation.
   const handleUnarchiveItem = () => {
     if (!selectedItem) return;
     setArchivedInventory(archivedInventory.filter(i => i.id !== selectedItem.id));
@@ -60,6 +63,7 @@ export function ArchiveModule({
   }, /*#__PURE__*/React.createElement(Search, {
     className: "absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400"
   }), /*#__PURE__*/React.createElement(Input, {
+    // Text search across name or ID.
     className: "pl-10",
     placeholder: "Search by name or ID...",
     value: searchQuery,
@@ -69,6 +73,7 @@ export function ArchiveModule({
   }, /*#__PURE__*/React.createElement(Select, {
     value: categoryFilter,
     onValueChange: value => setCategoryFilter(value)
+    // Category dropdown to constrain results.
   }, /*#__PURE__*/React.createElement(SelectTrigger, null, /*#__PURE__*/React.createElement(Filter, {
     className: "w-4 h-4 mr-2"
   }), /*#__PURE__*/React.createElement(SelectValue, {
@@ -112,6 +117,7 @@ export function ArchiveModule({
   }, /*#__PURE__*/React.createElement(ArchiveRestore, {
     className: "w-4 h-4 mr-2"
   }), "Restore")))))))), /*#__PURE__*/React.createElement(AlertDialog, {
+    // Confirmation gate before restoring an item back to active stock.
     open: showUnarchiveDialog,
     onOpenChange: setShowUnarchiveDialog
   }, /*#__PURE__*/React.createElement(AlertDialogContent, null, /*#__PURE__*/React.createElement(AlertDialogHeader, null, /*#__PURE__*/React.createElement(AlertDialogTitle, null, "Restore Item"), /*#__PURE__*/React.createElement(AlertDialogDescription, null, "Are you sure you want to restore \"", selectedItem?.name, "\" back to active inventory?")), /*#__PURE__*/React.createElement(AlertDialogFooter, null, /*#__PURE__*/React.createElement(AlertDialogCancel, {

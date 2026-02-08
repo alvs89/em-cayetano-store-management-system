@@ -8,7 +8,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { toast } from "sonner";
 import { useData } from "./DataContext";
 import { PageHeader } from "./PageHeader";
-// Function to generate alerts from inventory data
+
+// Derive contextual alerts from live inventory status so the feed reflects stock changes without manual input.
 const generateInventoryAlerts = inventory => {
   const alerts = [];
   inventory.forEach(item => {
@@ -38,6 +39,7 @@ const generateInventoryAlerts = inventory => {
   });
   return alerts;
 };
+// Fixed alerts that always show up, representing non-inventory system notices.
 const staticAlerts = [{
   id: "4",
   type: "info",
@@ -62,6 +64,7 @@ export function AlertsModule({
   onNavigate,
   onAlertCountChange
 }) {
+  // Pull current inventory from shared context so alerts react to upstream data changes.
   const {
     inventory
   } = useData();
@@ -69,27 +72,33 @@ export function AlertsModule({
   // Generate real-time alerts from inventory
   const inventoryAlerts = generateInventoryAlerts(inventory);
 
-  // Combine with static alerts
+  // Merge dynamic inventory alerts with static notices into a single feed.
   const allAlerts = [...inventoryAlerts, ...staticAlerts];
 
-  // Filter alerts based on user role - employees can't see admin-only alerts
+  // Hide admin-facing alerts for employees so they only see relevant information.
   const filteredAlerts = user.role === "Employee" ? allAlerts.filter(alert => alert.relatedModule !== "user-management" && alert.relatedModule !== "maintenance" && !alert.title.toLowerCase().includes("user registration")) : allAlerts;
   const [alerts, setAlerts] = useState(filteredAlerts);
 
-  // Update alerts when inventory changes
+  // Recompute the feed whenever inventory or role changes to keep visibility rules in sync.
   useEffect(() => {
     const newInventoryAlerts = generateInventoryAlerts(inventory);
     const newAllAlerts = [...newInventoryAlerts, ...staticAlerts];
     const newFilteredAlerts = user.role === "Employee" ? newAllAlerts.filter(alert => alert.relatedModule !== "user-management" && alert.relatedModule !== "maintenance" && !alert.title.toLowerCase().includes("user registration")) : newAllAlerts;
     setAlerts(newFilteredAlerts);
   }, [inventory, user.role]);
+
+  // Category breakdowns for the tabs and summary cards.
   const unreadAlerts = alerts.filter(a => !a.read);
   const warningAlerts = alerts.filter(a => a.type === "warning");
   const infoAlerts = alerts.filter(a => a.type === "info");
   const successAlerts = alerts.filter(a => a.type === "success");
+
+  // Notify parent when unread count changes so the header badge stays accurate.
   useEffect(() => {
     onAlertCountChange(unreadAlerts.length);
   }, [unreadAlerts.length, onAlertCountChange]);
+
+  // Mark a single alert as read and keep user feedback immediate.
   const handleMarkAsRead = id => {
     setAlerts(alerts.map(a => a.id === id ? {
       ...a,
@@ -97,10 +106,14 @@ export function AlertsModule({
     } : a));
     toast.success("Alert marked as read");
   };
+
+  // Permanently remove an alert from the list.
   const handleDismiss = id => {
     setAlerts(alerts.filter(a => a.id !== id));
     toast.success("Alert dismissed");
   };
+
+  // Bulk mark all alerts as read to clear badges quickly.
   const handleMarkAllAsRead = () => {
     setAlerts(alerts.map(a => ({
       ...a,
@@ -108,6 +121,8 @@ export function AlertsModule({
     })));
     toast.success("All alerts marked as read");
   };
+
+  // Route to the related module when an alert offers follow-up action.
   const handleGoToRelated = alert => {
     if (alert.relatedModule) {
       onNavigate(alert.relatedModule);
@@ -239,6 +254,7 @@ function AlertCard({
   onDismiss,
   onGoToRelated
 }) {
+  // Map alert type to the appropriate status icon.
   const getIcon = () => {
     switch (alert.type) {
       case "warning":
@@ -255,6 +271,8 @@ function AlertCard({
         });
     }
   };
+
+  // Match card accent colors to the alert type for quick scanning.
   const getBgColor = () => {
     switch (alert.type) {
       case "warning":
@@ -266,6 +284,7 @@ function AlertCard({
     }
   };
   return /*#__PURE__*/React.createElement("div", {
+    // Highlight unread alerts with a ring to draw attention without changing layout.
     className: `p-4 rounded-lg border ${getBgColor()} ${!alert.read ? "ring-2 ring-blue-400" : ""}`
   }, /*#__PURE__*/React.createElement("div", {
     className: "flex items-start gap-3"

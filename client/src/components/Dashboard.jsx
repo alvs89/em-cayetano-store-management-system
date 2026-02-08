@@ -10,23 +10,26 @@ export function Dashboard({
   user,
   activeBranch
 }) {
+  // Pull inventory sources from context so cards and lists stay live.
   const {
     inventory,
     archivedInventory
   } = useData();
 
-  // Calculate real stats
+  // Calculate headline inventory stats for the metric cards.
   const totalItems = inventory.length;
   const lowStockItems = inventory.filter(item => item.status === 'Low Stock').length;
   const activeProducts = inventory.filter(item => item.status === 'In Stock').length;
   const outOfStock = inventory.filter(item => item.status === 'Out of Stock').length;
   const archivedCount = archivedInventory.length;
 
-  // Calculate monthly activity (sum of all stock quantities as a simple metric)
+  // Basic activity signal: total units across inventory.
   const monthlyActivity = inventory.reduce((sum, item) => sum + item.quantity, 0);
 
-  // Get recent low stock items
+  // Surface the most critical items needing attention.
   const recentLowStock = inventory.filter(item => item.status === 'Low Stock' || item.status === 'Out of Stock').slice(0, 3);
+
+  // Render dashboard shell with stats, shortcuts, and recent activity.
   return /*#__PURE__*/React.createElement("div", {
     className: "min-h-screen bg-gray-50 p-8"
   }, /*#__PURE__*/React.createElement(PageHeader, {
@@ -38,7 +41,9 @@ export function Dashboard({
     onNavigate: onNavigate,
     showQuickActions: true,
     lowStockCount: lowStockItems
-  }), /*#__PURE__*/React.createElement("div", {
+  }),
+  // KPI cards summarizing inventory health at a glance.
+  /*#__PURE__*/React.createElement("div", {
     className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8"
   }, /*#__PURE__*/React.createElement(StatCard, {
     title: "Total Items",
@@ -84,7 +89,9 @@ export function Dashboard({
     bgGradient: "from-orange-50 to-yellow-50",
     trend: "up",
     percentage: "Stock"
-  })), /*#__PURE__*/React.createElement("div", {
+  })),
+  // Quick-access module shortcuts and recent activity panels.
+  /*#__PURE__*/React.createElement("div", {
     className: "grid grid-cols-1 lg:grid-cols-3 gap-6"
   }, /*#__PURE__*/React.createElement("div", {
     className: "lg:col-span-2"
@@ -174,7 +181,9 @@ export function Dashboard({
     className: "w-6 h-6 text-[#FFFF00]"
   }), /*#__PURE__*/React.createElement("h2", {
     className: "text-2xl font-bold text-gray-900"
-  }, "Recent Activity")), /*#__PURE__*/React.createElement(Card, {
+  }, "Recent Activity")),
+  // Inventory status breakdown for quick health check.
+  /*#__PURE__*/React.createElement(Card, {
     className: "mb-4 border-2 border-gray-200 shadow-md"
   }, /*#__PURE__*/React.createElement(CardHeader, {
     className: "pb-3"
@@ -214,7 +223,9 @@ export function Dashboard({
     className: "text-sm text-gray-700"
   }, "Out of Stock")), /*#__PURE__*/React.createElement("span", {
     className: "font-bold text-red-700"
-  }, outOfStock))))), recentLowStock.length > 0 && /*#__PURE__*/React.createElement(Card, {
+  }, outOfStock))))),
+  // Critical items list when any stock is low or depleted.
+  recentLowStock.length > 0 && /*#__PURE__*/React.createElement(Card, {
     className: "border-2 border-red-200 shadow-md"
   }, /*#__PURE__*/React.createElement(CardHeader, {
     className: "pb-3 bg-red-50"
@@ -244,7 +255,9 @@ export function Dashboard({
     onClick: () => onNavigate('alerts')
   }, "View All Alerts", /*#__PURE__*/React.createElement(ArrowRight, {
     className: "w-4 h-4 ml-2"
-  })))), recentLowStock.length === 0 && /*#__PURE__*/React.createElement(Card, {
+  })))),
+  // Reassurance card when there are no outstanding low-stock issues.
+  recentLowStock.length === 0 && /*#__PURE__*/React.createElement(Card, {
     className: "border-2 border-green-200 shadow-md"
   }, /*#__PURE__*/React.createElement(CardHeader, {
     className: "pb-3 bg-green-50"
