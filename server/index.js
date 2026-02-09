@@ -1,3 +1,45 @@
+// Helper: notify user that their account has been deactivated
+async function sendDeactivationEmail(toEmail, fullName, branch) {
+  const safeName = fullName || 'Team Member';
+  const safeBranch = branch || 'your branch';
+  const mailOptions = {
+    from: `"E.M. Cayetano Trading Notifications" <${process.env.EMAIL_USER}>`,
+    to: toEmail,
+    subject: 'Your account access has been deactivated',
+    html: `
+      <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 640px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 16px; overflow: hidden; background: #ffffff;">
+        <div style="background: linear-gradient(135deg, #FFFF00, #FF0000); padding: 22px; text-align: center;">
+          <div style="font-size: 20px; font-weight: 700; color: #111827;">E.M. Cayetano Trading</div>
+          <div style="font-size: 13px; color: #111827; opacity: 0.9; margin-top: 4px;">Inventory Management System</div>
+        </div>
+
+        <div style="padding: 28px 30px 30px;">
+          <h2 style="margin: 0 0 10px; color: #111827; font-size: 22px;">Account Deactivated</h2>
+          <p style="margin: 0 0 12px; color: #4b5563;">Hello <strong>${safeName}</strong>,</p>
+          <p style="margin: 0 0 12px; color: #4b5563;">Your account access for <strong>E.M. Cayetano Trading</strong> has been <strong>deactivated</strong> by an administrator. You can no longer log in or access the system.</p>
+
+          <div style="margin: 16px 0; padding: 14px 16px; border-radius: 12px; background: #f9fafb; border: 1px dashed #e5e7eb; color: #111827;">
+            <div style="font-weight: 600;">Summary</div>
+            <ul style="margin: 8px 0 0 18px; color: #4b5563;">
+              <li><strong>Branch:</strong> ${safeBranch}</li>
+              <li><strong>Status:</strong> Account deactivated</li>
+            </ul>
+          </div>
+
+          <p style="margin: 0 0 10px; color: #4b5563;">If you believe this was a mistake or have questions, please contact your branch administrator for clarification.</p>
+        </div>
+
+        <div style="background: #f9fafb; padding: 14px; text-align: center; font-size: 12px; color: #6b7280; border-top: 1px solid #e5e7eb;">
+          <div style="font-weight: 600; color: #111827;">E.M. Cayetano Trading</div>
+          <div>Rodriguez, Rizal • Manggahan & San Rafael Branches</div>
+          <div style="margin-top: 6px;">This is an automated message. Please do not reply.</div>
+        </div>
+      </div>
+    `
+  };
+
+  await transporter.sendMail(mailOptions);
+}
 // server/index.js
 // Express API for auth (login + 2FA), registration, password reset, and email delivery.
 require('dotenv').config();
@@ -469,7 +511,7 @@ async function sendRejectionEmail(toEmail, fullName, branch) {
             <div style="font-weight: 600;">Summary</div>
             <ul style="margin: 8px 0 0 18px; color: #4b5563;">
               <li><strong>Branch:</strong> ${safeBranch}</li>
-              <li>Status: Registration not approved</li>
+              <li><strong>Status:</strong> Registration not approved</li>
             </ul>
           </div>
 
@@ -537,6 +579,16 @@ app.post('/api/admin/users/:id/reject', authenticate, requireAdmin, async (req, 
   const { id } = req.params;
   try {
     const branch = req.user.branch;
+    // Fetch previous status before updating
+    const prevResult = await pool.query(
+      `SELECT status, full_name, email, username, branch FROM users WHERE user_id = $1 AND branch = $2`,
+      [id, branch]
+    );
+    if (prevResult.rowCount === 0) {
+      return res.status(404).json({ error: 'User not found in this branch' });
+    }
+    const prevUser = prevResult.rows[0];
+
     const update = await pool.query(
       `UPDATE users
          SET status = 'Inactive'
@@ -545,15 +597,18 @@ app.post('/api/admin/users/:id/reject', authenticate, requireAdmin, async (req, 
       [id, branch]
     );
 
-    if (update.rowCount === 0) {
-      return res.status(404).json({ error: 'User not found in this branch' });
-    }
-
     const user = update.rows[0];
     try {
-      await sendRejectionEmail(user.email, user.full_name, user.branch);
+      if (prevUser.status === 'Active') {
+        await sendDeactivationEmail(user.email, user.full_name, user.branch);
+      } else if (prevUser.status === 'Pending') {
+        await sendRejectionEmail(user.email, user.full_name, user.branch);
+      } else {
+        // fallback: treat as deactivation for any other status
+        await sendDeactivationEmail(user.email, user.full_name, user.branch);
+      }
     } catch (mailErr) {
-      console.error('Rejection email failed:', mailErr);
+      console.error('Rejection/Deactivation email failed:', mailErr);
     }
 
     return res.json({ message: 'User rejected/deactivated', user });
@@ -730,6 +785,7 @@ app.post('/api/auth/send-otp', async (req, res) => {
     await pool.query('UPDATE users SET otp_code = $1, otp_expires = $2 WHERE user_id = $3', [otp, expiresAt, user.user_id]);
 
     // 4. Send Professional HTML Email
+    const displayName = user.full_name || user.username;
     const mailOptions = {
       // "Display Name" <actual-email-for-auth>
       from: `"E.M. Cayetano Trading - Security" <${process.env.EMAIL_USER}>`, 
@@ -744,7 +800,7 @@ app.post('/api/auth/send-otp', async (req, res) => {
           
           <div style="padding: 28px 32px 32px;">
             <h2 style="color: #111827; margin: 0 0 8px;">Security Verification</h2>
-            <p style="color: #4b5563; margin: 0 0 12px;">Hello <strong>${user.username}</strong>,</p>
+            <p style="color: #4b5563; margin: 0 0 12px;">Hello <strong>${displayName}</strong>,</p>
             <p style="color: #4b5563; margin: 0 0 16px;">A login attempt was detected for your account. Use the code below to continue.</p>
             
             <div style="background: #f9fafb; border: 1px dashed #e5e7eb; border-radius: 12px; padding: 16px; text-align: center;">
