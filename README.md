@@ -280,10 +280,10 @@ Refine database schema cleanup
 - Admin-only features should remain protected by backend authorization.
 - Audit logs should record important system actions for accountability.
 
-## Current Maintainers
+## Group Members
 
 - Donato, Raymond B.
 - Guillermo, Alvin J.
 - Niez, John Alces B.
 
-Submitted to the Computer Science Department, Technological Institute of the Philippines.
+Bachelor of Science in Computer Science Students, Technological Institute of the Philippines.
