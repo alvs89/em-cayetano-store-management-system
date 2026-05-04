@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { Mail } from 'lucide-react';
 
 const emcLogoSrc = "/emc-logo.png";
+const RESEND_WAIT_DESCRIPTION = 'Please wait for the resend code timer to finish before requesting another code.';
 
 const ForgotPasswordScreen = () => {
   const [email, setEmail] = useState('');
@@ -22,9 +23,19 @@ const ForgotPasswordScreen = () => {
       const response = await axios.post('http://localhost:5000/api/auth/forgot-password', { email });
       const serverTime = response.data.serverTime || Date.now();
       const expiresAt = response.data.expiresAt || new Date(Date.now() + 120000).toISOString();
-      navigate('/set-password', { state: { email, otpIssuedAt: serverTime, otpExpiresAt: expiresAt } });
+      navigate('/set-password', {
+        state: {
+          email,
+          otpIssuedAt: serverTime,
+          otpExpiresAt: expiresAt,
+          retryAfterSeconds: response.data.retryAfterSeconds || 60,
+        }
+      });
     } catch (error) {
-      toast.error(error.response?.data?.error || "Failed to send code", {
+      const retryAfterSeconds = error.response?.data?.retryAfterSeconds;
+      const remainingAttempts = error.response?.data?.remainingAttempts;
+      toast.error(error.response?.data?.error || error.response?.data?.message || "Failed to send code", {
+        description: retryAfterSeconds && remainingAttempts !== 0 ? RESEND_WAIT_DESCRIPTION : undefined,
         classNames: {
           toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
         },

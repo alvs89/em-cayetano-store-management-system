@@ -82,8 +82,14 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
         const otpResponse = await axios.post('http://localhost:5000/api/auth/send-otp', { username });
         const serverTime = otpResponse.data.serverTime || Date.now();
         const expiresAt = otpResponse.data.expiresAt || new Date(Date.now() + 120000).toISOString();
-        localStorage.setItem('otp_issued_at', serverTime.toString());
-        localStorage.setItem('otp_expires_at', expiresAt);
+        localStorage.setItem('otp_2fa_issued_at', serverTime.toString());
+        localStorage.setItem('otp_2fa_expires_at', expiresAt);
+        localStorage.removeItem('otp_issued_at');
+        localStorage.removeItem('otp_expires_at');
+        localStorage.setItem(
+          `otp_2fa_resend_available_at_${username.toLowerCase()}`,
+          (Date.now() + Number(otpResponse.data.retryAfterSeconds || 60) * 1000).toString()
+        );
         localStorage.setItem('temp_username', response.data.username);
         localStorage.setItem('temp_email', response.data.email);
         localStorage.setItem('temp_branch_selected', branch);
@@ -503,6 +509,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
                 </div>
                 <p className="login-register-row">
                   <span>Don't have an account?</span>
+                  {' '}
                   <Link to="/register" className="login-register-link text-blue-600 hover:text-blue-700 hover:underline">Register here</Link>
                 </p>
               </div>

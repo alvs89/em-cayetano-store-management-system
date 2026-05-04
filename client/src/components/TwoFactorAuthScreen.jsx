@@ -14,9 +14,15 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
   const [remainingMs, setRemainingMs] = useState(120000);
+  const [resendCooldownSeconds, setResendCooldownSeconds] = useState(0);
+  const [resendAttemptsExhausted, setResendAttemptsExhausted] = useState(false);
   const navigate = useNavigate();
 
   const EXPIRED_MESSAGE = "Your code is no longer valid. Please click the resend button.";
+  const RESEND_WAIT_MESSAGE = 'Please wait for the resend code timer to finish before requesting another code.';
+  const EXPIRED_RESEND_WAIT_MESSAGE = 'Code expired. Wait until the resend code timer finishes, then request a new code.';
+  const TOO_MANY_OTP_REQUESTS_MESSAGE = 'Too many OTP requests used. You have reached the resend limit for now. Please wait for the reset timer to finish before requesting a new code.';
+  const TOO_MANY_EXPIRED_OTP_REQUESTS_MESSAGE = 'Too many OTP requests used. You have reached the resend limit, and the latest code has expired. Please wait for the reset timer to finish before requesting a new code.';
 
   const skewMsRef = useRef(0); // captures server ↔ client clock drift
   const expiresAtRef = useRef(null); // server-declared OTP expiry (ms)
@@ -24,14 +30,49 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
 
   const EXPIRY_TOLERANCE_MS = 15000; // allow 15s cushion so 0:00 stays valid through network/drift jitter (matches backend)
 
+  const formatCooldownTime = (seconds) => {
+    const safeSeconds = Math.max(1, Number(seconds) || 1);
+    if (safeSeconds < 60) {
+      return `${safeSeconds} second${safeSeconds === 1 ? '' : 's'}`;
+    }
+
+    const minutes = Math.floor(safeSeconds / 60);
+    const remainingSeconds = safeSeconds % 60;
+    const minuteText = `${minutes} minute${minutes === 1 ? '' : 's'}`;
+
+    if (remainingSeconds === 0) {
+      return minuteText;
+    }
+
+    return `${minuteText} and ${remainingSeconds} second${remainingSeconds === 1 ? '' : 's'}`;
+  };
+
+  const showCooldownToast = () => {
+    const codeHasExpired = remainingMs <= 0;
+
+    toast.info(
+      codeHasExpired
+        ? EXPIRED_RESEND_WAIT_MESSAGE
+        : RESEND_WAIT_MESSAGE,
+      {
+      description: undefined,
+      classNames: {
+        toast: 'rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900',
+      },
+      }
+    );
+  };
+
   // THE FIX: Retrieve from Local Storage instead of Navigation State
   // Temp values set during login -> 2FA step
   const username = localStorage.getItem('temp_username');
   const email = localStorage.getItem('temp_email');
   const selectedBranch = localStorage.getItem('temp_branch_selected');
   const accountBranch = localStorage.getItem('temp_account_branch');
-  const serverIssuedAt = Number(localStorage.getItem('otp_issued_at')); // server time (ms)
-  const otpExpiresAtIso = localStorage.getItem('otp_expires_at');
+  const serverIssuedAt = Number(localStorage.getItem('otp_2fa_issued_at') || localStorage.getItem('otp_issued_at')); // server time (ms)
+  const otpExpiresAtIso = localStorage.getItem('otp_2fa_expires_at') || localStorage.getItem('otp_expires_at');
+  const cooldownStorageKey = username ? `otp_2fa_resend_available_at_${username.toLowerCase()}` : 'otp_2fa_resend_available_at';
+  const exhaustedStorageKey = `${cooldownStorageKey}_exhausted`;
 
   useEffect(() => {
     // If no username is found, redirect to login (lost session)
@@ -77,6 +118,35 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
       }
     };
   }, [username, navigate, serverIssuedAt, otpExpiresAtIso]);
+
+  useEffect(() => {
+    const tickCooldown = () => {
+      const availableAt = Number(localStorage.getItem(cooldownStorageKey) || 0);
+      const remaining = Math.max(0, Math.ceil((availableAt - Date.now()) / 1000));
+      setResendCooldownSeconds(remaining);
+      if (remaining === 0 && availableAt) {
+        localStorage.removeItem(cooldownStorageKey);
+        localStorage.removeItem(exhaustedStorageKey);
+      }
+      setResendAttemptsExhausted(localStorage.getItem(exhaustedStorageKey) === 'true' && remaining > 0);
+    };
+
+    tickCooldown();
+    const id = setInterval(tickCooldown, 1000);
+    return () => clearInterval(id);
+  }, [cooldownStorageKey, exhaustedStorageKey]);
+
+  const startResendCooldown = (seconds = 60, attemptsExhausted = false) => {
+    const safeSeconds = Math.max(1, Number(seconds) || 60);
+    localStorage.setItem(cooldownStorageKey, (Date.now() + safeSeconds * 1000).toString());
+    if (attemptsExhausted) {
+      localStorage.setItem(exhaustedStorageKey, 'true');
+    } else {
+      localStorage.removeItem(exhaustedStorageKey);
+    }
+    setResendCooldownSeconds(safeSeconds);
+    setResendAttemptsExhausted(attemptsExhausted);
+  };
 
   const handleCodeChange = (value) => {
     const digitsOnly = value.replace(/\D/g, '').slice(0, 6);
@@ -143,6 +213,8 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
       localStorage.removeItem('temp_email');
       localStorage.removeItem('temp_branch_selected');
       localStorage.removeItem('temp_account_branch');
+      localStorage.removeItem('otp_2fa_issued_at');
+      localStorage.removeItem('otp_2fa_expires_at');
       localStorage.removeItem('otp_issued_at');
       localStorage.removeItem('otp_expires_at');
       
@@ -181,6 +253,20 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
 
   const handleResend = async () => {
     if (!username) return;
+    if (resendCooldownSeconds > 0) {
+      if (resendAttemptsExhausted) {
+        toast.error(remainingMs <= 0 ? TOO_MANY_EXPIRED_OTP_REQUESTS_MESSAGE : TOO_MANY_OTP_REQUESTS_MESSAGE, {
+          classNames: {
+            toast: 'rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900',
+          },
+        });
+        return;
+      }
+
+      showCooldownToast();
+      return;
+    }
+
     setResending(true);
     try {
       const resp = await axios.post('http://localhost:5000/api/auth/send-otp', { username });
@@ -188,8 +274,11 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
       const expiresAt = resp.data.expiresAt || new Date(Date.now() + 120000).toISOString();
 
       // Persist new timestamps
-      localStorage.setItem('otp_issued_at', serverTime.toString());
-      localStorage.setItem('otp_expires_at', expiresAt);
+      localStorage.setItem('otp_2fa_issued_at', serverTime.toString());
+      localStorage.setItem('otp_2fa_expires_at', expiresAt);
+      localStorage.removeItem('otp_issued_at');
+      localStorage.removeItem('otp_expires_at');
+      startResendCooldown(resp.data.retryAfterSeconds || 60, resp.data.remainingAttempts === 0);
 
       // Re-sync countdown with new values
       const clientNow = Date.now();
@@ -201,13 +290,23 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
 
       // Reset input and UI state
       setCode('');
-      toast.success('A new verification code was sent.', {
+      toast.success(resp.data.message || 'Verification code sent. Please check your email.', {
         classNames: {
           toast: 'rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900',
         },
       });
     } catch (error) {
-      toast.error(error.response?.data?.error || 'Failed to resend code', {
+      const retryAfterSeconds = error.response?.data?.retryAfterSeconds;
+      const remainingAttempts = error.response?.data?.remainingAttempts;
+      if (retryAfterSeconds) {
+        startResendCooldown(retryAfterSeconds, remainingAttempts === 0);
+      }
+      toast.error(error.response?.data?.error || error.response?.data?.message || 'Failed to resend code', {
+        description: retryAfterSeconds && remainingAttempts !== 0
+          ? (remainingMs <= 0
+            ? EXPIRED_RESEND_WAIT_MESSAGE
+            : RESEND_WAIT_MESSAGE)
+          : undefined,
         classNames: {
           toast: 'rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900',
         },
@@ -222,6 +321,8 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
     localStorage.removeItem('temp_email');
     localStorage.removeItem('temp_branch_selected');
     localStorage.removeItem('temp_account_branch');
+    localStorage.removeItem('otp_2fa_issued_at');
+    localStorage.removeItem('otp_2fa_expires_at');
     localStorage.removeItem('otp_issued_at');
     localStorage.removeItem('otp_expires_at');
     setCode('');
@@ -294,7 +395,11 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
                 disabled={loading || resending}
                 className="w-full py-5 rounded-xl border-2 border-[#FF0000] text-[#FF0000] bg-white hover:bg-red-50 shadow-sm transition-all duration-300 disabled:opacity-70"
               >
-                {resending ? "Sending new code..." : "Resend Code"}
+                {resending
+                  ? "Sending new code..."
+                  : resendCooldownSeconds > 0
+                    ? `Resend Code (${resendCooldownSeconds}s)`
+                    : "Resend Code"}
               </Button>
 
               <div className="text-center text-sm text-gray-600">

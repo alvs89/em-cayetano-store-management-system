@@ -14,6 +14,10 @@ const { Pool, types } = require('pg');
 const app = express();
 const PORT = process.env.PORT || 5000;
 const OTP_TTL_MS = 2 * 60 * 1000;
+const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
+const OTP_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const OTP_RATE_LIMIT_MAX_RESENDS = 5;
+const OTP_RATE_LIMIT_MAX_REQUESTS = OTP_RATE_LIMIT_MAX_RESENDS + 1; // initial send + allowed resends
 const ALLOWED_ROLES = ['Admin', 'Employee'];
 const ALLOWED_BRANCHES = ['Manggahan', 'San Rafael'];
 const OFFICIAL_INVENTORY_CATEGORIES = [
@@ -57,6 +61,11 @@ const CATEGORY_ALIASES = {
   other: 'Other'
 };
 
+// In-memory OTP request tracking is suitable for this single-server/local setup.
+// For multi-instance production deployments, replace this with database-backed
+// or Redis-backed rate limiting so attempts are shared across server instances.
+const otpRequestBuckets = new Map();
+
 // PostgreSQL TIMESTAMP values are stored without timezone metadata. The database
 // uses UTC timestamps, so parse them as UTC instead of the Node process timezone.
 types.setTypeParser(1114, (value) => new Date(`${value}Z`));
@@ -88,6 +97,10 @@ async function ensureSchema() {
       status VARCHAR(20) DEFAULT 'Active',
       otp_code VARCHAR(10),
       otp_expires TIMESTAMP,
+      login_otp_code VARCHAR(10),
+      login_otp_expires TIMESTAMP,
+      reset_otp_code VARCHAR(10),
+      reset_otp_expires TIMESTAMP,
       token_version INTEGER DEFAULT 0,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -176,6 +189,14 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE users
     ADD COLUMN IF NOT EXISTS token_version INTEGER DEFAULT 0;
+  `);
+
+  await pool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS login_otp_code VARCHAR(10),
+    ADD COLUMN IF NOT EXISTS login_otp_expires TIMESTAMP,
+    ADD COLUMN IF NOT EXISTS reset_otp_code VARCHAR(10),
+    ADD COLUMN IF NOT EXISTS reset_otp_expires TIMESTAMP;
   `);
 
   await pool.query(`
@@ -757,6 +778,90 @@ async function sendOtpEmail(user, otp, subject, intro) {
   });
 }
 
+function normalizeOtpRateLimitIdentifier(type, value) {
+  return `${type}:${String(value || '').trim().toLowerCase()}`;
+}
+
+function formatRetryAfter(seconds) {
+  const safeSeconds = Math.max(1, Number(seconds) || 1);
+  if (safeSeconds < 60) {
+    return `${safeSeconds} second${safeSeconds === 1 ? '' : 's'}`;
+  }
+
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainingSeconds = safeSeconds % 60;
+  const minuteText = `${minutes} minute${minutes === 1 ? '' : 's'}`;
+
+  if (remainingSeconds === 0) {
+    return minuteText;
+  }
+
+  return `${minuteText} and ${remainingSeconds} second${remainingSeconds === 1 ? '' : 's'}`;
+}
+
+function checkOtpRateLimit(identifier) {
+  const now = Date.now();
+  const recentRequests = (otpRequestBuckets.get(identifier) || [])
+    .filter(timestamp => now - timestamp < OTP_RATE_LIMIT_WINDOW_MS);
+
+  if (recentRequests.length >= OTP_RATE_LIMIT_MAX_REQUESTS) {
+    const retryAfterSeconds = Math.max(
+      1,
+      Math.ceil((OTP_RATE_LIMIT_WINDOW_MS - (now - recentRequests[0])) / 1000)
+    );
+    const message = `Too many OTP requests used. You have reached the resend limit for now. Please wait ${formatRetryAfter(retryAfterSeconds)} before requesting a new code.`;
+    otpRequestBuckets.set(identifier, recentRequests);
+    return {
+      allowed: false,
+      message,
+      error: message,
+      retryAfterSeconds,
+      remainingAttempts: 0
+    };
+  }
+
+  const lastRequestAt = recentRequests[recentRequests.length - 1];
+  if (lastRequestAt && now - lastRequestAt < OTP_RESEND_COOLDOWN_MS) {
+    const retryAfterSeconds = Math.max(
+      1,
+      Math.ceil((OTP_RESEND_COOLDOWN_MS - (now - lastRequestAt)) / 1000)
+    );
+    const message = `Please wait ${formatRetryAfter(retryAfterSeconds)} before requesting another code.`;
+    otpRequestBuckets.set(identifier, recentRequests);
+    return {
+      allowed: false,
+      message,
+      error: message,
+      retryAfterSeconds,
+      remainingAttempts: Math.max(0, OTP_RATE_LIMIT_MAX_REQUESTS - recentRequests.length)
+    };
+  }
+
+  otpRequestBuckets.set(identifier, recentRequests);
+  return {
+    allowed: true,
+    remainingAttempts: Math.max(0, OTP_RATE_LIMIT_MAX_REQUESTS - recentRequests.length)
+  };
+}
+
+function recordOtpRequest(identifier) {
+  const now = Date.now();
+  const recentRequests = (otpRequestBuckets.get(identifier) || [])
+    .filter(timestamp => now - timestamp < OTP_RATE_LIMIT_WINDOW_MS);
+  recentRequests.push(now);
+  otpRequestBuckets.set(identifier, recentRequests);
+
+  const remainingAttempts = Math.max(0, OTP_RATE_LIMIT_MAX_REQUESTS - recentRequests.length);
+  const retryAfterSeconds = remainingAttempts === 0
+    ? Math.max(1, Math.ceil((OTP_RATE_LIMIT_WINDOW_MS - (now - recentRequests[0])) / 1000))
+    : Math.ceil(OTP_RESEND_COOLDOWN_MS / 1000);
+
+  return {
+    remainingAttempts: Math.min(OTP_RATE_LIMIT_MAX_RESENDS, remainingAttempts),
+    retryAfterSeconds
+  };
+}
+
 async function authenticate(req, res, next) {
   const authHeader = req.headers.authorization || '';
   if (!authHeader.startsWith('Bearer ')) {
@@ -906,21 +1011,34 @@ app.post('/api/auth/send-otp', async (req, res) => {
     }
 
     const user = result.rows[0];
+    const rateLimitKey = normalizeOtpRateLimitIdentifier('username', user.username);
+    const rateLimit = checkOtpRateLimit(rateLimitKey);
+    if (!rateLimit.allowed) {
+      return res.status(429).json(rateLimit);
+    }
+
     const issuedAt = Date.now();
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(issuedAt + OTP_TTL_MS);
 
     await pool.query(
-      'UPDATE users SET otp_code = $1, otp_expires = $2 WHERE user_id = $3',
+      'UPDATE users SET login_otp_code = $1, login_otp_expires = $2 WHERE user_id = $3',
       [otp, expiresAt, user.user_id]
     );
 
     await sendOtpEmail(user, otp, '2FA Login Verification', 'Use this code to complete your login.');
+    const { remainingAttempts, retryAfterSeconds } = recordOtpRequest(rateLimitKey);
+    const attemptText = remainingAttempts === 1 ? 'attempt' : 'attempts';
+    const message = remainingAttempts === 0
+      ? `Verification code sent. This was your last resend attempt for now. Please enter it before it expires. You can request another code in ${formatRetryAfter(retryAfterSeconds)}.`
+      : `Verification code sent. You have ${remainingAttempts} resend ${attemptText} remaining.`;
 
     return res.json({
-      message: 'OTP sent successfully to email',
+      message,
       expiresAt: expiresAt.toISOString(),
-      serverTime: issuedAt
+      serverTime: issuedAt,
+      retryAfterSeconds,
+      remainingAttempts
     });
   } catch (err) {
     console.error('Send OTP error:', err);
@@ -941,11 +1059,11 @@ app.post('/api/auth/verify-otp', async (req, res) => {
 
     const user = result.rows[0];
 
-    if (user.otp_code !== code) {
+    if (user.login_otp_code !== code) {
       return res.status(400).json({ error: 'Invalid code' });
     }
 
-    if (!user.otp_expires || new Date(user.otp_expires).getTime() + 15000 < Date.now()) {
+    if (!user.login_otp_expires || new Date(user.login_otp_expires).getTime() + 15000 < Date.now()) {
       return res.status(400).json({ error: 'Code expired' });
     }
 
@@ -954,7 +1072,7 @@ app.post('/api/auth/verify-otp', async (req, res) => {
     }
 
     await pool.query(
-      'UPDATE users SET otp_code = NULL, otp_expires = NULL WHERE user_id = $1',
+      'UPDATE users SET login_otp_code = NULL, login_otp_expires = NULL WHERE user_id = $1',
       [user.user_id]
     );
 
@@ -985,21 +1103,34 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     }
 
     const user = userResult.rows[0];
+    const rateLimitKey = normalizeOtpRateLimitIdentifier('email', user.email || email);
+    const rateLimit = checkOtpRateLimit(rateLimitKey);
+    if (!rateLimit.allowed) {
+      return res.status(429).json(rateLimit);
+    }
+
     const issuedAt = Date.now();
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(issuedAt + OTP_TTL_MS);
 
     await pool.query(
-      'UPDATE users SET otp_code = $1, otp_expires = $2 WHERE email = $3',
+      'UPDATE users SET reset_otp_code = $1, reset_otp_expires = $2 WHERE email = $3',
       [otp, expiresAt, email]
     );
 
     await sendOtpEmail(user, otp, 'Password Reset Verification', 'Use this code to reset your password.');
+    const { remainingAttempts, retryAfterSeconds } = recordOtpRequest(rateLimitKey);
+    const attemptText = remainingAttempts === 1 ? 'attempt' : 'attempts';
+    const message = remainingAttempts === 0
+      ? `Verification code sent. This was your last resend attempt for now. Please enter it before it expires. You can request another code in ${formatRetryAfter(retryAfterSeconds)}.`
+      : `Verification code sent. You have ${remainingAttempts} resend ${attemptText} remaining.`;
 
     return res.json({
-      message: 'OTP sent',
+      message,
       expiresAt: expiresAt.toISOString(),
-      serverTime: issuedAt
+      serverTime: issuedAt,
+      retryAfterSeconds,
+      remainingAttempts
     });
   } catch (err) {
     console.error('Forgot password error:', err);
@@ -1019,16 +1150,16 @@ app.post('/api/auth/reset-password', async (req, res) => {
     }
 
     const user = userResult.rows[0];
-    const expiresMs = user.otp_expires ? new Date(user.otp_expires).getTime() : 0;
+    const expiresMs = user.reset_otp_expires ? new Date(user.reset_otp_expires).getTime() : 0;
 
-    if (user.otp_code !== otp || Date.now() - expiresMs > 15000) {
+    if (user.reset_otp_code !== otp || Date.now() - expiresMs > 15000) {
       return res.status(400).json({ error: 'Invalid or expired code' });
     }
 
     const newHash = await bcrypt.hash(newPassword, 10);
     await pool.query(
       `UPDATE users
-       SET password_hash = $1, otp_code = NULL, otp_expires = NULL, token_version = COALESCE(token_version, 0) + 1
+       SET password_hash = $1, reset_otp_code = NULL, reset_otp_expires = NULL, token_version = COALESCE(token_version, 0) + 1
        WHERE user_id = $2`,
       [newHash, user.user_id]
     );
