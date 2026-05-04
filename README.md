@@ -25,14 +25,14 @@ The current implementation focuses on:
 - Tailwind CSS and custom responsive CSS
 - Radix UI components
 - Lucide React icons
-- Axios
+- Axios for API requests
 - jsPDF and jsPDF AutoTable for report export
 
 ### Backend
 
 - Node.js
 - Express.js
-- PostgreSQL using `pg`
+- PostgreSQL database connection using `pg`
 - JWT authentication
 - Bcrypt password hashing
 - Nodemailer for email-based OTP and account notices
@@ -40,7 +40,7 @@ The current implementation focuses on:
 ### Database
 
 - PostgreSQL
-- Neon is recommended for hosted development and deployment
+- Neon as an optional hosted PostgreSQL platform for development and deployment
 
 ## Main Modules
 
