@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, Edit, Mail, MapPin, Search, UserCheck, UserX } from "lucide-react";
+import { ArrowUpDown, Edit, Mail, MapPin, Search, UserCheck, UserX, Users } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -16,7 +16,7 @@ import { PageHeader } from "./PageHeader";
 import { mergeSort } from "../utils/algorithms";
 
 export function UserManagementModule() {
-  const { users, setUsers } = useData();
+  const { users, setUsers, refreshSystemSummary } = useData();
   const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
   const authToken = localStorage.getItem("token");
   const sessionUser = (() => {
@@ -42,6 +42,14 @@ export function UserManagementModule() {
   const [searchQuery, setSearchQuery] = useState("");
   const [pendingSearchQuery, setPendingSearchQuery] = useState("");
   const [inactiveSearchQuery, setInactiveSearchQuery] = useState("");
+  const [activeTab, setActiveTab] = useState(() => {
+    const targetTab = localStorage.getItem("user_management_target_tab");
+    if (targetTab === "pending" || targetTab === "inactive" || targetTab === "active") {
+      localStorage.removeItem("user_management_target_tab");
+      return targetTab;
+    }
+    return "active";
+  });
   const [activeSort, setActiveSort] = useState({ key: "fullName", direction: "asc" });
   const [pendingSort, setPendingSort] = useState({ key: "fullName", direction: "asc" });
   const [inactiveSort, setInactiveSort] = useState({ key: "fullName", direction: "asc" });
@@ -161,42 +169,181 @@ export function UserManagementModule() {
           desc: `Sort by ${label} (Z-A)`
         };
 
+    const iconClass = `h-4 w-4 shrink-0 transition-transform ${isActive ? 'opacity-100' : 'opacity-45'} ${isActive && cfg.direction === 'desc' ? 'rotate-180' : ''}`;
+
     return (
       <div className="flex items-center gap-1 text-left font-medium text-slate-700">
         <button
           type="button"
           onClick={() => handleSort(scope, key)}
           className="flex items-center gap-1 hover:text-slate-900"
+          title={isActive ? titles[cfg.direction] : titles.asc}
         >
           <span>{label}</span>
+          <ArrowUpDown className={iconClass} aria-hidden="true" />
         </button>
-        <div className="flex items-center gap-1" aria-label={`Sort by ${label}`}>
-          <button
-            type="button"
-            onClick={e => {
-              e.stopPropagation();
-              handleSort(scope, key, "asc");
-            }}
-            className="p-0.5"
-            title={titles.asc}
-          >
-            <ArrowUp className={`w-3.5 h-3.5 ${isActive && cfg.direction === "asc" ? "text-blue-800" : "text-slate-400"}`} />
-          </button>
-          <button
-            type="button"
-            onClick={e => {
-              e.stopPropagation();
-              handleSort(scope, key, "desc");
-            }}
-            className="p-0.5"
-            title={titles.desc}
-          >
-            <ArrowDown className={`w-3.5 h-3.5 ${isActive && cfg.direction === "desc" ? "text-blue-800" : "text-slate-400"}`} />
-          </button>
-        </div>
       </div>
     );
   };
+
+  const renderUserStatusBadge = user => {
+    const status = user.status || (activeTab === "pending" ? "Pending" : activeTab === "inactive" ? "Inactive" : "Active");
+    const statusClasses = {
+      Active: "bg-green-100 text-green-700 hover:bg-green-100",
+      Pending: "bg-yellow-100 text-yellow-800 hover:bg-yellow-100",
+      Inactive: "bg-red-100 text-red-700 hover:bg-red-100"
+    };
+
+    return (
+      <Badge className={statusClasses[status] || "bg-slate-100 text-slate-700 hover:bg-slate-100"}>
+        {status}
+      </Badge>
+    );
+  };
+
+  const renderUserActions = (scope, user, isMobile = false) => {
+    const actionClass = isMobile ? "user-mobile-action" : "";
+
+    if (scope === "pending") {
+      return (
+        <div className={isMobile ? "user-mobile-actions" : "flex gap-2"}>
+          <Button
+            size="sm"
+            disabled={isActionLoading}
+            className={actionClass}
+            onClick={() => {
+              setSelectedUser(user);
+              setShowApproveDialog(true);
+            }}
+          >
+            <UserCheck className="w-4 h-4 mr-1" />
+            Approve
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={isActionLoading}
+            className={actionClass}
+            onClick={() => {
+              setSelectedUser(user);
+              setShowRejectDialog(true);
+            }}
+          >
+            <UserX className="w-4 h-4 mr-1" />
+            Reject
+          </Button>
+        </div>
+      );
+    }
+
+    if (scope === "inactive") {
+      return (
+        <div className={isMobile ? "user-mobile-actions" : ""}>
+          <Button
+            size="sm"
+            disabled={isActionLoading}
+            className={actionClass}
+            onClick={() => handleInitiateReactivate(user)}
+          >
+            Reactivate
+          </Button>
+        </div>
+      );
+    }
+
+    return (
+      <div className={isMobile ? "user-mobile-actions" : "flex gap-2"}>
+        <Button
+          size="sm"
+          variant="outline"
+          className={actionClass}
+          onClick={() => {
+            setSelectedUser(user);
+            setNewRole(user.role);
+            setIsEditDialogOpen(true);
+          }}
+          title="Edit Role"
+        >
+          <Edit className="w-4 h-4" />
+          {isMobile && <span>Edit Role</span>}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={isActionLoading}
+          className={actionClass}
+          onClick={() => handleOpenEditBranch(user)}
+          title="Edit Branch"
+        >
+          <MapPin className="w-4 h-4" />
+          {isMobile && <span>Branch</span>}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={isActionLoading}
+          className={actionClass}
+          onClick={() => handleInitiateDeactivate(user)}
+          title="Deactivate User"
+        >
+          <UserX className="w-4 h-4" />
+          {isMobile && <span>Deactivate</span>}
+        </Button>
+      </div>
+    );
+  };
+
+  const renderMobileEmptyState = message => (
+    <div className="user-mobile-empty">
+      {message}
+    </div>
+  );
+
+  const renderMobileUserCards = (scope, userList, emptyMessage) => (
+    <div className="user-mobile-list">
+      {userList.length === 0
+        ? renderMobileEmptyState(emptyMessage)
+        : userList.map(user => (
+          <article className="user-mobile-card" key={user.id}>
+            <div className="user-mobile-card-header">
+              <div className="min-w-0">
+                <h3 title={user.fullName}>{user.fullName || "Unnamed User"}</h3>
+                <p>ID: {user.id || "N/A"}</p>
+              </div>
+              <Badge variant="outline" className="user-role-badge">
+                {user.role || (scope === "pending" ? "Pending" : "Unassigned")}
+              </Badge>
+            </div>
+
+            <div className="user-mobile-fields">
+              <div className="user-mobile-field">
+                <span>Username</span>
+                <strong title={user.username}>{user.username || "N/A"}</strong>
+              </div>
+              <div className="user-mobile-field">
+                <span>Email</span>
+                <strong title={user.email}>{user.email || "N/A"}</strong>
+              </div>
+              <div className="user-mobile-field">
+                <span>Branch</span>
+                <strong title={user.branch}>{user.branch || "Not set"}</strong>
+              </div>
+              {scope === "pending" && (
+                <div className="user-mobile-field">
+                  <span>Created</span>
+                  <strong>{user.createdDate || "N/A"}</strong>
+                </div>
+              )}
+            </div>
+
+            <div className="user-mobile-card-footer">
+              {renderUserStatusBadge(user)}
+              {renderUserActions(scope, user, true)}
+            </div>
+          </article>
+        ))}
+    </div>
+  );
 
   const filteredActiveUsers = useMemo(() => {
     const lowerQuery = searchQuery.toLowerCase();
@@ -231,6 +378,41 @@ export function UserManagementModule() {
     return mergeSort(filtered, inactiveComparator);
   }, [inactiveUsers, inactiveComparator, inactiveSearchQuery]);
 
+  const renderChangePreview = (label, currentValue, nextValue, nextTone = "yellow") => {
+    const hasChange = nextValue && currentValue !== nextValue;
+    const nextToneClasses = nextTone === "red"
+      ? "border-red-300 bg-red-50 text-red-900"
+      : "border-yellow-300 bg-yellow-100 text-slate-900";
+
+    return (
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current {label}</p>
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <span className="text-sm font-medium text-slate-700">{currentValue || "Not set"}</span>
+            <Badge variant="outline" className="border-slate-300 text-slate-600">Current</Badge>
+          </div>
+        </div>
+        <div className={`rounded-lg border p-4 shadow-sm transition-all ${hasChange ? nextToneClasses : "border-slate-200 bg-white text-slate-700"}`}>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">New {label}</p>
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <span className={`text-sm font-semibold ${hasChange ? "text-slate-900" : "text-slate-700"}`}>
+              {nextValue || "No selection yet"}
+            </span>
+            <Badge className={hasChange ? "bg-[#FF0000] text-white hover:bg-[#FF0000]" : "bg-slate-200 text-slate-700 hover:bg-slate-200"}>
+              {hasChange ? "New Selection" : "Unchanged"}
+            </Badge>
+          </div>
+          {hasChange && (
+            <p className="mt-3 text-xs font-medium text-slate-700">
+              This new {label.toLowerCase()} will be applied after confirmation.
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const handleApprove = async user => {
     if (!user) return false;
     setIsActionLoading(true);
@@ -249,6 +431,7 @@ export function UserManagementModule() {
       const data = await res.json();
       const updated = normalizeUser(data.user);
       upsertUser(updated);
+      refreshSystemSummary();
       toast.success(`User ${updated.fullName} is now Active`, {
         description: "Activation email sent to the employee"
       });
@@ -301,6 +484,7 @@ export function UserManagementModule() {
       const data = await res.json();
       const updated = normalizeUser(data.user);
       upsertUser(updated);
+      refreshSystemSummary();
       toast.error(`${updated.fullName} set to Inactive`, {
         description: "User can no longer access the system"
       });
@@ -337,6 +521,7 @@ export function UserManagementModule() {
       const data = await res.json();
       const updated = normalizeUser(data.user);
       upsertUser(updated);
+      refreshSystemSummary();
       toast.warning(`${updated.fullName}'s account deactivated`, {
         description: 'User will no longer have system access'
       });
@@ -490,47 +675,584 @@ export function UserManagementModule() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-6xl mx-auto space-y-6">
-        <PageHeader title="User Management" subtitle="Manage user accounts, roles, and permissions" />
+    <div className="user-management-page min-h-screen bg-gray-50 p-4 md:p-8">
+      <style>{`
+        .user-management-page,
+        .user-management-page * {
+          box-sizing: border-box;
+        }
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card>
+        .user-management-page {
+          overflow-x: hidden;
+        }
+
+        .user-management-shell {
+          width: min(100%, 72rem);
+        }
+
+        .user-summary-grid {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .user-summary-card {
+          min-width: 0;
+          transition: padding 180ms ease, min-height 180ms ease;
+        }
+
+        .user-summary-content {
+          min-height: 84px;
+        }
+
+        .user-summary-icon {
+          width: 3rem;
+          height: 3rem;
+        }
+
+        .user-accounts-card {
+          overflow: hidden;
+        }
+
+        .user-tabs-list {
+          width: fit-content;
+          max-width: 100%;
+          flex-wrap: wrap;
+          gap: 0.25rem;
+          height: auto;
+          padding: 0.25rem;
+          border-radius: 999px;
+        }
+
+        .user-tabs-list [role="tab"] {
+          min-height: 2.5rem;
+          border-radius: 999px;
+          white-space: nowrap;
+        }
+
+        .user-tabs-list [role="tab"][data-state="active"] {
+          background: #ff0000;
+          color: #ffffff;
+          box-shadow: 0 10px 18px rgba(255, 0, 0, 0.22);
+        }
+
+        .user-tabs-list [role="tab"][data-state="active"]:hover {
+          background: #e00000;
+          color: #ffffff;
+        }
+
+        .user-edit-dialog,
+        .user-confirm-dialog {
+          width: min(100% - 2rem, 28rem);
+          max-width: min(100% - 2rem, 28rem) !important;
+          gap: 0.85rem;
+          border-radius: 1rem;
+        }
+
+        .user-edit-dialog {
+          padding: 1.25rem;
+        }
+
+        .user-edit-dialog [data-slot="dialog-header"] {
+          gap: 0.35rem;
+          padding-right: 1.75rem;
+        }
+
+        .user-edit-dialog [data-slot="dialog-title"],
+        .user-confirm-dialog [data-slot="alert-dialog-title"] {
+          font-size: 1.15rem;
+          line-height: 1.2;
+        }
+
+        .user-edit-dialog [data-slot="dialog-description"],
+        .user-confirm-dialog [data-slot="alert-dialog-description"] {
+          font-size: 0.9rem;
+          line-height: 1.4;
+        }
+
+        .user-edit-dialog [data-slot="dialog-footer"],
+        .user-confirm-dialog [data-slot="alert-dialog-footer"] {
+          gap: 0.6rem;
+        }
+
+        .user-confirm-dialog [data-slot="alert-dialog-header"] {
+          gap: 0.5rem;
+          padding: 1.25rem 1.25rem 0;
+        }
+
+        .user-confirm-dialog [data-slot="alert-dialog-footer"] {
+          padding: 0 1.25rem 1.25rem;
+        }
+
+        .user-confirm-dialog .grid.grid-cols-1.gap-3,
+        .user-edit-dialog .grid.grid-cols-1.gap-3 {
+          gap: 0.55rem;
+        }
+
+        .user-confirm-dialog .rounded-lg.p-4,
+        .user-edit-dialog .rounded-lg.p-4 {
+          padding: 0.8rem;
+        }
+
+        .user-search-wrap {
+          max-width: 100%;
+        }
+
+        .user-table-shell {
+          overflow: hidden;
+        }
+
+        .user-table-shell table {
+          table-layout: fixed;
+          width: 100%;
+        }
+
+        .user-mobile-list {
+          display: none;
+        }
+
+        .user-role-badge {
+          max-width: 100%;
+          white-space: normal;
+          text-align: center;
+        }
+
+        .user-mobile-empty {
+          display: grid;
+          min-height: 8rem;
+          place-items: center;
+          border: 1px dashed #cbd5e1;
+          border-radius: 0.75rem;
+          color: #64748b;
+          text-align: center;
+          padding: 1rem;
+          background: #f8fafc;
+        }
+
+        @media (max-width: 900px) {
+          .user-management-page {
+            padding: 1.25rem;
+          }
+
+          .user-management-shell {
+            gap: 1.25rem;
+          }
+
+          .user-management-page .mb-8 {
+            margin-bottom: 1.25rem;
+          }
+
+          .user-management-page .mb-8 > .relative {
+            border-radius: 1.25rem;
+            padding: 2rem;
+          }
+
+          .user-management-page .mb-8 h1 {
+            font-size: clamp(2rem, 7vw, 2.75rem);
+            line-height: 1.05;
+            margin-bottom: 0.5rem;
+          }
+
+          .user-management-page .mb-8 p {
+            font-size: clamp(0.95rem, 3.4vw, 1.1rem);
+            line-height: 1.35;
+          }
+
+          .user-summary-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.85rem;
+          }
+
+          .user-summary-content {
+            min-height: 72px;
+          }
+        }
+
+        @media (max-width: 820px) {
+          .user-management-page {
+            padding: 1.25rem;
+          }
+
+          .user-management-shell {
+            gap: 1rem;
+          }
+
+          .user-management-page .mb-8 > .relative {
+            padding: 1.5rem;
+          }
+
+          .user-management-page .mb-8 .flex.min-w-0.items-center {
+            align-items: center;
+            gap: 1rem;
+          }
+
+          .user-management-page .mb-8 .flex.h-16 {
+            width: 4rem;
+            height: 4rem;
+            border-radius: 1rem;
+          }
+
+          .user-management-page .mb-8 .flex.h-16 svg {
+            width: 2rem;
+            height: 2rem;
+          }
+
+          .user-management-page .mb-8 .min-w-0[style] {
+            margin-left: 0 !important;
+          }
+
+          .user-summary-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.875rem;
+          }
+
+          .user-summary-card .pt-6 {
+            padding: 1rem;
+          }
+
+          .user-summary-content {
+            min-height: 64px;
+          }
+
+          .user-summary-card p:first-child {
+            font-size: 0.875rem;
+            line-height: 1.2;
+          }
+
+          .user-summary-card p:last-child {
+            font-size: 1.75rem;
+            line-height: 1.1;
+          }
+
+          .user-summary-icon {
+            width: 2.75rem;
+            height: 2.75rem;
+            border-radius: 0.75rem;
+          }
+
+          .user-summary-icon svg {
+            width: 1.35rem;
+            height: 1.35rem;
+          }
+
+          .user-accounts-card > div:first-child {
+            padding: 1.25rem 1.25rem 0.75rem;
+          }
+
+          .user-accounts-card > div:nth-child(2) {
+            padding: 0 1.25rem 1.25rem;
+          }
+
+          .user-accounts-card [data-slot="card-title"] {
+            font-size: 1.125rem;
+          }
+
+          .user-accounts-card [data-slot="card-description"] {
+            font-size: 0.95rem;
+            line-height: 1.35;
+          }
+
+          .user-tabs-list {
+            width: 100%;
+            justify-content: flex-start;
+            border-radius: 1rem;
+          }
+
+          .user-tabs-list [role="tab"] {
+            flex: 1 1 auto;
+            min-width: fit-content;
+            padding-inline: 0.85rem;
+            font-size: 0.9rem;
+          }
+
+          .user-search-wrap {
+            margin-bottom: 0.875rem;
+          }
+
+          .user-search-wrap input {
+            min-height: 2.75rem;
+            font-size: 0.95rem;
+            text-overflow: ellipsis;
+          }
+
+          .user-table-shell {
+            display: none;
+          }
+
+          .user-mobile-list {
+            display: grid;
+            gap: 0.875rem;
+          }
+
+          .user-mobile-card {
+            min-width: 0;
+            border: 1px solid #dbe3ee;
+            border-radius: 0.9rem;
+            background: #ffffff;
+            padding: 1rem;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+          }
+
+          .user-mobile-card-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 0.75rem;
+          }
+
+          .user-mobile-card-header h3 {
+            color: #0f172a;
+            font-size: 1rem;
+            font-weight: 800;
+            line-height: 1.25;
+            overflow-wrap: anywhere;
+          }
+
+          .user-mobile-card-header p {
+            color: #64748b;
+            font-size: 0.8rem;
+            margin-top: 0.25rem;
+          }
+
+          .user-mobile-fields {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.6rem;
+            margin-top: 0.875rem;
+          }
+
+          .user-mobile-field {
+            min-width: 0;
+            border-radius: 0.75rem;
+            background: #f8fafc;
+            padding: 0.75rem;
+          }
+
+          .user-mobile-field span {
+            display: block;
+            color: #64748b;
+            font-size: 0.72rem;
+            font-weight: 800;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+          }
+
+          .user-mobile-field strong {
+            display: block;
+            min-width: 0;
+            color: #0f172a;
+            font-size: 0.9rem;
+            line-height: 1.25;
+            margin-top: 0.25rem;
+            overflow-wrap: anywhere;
+          }
+
+          .user-mobile-field:nth-child(2) {
+            grid-column: 1 / -1;
+          }
+
+          .user-mobile-card-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            margin-top: 0.875rem;
+            padding-top: 0.875rem;
+            border-top: 1px solid #e2e8f0;
+          }
+
+          .user-mobile-actions {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 0.5rem;
+          }
+
+          .user-mobile-action {
+            min-height: 2.75rem;
+            gap: 0.4rem;
+            border-radius: 0.75rem;
+          }
+        }
+
+        @media (max-width: 520px) {
+          .user-management-page {
+            padding: 1rem;
+          }
+
+          .user-management-page .mb-8 > .relative {
+            padding: 1.25rem;
+          }
+
+          .user-management-page .mb-8 .flex.min-w-0.items-center {
+            flex-wrap: nowrap;
+          }
+
+          .user-management-page .mb-8 .flex.h-16 {
+            width: 3.25rem;
+            height: 3.25rem;
+            border-radius: 0.9rem;
+          }
+
+          .user-management-page .mb-8 .flex.h-16 svg {
+            width: 1.7rem;
+            height: 1.7rem;
+          }
+
+          .user-management-page .mb-8 h1 {
+            font-size: clamp(1.65rem, 8vw, 2.1rem);
+          }
+
+          .user-summary-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.55rem;
+          }
+
+          .user-summary-content {
+            min-height: 84px;
+            align-items: flex-start;
+            flex-direction: column;
+            justify-content: space-between;
+            position: relative;
+          }
+
+          .user-summary-card .pt-6 {
+            padding: 0.75rem;
+          }
+
+          .user-summary-card p:first-child {
+            max-width: calc(100% - 1.85rem);
+            font-size: 0.76rem;
+            line-height: 1.18;
+          }
+
+          .user-summary-card p:last-child {
+            font-size: 1.55rem;
+          }
+
+          .user-summary-icon {
+            position: absolute;
+            top: 0.05rem;
+            right: 0;
+            width: 2rem;
+            height: 2rem;
+            border-radius: 0.65rem;
+          }
+
+          .user-summary-icon svg {
+            width: 1.05rem;
+            height: 1.05rem;
+          }
+
+          .user-tabs-list {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+
+          .user-tabs-list [role="tab"] {
+            min-width: 0;
+            padding-inline: 0.5rem;
+            font-size: 0.82rem;
+          }
+
+          .user-mobile-fields {
+            grid-template-columns: 1fr;
+          }
+
+          .user-mobile-field:nth-child(2) {
+            grid-column: auto;
+          }
+
+          .user-mobile-card-footer {
+            align-items: stretch;
+            flex-direction: column;
+          }
+
+          .user-mobile-card-footer > .inline-flex {
+            width: fit-content;
+          }
+
+          .user-mobile-actions,
+          .user-mobile-action {
+            width: 100%;
+          }
+
+          .user-mobile-action {
+            flex: 1 1 100%;
+            justify-content: center;
+          }
+        }
+
+        @media (max-width: 380px) {
+          .user-summary-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.45rem;
+          }
+
+          .user-summary-card .pt-6 {
+            padding: 0.65rem;
+          }
+
+          .user-summary-content {
+            min-height: 78px;
+          }
+
+          .user-summary-card p:first-child {
+            font-size: 0.7rem;
+          }
+
+          .user-summary-card p:last-child {
+            font-size: 1.35rem;
+          }
+
+          .user-summary-icon {
+            width: 1.75rem;
+            height: 1.75rem;
+          }
+        }
+      `}</style>
+      <div className="user-management-shell max-w-6xl mx-auto space-y-6">
+        <PageHeader
+          title="User Management"
+          subtitle="Manage user accounts, roles, and permissions"
+          icon={<Users className="h-8 w-8" />}
+        />
+
+        <div className="user-summary-grid grid gap-6">
+          <Card className="user-summary-card">
             <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
+              <div className="user-summary-content flex items-center justify-between">
                 <div>
                   <p className="text-sm text-slate-600 mb-1">Active Users</p>
                   <p className="text-2xl text-slate-900">{activeUsers.length}</p>
                 </div>
-                <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                <div className="user-summary-icon bg-green-100 rounded-lg flex items-center justify-center">
                   <UserCheck className="w-6 h-6 text-green-600" />
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="user-summary-card">
             <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
+              <div className="user-summary-content flex items-center justify-between">
                 <div>
                   <p className="text-sm text-slate-600 mb-1">Pending Approval</p>
                   <p className="text-2xl text-slate-900">{pendingUsers.length}</p>
                 </div>
-                <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
+                <div className="user-summary-icon bg-orange-100 rounded-lg flex items-center justify-center">
                   <Mail className="w-6 h-6 text-orange-600" />
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="user-summary-card">
             <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
+              <div className="user-summary-content flex items-center justify-between">
                 <div>
                   <p className="text-sm text-slate-600 mb-1">Inactive Users</p>
                   <p className="text-2xl text-slate-900">{inactiveUsers.length}</p>
                 </div>
-                <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
+                <div className="user-summary-icon bg-red-100 rounded-lg flex items-center justify-center">
                   <UserX className="w-6 h-6 text-red-600" />
                 </div>
               </div>
@@ -538,21 +1260,21 @@ export function UserManagementModule() {
           </Card>
         </div>
 
-        <Card className="col-span-1 md:col-span-3 w-full">
+        <Card className="user-accounts-card col-span-1 md:col-span-3 w-full">
           <CardHeader>
             <CardTitle>User Accounts</CardTitle>
             <CardDescription>View and manage all user accounts</CardDescription>
           </CardHeader>
           <CardContent>
-            <Tabs defaultValue="active" className="mb-4">
-              <TabsList>
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
+              <TabsList className="user-tabs-list">
                 <TabsTrigger value="active">Active ({activeUsers.length})</TabsTrigger>
                 <TabsTrigger value="pending">Pending ({pendingUsers.length})</TabsTrigger>
                 <TabsTrigger value="inactive">Inactive ({inactiveUsers.length})</TabsTrigger>
               </TabsList>
 
               <TabsContent value="active">
-                <div className="mb-4">
+                <div className="user-search-wrap mb-4">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                     <Input
@@ -563,7 +1285,7 @@ export function UserManagementModule() {
                     />
                   </div>
                 </div>
-                <div className="border border-slate-200 rounded-lg">
+                <div className="user-table-shell border border-slate-200 rounded-lg">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -608,43 +1330,10 @@ export function UserManagementModule() {
                             </TableCell>
                             <TableCell className="text-sm">{user.branch}</TableCell>
                             <TableCell>
-                              <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
-                                Active
-                              </Badge>
+                              {renderUserStatusBadge(user)}
                             </TableCell>
                             <TableCell>
-                              <div className="flex gap-2">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => {
-                                    setSelectedUser(user);
-                                    setNewRole(user.role);
-                                    setIsEditDialogOpen(true);
-                                  }}
-                                  title="Edit Role"
-                                >
-                                  <Edit className="w-4 h-4" />
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={isActionLoading}
-                                  onClick={() => handleOpenEditBranch(user)}
-                                  title="Edit Branch"
-                                >
-                                  <MapPin className="w-4 h-4" />
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={isActionLoading}
-                                  onClick={() => handleInitiateDeactivate(user)}
-                                  title="Deactivate User"
-                                >
-                                  <UserX className="w-4 h-4" />
-                                </Button>
-                              </div>
+                              {renderUserActions("active", user)}
                             </TableCell>
                           </TableRow>
                         ))
@@ -652,10 +1341,11 @@ export function UserManagementModule() {
                     </TableBody>
                   </Table>
                 </div>
+                {renderMobileUserCards("active", filteredActiveUsers, "No active users found")}
               </TabsContent>
 
               <TabsContent value="pending">
-                <div className="mb-4">
+                <div className="user-search-wrap mb-4">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                     <Input
@@ -667,7 +1357,7 @@ export function UserManagementModule() {
                   </div>
                 </div>
 
-                <div className="border border-slate-200 rounded-lg">
+                <div className="user-table-shell border border-slate-200 rounded-lg">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -715,37 +1405,11 @@ export function UserManagementModule() {
                             </TableCell>
                             <TableCell className="text-sm">{user.branch}</TableCell>
                             <TableCell>
-                              <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100">
-                                {user.status || "Pending"}
-                              </Badge>
+                              {renderUserStatusBadge(user)}
                             </TableCell>
                             <TableCell className="text-sm">{user.createdDate}</TableCell>
                             <TableCell>
-                              <div className="flex gap-2">
-                                <Button
-                                  size="sm"
-                                  disabled={isActionLoading}
-                                  onClick={() => {
-                                    setSelectedUser(user);
-                                    setShowApproveDialog(true);
-                                  }}
-                                >
-                                  <UserCheck className="w-4 h-4 mr-1" />
-                                  Approve
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={isActionLoading}
-                                  onClick={() => {
-                                    setSelectedUser(user);
-                                    setShowRejectDialog(true);
-                                  }}
-                                >
-                                  <UserX className="w-4 h-4 mr-1" />
-                                  Reject
-                                </Button>
-                              </div>
+                              {renderUserActions("pending", user)}
                             </TableCell>
                           </TableRow>
                         ))
@@ -753,10 +1417,11 @@ export function UserManagementModule() {
                     </TableBody>
                   </Table>
                 </div>
+                {renderMobileUserCards("pending", filteredPendingUsers, "No pending users")}
               </TabsContent>
 
               <TabsContent value="inactive">
-                <div className="mb-4">
+                <div className="user-search-wrap mb-4">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                     <Input
@@ -768,7 +1433,7 @@ export function UserManagementModule() {
                   </div>
                 </div>
 
-                <div className="border border-slate-200 rounded-lg">
+                <div className="user-table-shell border border-slate-200 rounded-lg">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -813,16 +1478,10 @@ export function UserManagementModule() {
                             </TableCell>
                             <TableCell className="text-sm">{user.branch}</TableCell>
                             <TableCell>
-                              <Badge className="bg-red-100 text-red-700 hover:bg-red-100">{user.status || "Inactive"}</Badge>
+                              {renderUserStatusBadge(user)}
                             </TableCell>
                             <TableCell>
-                              <Button
-                                size="sm"
-                                disabled={isActionLoading}
-                                onClick={() => handleInitiateReactivate(user)}
-                              >
-                                Reactivate
-                              </Button>
+                              {renderUserActions("inactive", user)}
                             </TableCell>
                           </TableRow>
                         ))
@@ -830,6 +1489,7 @@ export function UserManagementModule() {
                     </TableBody>
                   </Table>
                 </div>
+                {renderMobileUserCards("inactive", filteredInactiveUsers, "No inactive users")}
               </TabsContent>
             </Tabs>
           </CardContent>
@@ -837,7 +1497,7 @@ export function UserManagementModule() {
 
         {/* Dialogs and AlertDialogs */}
         <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-          <DialogContent>
+          <DialogContent className="user-edit-dialog">
             <DialogHeader>
               <DialogTitle>Edit User Role</DialogTitle>
               <DialogDescription>Update role for: {selectedUser?.fullName}</DialogDescription>
@@ -855,6 +1515,7 @@ export function UserManagementModule() {
                   </SelectContent>
                 </Select>
               </div>
+              {renderChangePreview("Role", selectedUser?.role, newRole || selectedUser?.role)}
             </div>
             <DialogFooter>
               <Button
@@ -873,7 +1534,7 @@ export function UserManagementModule() {
         </Dialog>
 
         <AlertDialog open={showRoleChangeDialog} onOpenChange={setShowRoleChangeDialog}>
-          <AlertDialogContent className="bg-white rounded-lg border border-gray-200 p-6 shadow-lg max-w-lg">
+          <AlertDialogContent className="user-confirm-dialog bg-white rounded-lg border border-gray-200 p-0 shadow-lg">
             <AlertDialogHeader showBrand={false}>
               <AlertDialogTitle>Confirm Role Change</AlertDialogTitle>
               <AlertDialogDescription>
@@ -887,6 +1548,7 @@ export function UserManagementModule() {
                     <strong className="text-gray-900">{newRole}</strong>? This will affect their system permissions.</>
                 )}
               </AlertDialogDescription>
+              {renderChangePreview("Role", selectedUser?.role, newRole, "red")}
 
               {selectedUser && sessionUser?.id === selectedUser.id && newRole !== 'Admin' && (
                 <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
@@ -917,7 +1579,7 @@ export function UserManagementModule() {
         </AlertDialog>
 
         <AlertDialog open={showDeactivateDialog} onOpenChange={setShowDeactivateDialog}>
-          <AlertDialogContent className="bg-white rounded-lg border border-gray-200 p-6 shadow-lg max-w-lg">
+          <AlertDialogContent className="user-confirm-dialog bg-white rounded-lg border border-gray-200 p-0 shadow-lg">
             <AlertDialogHeader showBrand={false}>
               <AlertDialogTitle>Deactivate User Account</AlertDialogTitle>
               <AlertDialogDescription>
@@ -941,7 +1603,7 @@ export function UserManagementModule() {
         </AlertDialog>
 
         <AlertDialog open={showApproveDialog} onOpenChange={setShowApproveDialog}>
-          <AlertDialogContent className="bg-white rounded-lg border border-gray-200 p-6 shadow-lg max-w-lg">
+          <AlertDialogContent className="user-confirm-dialog bg-white rounded-lg border border-gray-200 p-0 shadow-lg">
             <AlertDialogHeader showBrand={false}>
               <AlertDialogTitle>Approve User Registration</AlertDialogTitle>
               <AlertDialogDescription>
@@ -965,7 +1627,7 @@ export function UserManagementModule() {
         </AlertDialog>
 
         <Dialog open={isEditBranchDialogOpen} onOpenChange={setIsEditBranchDialogOpen}>
-          <DialogContent>
+          <DialogContent className="user-edit-dialog">
             <DialogHeader>
               <DialogTitle>Edit User Branch</DialogTitle>
               <DialogDescription>
@@ -989,6 +1651,7 @@ export function UserManagementModule() {
                   </SelectContent>
                 </Select>
               </div>
+              {renderChangePreview("Branch", selectedUser?.branch, newBranch || selectedUser?.branch)}
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                 <p className="text-sm text-yellow-800">
                   <strong>Note:</strong> Transferring this {selectedUser?.role?.toLowerCase() || "employee"} will automatically update their system access to view and modify records only for the newly assigned branch.
@@ -1014,7 +1677,7 @@ export function UserManagementModule() {
         </Dialog>
 
         <AlertDialog open={showBranchTransferDialog} onOpenChange={setShowBranchTransferDialog}>
-          <AlertDialogContent className="bg-white rounded-lg border border-gray-200 p-6 shadow-lg max-w-lg">
+          <AlertDialogContent className="user-confirm-dialog bg-white rounded-lg border border-gray-200 p-0 shadow-lg">
             <AlertDialogHeader showBrand={false}>
               <AlertDialogTitle>Confirm Branch Transfer</AlertDialogTitle>
               <AlertDialogDescription>
@@ -1022,6 +1685,7 @@ export function UserManagementModule() {
                 <strong className="text-gray-900">{selectedUser?.branch}</strong> to{" "}
                 <strong className="text-gray-900">{newBranch}</strong>? This will affect their system access.
               </AlertDialogDescription>
+              {renderChangePreview("Branch", selectedUser?.branch, newBranch, "red")}
             </AlertDialogHeader>
             <AlertDialogFooter className="mt-4">
               <AlertDialogCancel
@@ -1041,7 +1705,7 @@ export function UserManagementModule() {
         </AlertDialog>
 
         <AlertDialog open={showRejectDialog} onOpenChange={setShowRejectDialog}>
-          <AlertDialogContent className="bg-white rounded-lg border border-gray-200 p-6 shadow-lg max-w-lg">
+          <AlertDialogContent className="user-confirm-dialog bg-white rounded-lg border border-gray-200 p-0 shadow-lg">
             <AlertDialogHeader showBrand={false}>
               <AlertDialogTitle>Reject User Registration</AlertDialogTitle>
               <AlertDialogDescription>
@@ -1058,7 +1722,7 @@ export function UserManagementModule() {
         </AlertDialog>
 
         <AlertDialog open={showReactivateDialog} onOpenChange={setShowReactivateDialog}>
-          <AlertDialogContent className="bg-white rounded-lg border border-gray-200 p-6 shadow-lg max-w-lg">
+          <AlertDialogContent className="user-confirm-dialog bg-white rounded-lg border border-gray-200 p-0 shadow-lg">
             <AlertDialogHeader showBrand={false}>
               <AlertDialogTitle>Reactivate User Account</AlertDialogTitle>
               <AlertDialogDescription>

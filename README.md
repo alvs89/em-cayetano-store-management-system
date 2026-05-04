@@ -1,217 +1,289 @@
-# Web-Based Store Management System for E.M. Cayetano Trading
+# E.M. Cayetano Store Management System
 
-A comprehensive web application designed to streamline business operations, inventory management, and sales tracking for E.M. Cayetano Trading. This system provides a robust interface for managing stock, generating reports, and maintaining user access control.
+A web-based inventory management system for E.M. Cayetano Trading. The system helps the store monitor branch inventory, manage stock-in and stock-out transactions, generate reports, track alerts, archive records, and administer user access.
 
-## 📋 Table of Contents
+## Project Overview
 
-* [Tech Stack](https://www.google.com/search?q=%23-tech-stack)
-* [Project Overview](https://www.google.com/search?q=%23-project-overview)
-* [Project Structure](https://www.google.com/search?q=%23-project-structure)
-* [Prerequisites](https://www.google.com/search?q=%23-prerequisites)
-* [Installation & Setup](https://www.google.com/search?q=%23-installation--setup)
-* [Database Configuration (Neon)](https://www.google.com/search?q=%23-database-configuration-neon)
-* [Running the Application](https://www.google.com/search?q=%23-running-the-application)
-* [Security & Git Guidelines](https://www.google.com/search?q=%23-security--git-guidelines)
-* [Authors](https://www.google.com/search?q=%23-authors)
+This project is built for the inventory workflow of E.M. Cayetano Trading. It centralizes product records, branch stock levels, archived items, user accounts, alerts, reports, maintenance tools, audit logs, and stock movement history in one responsive web application.
 
----
+The current implementation focuses on:
 
-## 🛠 Tech Stack
+- Real-time inventory and alert updates
+- Branch-level stock status tracking
+- Historical stock movement records
+- Audit logging for important user actions
+- Mobile-responsive layouts across all major pages
+- Admin-controlled user management and maintenance actions
+- PDF report export
 
-**Frontend**
+## Tech Stack
 
-* **Framework:** React.js (via Vite)
-* **Styling:** Tailwind CSS (inferred), CSS Modules
-* **Components:** Custom UI components (located in `client/src/components/ui`)
-* **State Management:** React Context API (`DataContext.jsx`)
+### Frontend
 
-**Backend**
+- React 19
+- Vite
+- Tailwind CSS and custom responsive CSS
+- Radix UI components
+- Lucide React icons
+- Axios
+- jsPDF and jsPDF AutoTable for report export
 
-* **Runtime:** Node.js
-* **Framework:** Express.js
-* **Authentication:** JSON Web Tokens (JWT), Bcrypt.js
-* **Utilities:** Nodemon, Dotenv, CORS
+### Backend
 
-**Database**
+- Node.js
+- Express.js
+- PostgreSQL using `pg`
+- JWT authentication
+- Bcrypt password hashing
+- Nodemailer for email-based OTP and account notices
 
-* **Database:** PostgreSQL (hosted on Neon)
-* **Driver:** `pg` (node-postgres)
+### Database
 
----
+- PostgreSQL
+- Neon is recommended for hosted development and deployment
 
-## 📖 Project Overview
+## Main Modules
 
-This system is engineered to modernize the manual processes of E.M. Cayetano Trading. It serves as a central hub for business data, ensuring data integrity and accessibility.
+- **Authentication**: Login, registration, forgot password, password reset, and two-factor verification.
+- **Dashboard**: Inventory summary, alerts overview, quick access modules, recent activity, and system guidelines.
+- **Search Products**: Product lookup with responsive result cards.
+- **Inventory Management**: Add items, update stock, stock-in, stock-out, archive items, sorting, filtering, and responsive mobile cards.
+- **Archive**: View and restore archived inventory records.
+- **Reports**: Summary, detailed inventory, low stock alert, category breakdown, and stock movement history reports with PDF export.
+- **Alerts**: Low-stock, out-of-stock, pending user, and system notifications with read/dismiss controls.
+- **Maintenance**: Backup, restore, optimization actions, data integrity checks, and system information.
+- **User Management**: Approve, deactivate, reactivate, change role, and change branch for users.
 
-### Key Modules
+## Project Structure
 
-* **Dashboard:** specialized views for quick insights into daily operations.
-* **Inventory Management:** Track stock levels, add new items, and manage product details.
-* **Search Module:** efficient lookup for products and records.
-* **Reports Module:** Generate actionable insights and sales reports.
-* **User Management:** Admin controls for managing staff accounts and permissions.
-* **Archive & Maintenance:** Tools for data archiving and system health checks.
-* **Alerts:** Notifications for low stock or critical system events.
-
----
-
-## 📂 Project Structure
-
-```bash
+```text
 em-cayetano-store-management-system/
-├── client/                 # Frontend Application (React + Vite)
-│   ├── public/             # Static assets
+├── client/
 │   ├── src/
-│   │   ├── assets/         # Images and icons
-│   │   ├── components/     # Reusable UI components & Feature Modules
-│   │   │   ├── ui/         # Generic UI elements (Buttons, Inputs, etc.)
+│   │   ├── components/
+│   │   │   ├── ui/
 │   │   │   ├── Dashboard.jsx
 │   │   │   ├── InventoryModule.jsx
-│   │   │   └── ... (Other modules)
-│   │   ├── styles/         # Global styles and CSS
-│   │   ├── utils/          # Utility functions and algorithms
-│   │   ├── App.jsx         # Main Application Component
-│   │   └── main.jsx        # Entry point
-│   ├── .env.example        # Client-side environment variable template
-│   ├── vite.config.js      # Vite configuration
-│   └── package.json        # Frontend dependencies
-│
-├── server/                 # Backend Application (Node + Express)
-│   ├── node_modules/       # Backend dependencies
-│   ├── database.sql        # SQL Schema for Database initialization
-│   ├── index.js            # Server entry point
-│   ├── .env                # Server-side environment variables (GitIgnored)
-│   └── package.json        # Backend dependencies
-│
-└── README.md               # Project Documentation
-
+│   │   │   ├── ReportsModule.jsx
+│   │   │   └── ...
+│   │   ├── styles/
+│   │   ├── utils/
+│   │   ├── App.jsx
+│   │   └── main.jsx
+│   ├── package.json
+│   └── vite.config.js
+├── server/
+│   ├── database.sql
+│   ├── index.js
+│   ├── package.json
+│   └── reset-admin.js
+├── documentation.txt
+└── README.md
 ```
 
----
+## Prerequisites
 
-## ✅ Prerequisites
+Install these before running the project:
 
-Before you begin, ensure you have the following installed:
+- Node.js 18 or newer
+- npm
+- Git
+- PostgreSQL database, preferably Neon
 
-* [Node.js](https://www.google.com/search?q=https://nodejs.org/) (v16 or higher)
-* [Git](https://www.google.com/search?q=https://git-scm.com/)
-* A [Neon](https://www.google.com/search?q=https://neon.tech/) account (for the Serverless PostgreSQL database)
-
----
-
-## ⚙️ Installation & Setup
+## Local Setup
 
 ### 1. Clone the Repository
 
 ```bash
 git clone https://github.com/alvs89/em-cayetano-store-management-system.git
 cd em-cayetano-store-management-system
-
 ```
 
-### 2. Frontend Setup
-
-Navigate to the client directory and install dependencies:
-
-```bash
-cd client
-npm install
-
-```
-
-* Create a `.env` file in the `client/` folder based on `.env.example`.
-* Configure your API base URL (e.g., `VITE_API_URL=http://localhost:5000`).
-
-### 3. Backend Setup
-
-Navigate to the server directory and install dependencies:
-
-```bash
-cd ../server
-npm install
-
-```
-
-* Create a `.env` file in the `server/` folder.
-* Add the following variables:
-```env
-PORT=5000
-DATABASE_URL=your_neon_connection_string
-JWT_SECRET=your_secure_random_string
-
-```
-
-
-
----
-
-## 🗄 Database Configuration (Neon)
-
-This project uses **Neon**, a serverless PostgreSQL platform.
-
-1. **Create a Project:** Log in to [Neon Console](https://www.google.com/search?q=https://console.neon.tech/) and create a new project.
-2. **Get Connection String:** Copy the "Direct Connection" string from your Neon dashboard. It should look like `postgres://user:password@ep-xyz.aws.neon.tech/dbname?sslmode=require`.
-3. **Configure Server:** Paste this string into your `server/.env` file as `DATABASE_URL`.
-4. **Initialize Schema:**
-* Locate the file `server/database.sql` in this repository.
-* Run the SQL commands inside this file using the Neon SQL Editor or a local tool like pgAdmin connected to your Neon instance. This will create the necessary tables and relationships.
-
-
-
----
-
-## 🚀 Running the Application
-
-To run the full stack locally, you need two terminal windows.
-
-**Terminal 1: Backend**
+### 2. Install Backend Dependencies
 
 ```bash
 cd server
-npm start
-# OR if using nodemon for development:
-npm run dev
-
+npm install
 ```
 
-*The server should start on port 5000 (or your defined port).*
+Create `server/.env`:
 
-**Terminal 2: Frontend**
+```env
+PORT=5000
+DATABASE_URL=your_postgresql_connection_string
+JWT_SECRET=your_secure_jwt_secret
+EMAIL_USER=your_email_address
+EMAIL_PASS=your_email_app_password
+```
+
+Notes:
+
+- `DATABASE_URL` is required.
+- `JWT_SECRET` should be a strong random string.
+- `EMAIL_USER` and `EMAIL_PASS` are required for OTP and email notifications.
+- Do not commit `.env` files.
+
+### 3. Install Frontend Dependencies
+
+```bash
+cd ../client
+npm install
+```
+
+Optional `client/.env`:
+
+```env
+VITE_API_BASE_URL=http://localhost:5000
+VITE_APP_VERSION=1.0.0
+VITE_APP_ENV=Development
+```
+
+Some authentication screens currently target the local backend during development, so run the backend on port `5000` unless those API URLs are updated.
+
+## Database Setup
+
+The backend includes runtime schema setup in `server/index.js`. When the server starts, it creates or updates the required tables.
+
+The important database tables are:
+
+- `users`
+- `products`
+- `branch_inventory`
+- `archived_inventory`
+- `stock_movements`
+- `audit_logs`
+- `backup_logs`
+
+### Clean Inventory Design
+
+The product catalog and branch stock data are separated:
+
+```text
+products
+- product_id
+- name
+- category
+- created_at
+```
+
+```text
+branch_inventory
+- inventory_id
+- product_id
+- branch
+- stock_level
+- min_stock_level
+- status
+- last_updated
+```
+
+Stock status should come from `branch_inventory`, not `products`.
+
+## Running the Application
+
+Open two terminals.
+
+### Backend
+
+```bash
+cd server
+npm run dev
+```
+
+or:
+
+```bash
+npm start
+```
+
+The backend runs on:
+
+```text
+http://localhost:5000
+```
+
+### Frontend
 
 ```bash
 cd client
 npm run dev
-
 ```
 
-*Vite will start the development server, typically at `http://localhost:5173`.*
+The Vite development server usually runs on:
 
----
+```text
+http://localhost:5173
+```
 
-## 🔒 Security & Git Guidelines
+## Build Check
 
-### Secure Coding Practices
+Before pushing changes, run:
 
-* **Never commit `.env` files.** Ensure `.env` is listed in your `.gitignore`.
-* **Sanitize Inputs:** Always validate and sanitize user inputs on the backend to prevent SQL injection (handled by parameterized queries in `pg`).
-* **Secrets:** Keep `JWT_SECRET` and database credentials distinct for production and development.
+```bash
+cd client
+npm run build
+```
 
-### Git Workflow
+For backend syntax checking:
 
-* **Main Branch (`main`):** Stable, production-ready code only. Direct commits are restricted.
-* **Development Branch (`dev` or `develop`):** Integration branch for ongoing work.
-* **Feature Branches:** Create a new branch for every feature or bug fix.
-* Naming convention: `feature/feature-name` or `fix/bug-description`.
+```bash
+cd server
+node --check index.js
+```
 
+## Default Admin Account
 
-* **Pull Requests:** All changes must go through a Pull Request (PR) from a feature branch to `dev`, then `dev` to `main`. Code review is required before merging.
+Use `server/reset-admin.js` if you need to reset the seeded admin account password in development.
 
----
+```bash
+cd server
+node reset-admin.js
+```
 
-## 👥 Authors
+Coordinate with the group before changing shared admin credentials.
 
-* **Donato, Raymond B.**
-* **Guillermo, Alvin J.**
-* **Niez, John Alces B.**
+## Groupmate Development Guide
 
-*Submitted to the Computer Science Department, Technological Institute of the Philippines.*
+### Recommended Workflow
+
+1. Pull the latest code before starting work.
+2. Create a feature branch for your assigned task.
+3. Keep changes focused on one feature or fix.
+4. Run the frontend build before committing.
+5. Avoid committing generated logs, build outputs, `node_modules`, or `.env` files.
+6. Write clear commit messages.
+7. Push your branch and open a pull request when ready.
+
+### Suggested Branch Names
+
+```text
+feature/inventory-improvements
+feature/reports-export
+fix/mobile-layout
+fix/database-schema
+```
+
+### Commit Message Examples
+
+```text
+Improve mobile dashboard layout
+Add stock movement report
+Fix archive restore validation
+Refine database schema cleanup
+```
+
+## Security Notes
+
+- Never commit `.env` files or database credentials.
+- Use strong JWT secrets in production.
+- Keep Neon credentials private.
+- Admin-only features should remain protected by backend authorization.
+- Audit logs should record important system actions for accountability.
+
+## Current Maintainers
+
+- Donato, Raymond B.
+- Guillermo, Alvin J.
+- Niez, John Alces B.
+
+Submitted to the Computer Science Department, Technological Institute of the Philippines.

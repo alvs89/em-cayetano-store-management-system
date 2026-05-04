@@ -18,19 +18,45 @@ CREATE TABLE users (
 );
 
 -- 2. PRODUCTS TABLE (Inventory Management)
--- Stores the hardware items, stock levels, and pricing
+-- Stores the shared product catalog
 CREATE TABLE products (
     product_id SERIAL PRIMARY KEY,
     name VARCHAR(150) NOT NULL,
     category VARCHAR(50) NOT NULL,
-    price DECIMAL(10, 2) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 3. BRANCH INVENTORY TABLE
+-- Stores stock counts per branch for each product
+CREATE TABLE branch_inventory (
+    inventory_id SERIAL PRIMARY KEY,
+    product_id INT NOT NULL REFERENCES products(product_id) ON DELETE CASCADE,
+    branch VARCHAR(50) NOT NULL,
     stock_level INTEGER DEFAULT 0,
     min_stock_level INTEGER DEFAULT 5,
     status VARCHAR(20) DEFAULT 'In Stock',
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (product_id, branch)
 );
 
--- 3. INITIAL SEED DATA (System Admin)
+-- 4. ARCHIVED INVENTORY TABLE
+-- Stores archived branch inventory records for restore/history workflows
+CREATE TABLE archived_inventory (
+    archived_inventory_id SERIAL PRIMARY KEY,
+    original_inventory_id INT,
+    product_id INT,
+    name VARCHAR(150) NOT NULL,
+    category VARCHAR(50) NOT NULL,
+    branch VARCHAR(50) NOT NULL,
+    stock_level INTEGER DEFAULT 0,
+    min_stock_level INTEGER DEFAULT 5,
+    status VARCHAR(20) DEFAULT 'In Stock',
+    last_updated TIMESTAMP,
+    archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    archived_by INT REFERENCES users(user_id) ON DELETE SET NULL
+);
+
+-- 5. INITIAL SEED DATA (System Admin)
 -- Creates the first admin account to allow initial login.
 -- Username: admin
 -- Password: admin123 (Managed via server-side hardcoded check for now)

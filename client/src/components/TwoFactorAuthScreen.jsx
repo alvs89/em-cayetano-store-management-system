@@ -1,6 +1,6 @@
 // 2FA UI: collects OTP, verifies with backend, and finalizes login session.
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { ShieldCheck, Mail, Check } from 'lucide-react';
 import { toast } from 'sonner';
@@ -9,8 +9,8 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 
-export function TwoFactorAuthScreen({ onSuccess }) {
-  const [code, setCode] = useState(['', '', '', '', '', '']);
+export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
+  const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
   const [remainingMs, setRemainingMs] = useState(120000);
@@ -78,16 +78,9 @@ export function TwoFactorAuthScreen({ onSuccess }) {
     };
   }, [username, navigate, serverIssuedAt, otpExpiresAtIso]);
 
-  const handleChange = (index, value) => {
-    if (isNaN(value)) return;
-    const newCode = [...code];
-    newCode[index] = value;
-    setCode(newCode);
-
-    // Auto-focus next input
-    if (value && index < 5) {
-      document.getElementById(`code-${index + 1}`).focus();
-    }
+  const handleCodeChange = (value) => {
+    const digitsOnly = value.replace(/\D/g, '').slice(0, 6);
+    setCode(digitsOnly);
   };
 
   const handleVerify = async (e) => {
@@ -101,8 +94,7 @@ export function TwoFactorAuthScreen({ onSuccess }) {
       });
       return;
     }
-    const fullCode = code.join('').replace(/\s+/g, '');
-    if (fullCode.length !== 6) {
+    if (code.length !== 6) {
       toast.error("Please enter the full 6-digit code", {
         classNames: {
           toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
@@ -117,7 +109,7 @@ export function TwoFactorAuthScreen({ onSuccess }) {
       // 1. Verify with Backend
       const response = await axios.post('http://localhost:5000/api/auth/verify-otp', {
         username,
-        code: fullCode,
+        code,
         branch: selectedBranch
       });
 
@@ -166,6 +158,7 @@ export function TwoFactorAuthScreen({ onSuccess }) {
       if (typeof onSuccess === 'function') {
         onSuccess(user);
       } else {
+        sessionStorage.setItem('authSessionActive', 'true');
         navigate('/dashboard', { replace: true });
       }
 
@@ -179,7 +172,7 @@ export function TwoFactorAuthScreen({ onSuccess }) {
           toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
         },
       });
-      setCode(['', '', '', '', '', '']); // Clear inputs on error
+      setCode(''); // Clear input on error
     } finally {
       setLoading(false);
       // Timer continues running; no restart logic needed.
@@ -207,7 +200,7 @@ export function TwoFactorAuthScreen({ onSuccess }) {
       setRemainingMs(expiresAtRef.current - alignedNow);
 
       // Reset input and UI state
-      setCode(['', '', '', '', '', '']);
+      setCode('');
       toast.success('A new verification code was sent.', {
         classNames: {
           toast: 'rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900',
@@ -221,6 +214,22 @@ export function TwoFactorAuthScreen({ onSuccess }) {
       });
     } finally {
       setResending(false);
+    }
+  };
+
+  const handleBackToLogin = () => {
+    localStorage.removeItem('temp_username');
+    localStorage.removeItem('temp_email');
+    localStorage.removeItem('temp_branch_selected');
+    localStorage.removeItem('temp_account_branch');
+    localStorage.removeItem('otp_issued_at');
+    localStorage.removeItem('otp_expires_at');
+    setCode('');
+
+    if (typeof onBackToLogin === 'function') {
+      onBackToLogin();
+    } else {
+      navigate('/login', { replace: true });
     }
   };
 
@@ -257,20 +266,18 @@ export function TwoFactorAuthScreen({ onSuccess }) {
 
             <form onSubmit={handleVerify} className="space-y-6">
               <div className="space-y-2">
-                <Label className="text-gray-800">Enter 6-digit code</Label>
-                <div className="flex justify-between gap-2">
-                  {code.map((digit, index) => (
-                    <Input
-                      key={index}
-                      id={`code-${index}`}
-                      type="text"
-                      maxLength="1"
-                      value={digit}
-                      onChange={(e) => handleChange(index, e.target.value)}
-                      className="w-12 h-12 text-center text-xl rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm"
-                    />
-                  ))}
-                </div>
+                <Label htmlFor="code" className="text-gray-800">Enter 6-digit code</Label>
+                <Input
+                  id="code"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="Enter 6-digit code"
+                  value={code}
+                  onChange={(e) => handleCodeChange(e.target.value)}
+                  className="h-12 rounded-xl border-gray-300 text-center text-xl tracking-[0.45em] font-semibold focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm"
+                  maxLength={6}
+                />
               </div>
 
               <Button
@@ -291,7 +298,13 @@ export function TwoFactorAuthScreen({ onSuccess }) {
               </Button>
 
               <div className="text-center text-sm text-gray-600">
-                <Link to="/" className="text-blue-600 hover:underline">Back to Login</Link>
+                <button
+                  type="button"
+                  onClick={handleBackToLogin}
+                  className="text-blue-600 hover:underline"
+                >
+                  Back to Login
+                </button>
               </div>
             </form>
           </CardContent>

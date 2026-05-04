@@ -357,12 +357,12 @@ export function sortByDateDesc(items) {
  * Sort items by ID (A-Z)
  */
 export function sortByIdAsc(items) {
-  return mergeSort(items, (a, b) => a.id.localeCompare(b.id));
+  return mergeSort(items, (a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
 }
 
 /**
  * Sort items by ID (Z-A)
  */
 export function sortByIdDesc(items) {
-  return mergeSort(items, (a, b) => b.id.localeCompare(a.id));
+  return mergeSort(items, (a, b) => String(b.id).localeCompare(String(a.id), undefined, { numeric: true }));
 }

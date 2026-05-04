@@ -1,0 +1,1941 @@
+WEB-BASED STORE MANAGEMENT SYSTEM
+FOR E.M. CAYETANO TRADING
+A Software Engineering 1 Project by
+Donato, Raymond B.
+Guillermo, Alvin J.
+Niez, John Alces B.
+Submitted to the Computer Science Department
+Technological Institute of the Philippines Quezon City
+In Partial Fulfillment
+of the Requirements for the Degree
+Bachelor of Science in Computer Science (BSCS)
+November 2025
+Dedication
+We, the proponents, Donato, Raymond B., Guillermo, Alvin J., and Niez, John
+Alces B. humbly dedicate this study to our chosen company, E.M. Cayetano
+Trading by implementing a Web-Based Store Management System for a
+streamline business operation.
+The students aim to provide a reliable reference for the future researchers
+who potentially want to continue implementing a Web-Based Store Management
+System.
+Finally, we dedicate this to our family and friends who became our support
+system in the process of making this study in reality. Also, to our mentor who has
+been our guidance all throughout the study.
+Acknowledgement
+With the effort, patience, and inspiration, this research became a reality.
+The proponents are grateful to those who extended their support for the
+completion of this study.
+First and foremost, the proponents would like to thank their adviser, Dr.
+Karren V. de Lara for her guidance and support throughout the research
+process. This study would not be accomplished without her support and
+expertise that greatly contributed to the whole work.
+Moreover, extending the recognition, the proponents would also like to
+sincerely appreciate the cooperation and trust of Ms. Edna M. Cayetano for
+letting her company be the subject of conducting this study. They are the main
+key that makes this research possible, from cooperating to our interview until the
+proponents meet the objectives of the study and successfully implementing the
+proposed system.
+Table of Contents
+I. Introduction
+Background of the Study.................................................................................. 3
+Statement of the Problem................................................................................. 5
+Objectives of the Study.....................................................................................6
+Significance of the Study.................................................................................. 6
+Scope............................................................................................................... 8
+Delimitations................................................................................................... 11
+II. System Design
+Narrative Description of the Existing System................................................. 15
+Narrative Description of the Proposed System...............................................17
+Procedural Flowchart of the Proposed System.............................................. 21
+Context Diagram of the Proposed System..................................................... 72
+Data Flow Diagram of the Proposed System................................................. 73
+Use Case Diagram......................................................................................... 78
+Hierarchical Input Process, and Output.......................................................... 79
+Input, Process, Output.................................................................................... 83
+Entity Relationship Diagram........................................................................... 89
+Screen Designs.............................................................................................. 90
+III. Methodology
+Software Process Model............................................................................... 112
+System Architecture......................................................................................116
+Data Gathering Instruments and Procedures............................................... 119
+Feasibility Study........................................................................................... 121
+Technical, Operational, and Economical...................................................... 121
+Cost Benefit Analysis (CBA)......................................................................... 123
+Materials....................................................................................................... 130
+Testing and Operating Procedure................................................................. 131
+Unit Testing............................................................................................. 131
+Module Testing........................................................................................ 131
+Integration Testing................................................................................... 132
+Software Evaluation......................................................................................132
+Sampling Tools............................................................................................. 134
+Work Plan..................................................................................................... 135
+Algorithm Implementation............................................................................. 135
+System Architecture of Algorithm................................................................. 138
+List of Tables
+Table 1 Cost-Benefit Analysis....................................................................... 129
+Table 2 Likert Scale...................................................................................... 133
+List of Figures
+Figure 1 Start Flowchart................................................................................. 21
+Figure 2 Sign Up Flowchart............................................................................ 23
+Figure 3 Forgot Password Flowchart..............................................................25
+Figure 4 Two-Factor Authentication Flowchart............................................... 27
+Figure 5 Employee Menu Flowchart............................................................... 29
+Figure 6 Admin Menu Flowchart.....................................................................31
+Figure 7 Search Flowchart............................................................................. 33
+Figure 8 Employee Inventory Flowchart......................................................... 35
+Figure 9 Admin Inventory Flowchart............................................................... 37
+Figure 10 Inventory Search Item Flowchart....................................................39
+Figure 11 Inventory Stock In Flowchart.......................................................... 41
+Figure 12 Inventory Stock Out Flowchart....................................................... 42
+Figure 13 Edit Inventory Flowchart................................................................. 43
+Figure 14 Add New Item Flowchart................................................................ 45
+Figure 15 Employee Archive Flowchart.......................................................... 47
+Figure 16 Admin Archive Flowchart................................................................49
+Figure 17 Reports Flowchart.......................................................................... 50
+Figure 18 Summary Report Flowchart............................................................52
+Figure 19 Detailed Inventory Report Flowchart.............................................. 53
+Figure 20 Low Stock Report Flowchart.......................................................... 55
+Figure 21 Category Analysis Report Flowchart.............................................. 57
+Figure 22 Alerts and Notifications Flowchart.................................................. 59
+Figure 23 Maintenance Flowchart.................................................................. 60
+Figure 24 User Management Flowchart......................................................... 61
+Figure 25 Pending User Flowchart................................................................. 63
+Figure 26 Inactive User Flowchart.................................................................. 65
+Figure 27 Edit Role Flowchart........................................................................ 67
+Figure 28 Edit Branch Flowchart.................................................................... 69
+Figure 29 Deactivate Flowchart...................................................................... 70
+Figure 30 Help Flowchart............................................................................... 71
+Figure 31 Context Diagram............................................................................ 72
+Figure 32 Security Module Data Flow Diagram..............................................73
+Figure 33 Registration and Verification Module Data Flow Diagram.............. 73
+Figure 34 Inventory Module Data Flow Diagram............................................ 74
+Figure 35 Search Module Data Flow Diagram............................................... 74
+Figure 36 Maintenance Module Data Flow Diagram...................................... 75
+Figure 37 Reports Module Data Flow Diagram.............................................. 75
+Figure 38 Archive Module Data Flow Diagram...............................................76
+Figure 39 Alerts and Notifications Module Data Flow Diagram...................... 76
+Figure 40 Help Module Data Flow Diagram................................................... 77
+Figure 41 Use Case Diagram......................................................................... 78
+Figure 42 Main System HIPO......................................................................... 79
+Figure 43 Security HIPO.................................................................................79
+Figure 44 Registration and Verification HIPO.................................................80
+Figure 45 Inventory HIPO............................................................................... 80
+Figure 46 Search HIPO.................................................................................. 81
+Figure 47 Maintenance HIPO......................................................................... 81
+Figure 48 Reports HIPO................................................................................. 82
+Figure 49 Archive HIPO..................................................................................82
+Figure 50 Alerts and Notifications HIPO......................................................... 82
+Figure 51 Help HIPO...................................................................................... 83
+Figure 52 Security IPO................................................................................... 83
+Figure 53 Registration and Verification IPO................................................... 84
+Figure 54 Admin Inventory IPO...................................................................... 84
+Figure 55 Edit Inventory IPO.......................................................................... 85
+Figure 56 Inventory Stock In/Out IPO.............................................................85
+Figure 57 Archive IPO.................................................................................... 86
+Figure 58 Search IPO..................................................................................... 86
+Figure 59 Maintenance IPO............................................................................87
+Figure 60 User Management IPO...................................................................87
+Figure 61 Reports IPO....................................................................................88
+Figure 62 Alerts and Notifications IPO........................................................... 88
+Figure 63 Help IPO......................................................................................... 89
+Figure 64 Entity Relationship Diagram........................................................... 89
+Figure 65 Login Screen UI..............................................................................90
+Figure 66 Create an Account Screen UI.........................................................91
+Figure 67 Forgot Password Screen UI........................................................... 92
+Figure 68 Two-Factor Authentication (2FA) Screen UI...................................93
+Figure 69 Employee Dashboard Screen UI.................................................... 94
+Figure 70 Admin Dashboard Screen UI..........................................................95
+Figure 71 Search Products Screen UI............................................................ 96
+Figure 72 Employee Inventory Screen UI.......................................................97
+Figure 73 Admin Inventory Screen UI............................................................ 98
+Figure 74 Inventory Stock In Screen UI..........................................................99
+Figure 75 Inventory Stock Out Screen UI..................................................... 100
+Figure 76 Add New Item Screen UI.............................................................. 101
+Figure 77 Archive Screen UI........................................................................ 102
+Figure 78 Reports Screen UI........................................................................ 103
+Figure 79 Alerts and Notifications Screen UI................................................104
+Figure 80 Maintenance Screen UI................................................................ 105
+Figure 81 User Management Screen UI....................................................... 106
+Figure 82 Edit User Role Screen UI............................................................. 107
+Figure 83 Edit Branch Screen UI.................................................................. 108
+Figure 84 Deactivate User Screen UI........................................................... 109
+Figure 85 Help Screen UI............................................................................. 110
+Figure 86 V-Model Diagram.......................................................................... 112
+Figure 87 System Architecture......................................................................116
+Figure 88 Gantt Chart................................................................................... 135
+Figure 89 Linear Search Algorithm Architecture...........................................138
+Figure 90 Binary Search Algorithm Architecture.......................................... 139
+Figure 91 Merge Sort Algorithm Architecture............................................... 140
+Figure 92 Bcrypt Hashing Algorithm Architecture.........................................141
+CHAPTER 1
+Introduction
+In today’s digital era, many businesses rely on technology to improve their
+efficiency, accuracy, and competitiveness. For small and medium-sized
+enterprises (SMEs), computerized systems have become essential for managing
+daily operations, including inventories, employee records, and transactions.
+Without such systems, businesses often face issues such as inaccurate records,
+delays in reporting, and difficulties in coordinating across branches.
+In this context, software engineering provides a structured and disciplined
+approach to solving business challenges through technology. According to
+McNeil (2024), software engineering applies engineering principles traditionally
+used in the design and management of physical systems to the entire software
+life cycle, including design, development, testing, deployment, and maintenance.
+This ensures that the resulting software is not only functional but also efficient,
+reliable, and adaptable to change. In simple terms, software engineering focuses
+on building quality systems that can support long-term business growth and
+continuous improvement.
+McNeil (2024) also explains that computer software refers to the collection
+of programs, procedures, and documentation that enable a computer system to
+perform specific tasks. It is classified into three major types: system software,
+which manages hardware and system resources; application software, which
+helps users perform specific tasks such as word processing or inventory
+management; and programming software, which provides the tools developers
+1
+use to create and maintain applications. Together, these types form the
+foundation of every computerized system and make automation and integration
+possible in modern business operations.
+The concept of a system, an organized set of components working
+together toward a goal lies at the center of software engineering and computer
+software. In business, systems are used to automate processes, reduce errors,
+and support decision-making. This is especially valuable for SMEs with multiple
+branches, where manual methods such as spreadsheets often result in
+inefficiency and inconsistent reporting.
+A web-based system addresses these issues. Accessible through the
+Internet, this type of system allows authorized users to log in and update records
+in real time, regardless of their location. Web-based systems eliminate delays in
+data consolidation, reduce inconsistencies, and provide scalability, since new
+branches can be integrated easily without separate installations. They are also
+cost-efficient, compatible with multiple devices and operating systems, and
+capable of supporting continuous updates and improvements.
+Building on these principles, this study proposes the development of a
+Web-Based Store Management System for E.M. Cayetano Trading, a hardware
+and construction supply business with two branches. The current manual
+method, which relies on spreadsheets and daily cross-checks, often results in
+errors and time delays. By introducing a semi-automated, web-based system, the
+business will be able to streamline inventory monitoring, manage supplies more
+2
+effectively, and generate standardized daily, weekly, and monthly reports,
+complemented by content-based report views and types, such as Summary,
+Detailed, Low Stock Alert, and Category Analysis. With real-time access and
+branch-wide connectivity, the proposed system is designed to improve accuracy,
+efficiency, and overall business performance.
+Background of the Study
+E.M. Cayetano Trading is a hardware and construction supply store
+established on May 25, 2012, by Ms. Edna M. Cayetano, who continues to serve
+as the business admin, owner, and proprietor. The company’s main branch is
+located in Manggahan, Rodriguez, Rizal, and another branch operates in San
+Rafael, Rodriguez, Rizal. The business offers a wide variety of products, such as
+cement, plywood, nails, hammers, screwdrivers, steel bars, and other hardware
+supplies that cater to construction projects and home improvement needs.
+At present, the store relies heavily on manual processes and Microsoft
+Excel for tracking daily sales and inventory. Typically, one employee encodes
+daily transactions while another conducts manual counts of stock. At the end of
+the day, their records are compared to ensure accuracy. However, this method is
+not always reliable. The admin has identified recurring issues such as inaccurate
+tallies, discrepancies between actual stock and recorded inventory, and
+instances of overstocking or understocking. For example, items like plywood or
+cement sometimes appear to be out of stock on paper, leading to unnecessary
+reorders, even when sufficient stock is still available.
+3
+To calculate inventory, the store follows a basic formula: Beginning
+Inventory – Outgoing Sales + New Deliveries = Ending Inventory. Although
+simple, this process can be error-prone, especially when data is handled
+manually. Furthermore, with two branches now in operation, monitoring stock
+levels across locations has become increasingly challenging. The lack of a
+centralized system makes data consolidation time-consuming and inconsistent.
+To address these challenges, a Web-Based Store Management System is
+proposed. The system will integrate multiple branches into a single platform,
+allowing the admin and authorized employees to access accurate stock
+information, generate daily, weekly, and monthly reports, and receive low-stock
+alerts. In addition, the reporting feature will support content-based report views
+and types, including Summary, Detailed, Low Stock Alert, and Category Analysis
+to provide the Admin with a clearer understanding of stock movement and
+category performance across branches. The proposed system will be developed
+using HTML5 and CSS3 for structure and design, paired with React v19 as the
+front-end framework to enhance interactivity and responsiveness. On the server
+side, JavaScript (ES2024) with Express.js version 5.1.0 will serve as the
+backend technology, enabling smooth communication between the user interface
+and the database. For data storage, PostgreSQL (v18) will be implemented as
+the primary database because of its reliability, scalability, and ability to handle
+structured records, such as inventory counts across branches. These
+technologies were chosen because they are widely used in modern web
+4
+development, cost-efficient, and capable of ensuring both accessibility and
+real-time updates for branch-wide monitoring purposes.
+By adapting a web-based system, the recurring problems of inaccurate
+stock monitoring, delayed reporting, and inconsistent records between branches
+can be significantly reduced, if not fully eliminated. Unlike the current manual and
+spreadsheet-based approaches, the proposed system ensures secured access,
+real-time synchronization, and reliable storage, making inventory data accurate,
+accessible, and protected from unauthorized manipulation or loss. Through this
+digital transformation, E.M. Cayetano Trading will not only improve efficiency,
+minimize stock errors, and maintain consistent records across its two branches
+but also establish a scalable foundation that can support future business
+expansion plans.
+Statement of the Problem
+E.M. Cayetano Trading currently relies on manual and spreadsheet-based
+processes to track inventory, leading to inconsistencies and inefficiencies in
+managing its operations.
+1. Lack of security for inventory data and monitoring, which leads to weak
+access controls, vulnerability to unauthorized changes, and increased risk
+of inventory mismanagement or discrepancies.
+2. Absence of real-time monitoring and centralized access to inventory data
+between the Manggahan and San Rafael branches.
+5
+3. Inefficient management of user accounts, where the absence of a
+centralized system for adding, updating, or maintaining user information
+leads to unorganized record handling and the absence of a proper
+process for authorizing or maintaining user access.
+Objectives of the Study
+The study aims to address the challenges of E.M. Cayetano Trading by
+developing a Web-Based Inventory Management System that ensures accuracy,
+efficiency, and accessibility.
+1. To implement a robust security module through role-based access control
+and secure password hashing to restrict access and protect employee
+credentials.
+2. To provide a centralized platform that enables real-time monitoring of
+stock and supply levels, allows product updates, and supports report
+generation across both branches.
+3. To design and integrate a centralized User Management feature that
+enables the admin to efficiently authorize, update, and maintain user
+accounts, ensuring organized access control and streamlined system
+operations.
+Significance of the Study
+The product of this study will directly benefit E.M Cayetano Trading’s
+business operations by introducing a centralized and accurate inventory system
+6
+that guarantees real-time monitoring of inventory count across all branches. The
+product will facilitate optimized operations, reduce financial losses from
+overstocking or understocking, and support smarter business decision-making.
+The employees of the business that handles stock management will benefit from
+a central digitized stock management system, and will eliminate tedious manual
+counting and recording of stocks. The business admin will be able to access the
+inventory of all their branches and receive notifications when certain products are
+nearing depletion.
+The proponents will enhance their technical skills, gain practical
+experience in software development, and produce a product that addresses a
+real-world business need. The proponents will incorporate all past knowledge to
+create a software solution for E.M. Cayetano Trading. The proponents will have
+first-hand experience in the software development process, from the initial
+interview with the target business to the deployment of the final product to be
+utilized by the business. The proponents will learn how to design a system that
+will aid in the day-to-day operations of a real business and use that experience to
+boost their careers in the future.
+Moreover, this study will contribute to various academic and professional
+fields. In technology, it demonstrates how business operations can be improved
+through automation, data centralization, and real-time information sharing. In
+computer science, the study highlights the application of algorithms and
+7
+database management to solve real-world problems efficiently. In software
+engineering, it strengthens the importance of applying systematic development
+methodologies from requirement analysis and design to testing and deployment,
+ensuring that the software is reliable, scalable, and user-friendly. Beyond these
+technical fields, the study also impacts economics and business management.
+By converting a manual system into a semi-automated, computerized one, the
+company can minimize inefficiencies, increase productivity, and serve more
+customers, which ultimately leads to higher profits and improved competitiveness
+in the market. Furthermore, the conducted research will open new opportunities
+for future researchers in software engineering by expanding studies on
+web-based development of inventory systems for businesses. It can serve as a
+valuable reference in understanding the design and implementation of a
+centralized inventory system tailored for multi-branched brick-and-mortar
+enterprises.
+Scope
+The proposed project will deliver a reliable, efficient, and user-friendly
+web-based inventory management system for E.M. Cayetano Trading. Its primary
+purpose is to replace the limitations of the existing manual and
+spreadsheet-based processes by introducing semi-automation approach,
+real-time monitoring, enhanced security, and accurate reporting across all
+branches.
+8
+At the core of the system is the Security Module, which will manage
+authentication, authorization, and password protection using bcrypt to ensure
+employee credentials remain safe even in the event of a database compromise.
+Complementing this is the Registration and Verification Module, which handles
+account creation, prevents duplicate registrations through database-level unique
+indexes, and verifies users through email.
+The Maintenance Module enables the admin to perform essential upkeep
+tasks, such as database backup and restore. This module also integrates User
+Management functions, allowing the admin to approve new accounts, deactivate
+or reactivate users, and manage user roles to maintain security and
+accountability within the system.
+Additionally, a Help Module will provide user assistance and guidance,
+enabling employees to easily navigate the system and resolve common issues,
+thereby reducing its misuse and downtime.
+The system will also integrate a Search Module designed to make
+inventory lookup faster and more efficient than the current system. This will
+employ binary search algorithms for dealing with sorted product lists, significantly
+reducing lookup time by repeatedly dividing the search space in half. For smaller
+datasets or unsorted product collections, linear search will be used, as it allows
+quick scanning without the overhead of sorting.
+9
+For reporting, the Reports Module will provide standardized daily, weekly,
+and monthly reports based on the business formula “Beginning Inventory –
+Outgoing Sales + New Deliveries = Ending Inventory.” It will also support
+content-based report views and types (Summary, Detailed, Low Stock Alert, and
+Category Analysis) to enhance data interpretation and support better
+decision-making.
+Central to these modules is the Inventory Module, which will record and
+manage all stock movements across branches, including item codes, quantities,
+prices, and categories, serving as the foundation of the system’s operations.
+To further enhance business oversight, the Alerts and Notifications Module
+will deliver low-stock warnings, synchronization failure alerts, and notifications for
+new user registrations directly through the system. Complementing this is the
+Archive Module, which securely stores inactive or outdated inventory records,
+allowing an admin to restore or review them when necessary without
+permanently deleting data.
+For data organization, the system will apply merge sort, a
+divide-and-conquer algorithm known for its stability and efficiency with large
+datasets. Merge sort will ensure that product records, particularly those
+containing duplicate values, are always presented in a clear and consistent order.
+The development of the system will utilize JavaScript (ES2024) with the
+React v19 for the front-end, Express.js version 5.1.0 for the back-end, and
+PostgreSQL (v18) for the database, ensuring efficiency and reliability in data
+10
+management. The use of HTML5 and CSS3 will support responsive web design,
+while the design of the system will be visualized using Figma. As a web-based
+platform, the inventory management system will be compatible with major
+operating systems such as Windows and Android, it will function through widely
+used browsers including Google Chrome and Mozilla Firefox. With these features
+and modules, the system is expected to optimize inventory management for E.M.
+Cayetano Trading, providing a centralized solution that guarantees security,
+accessibility, and accuracy in managing business resources.
+Delimitations
+During the initial interview with the business admin, the admin expressed
+that the business's main need and priority is an improved inventory management
+system from their current strategy. In light of this, the proponents will not be
+building a separate transaction system alongside the inventory management
+system. The intended users of the system will only be the employees of E.M.
+Cayetano Trading, who will handle the inventory management, and the business
+admin.
+An internet connection will be needed for the users to access the
+inventory. The proposed system will not function without an internet connection.
+Support of the system is limited to the specified operating systems, versions, and
+the specified browsers stated in the scope; other OS/browsers and legacy OS
+and browser versions are not guaranteed to work. Customer relationship
+management, payroll, and supplier ordering modules are not included in the
+11
+system. Likewise, the data migration process from the existing manual or
+spreadsheet-based system to the proposed system will not be handled by the
+proponents. Post-deployment maintenance and feature updates are also
+excluded from the initial deliverables.
+Other limitations include the limitation of security coverage; the system
+cannot guarantee absolute protection from external threats, such as hacking or
+data loss, due to unforeseen server issues.
+12
+CHAPTER 2
+System Design
+System design is the process of transforming user requirements into a
+structured blueprint that defines how a system will operate and interact with its
+components. According to Lal (2024), system design is both an innovative and
+technical phase of development, where the proposed solution is planned and
+organized in preparation for implementation. It focuses on the “how” of the
+system such as how processes are structured and components interact to
+achieve organizational goals. Tsui et al. (2023) emphasize that system design
+bridges the gap between requirements and implementation by decomposing the
+system into interconnected modules, ensuring that every function, process, and
+interface works cohesively to meet both functional and non-functional
+requirements.
+To begin with, to visualize and communicate the design effectively, various
+diagrams are used as graphical notations. These diagrams help analysts,
+designers, and developers understand the system’s structure and behavior in a
+more intuitive and organized manner. Each type of diagram serves a unique
+purpose and represents a different perspective of the system.
+Among these diagrams, the Flowchart is one of the most fundamental
+tools used in system design. It graphically represents the logical flow of
+processes using standardized symbols such as ovals, rectangles, and diamonds
+to denote start or end points, actions, and decisions. According to Kung (2023),
+flowcharts function as directed graphs that organize processing nodes, decision
+13
+nodes, and connecting paths to effectively model the flow of control within a
+process.
+Meanwhile, a Data Flow Diagram (DFD) emphasizes how data moves
+between processes and entities rather than control flow. According to Borg
+(2024), DFDs serve as significant modeling techniques for analyzing and
+constructing information processes by illustrating the movement of information
+based on inputs and outputs within a system. DFDs are important because they
+model information systems clearly, allowing designers to trace data from entry to
+exit points.
+In addition, the Use Case Diagram, as Tsui et al. (2023) describe it as a
+representation of the interactions between users (actors) and the system. It helps
+identify system functionalities from the users' perspective and ensures that all
+interactions and requirements are well understood during system design.
+Furthermore, modern system design continues to integrate various
+modeling techniques while retaining classical methods such as the Hierarchical
+Input-Process-Output (HIPO) diagram. The HIPO model adopts a top-down
+approach that visualizes a system’s overall structure through hierarchy charts
+and Input-Process-Output (IPO) diagrams. This method effectively documents
+system functions, clarifies relationships among modules, and supports clear
+communication between designers and stakeholders.
+Moreover, Input-Process-Output (IPO) diagrams, as described in the
+INCOSE Systems Engineering Handbook (2023), represent how inputs are
+14
+transformed into outputs through defined system processes. Each IPO diagram
+outlines what data enters a process, how it is handled, and what results it
+produces. This structured visualization helps system engineers and developers
+identify the essential components and expected outcomes of each module.
+Lastly, the Entity-Relationship Diagram (ERD) focuses on the structure of
+data in the system. Based on Borg (2024), an ERD "visually depicts an
+organization's entities, the entities' relationships to each other, and the business
+rules associated with the relationships" (p. 52). It provides a foundation for
+database design by defining entities, attributes, and their interconnections.
+Narrative Description of the Existing System
+The existing system of E.M. Cayetano Trading operates entirely through
+manual, paper-based, and spreadsheet-driven processes for managing daily
+operations. The workflow mainly involves employees recording daily sales,
+deliveries, and inventory updates using Microsoft Excel files. Each branch,
+namely Manggahan and San Rafael, maintains its own records independently,
+meaning that the admin does not consolidate or centralize their data. This
+branch-by-branch setup makes it difficult to gain a unified view of stock
+availability and overall business performance. The system lacks automation,
+real-time tracking, and centralized storage, which often causes inconsistencies
+between recorded quantities and actual stock levels.
+In the current setup, each employee manually logs item transactions, such
+as stock-in (deliveries) and stock-out (sales), into spreadsheets. Afterward,
+15
+physical stock counts are conducted at the end of the day or week to cross-check
+these records. Any discrepancies require manual reconciliation, often involving
+recalculating the ending inventory and verifying purchase or delivery documents.
+The process is repetitive, slow, and highly prone to human error—especially
+when multiple employees update the same file simultaneously.
+Furthermore, since both branches operate separately, tracking inventory
+across locations is difficult. The Admin must manually collect and merge files
+from both locations to determine overall stock availability. This lack of
+synchronization often results in overstocking of slow-moving products or
+shortages of fast-moving items. Additionally, because there are no automated
+low-stock alerts, restocking only happens after employees notice that supplies
+are running low, which can disrupt operations or delay customer orders.
+Reporting also presents significant challenges. Employees must manually
+compile stock and sales data into Excel summary sheets and send them to the
+admin for review. Preparing daily, weekly, or monthly inventory summaries
+requires gathering multiple files, verifying formulas, and recalculating totals,
+increasing the risk of misreporting. The absence of standardized reporting tools
+makes it difficult for the admin to quickly assess inventory performance or detect
+trends.
+Moreover, the system lacks any built-in user management or data security
+features. All employees share access to the same files, so accidental deletions,
+unauthorized edits, or untracked changes can easily occur without accountability.
+16
+Overall, the existing manual system is inefficient and error-prone, limiting
+the company’s ability to maintain accurate inventory records, generate timely
+reports, and ensure secure data handling across branches. These limitations
+highlight the need for a web-based, centralized inventory management system
+that can support semi-automated stock monitoring, reporting, and user access
+control—helping streamline operations and support better business decisions for
+both branches.
+Narrative Description of the Proposed System
+The proposed system is a web-based inventory management platform
+developed specifically for E.M. Cayetano Trading to replace its manual,
+paper-based, and spreadsheet-driven processes. It aims to improve the
+company’s inventory monitoring, reporting accuracy, and data security across its
+multiple branches. By centralizing all records in a single online database, the
+system enables the admin and authorized employees to access real-time,
+consistent information anytime and anywhere through a secure internet
+connection.
+The system provides role-based access control to ensure organized and
+secure user interaction. The admin holds the highest level of access, enabling
+them to manage products, review reports, perform maintenance tasks such as
+data backup and restoration, and oversee user accounts. Meanwhile, employees
+are granted limited access that focuses on operational tasks such as updating
+stock movements (stock-in and stock-out), searching items, and viewing product
+details. This role-based control ensures that sensitive functions—like deactivating
+17
+accounts, approving new users, or editing high-level records remain exclusive to
+admin.
+The proposed system is composed of several interrelated modules that
+enhance usability and reliability. The Security Module ensures that only
+authorized users can log in through role-based authentication, secure password
+handling, and account verification. The Registration and Verification Module
+supports new account creation, email verification, and password reset processes,
+ensuring accessibility and preventing duplicate user entries.
+For system upkeep, the Maintenance Module allows an admin to perform
+data backups, restore records when needed, and manage user profiles. A Help
+Module is also integrated to assist users by providing FAQs, system guidelines,
+and contact support, minimizing confusion and errors during use.
+Central to the system is the Inventory Module, where all stock records are
+stored and updated. Employees can record deliveries, sales, and adjustments
+while the system automatically calculates balances. Supporting this, the Search
+Module enables fast and accurate item lookups.
+Supporting business oversight, the Reports Module provides
+comprehensive reporting features to support business analysis and
+decision-making. It generates standardized daily, weekly, and monthly reports
+based on the company’s formula. In addition to time-based summaries, the
+system also features content-based report views and types, such as Summary,
+Detailed, Low Stock Alert, and Category Analysis, allowing the admin and
+18
+employees to analyze inventory trends and performance from different
+perspectives. The module also includes an Export to PDF option, enabling users
+to easily generate and download digital copies of reports for documentation and
+review.
+To further support operational accuracy, the Alerts and Notifications
+Module provides real-time low-stock alerts and system-related notifications,
+ensuring that the admins and employees can make timely restocking decisions
+and respond promptly to inventory changes.
+Complementing this, the Archive Module stores inactive or outdated
+inventory items in a secure storage area within the system. This allows an admin
+to manage records efficiently—viewing, filtering, or restoring archived items when
+necessary while maintaining a clean and organized active inventory list.
+From a technical standpoint, the system will be developed using HTML5
+and CSS3 for structure and design, ensuring a clean and responsive interface.
+The front end will be powered by React v19, providing dynamic and interactive
+user experiences. On the server side, the system will utilize JavaScript (ES2024)
+with Express.js version 5.1.0 to handle backend logic and enable seamless
+communication between the client and server. For data storage, PostgreSQL
+(v18) will serve as the main database, offering reliable, scalable, and structured
+record management for inventory data across branches. The system will remain
+accessible across devices and browsers, supporting both desktop and mobile
+platforms through common browsers like Google Chrome and Mozilla Firefox.
+19
+Overall, the system strengthens operational efficiency by automating stock
+management, securing sensitive data, and improving communication across
+branches. With clear role assignments and centralized data access, E.M.
+Cayetano Trading can minimize errors, generate timely reports, and make
+data-driven decisions, establishing a stronger foundation for business growth and
+sustainability.
+20
+Procedural Flowchart of the Proposed System
+Figure 1 Start Flowchart
+This figure shows the initial process flow of the Web-Based Store Management
+System for E.M. Cayetano Trading. It begins with the user entering their
+username and password or selecting an option such as sign-up or forgot
+21
+password. The system validates the input fields to ensure all required information
+is provided. If any fields are incomplete or the credentials are invalid, the user is
+prompted with an appropriate message. Once valid credentials are provided, the
+system verifies them in the database. If the verification is successful, the user
+proceeds to the Two-Factor Authentication (2FA) stage. Otherwise, they may
+choose to sign up for a new account or recover their password.
+22
+Figure 2 Sign Up Flowchart
+This figure outlines the sign-up process for new users within the system. It begins
+with the user providing essential information such as full name, username, and
+email, followed by the selection of a branch. The system then checks whether all
+required fields have been filled and verifies the uniqueness of the chosen
+23
+username. If any required information is missing or the username already exists,
+the user is prompted with a validation notification. When all validations are
+satisfied, the system saves the new user's details to the database with a pending
+status and displays a success notification, confirming that the registration
+process was initiated properly.
+24
+Figure 3 Forgot Password Flowchart
+This figure presents the process for users who need to recover a forgotten
+password within the system. It starts by prompting the user to input their
+25
+username and registered email address. After checking that all fields are
+complete, the system verifies whether the information matches an existing user
+in the database. If not, an empty state message is displayed; if the user exists, a
+password reset link is sent to their email. Finally, the system provides
+confirmation and instructions, ensuring users receive the necessary information
+to proceed with password recovery effectively.
+26
+Figure 4 Two-Factor Authentication Flowchart
+This figure illustrates the two-factor authentication process that follows a
+successful login. The system sends a six-digit verification code to the user's
+email, guiding them to a verification screen with a countdown timer. The user
+27
+must enter the code within two minutes; if not, they can request a new code or
+exit the process. The entered code is checked for length and accuracy, providing
+tailored error messages for invalid or expired attempts. Upon successful
+verification, the login is confirmed, and the user is directed to the appropriate
+menu based on their role as admin or employee ensuring secure and role-based
+system access.
+28
+Figure 5 Employee Menu Flowchart
+This figure displays the navigation flow for employees after logging in. Upon
+accessing the employee menu, users are presented with various options such as
+29
+searching, managing inventory, viewing archives, generating reports, checking
+alerts and notifications, seeking help, or logging out. The user selects an option,
+and the system guides them to the corresponding interfaces. If the employee
+chooses to log out, the session ends; otherwise, they may return to the menu to
+perform additional tasks, ensuring logical and user-friendly navigation through
+their available functions.
+30
+Figure 6 Admin Menu Flowchart
+This Figure outlines how an admin interacts with the system after logging in.
+From the admin menu, users are presented with a variety of options, including
+searching, managing inventory, accessing archives, generating reports, checking
+alerts and notifications, performing maintenance, managing users, seeking help,
+31
+or logging out. The admin selects a desired function, and the system guides them
+directly to the corresponding interfaces. If log out is chosen, the session ends;
+otherwise, the admin can continuously navigate between different features
+according to their responsibilities.
+32
+Figure 7 Search Flowchart
+33
+This figure represents the sequence for searching inventory within the system. It
+starts by presenting a search interface where users can use filters and input
+fields. When a search is initiated, the system loads inventory data, then
+processes user-entered keywords or filter selections. If no input is provided, the
+user receives an instructional message–like “start searching for products.” If
+there are matching items, the number of results and product details are shown,
+while no matches prompt an empty state message. Users can choose to return to
+the main menu or continue searching as needed
+34
+Figure 8 Employee Inventory Flowchart
+This figure presents the workflow for employees managing inventory tasks. Upon
+accessing the employee inventory section, the user is given options to search for
+35
+items and carry out stock-in and stock-out tasks. Depending on their selection,
+the system directs them to the corresponding inventory operation. After
+completing a task, employees can either return to the main menu or stay within
+the inventory functions, supporting efficient and straightforward inventory
+management.
+36
+Figure 9 Admin Inventory Flowchart
+37
+This figure describes the workflow for an admin managing inventory. Upon
+accessing the admin inventory menu, the user can choose to search inventory
+items, edit existing records, and carry out stock-in and stock-out tasks. Each
+option leads directly to its corresponding function, supporting both inventory
+management and updates. After performing tasks, an admin has the option to
+return to the main menu or stay within the inventory area, promoting flexible and
+comprehensive inventory control.
+38
+Figure 10 Inventory Search Item Flowchart
+39
+This figure highlights the process of searching for specific items within the
+inventory. The workflow begins with displaying the inventory search interface,
+where the user can perform a search or select a product category. After entering
+or selecting criteria, the system collects the input and checks it against the
+inventory database. If matching hardware items are found, they are presented on
+the screen for review; if not, a message indicates that there are no results. The
+user is then given the option to return to the main menu or continue performing
+further searches, ensuring efficient and straightforward inventory look-up.
+40
+Figure 11 Inventory Stock In Flowchart
+This figure describes the process for adding items to inventory stock. It starts by
+guiding the user to the stock-in interface, where they can choose an item and
+specify the quantity to be added. The system checks if the entered quantity is
+valid and greater than zero; if not, a validation message is shown. Once verified,
+the system calculates the new total, updates the item's stock level, status, and
+last updated date in the database, and displays a success notification. Users are
+41
+then given the option to return to the main menu or continue performing
+additional stock-in operations.
+Figure 12 Inventory Stock Out Flowchart
+This figure outlines the procedure for removing hardware items from stock. It
+begins with the user selecting an item and specifying the quantity to deduct using
+the stock-out form. The system validates that the requested quantity is a positive
+number and does not exceed the current available stock. It then calculates the
+new stock level, issues alerts if the item is depleted or low, and updates the
+database with the new quantity, status, and last updated date. A success
+42
+notification confirms the operation, after which the user can choose to return to
+the main menu or continue with further stock-out operations.
+Figure 13 Edit Inventory Flowchart
+This figure outlines the steps for editing inventory records. It begins by displaying
+the inventory interface, after which the user can choose to add a new item,
+43
+archive an existing item, or return to the main menu. If added, the process moves
+to the relevant form for entering new item details; if archiving, the selected item is
+prepared for archival. This flow enables the admin to effectively manage
+inventory updates, ensuring accurate and current records for all hardware assets.
+44
+Figure 14 Add New Item Flowchart
+This figure details the steps involved in adding a new hardware item to inventory.
+It starts by opening an entry form, where the user must provide all required item
+details. The process ensures each field is filled, the entered quantity is a valid
+non-negative number, and the item does not already exist in the database. Once
+validated, the system generates a unique ID, determines stock status, and adds
+45
+the item to the inventory list. Notifications are shown depending on stock and
+warning levels, allowing the user to confirm successful addition or be alerted to
+any potential issues before returning to the main menu or repeating the process
+46
+Figure 15 Employee Archive Flowchart
+This figure presents the employee archive workflow. It begins by showing the
+archive page interface and retrieving all archived items from the system
+47
+database. Employees can then search or filter these archived items, with results
+displayed in a detailed table view. If no matching items are found, an empty state
+message is shown; otherwise, the table provides comprehensive details for each
+entry. Users may choose to return to the main menu or continue searching within
+the archives.
+48
+Figure 16 Admin Archive Flowchart
+This figure shows the process flow for how the admin manages archived
+inventory items. The sequence begins with accessing the archive interface,
+49
+where the system retrieves all archived items from the database. The admin can
+then search or filter items, which are displayed in a table view with details and
+restore options. If an item is selected for restoration and the admin confirms the
+action, the system removes it from the archive list, adds it back to the active
+inventory, and updates the database records. If no items are found or the
+restoration is cancelled, the process returns to the archive management interface
+for further actions.
+Figure 17 Reports Flowchart
+50
+This figure shows the workflow for generating inventory and summary
+reports, where users select a time period (daily, weekly, or monthly) and choose
+the report type, such as summary, detailed inventory, low stock alert, or category
+analysis. Each selection generates the corresponding report, allowing users to
+access tailored information for decision-making and navigate back to the main
+menu or view more reports as needed.
+51
+Figure 18 Summary Report Flowchart
+This figure explains how a user generates and exports a summary report. The
+process begins with a preview screen, after which the user can choose to export
+52
+the report as a PDF version for a selected period. Depending on the user's
+action, the workflow allows returning to the main menu or repeating the process
+for other report periods.
+Figure 19 Detailed Inventory Report Flowchart
+This figure describes the detailed inventory report workflow. Users preview
+inventory data, apply category filters, and then view items by category or all items
+together. If an export is chosen, the system generates a PDF either for the
+filtered category or for the entire inventory, always based on the user’s selected
+53
+period. The flow supports flexible generation of comprehensive or specific
+inventory records.
+54
+Figure 20 Low Stock Report Flowchart
+This figure presents the steps for showing the low stock report. The report
+preview identifies items flagged as low or out of stock, which are shown to the
+55
+user for review. The user may export this data as a PDF based on the chosen
+period, and then either return to the main menu or repeating the process for other
+report periods.
+56
+Figure 21 Category Analysis Report Flowchart
+57
+This figure covers the category analysis report workflow. It starts with a preview,
+then groups and summarizes inventory data based on item categories. Users can
+export this summarized report as a PDF for the period they select or return to the
+main menu for additional reporting needs.
+58
+Figure 22 Alerts and Notifications Flowchart
+This figure illustrates how the system manages alerts and notifications by loading
+user details and inventory data to generate real-time updates combined with
+59
+system-wide alerts. Based on user roles, certain admin-only alerts are filtered
+out, and users can view, dismiss, or mark alerts as read, with success
+notifications confirming each action.
+Figure 23 Maintenance Flowchart
+60
+This figure outlines the steps for system maintenance operations. Users begin by
+selecting from options such as backup, restore, user management, or
+optimization. The process guides users through performing database backups or
+restores with confirmation notifications, and allows for access to user
+management or returning to the main menu.
+Figure 24 User Management Flowchart
+61
+This figure explains the user management workflow. It begins with a list of all
+users categorized as active, pending, or inactive. Users can filter and search
+through these lists, and perform management actions such as editing roles,
+changing branches, or deactivating users. Each action is confirmed and reflected
+in the user interface, supporting organized and efficient user administration.
+62
+Figure 25 Pending User Flowchart
+63
+This figure illustrates the process of managing pending user accounts, starting
+with a list where the admin can approve or reject each application. Approving
+activates the account with a success notification, while rejecting confirms
+removal, notifies the user, and displays a rejection message, allowing the admin
+to efficiently manage and review pending accounts.
+64
+Figure 26 Inactive User Flowchart
+65
+This figure shows how inactive user accounts are managed, where an admin can
+view a list of inactive users and reactivate any account. Once reactivated, the
+user’s status changes to active, a password setup email is sent, and a success
+notification confirms the action.
+66
+Figure 27 Edit Role Flowchart
+67
+This figure details the process of editing a user’s role. Upon selecting this action,
+an edit role dialog is displayed where the admin can choose a new role for the
+user: admin or employee. If the same role is selected, an informational message
+appears; if a different role is chosen, a confirmation dialog follows. Once
+confirmed, the system updates the user's role in the database and the user
+interface, and displays a success notification.
+68
+Figure 28 Edit Branch Flowchart
+69
+This figure describes the workflow for editing a user’s assigned branch. Admin
+can open the edit dialog to select a new branch; if the chosen branch matches
+the current one, an informational message appears, and no changes are made. If
+a different branch is selected, the admin is prompted to confirm the transfer.
+Once confirmed, the system updates the user’s branch in the database and
+displays a success notification, ensuring any changes are clearly communicated
+and accurately recorded.
+Figure 29 Deactivate Flowchart
+70
+This figure details the steps for deactivating a user account. When an admin
+initiates deactivation, a confirmation dialog appears. If the action is confirmed,
+the user's status is set to inactive in the database, and a success notification is
+shown. If not confirmed, the workflow simply closes the dialog and shows the
+user management screen, ensuring that all changes are deliberate and tracked.
+Figure 30 Help Flowchart
+71
+This figure describes the Help flow. When users access the Help & Support
+interface, they can choose to view frequently asked questions, guides, or contact
+support details. The system responds by displaying the requested information.
+Users may also return to the main menu or stay in the Help interface.
+Context Diagram of the Proposed System
+Figure 31 Context Diagram
+72
+Data Flow Diagram of the Proposed System
+Figure 32 Security Module Data Flow Diagram
+Figure 33 Registration and Verification Module Data Flow Diagram
+73
+Figure 34 Inventory Module Data Flow Diagram
+Figure 35 Search Module Data Flow Diagram
+74
+Figure 36 Maintenance Module Data Flow Diagram
+Figure 37 Reports Module Data Flow Diagram
+75
+Figure 38 Archive Module Data Flow Diagram
+Figure 39 Alerts and Notifications Module Data Flow Diagram
+76
+Figure 40 Help Module Data Flow Diagram
+77
+Use Case Diagram
+Figure 41 Use Case Diagram
+78
+Hierarchical Input Process, and Output
+Figure 42 Main System HIPO
+Figure 43 Security HIPO
+79
+Figure 44 Registration and Verification HIPO
+Figure 45 Inventory HIPO
+80
+Figure 46 Search HIPO
+Figure 47 Maintenance HIPO
+81
+Figure 48 Reports HIPO
+Figure 49 Archive HIPO
+Figure 50 Alerts and Notifications HIPO
+82
+Figure 51 Help HIPO
+Input, Process, Output
+Figure 52 Security IPO
+83
+Figure 53 Registration and Verification IPO
+Figure 54 Admin Inventory IPO
+84
+Figure 55 Edit Inventory IPO
+Figure 56 Inventory Stock In/Out IPO
+85
+Figure 57 Archive IPO
+Figure 58 Search IPO
+86
+Figure 59 Maintenance IPO
+Figure 60 User Management IPO
+87
+Figure 61 Reports IPO
+Figure 62 Alerts and Notifications IPO
+88
+Figure 63 Help IPO
+Entity Relationship Diagram
+Figure 64 Entity Relationship Diagram
+89
+Screen Designs
+Figure 65 Login Screen UI
+This figure presents the Login Screen for the Web-Based Store Management
+System for E.M. Cayetano Trading. The main purpose of this interface is to
+securely authenticate users before granting access to the system's core
+functionalities. Users are prompted to enter their username, password, and
+select their respective branch before clicking the login button to proceed.
+Additionally, the screen offers options for users who may have forgotten their
+password or want to register a new account, ensuring smooth entry into the
+system. This login process is fundamental as it initiates the user workflow,
+enabling access control tailored to individual branches or roles within the overall
+management platform.
+90
+Figure 66 Create an Account Screen UI
+This figure displays the Create Account Screen, which serves as the registration
+interface for new users of the E.M. Cayetano Trading Inventory System. On this
+screen, users are required to enter their full name, desired username, email
+address, and select their respective branch before submitting their registration.
+Once the form is completed and submitted, the account remains pending until
+reviewed and approved by an admin. This process ensures that only authorized
+and verified users can participate in the system, supporting secure onboarding
+and helping maintain the integrity of the organization’s user database.
+91
+Figure 67 Forgot Password Screen UI
+This figure shows the Forgot Password Screen, which facilitates password
+recovery for users of the system. Users are prompted to provide their username
+and registered email address. By clicking the “Send Reset Link” button, a
+password reset process is initiated, allowing users to regain access to their
+account securely through their email. This interface ensures quick and secure
+handling of forgotten credentials, connecting users efficiently back to the system
+while protecting account integrity.
+92
+Figure 68 Two-Factor Authentication (2FA) Screen UI
+This figure shows the Two-Factor Authentication (2FA) Screen, which adds an
+extra layer of security to the system. After logging in, users are prompted to enter
+a six-digit verification code sent to their registered email address. This verification
+must be completed within the allotted time; if necessary, users can request a new
+code. This process is crucial for ensuring that only authorized users gain access,
+protecting sensitive inventory data and business information. The 2FA workflow
+enhances security by preventing unauthorized access even if login credentials
+are compromised.
+93
+Figure 69 Employee Dashboard Screen UI
+This figure shows the Employee Dashboard screen, which serves as the main
+landing page for employees after a successful login. The interface provides an
+overview of key inventory statistics, such as total items, low-stock items, active
+products, and total inventory count. Users can quickly access different
+modules—such as searching products, managing inventory, viewing archived
+items, generating reports, and others—through the quick access section. The
+dashboard also displays recent activity, including current stock status and alerts
+requiring attention. This screen helps employees efficiently monitor inventory
+health and navigate directly to important actions, making it an essential control
+center for daily operations within the store management system.
+94
+Figure 70 Admin Dashboard Screen UI
+This figure shows the Admin Dashboard, which functions as the central hub for
+users with administrative privileges after a successful login. The dashboard
+summarizes critical inventory metrics such as total items, low-stock products,
+active products, and total inventory. It also prominently features quick access
+modules, allowing an admin to swiftly navigate to inventory management,
+archive, reports, product search, and other system functions. On the left,
+navigation options include user and system management tools like Maintenance
+and User Management, which are exclusive to admins. The recent activity and
+alerts sections support proactive decision-making by highlighting current
+inventory status and urgent issues. This interface is essential for overseeing
+business operations, managing users, and ensuring inventory control across a
+specific branch.
+95
+Figure 71 Search Products Screen UI
+This figure features the Search Products Interface, which allows both Admin and
+Employee users to quickly locate and review product information within the
+inventory system. The screen provides a search bar for entering product names
+or IDs, along with dropdown filters for category and status to narrow down
+results. As the user types or adjusts filters, relevant products appear below for
+easy access to detailed information. This interface contributes to efficient product
+management by helping users identify item availability, locate specific products,
+and monitor stock levels across the system, making it a central part of routine
+inventory operations.
+96
+Figure 72 Employee Inventory Screen UI
+This figure shows the Employee Inventory Screen, where employees can view
+and manage the list of inventory items for their specific branch. The interface
+features a searchable table of inventory, displaying item ID, name, category,
+quantity, stock status, and the date each item was last updated. The Inventory
+Search function at the top allows employees to quickly find items by entering
+product names or IDs, and to further refine results using category filters. As
+employees type or change filters, the displayed list updates automatically,
+helping users pinpoint inventory details instantly. Action buttons next to each item
+make it easy for employees to increase or decrease stock according to daily
+transactions. This comprehensive yet user-friendly workflow streamlines product
+tracking, supports real-time updates, and reduces the time required to locate and
+manage hardware inventory, which is crucial for routine branch operations.
+97
+Figure 73 Admin Inventory Screen UI
+This figure shows the Admin Inventory Screen, which provides advanced
+inventory management capabilities for admins. Similar to the employee inventory
+view, this interface lists all items with key details such as item ID, name, category,
+quantity, stock status, and last updated date. Also, the Inventory Search function
+at the top allows an admin to quickly find items by entering product names or IDs,
+and to further refine results using category filters. However, admins have
+additional control through action buttons that allow them not only to update stock
+levels but also to add new items to the inventory and archive existing items. The
+"+ Add Item" button facilitates the onboarding of new products, while the archive
+button helps manage discontinued or inactive items. This screen is central for
+keeping inventory records accurate, making high-level adjustments, and ensuring
+the system remains well-organized and up-to-date.
+98
+Figure 74 Inventory Stock In Screen UI
+This figure displays the Inventory Stock In interface, which is accessed by both
+employees and admins when they need to add new stock for a specific item. The
+pop-up form appears after clicking the ‘stock in’ button, and the form shows the
+item name and presents a field for the user to enter the quantity of stock to be
+added. The current stock level is also shown for reference, helping users make
+informed decisions. Upon confirmation, the system updates the inventory record,
+ensuring that stock levels remain accurate and up-to-date. The clear workflow
+supports straightforward product replenishment and maintains the integrity of
+inventory management within the business.
+99
+Figure 75 Inventory Stock Out Screen UI
+This figure shows the Inventory Stock Out interface, which is used by employees
+or admins when they need to remove stock for a given item. The form appears
+after selecting the 'stock out' button from the inventory list. It displays the product
+name and prompts the user to enter the quantity to be deducted, presenting the
+current available stock for immediate reference. Once the quantity is confirmed,
+inventory levels are updated accordingly in the system. This clear, step-by-step
+process ensures that stock removals are handled accurately and that inventory
+data remains consistent and reliable across all business operations.
+100
+Figure 76 Add New Item Screen UI
+This figure shows the Add New Item interface, available to admins within the
+inventory management system. When admins need to introduce a new product to
+the inventory, this form dialog prompts them to enter key details such as the item
+name, its category (e.g., tools, paint, cement), and the initial quantity on hand.
+Once the necessary information is provided and submitted, the item is added to
+the inventory database and becomes visible in the main list. This streamlined
+process makes it easy for system admins to expand the product catalog, keeping
+inventory records up-to-date as new hardware or construction supplies arrive at
+the business.
+101
+Figure 77 Archive Screen UI
+This figure displays the Archive Screen, where users can view inventory items
+that have been archived and are no longer active in daily operations. The
+screenshot shows the Admin Archive interface, which provides admins a table
+listing all archived items with details such as item name, category, quantity,
+current status, archived date, and an option to restore items back into active
+inventory using the Restore button. The search and filter features at the top help
+users find specific archived items efficiently. In contrast, the Employee Archive
+interface is similar in layout and available information, but it does not include the
+Restore button—employees have view-only access and cannot reinstate items.
+This division of roles ensures proper control and accountability over inventory
+records, safeguarding accurate inventory history and supporting proper inventory
+management workflows.
+102
+Figure 78 Reports Screen UI
+This Figure showcases the Reports Screen, which enables users—admins and
+employees—to generate and review comprehensive inventory reports based on
+real-time data. Users can conFigure the report by selecting the desired period
+(such as daily), picking the report type (e.g., summary), and setting relevant
+dates. The main panel provides a summary of key inventory statistics, including
+total items, total units, counts of low- and out-of-stock products, and an overall
+inventory status. The interface includes an Export PDF button, allowing users to
+easily generate print-friendly reports for record-keeping or decision-making. This
+feature makes it simple to monitor inventory trends, share insights with
+stakeholders, and ensure accurate, up-to-date tracking of supplies and stock
+levels within the business.
+103
+Figure 79 Alerts and Notifications Screen UI
+This figure illustrates the Alerts & Notifications Screen, which keeps users
+informed about important system events and real-time inventory conditions.
+Admins and employees see different sets of alerts based on their roles.
+Employees receive notifications related to inventory status, such as low or
+out-of-stock warnings, ensuring they can respond swiftly to inventory issues. In
+contrast, admins receive a broader range of notifications, including inventory
+alerts, maintenance reminders for system upkeep, and new user registration or
+user management events. This role-based filtering ensures that each user
+accesses only relevant, actionable information. Controls at the top allow users to
+mark all alerts as read, and users can view or dismiss individual messages,
+promoting a responsive and well-monitored store management system.
+104
+Figure 80 Maintenance Screen UI
+This figure presents the system maintenance interface, which serves as a
+centralized area for managing and overseeing key administrative operations. It
+enables authorized users to perform essential maintenance functions, monitor
+system status, and configure necessary settings. The interface is designed to
+support data integrity, maintain security, and ensure smooth overall system
+management.
+105
+Figure 81 User Management Screen UI
+This figure presents the User Management Screen, the central hub for an admin
+to oversee user accounts, roles, and permissions within the system. The top
+section summarizes the number of active users, pending approvals, and inactive
+users. Below, the interface allows admins to view and manage all user accounts,
+filter users by status (active, pending, inactive), and search by keywords such as
+name, username, email, or branch. The results display each user's full name,
+username, email, assigned role, associated branch, account status, and
+available actions. Action buttons provide options for editing user details, such as
+updating roles, changing branch assignments, or deactivating users. This
+comprehensive dashboard streamlines onboarding, access control, and ongoing
+administration, ensuring the system operates securely and efficiently.
+106
+Figure 82 Edit User Role Screen UI
+This figure displays the Edit User Role form, where an admin can update a user's
+system role—such as switching from admin to employee or vice versa. This
+change immediately affects the user's permissions and the features they can
+access. The straightforward dropdown menu lets the admin choose the new role,
+and upon saving, the user's access to system modules and actions adjusts
+accordingly, ensuring role-based control over system functionalities.
+107
+Figure 83 Edit Branch Screen UI
+This figure shows the Edit User Branch form, which allows an admin to change
+the system branch associated with a user account. For example, an admin or
+employee can be moved from the Manggahan branch to San Rafael, or vice
+versa. Once updated, the user's access permissions and data views shift to
+match the new branch—meaning they will now view and work with inventory,
+reports, and features relevant only to their newly assigned branch. This capability
+is crucial for managing staff reassignments and ensuring accurate,
+branch-specific record-keeping.
+108
+Figure 84 Deactivate User Screen UI
+This figure illustrates the Deactivate User Account confirmation dialog. When an
+admin chooses to deactivate a user, a prompt appears to confirm the action.
+Confirming deactivation immediately removes the user's access to the system
+and moves their record from the active users list to the "Inactive" users tab within
+the User Management module. This process supports secure and clean user
+offboarding, allowing for account reactivation if needed in the future.
+109
+Figure 85 Help Screen UI
+This figure presents the Help & Support interface, designed to assist users in
+addressing inquiries and obtaining guidance regarding the system. It includes
+accessible resources such as frequently asked questions, step-by-step
+instructions, and contact options for further assistance. The layout promotes
+ease of use, enabling users to quickly find solutions, understand system
+functions, and access relevant information. This screen ensures that both
+employees and admins have ready access to the help they need, contributing to
+smooth training, efficient troubleshooting, and effective use of the store
+management system.
+110
+CHAPTER 3
+Methodology
+This chapter discusses the methodology employed in developing the
+Web-Based Store Management System, using the V-Model as the selected
+software development framework. The V-Model was chosen because it
+integrates validation and verification at every stage, ensuring that each phase of
+development is matched with a corresponding testing phase to guarantee system
+accuracy, reliability, and effectiveness. This chapter provides an overview of the
+structured process followed in designing, developing, and evaluating the system.
+It also discusses the data-gathering methods, such as interviews, observations,
+and research, which were used to obtain accurate and relevant information for
+the system’s requirements. The feasibility study is included to assess the
+project’s technical, operational, and economic viability, determining whether the
+system can be realistically implemented and sustained. Additionally, the chapter
+presents the cost-benefit analysis to evaluate the financial soundness of the
+project and a Gantt chart that visually represents the project timeline and
+workflow. Altogether, these sections establish a comprehensive and systematic
+methodological framework that ensures the system’s development is
+well-organized, evidence-based, and aligned with its intended goals.
+111
+Software Process Model
+Figure 86 V-Model Diagram
+The diagram illustrated above is the V-Model Software Development Life
+Cycle (SDLC), which is an extension of the classic waterfall model by bending
+the process into a V shape. It consists of three phases: Verification, Coding, and
+Validation.
+It begins in the left leg, which is the Verification Phase, where the
+proponents ensure that the software is developed according to the company's
+requirements and technical specifications. This phase includes four design
+levels: Requirements Design, System Design, Architectural Design, and Module
+Design.
+112
+The Requirement design is where the software requirements are
+understood from the customer's perspective. This phase involves thorough
+communication with the company to understand their expectations and exact
+requirements. The requirement gathering was done using interviews between the
+company owner and proponents.
+Next, in the System Design, the proponents determined the overall
+structure of the web-based system, describing how its components work together
+and interact. This phase will include understanding and documenting the whole
+hardware and communication architecture for the product being developed.
+The Architectural Design, also known as High-Level Design, is where
+architectural specifications are understood and designed. The system design is
+broken down further into modules taking up different functionality. The flow of
+data and communication between the internal modules and other systems is
+understood and defined in this stage.
+The Module Design, also referred to as Low-Level Design, is where the
+detailed internal design for all the system modules is defined. Each module’s
+logic, input-output structure, and interconnection are defined to ensure
+consistency and compatibility across the system.
+The middle of the V represents the Coding or Development Phase, where
+the proponents implement the gathered requirements and specifications from the
+previous phase. In the V-model, the process bends upward for the final phase,
+which is the validation phase. The goal of this phase is the analysis of
+113
+requirements; for example, the requirement design is paired with acceptance
+testing, the system design is paired with system testing, and the software design
+is paired with integration testing.
+The Coding phase is where the actual implementation of all the design
+choices from the prior phase is made. The most suitable programming language
+is decided based on the system and architectural requirements, which for this
+specific project is Javascript (ES2024) using VSCode (ver. 1.105) and
+PostgreSQL (v18) for the system database. The coding is done according to the
+coding principles and standards. Before the final build is checked into the
+repository, the code is subjected to many code reviews and optimized for
+maximum performance.
+After the coding phase, the final phase in the V-Model is to test the
+system. Unit testing is code-level testing that helps eliminate issues early on,
+although it cannot find all defects.
+In integration testing, the modules are integrated and the system is tested.
+The integration testing process is conducted during the architecture design
+phase to confirm the interconnection of modules.
+System testing, which is directly paired with the system design phase,
+ensures that the whole system functions properly and that the system under
+development communicates with external systems. Software and hardware
+compatibility issues are expected to be discovered in this segment.
+114
+Acceptance testing, paired with the requirements phase, is conducted with
+real users in the company’s environment to confirm that the system meets both
+functional and non-functional requirements—such as performance, load
+handling, usability, and compatibility with external systems.
+115
+System Architecture
+Figure 87 System Architecture
+The system architecture for the Web-Based Store Management System
+for E.M. Cayetano Trading is designed to streamline inventory monitoring,
+116
+product management, and report generation across multiple branches while
+ensuring data accuracy, real-time access, and security. The architecture adopts a
+three-tier model consisting of the Presentation Tier, Logic Tier, and Data Tier,
+each serving a distinct role in promoting efficiency, scalability, and protection of
+business data.
+In the Presentation Tier, the user interface is developed using React (v19)
+to provide an interactive and responsive environment where users with different
+access levels can navigate various functionalities such as client registration,
+inventory management, and other general and advanced modules. This layer
+allows the admin and authorized employees to log in, manage inventory,
+generate reports, and monitor product stocks in real time. It focuses on delivering
+a user-friendly experience through a clean, accessible layout that matches the
+users’ level of computer literacy. Basic data validation is performed on the client
+side to reduce unnecessary server requests and to provide immediate feedback
+for invalid or missing inputs.
+The Logic Tier serves as the system’s core, where all business logic,
+rules, and data processing occur. Implemented using JavaScript (ES2024) and
+Express.js version 5.1.0, this layer efficiently handles server-side operations,
+data validation, and communication between components. It integrates bcrypt
+hashing for password encryption, along with session management and
+role-based access control (RBAC) to ensure that only authorized users can
+perform sensitive or administrative operations. This tier ensures that all
+117
+processes are executed securely and that responses to user actions are
+accurate and timely.
+The Data Tier is responsible for securely managing all persistent data
+through PostgreSQL (v18), chosen for its reliability, scalability, and capacity to
+handle large volumes of structured records across multiple branches. This layer
+stores all system data, including inventory records, user accounts, and generated
+reports, and manages archiving, retrieval, and restoration as needed. It also
+supports semi-automated data backup and recovery procedures as part of the
+system’s maintenance module, ensuring business continuity in case of failures or
+data corruption.
+In terms of data flow, the process begins when the user interacts with the
+Presentation Tier by entering input through the interface. These inputs are first
+validated on the client side before being sent as requests to the Logic Tier, where
+the system’s business rules and server-side processing take place. The Logic
+Tier communicates with the Data Tier to store, retrieve, or update records as
+required. Once the operation is completed, the processed data is sent back
+through the Logic Tier to the Presentation Tier, where the results are displayed to
+the user in real time. This seamless exchange of data ensures efficiency,
+accuracy, and responsiveness across all system components.
+Overall, this three-tier architecture ensures that the Web-Based Store
+Management System operates efficiently, securely, and at scale. It enables
+real-time synchronization of data across branches, minimizes human error, and
+118
+provides a solid foundation for future enhancements or system expansion.
+Through its modular and layered design, the system achieves its goal of offering
+E.M. Cayetano Trading a centralized, accurate, and responsive platform for
+managing inventory and supporting data-driven business decisions.
+Data Gathering Instruments and Procedures
+This section discusses the instruments and procedures used in collecting
+the necessary data for the development of the Web-Based Store Management
+System for E.M. Cayetano Trading. Gathering accurate and reliable information
+was essential to understanding the business’s workflow, identifying challenges,
+and designing an appropriate system solution. Research indicates that employing
+multiple data-collection methods enhances insight and strengthens the validity of
+findings through data triangulation (George, 2021). To ensure comprehensive
+and credible results, the proponents utilized three data-gathering instruments, as
+follows:
+1. Interview – it served as the primary tool for obtaining firsthand information
+from the store admin. Its purpose was to gather details about the current
+processes, problems encountered, and desired improvements for the
+system. Before conducting the interview, the proponents submitted a
+formal letter of request to the admin, seeking permission to conduct the
+interview and gather accurate information about the existing manual sales
+and inventory process. A semi-structured format was used, allowing
+open-ended questions and follow-ups to clarify responses. This method
+helped the proponents better understand the store’s daily operations, such
+119
+as sales recording and inventory tracking. According to Braun and Clarke
+(2021), interviews are effective in exploring participants’ experiences and
+obtaining detailed qualitative data. The insights gained from this process
+guided the formulation of system features and functions aligned with the
+store’s operational needs.
+2. Online Research – it was used as a secondary method to gather
+supporting information and references relevant to the study. The
+proponents accessed credible online sources, including academic articles,
+journals, and reputable websites, to find related studies about store
+management systems and system design. The literature review process
+on digital and print platforms helps situate a study within existing work and
+guides methodology design (Chigbu, 2023). By leveraging online
+databases and academic repositories, the proponents were able to identify
+best practices for system development.
+3. Library Research – It was conducted to complement the information
+gathered from interviews and online sources. The proponents visited the
+school library to consult recently published and freely available printed
+books and materials that provided additional up-to-date references to
+support the study. The library research strengthened the proponents’
+background knowledge and ensured scholarly accuracy. The academic
+library serves as a source of quality, authoritative, up-to-date, and relevant
+resources that support academic needs and research requirements of the
+academic community (Philippine Association of Academic and Research
+120
+Librarians, 2022). By using library resources, the proponents were able to
+gather reliable and well-reviewed information that met academic
+standards.
+Feasibility Study
+The proponents intend to develop a Web-Based Inventory Management
+System for the E.M. Cayetano Trading to replace the company’s current
+paper-based inventory management system which will enhance the operational
+efficiency and security of the company’s inventory.
+Technical, Operational, and Economical
+The technical feasibility of implementing a Web-based Inventory
+Management System depends on meeting the precise system requirements. It
+requires a 64-bit processor and operating system, preferably Windows 10 or
+above. JavaScript (ES2024) is the programming language that will be utilized for
+the development of the system. The minimum system specification for the
+system is a desktop motherboard that supports 8GB DDR4 Ram, which, for Intel,
+are LGA 1151, 1200, and specific LGA 1700 motherboards; meanwhile, for AMD
+chipsets, are AM4 motherboards. External peripherals such as printers, monitors,
+USB optical mouse, keyboard are essential for the system’s functionality. In
+addition, the system requires trained or proficient employees to ensure correct
+and efficient operation. The Web-Based Inventory Management System's
+seamless implementation and operation are guaranteed by this technical base.
+121
+There are several factors that comprise the operational feasibility of the
+Inventory management system that ensures its straightforward adaptation into
+the hardware store’s daily operations. A detailed user manual is essential for
+training since it provides users with the knowledge and skills they need to
+efficiently operate the system. User acceptability is critical to the system's
+performance, necessitating an assessment of staff preparedness and technical
+competency to facilitate seamless implementation. A proactive maintenance plan
+is necessary to promptly resolve any problems that may occur during regular use
+in order to preserve continuous operating efficiency. A full migration of existing
+physical inventory and records is integral for the system’s integration, as it
+ensures a smooth transition and continuity of operations in the store.
+In evaluating the economic feasibility of the proposed system, several
+critical considerations have been identified. The main goal is to determine the
+financial viability and benefits associated with this implementation. Using a Cost
+Benefit Analysis (CBA), the costs, which include implementation, training, and
+maintenance, have been thoroughly evaluated, totalling to ₱162,674.88 for the
+initial investment with a projected annual benefit of ₱138,273.65. Estimated
+benefits also include enhanced record handling, increased workflow efficiency,
+and a more robust security system, contributing to the overall value proposition of
+the system. The predicted return on investment (ROI) is roughly 85%, with a
+calculated payback period of around a year and two months. This rigorous
+economic feasibility analysis, which takes into account both costs and benefits,
+seeks to determine if the veterinary management system is not only financially
+122
+viable but also capable of producing demonstrable gains in workflow efficiency
+and service quality.
+Cost Benefit Analysis (CBA)
+1. Hardware Cost
+Recommended
+Requirements
+Specifications Quantity Unit Price
+(₱)
+Cost (₱)
+Printer Canon PIXMA
+TS207
+2 2,495.00 4990.00
+Motherboard MSI PRO
+H610M-E
+2 4,302.00 8,604.00
+Power Supply
+Unit (PSU)
+MSI MAG
+A550BN
+2 2,595.00 5,190.00
+Display Monitor Nvision H22V8
+21.5
+2 2,333.00 4,666.00
+Keyboard &
+Mouse
+K-101 Membrane
+Keyboard and
+Mouse Combo
+2 299.00 598.00
+Processor (CPU) Intel® Core™
+i3-13100
+2 6,500.00 13,000.00
+Memory Kingston Fury
+8GB
+2 1,895.00 3,790.00
+Storage ADATA 1TB
+LEGEND 710
+M.2 PCIe NVMe
+2 3,650.00 7,300.00
+PC Case MSI Pro Shield
+M100P
+2 1,395.00 2,790.00
+UPS Awp Wise
+(AID650) 650va /
+360w UPS
+2 1,530.00 3,060.00
+123
+LAN cable Vention Cat6
+High Speed Lan
+Cable Ethernet
+Rj45 1000Mbps
+2 124.00 248.00
+Total: ₱54,326.00
+Sources:
+https://shopee.ph/Canon-PIXMA-TS207-Inkjet-Printer-with-High-Resolution-andLow-Cost-Cartridges-for-Quality-Printing-i.132868149.4640189091?extraParams
+=%7B%22display_model_id%22%3A214220846767%2C%22model_selection_lo
+gic%22%3A3%7D&rModelId=214220846767&sp_atk=f27b44c8-a626-4c7c-b14e
+-856cfe540b97&vItemId=29086705090&vModelId=295107984953&vShopId=125
+7811163&xptdk=f27b44c8-a626-4c7c-b14e-856cfe540b97
+https://easypc.com.ph/collections/motherboard/products/msi-pro-h610m-e-socket
+-lga-1700-ddr4-motherboard#
+https://dynaquestpc.com/collections/components-power-supply-500-650-watts/pr
+oducts/msi-mag-a550bn-bronze-550w-80-power-supply
+https://shopee.ph/Zeus-Office-School-Keyboard-And-Mouse-USB-Wired-Office-D
+esktop-Laptop-Mouse-Keyboard-Combo-Set-i.822608811.26709708047?extraPa
+rams=%7B%22display_model_id%22%3A241498787537%2C%22model_selecti
+on_logic%22%3A3%7D
+https://pcx.com.ph/collections/processors/products/intel-core-i3-13100-processor
+-12m-cache-up-to-4-50-ghz?_pos=2&_fid=0f4bdf9ab&_ss=c
+124
+https://shopee.ph/Kingston-Fury-8GB-Beast-DDR4-3200mHz-Memory-(KF432C1
+6BB-8)-i.124930893.13515932412?extraParams=%7B%22display_model_id%22
+%3A85023829595%2C%22model_selection_logic%22%3A3%7D
+https://pcx.com.ph/collections/internal-storages/products/adata-1tb-legend-710-m
+-2-pcie-nvme-aleg-710-1tcs-solid-state-drive
+https://dynaquestpc.com/collections/chassis-mid-tower/products/msi-pro-shield-m
+100p-compact-mid-tower-tool-free-drive-bays-usb-3-2-pc-case
+https://dynaquestpc.com/collections/ups-avr/products/awp-wise-aid650-650va-36
+0w-ups
+https://shopee.ph/Vention-Cat6-High-Speed-Lan-Cable-Ethernet-Rj45-1000Mbps
+-For-Router-Pc-i.270658839.5654614237?extraParams=%7B%22display_model
+_id%22%3A61180921690%2C%22model_selection_logic%22%3A3%7D
+2. Software Development Cost
+Personnel No. of Personnel Salary (₱)
+Programmer 3 26,878.00
+Total: ₱80,634.00
+Source:
+https://ph.indeed.com/career/programmer/salaries
+125
+Operational Cost
+A. System Cost
+Items Specification Costs (₱)
+Operating System Windows 11 Home
+64-Bit
+6,700.00
+Database Engine PostgreSQL
+(version 18.0)
+Free
+Programming
+Language
+Javascript (ES2024) Free
+IDE Virtual Studio Code
+(Version 1.105)
+Free
+Version Control
+System
+Git (Version 2.51.2) Free
+Domain Name emcayetano.org 410.04
+Web Hosting Services DigitalOcean
+(App Platform,
+Managed DB, Spaces)
+1,477.44 / month
+Total: ₱8,587.48
+Sources:
+https://pcx.com.ph/collections/windows/products/windows-11-home-64-bit-eng-int
+ernational-oem-dvd-oem-kw9-00632
+https://code.visualstudio.com/updates/v1_105
+https://git-scm.com/
+https://www.namecheap.com/domains/registration/results/?domain=cayetanohar
+dware.com
+https://www.digitalocean.com/pricing
+126
+B. Stationeries and Supplies
+Item Quantity Price (₱) Total (₱)
+Hard Copy
+Bond Paper
+Short A4
+500 230.00 230.00
+Hard Copy
+Bond Paper
+Short Legal
+500 240.00 240.00
+Canon PG 745
+or CL 746 Ink
+Cartridge
+2 2,455.00 4,910.00
+Best Buy Folder
+White with
+Cover
+5 25.00 125.00
+Deli 12PCS Gel
+Pen 0.5mm
+12 132.00 132.00
+Mongol Pencil
+No.2 Box of 12
+12 119.00 119.00
+Total: ₱5,756.00
+Sources:
+https://shopee.ph/Hard-Copy-Bond-Paper-Short-A4-Long-70gsm-80gsm-(sold-pe
+r-ream)-i.215629824.29206798671?extraParams=%7B%22display_model_id%2
+2%3A178337237122%2C%22model_selection_logic%22%3A3%7D&sp_atk=fa2
+f90ba-bbee-411a-ad7b-ec16113ab59c&xptdk=fa2f90ba-bbee-411a-ad7b-ec1611
+3ab59c
+https://shopee.ph/Canon-PG-745-or-CL-746-Ink-Cartridge-i.132868149.5608044
+004
+127
+https://shopee.ph/Best-Buy-Folder-White-with-Cover-School-Supplies-Filing-Sup
+plies-i.75450137.28311142466?extraParams=%7B%22display_model_id%22%3
+A148790151325%2C%22model_selection_logic%22%3A3%7D
+https://shopee.ph/Deli-12PCS-Gel-Pen-0.5mm-Press-Sign-Pens-Writing-Ballpeni.332268558.23557748984?extraParams=%7B%22display_model_id%22%3A27
+0712237428%2C%22model_selection_logic%22%3A3%7D
+https://shopee.ph/Mongol-Pencil-No.2-Box-of-12-i.489304202.12505832097?extr
+aParams=%7B%22display_model_id%22%3A120248291930%2C%22model_sel
+ection_logic%22%3A3%7D
+C. Utility Expenses
+Particulars Cost (₱) Total (₱)
+Electricity 2,786.70 5,573.40
+Internet 2,099.00 4,198.00
+Total: ₱9,771.40
+Assumptions/Usage: The two branches use 210 kWh per month for 9 hours/day
+over 30 days.
+Rate: ₱13.27/kWh (based on Meralco August rate 2025)
+Electricity Cost = 210 kWh x 13.27 ₱/kWh = 2,786.7 x 2 = ₱5,573.40
+Plan: PLDT Home Fiber 500 Mbps
+Monthly Fee: ₱2,099.00
+Assumptions: Used for system access, inventory notifications, and backups.
+Internet Cost per month = ₱2,099.00
+128
+Sources:
+https://company.meralco.com.ph/news-and-advisories/higher-rates-august-2025
+https://www.pldthome.com/fiber
+D. Training Costs
+Personnel Amount per Day
+(₱)
+Days Hours Total (₱)
+Administrator 300.00 7 5 2,100.00
+Employee 300.00 5 5 1,500.00
+Total: ₱3,600.00
+((60.00 / hour * 5 Hours) * 7 Days) = ₱2,100.00
+((60.00 / hour * 5 Hours) * 5 Days) = ₱1,500.00
+Summary Cost
+Description Cost (₱)
+I. Hardware Cost 54,326.00
+II. Software Development Cost 80,634.00
+III. A. System Cost 8,587.48
+III. B. Stationeries and Supplies 5,756.00
+III. C. Utility Expenses 9,771.40
+III. D. Training Cost 3,600.00
+Table 1 Cost-Benefit Analysis. Total Costs: ₱162,674.88
+129
+Estimated Benefits:
+Accuracy and efficiency of the software at approximately 85%
+Total estimated benefits = 162,674.88 x 85%
+Total = ₱138,273.65
+Payback Period
+Payback Period = (Total Cost / Total Estimated Benefits) x 12
+= (162,674.88 / 138,273.65) x 12
+Total = 14 Months or 1 year and 2 months
+Return on Investment (ROI)
+Return of Investment = (Total Estimated Benefits / Total Cost) x 100
+= (138,273.65 / 162,674.88) x 100
+Total = 85%
+The total cost of the hardware, software development, system, stationery,
+supplies, utility, and training is ₱162,674.88. Meanwhile, the time allotted for the
+money to be returned is within 14 months or 1 year and 2 months. In that time,
+85% of the money will be returned which totals to ₱138,273.65.
+Materials
+The system will employ various software and hardware. For hardware, a
+printer will be used mainly for processing standardized reports of inventory. For
+software, the system will be developed using Javascript (ES2024) programming
+language for the reason that the proposed system will be web based. VSCode
+130
+(ver. 1.105) will be the IDE of choice for; Git (Version 2.51.2) will be the version
+control system of the development process, and PostgreSQL (v18.0) for the
+database.
+Testing and Operating Procedure
+Unit Testing
+Unit testing is the process of testing the small parts of the code, like it is a
+method that verifies the code's correctness by running it one by one. It's a key
+part of software development that improves code quality by testing each unit in
+isolation.
+You write unit tests for these code units and run them automatically every
+time you make changes. If a test fails, it helps you quickly find and fix the issue.
+Unit testing promotes modular code, ensures better test coverage, and saves
+time by allowing developers to focus more on coding than manual testing.
+Module Testing
+Module testing is a type of software testing that focuses on individual
+modules. The goal of module testing is to ensure that each module is working
+correctly and meets all the requirements. This includes verifying the functionality
+of the code, as well as checking for any errors or bugs. Module testing is an
+important part of the software development process and should not be
+overlooked. It can help to find and fix any defects in the code before they cause
+problems in the final product.
+131
+Module testing will be conducted in the Inventory Management System by
+individually evaluating each module to ensure proper functionality and reliability.
+Both input and output tests will be performed to assess performance under
+various conditions. This process ensures the detection of bugs and errors early
+on, prior to integrating the modules into the complete system.
+Integration Testing
+Integration Testing focuses on verifying the interactions between different
+modules of the software. The main purpose of Integration Testing is to identify
+any problems or bugs that arise when different components interact with each
+other.
+Integration testing will be implemented in the Inventory Management
+System to ensure that all modules function seamlessly together as a unified
+system. This process identifies defects that may arise during module interactions
+and detects issues not visible during individual module testing.
+Software Evaluation
+The following are the criteria identified to evaluate the software, according to the
+ISO 25010 model
+1. Functionality - Refers to how effectively the software performs its intended
+purpose and delivers all required features accurately and completely.
+132
+2. Security - Measures the system’s capability to safeguard data, control
+access, and prevent unauthorized usage; it ensures confidentiality,
+integrity, and availability of information.
+3. Usability - Evaluates how simple and intuitive the system is to learn,
+navigate, and operate, ensuring a user-friendly and efficient interface.
+4. Reliability - Describes the system’s capacity to function consistently
+without errors, maintaining a dependable performance during regular and
+practical use.
+5. Maintainability - Determines how easily the software can be updated,
+modified, or enhanced, this includes bug fixes, improving performance,
+and adding new features.
+Likert - Scale Likert-Scale
+Description
+Likert - Scale Interval
+6 Strongly Agree 5.17- 6.00
+5 Agree 4.33 - 5.16
+4 Slightly Agree 3.51 - 4.32
+3 Slightly Disagree 2.67 - 3.50
+2 Disagree 1.83 - 2.66
+1 Strongly Disagree 1.00 - 1.82
+Table 2 Likert Scale
+133
+Sampling Tools
+This study employs cluster sampling as its primary sampling method, in
+which the population is categorized into natural groups based on their
+professions. For this research, two distinct clusters were identified: IT-related
+professionals and non-IT professionals. The use of cluster sampling enables the
+researchers to focus on specific groups capable of providing valuable feedback
+regarding the technical and practical aspects of the system.
+A total of twenty participants will be involved in the study, consisting of ten
+IT professionals and ten non-IT professionals. The IT professionals will include
+individuals with computer-related degrees such as Information Technology,
+Computer Science, Information Systems, Data Science, and other related fields.
+Participants are preferably those with at least one year of relevant work
+experience with an age range of twenty-five to sixty years old.
+On the other hand, the non-IT participants will consist of ten store
+personnel, this includes the store manager, cashier, and employees who handle
+product transactions and stock. Their ages are preferably within the same age
+range of twenty-five to sixty years old.
+134
+Work Plan
+Figure 88 Gantt Chart
+Algorithm Implementation
+The algorithm implementation of the proposed Web-Based Store
+Management System for E.M. Cayetano Trading plays a crucial role in ensuring
+fast, accurate, and secure operations across its major modules. Each algorithm
+was carefully selected to meet the system’s functional requirements, particularly
+in inventory search, product sorting, and user authentication. By integrating these
+algorithms, the system minimizes manual errors, improves performance, and
+enhances user experience for both the admin and employees.
+The search algorithm is applied within the system’s Search Module to
+enable users to quickly locate specific products from the inventory database. The
+system dynamically uses two search approaches: Linear Search and Binary
+135
+Search. The Linear Search algorithm is used when the dataset is unsorted or
+when the user performs a general keyword search. It checks each record
+sequentially until a match is found, making it simple and appropriate for small
+datasets or flexible keyword queries. On the other hand, the Binary Search
+algorithm is implemented when the dataset is already sorted by product ID or
+name. Binary Search works by repeatedly dividing the search range in half until
+the target record is found, significantly reducing search time across branches
+compared to a linear scan. This dual-use approach ensures that the system
+remains efficient regardless of the data size or structure, providing users with
+accurate and immediate results. When the dataset is unsorted or recently
+updated, the system automatically defaults to Linear Search to maintain search
+functionality until the data is re-sorted.
+The system also integrates a sorting algorithm, specifically Merge Sort, to
+organize inventory data before display and reporting. Merge Sort was chosen
+due to its high stability and predictable time complexity of O(n log n), making it
+ideal for handling large datasets such as hundreds of product records. The
+algorithm works by recursively dividing the product list into smaller sublists,
+sorting them individually, and then merging them back together in the correct
+order. This ensures that all product information—such as product ID, name,
+category, quantity, and last updated date—is presented in a consistent,
+ascending or descending order. This not only helps the admin easily interpret the
+data but also improves report generation speed and accuracy.
+136
+To maintain system security and data integrity, the system implements a
+Bcrypt Hashing Algorithm for password encryption. When users create or log into
+their accounts, the system does not store plain-text passwords. Instead, Bcrypt
+transforms the entered password into an irreversible hash using a salt value.
+During login, the system verifies the entered password by hashing it again and
+comparing the result with the stored hash in the database. If both hashes match,
+access is granted. This ensures that even if unauthorized users gain access to
+the database, the actual passwords remain protected. Through this algorithm, the
+system provides a strong defense against common security threats such as
+brute-force and dictionary attacks.
+137
+System Architecture of Algorithm
+Figure 89 Linear Search Algorithm Architecture
+This diagram illustrates the linear search algorithm, in which the system
+starts checking the first item in the list and continues one by one until it either
+finds the target item or reaches the end of the list. In the context of our system,
+linear search is used for simpler lookup scenarios—such as when an employee
+enters a product name or ID and the inventory list is small or not fully sorted. The
+algorithm proceeds by comparing each inventory record in sequence; if a match
+is found, it returns the item and ends the search; otherwise, it continues until no
+more items remain. Because its performance grows proportionally with the
+number of items (O(n) complexity), this method works well for small to moderate
+datasets but becomes less efficient as the inventory size grows.
+138
+Figure 90 Binary Search Algorithm Architecture
+This diagram shows the binary search algorithm applied to a sorted list of
+items: the system calculates the middle index, compares the target value with the
+middle item, and depending on whether the target is less or greater than that
+middle item, it discards half of the list and repeats the process on the remaining
+half. In our system, after the product inventory is sorted (for example, by ID or
+category using a sorting algorithm), binary search is used for fast lookups across
+branches. Because with each step the search space is halved, this method
+achieves logarithmic time complexity, O(log n), making it especially efficient for
+large inventories. It requires that the list is already sorted, which aligns with our
+preprocessing step in the system. This process continues until the item is found
+or the search space becomes empty, ensuring quick and accurate lookups within
+the inventory.
+139
+Figure 91 Merge Sort Algorithm Architecture
+This diagram displays the merge sort algorithm, which uses a
+divide-and-conquer strategy: the inventory list is repeatedly split into smaller
+halves until each sub-list contains a single item (trivially sorted), then those
+sub-lists are merged back together in sorted order, reconstructing the complete
+list. In the system for E.M. Cayetano Trading, merge sort is used to arrange the
+inventory items—by product ID, name, category, quantity, or last updated
+date—to ensure organized data before searching. This ensures consistent
+ordering and efficient subsequent operations. Merge sort has good performance
+(O(n log n) time complexity) and is stable, which is helpful when items share the
+same key field (e.g., category).
+140
+Figure 92 Bcrypt Hashing Algorithm Architecture
+This diagram illustrates how bcrypt converts a plain-text password into a
+secure hash by combining it with a unique salt, processed through the bcrypt
+algorithm (with an adjustable cost factor), and produces a hashed value for
+secure storage. In our system’s Security Module, bcrypt is used to protect admin
+and employee credentials stored in the database, ensuring that plain-text
+passwords are never saved. Even if the system is compromised, attackers
+cannot easily reverse the hash because bcrypt is intentionally slow and includes
+salt to protect against pre-computed attacks (like rainbow tables). This method is
+widely recognized as an industry standard for secure password storage.
+141
+Appendix A
+Concept Paper
+Appendix B
+Interview Transcript
+Alvin Guillermo: Good day. We would like to officially begin by sharing a few
+important reminders. First, may we ask if you are comfortable with us recording
+the audio? Secondly, we want to assure you that this interview is conducted in
+compliance with the Data Privacy Act of 2012. All of the information you share
+will remain confidential and will only be used for school and project purposes. If
+there are any questions you are not comfortable answering, you may skip them.
+Alvin Guillermo: For our first question, could you introduce yourself and share
+the name of your business or company?
+Ms. Edna Cayetano: I am Edna Cayetano. Our business is a hardware and
+construction company named EM Cayetano Trading.
+Alvin Guillermo: When was it established?
+Ms. Edna Cayetano: It was established on May 25, 2012.
+Alvin Guillermo: What services does your business offer?
+Ms. Edna Cayetano: We deliver hardware and construction materials. We also
+sell directly to walk-in customers.
+Alvin Guillermo: Do you currently use any system or software to manage your
+business operations?
+Ms. Edna Cayetano: At the moment, that is what we are studying. When we
+started, it was only one branch, but now we have more, and the business is
+expanding. For now, I am the one who creates the systems we use.
+Alvin Guillermo: Since you mentioned Excel, how do you currently manage your
+business when it comes to inventory, sales records, and customer transactions?
+Ms. Edna Cayetano: At the end of the day, transactions are encoded. From
+those records, we generate the inventory. But not everything is tracked, only the
+more saleable items that run out quickly. I also keep a manual record of daily
+purchases. At the end of the day, the encoder checks if the manual and system
+records match. We compute the ending inventory as: beginning balance minus
+items sold, plus new deliveries.
+Alvin Guillermo: What problems do you usually encounter with your manual
+system?
+Ms. Edna Cayetano: Sometimes the records are inaccurate. For example, the
+system shows 28 pieces of plywood, but the actual count is different. That’s when
+we realize something went wrong, usually after the encoder checks. It’s not yet a
+smooth process.
+Alvin Guillermo: How do these problems affect your daily store operations?
+Ms. Edna Cayetano: Sometimes I think an item is out of stock because that’s
+what the inventory shows, so I place an order. But it turns out there is still stock,
+and we end up overstocked. Other times, the records show there is stock, but in
+reality, there is none, so I fail to order and we run out of items to sell.
+Raymond Donato: If we were to develop a system specifically for your store,
+what features would you like us to add?
+Ms. Edna Cayetano: Really? You will develop one? Is it free? Actually, I have a
+friend who is also a programmer. He started developing one for us, but he is in
+Singapore, so it was not completed. What I really need is an inventory system. In
+retail stores like ours, inventory is very important, especially for saleable items
+that run out quickly. I should know exactly what is in stock so I can reorder before
+it runs out. That’s the most important feature.
+Alvin Guillermo: What other systems would you consider helpful for your
+business?
+Ms. Edna Cayetano: Inventory is the priority, but payroll would also be useful,
+especially now that I have more employees. If the system could also handle
+communication with suppliers, that would be good. For example, having a
+website where we could directly order from suppliers would be convenient.
+John Alces Niez: Do you currently have suppliers? If so, how do you
+communicate with them?
+Ms. Edna Cayetano: Yes, we do. We usually communicate through Viber. I just
+send an order, and they deliver.
+John Alces Niez: Do you encounter any problems when communicating with
+your suppliers?
+Ms. Edna Cayetano: So far, no. But maybe it’s because younger people like you
+know more modern ways. I often tell my children, who are about your age, to
+study new technologies. I’m already 52, and what I know sometimes feels
+outdated. You, on the other hand, are familiar with tools like AI and ChatGPT,
+which make things much easier. That’s why I also ask, what new ideas can you
+suggest?
+John Alces Niez: One possible improvement is an inventory system. Another
+suggestion is to develop a payroll feature for employees or a dedicated website
+for supplier communication. For example, you could place orders through the
+website, and the supplier would receive notifications for delivery.
+Ms. Edna Cayetano: Actually, I don’t really have problems with my current
+suppliers since I deal with them directly. It’s easier that way—I can message
+them directly, even at night, and they deliver. But I also have another idea. I have
+a branch in Montalban, and I thought about creating a website where customers
+could place orders. Then, I could partner with other hardware stores in different
+locations. For example, if someone orders from Cavite, my partner hardware
+store in Cavite could fulfill the order, and I would just earn a commission. It’s still
+just an idea, but it’s something I am considering.
+Alvin Guillermo: That’s an interesting plan. But in terms of your current needs,
+inventory is your number one priority?
+Ms. Edna Cayetano: Yes, inventory is the most important. Payroll is also needed
+since I now have more employees, but inventory must come first. Every store
+needs an inventory management system.
+Alvin Guillermo: Thank you for your time and for sharing this valuable
+information.
+Ms. Edna Cayetano: You’re welcome.
+Alvin Guillermo: Before we end, may we kindly take a photo with you for
+documentation?
+Ms. Edna Cayetano: Of course, let’s take a picture.
+Appendix C
+Photo with Company
+Appendix D
+References
+Auth0 by Okta. (2024, April 5). What is bcrypt and how does password
+hashing work? Auth0.
+https://auth0.com/blog/hashing-in-action-understanding-bcrypt/
+Borg, M. (2024). Information systems analysis and design: A structured
+approach. American Academic Publisher.
+Braun, V., & Clarke, V. (2021). Thematic analysis: A practical guide. SAGE
+Publications.
+Chigbu, U. E. (2023). The science of literature reviews: Searching,
+identifying, and synthesising sources. Publications, 11(1), 2.
+https://doi.org/10.3390/publications11010002
+GeeksforGeeks. (2024, February 10). Linear Search Algorithm –
+Explanation, steps, and examples. GeeksforGeeks.
+https://www.geeksforgeeks.org/linear-search/
+GeeksforGeeks. (2024, March 2). Binary Search Algorithm – Working,
+example, and time complexity. GeeksforGeeks.
+https://www.geeksforgeeks.org/binary-search/
+George, T. (2021, August 13). Mixed methods research: Definition, guide
+& examples. Scribbr.
+https://www.scribbr.com/methodology/mixed-methods-research/
+International Council on Systems Engineering (INCOSE). (2023). INCOSE
+systems engineering handbook (5th ed.). John Wiley & Sons.
+Kung, D. C. (2023). Software engineering (2nd ed.). McGraw-Hill
+Education.
+Lal, M. (2024). System analysis and design: Concepts and applications.
+Cengage Learning.
+Liu, P. S., Chin, J. F., Ab-Samat, H., et al. (2025). Digital variant design
+V-model for rapid product development. International Journal of Advanced
+Manufacturing Technology, 139, 2103–2121.
+https://doi.org/10.1007/s00170-025-15982-1
+McNeil, R. (2024). Software Engineering: Principles and Practices (2nd
+ed.). Pearson Education.
+Pavlíčková, M., Mojžišová, A., Bodíková, Z., Szeplaki, R., & Laciak, M.
+(2024). Integration and implementation of scaled agile framework and V-model in
+the healthcare sector organization. Electronics, 13(11), 2051.
+https://doi.org/10.3390/electronics13112051
+Philippine Association of Academic and Research Librarians. (2022). 2022
+PAARL standards for academic libraries.
+https://paarl.org.ph/wp-content/uploads/2022/12/2022-PAARL-STANDARDS-FO
+R-ACADEMIC-LIBRARIES.pdf
+Programiz. (2024, January 15). Merge sort algorithm – Definition, working,
+and examples. Programiz. https://www.programiz.com/dsa/merge-sort
+Tsui, F. F., Bernal, B., & Karam, O. (2023). Essentials of software
+engineering (7th ed.). Jones & Bartlett Learning.
+Valacich, J. S., George, J. F., & Hoffer, J. A. (2024). Modern systems
+analysis and design (10th ed.). Pearson Education.

@@ -1,7 +1,7 @@
 // Login UI: validates inputs, calls backend login, and kicks off 2FA.
 import axios from 'axios';
 import { useState, useEffect } from "react";
-import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Loader2, Lock, Store, User } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -68,7 +68,13 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
         localStorage.setItem('token', response.data.token);
         localStorage.setItem('user', JSON.stringify(response.data.user));
         localStorage.setItem('active_branch', branch);
-        window.location.reload(); 
+        sessionStorage.setItem('authSessionActive', 'true');
+        window.dispatchEvent(new Event('auth-state-changed'));
+        if (typeof onLogin === 'function') {
+          onLogin(response.data.user);
+        } else {
+          navigate('/dashboard', { replace: true });
+        }
         return;
       }
 
@@ -81,7 +87,15 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
         localStorage.setItem('temp_username', response.data.username);
         localStorage.setItem('temp_email', response.data.email);
         localStorage.setItem('temp_branch_selected', branch);
-        navigate('/2fa');
+        if (typeof onNavigateTo2FA === 'function') {
+          onNavigateTo2FA({
+            username: response.data.username,
+            email: response.data.email,
+            branch,
+          });
+        } else {
+          navigate('/2fa');
+        }
       }
 
     } catch (error) {
@@ -96,86 +110,376 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
   };
 
   return (
-    <div className="min-h-screen flex bg-gray-50">
-      <div className="flex-1 flex items-center justify-center p-12 bg-gradient-to-br from-yellow-50 via-white to-orange-50">
-        <Card className="w-full max-w-lg rounded-3xl shadow-2xl border border-gray-200 bg-white">
-          <CardContent className="px-12 py-10 space-y-8">
-            <div className="flex justify-center mb-6">
-              <img src={emcLogoSrc} alt="EMC Logo" className="w-24 h-24 object-contain" />
-            </div>
+    <div className="login-page min-h-screen flex">
+      <style>{`
+        html,
+        body,
+        #root,
+        .auth-screen-shell,
+        .login-page {
+          width: 100%;
+          min-height: 100%;
+          margin: 0;
+          padding: 0;
+          background-color: #fff7ed !important;
+          background-image:
+            radial-gradient(circle at 88% 8%, rgba(255, 255, 0, 0.35), transparent 24%),
+            radial-gradient(circle at 0% 100%, rgba(255, 0, 0, 0.13), transparent 28%),
+            linear-gradient(145deg, #fffbeb 0%, #fff7ed 48%, #fee2e2 100%) !important;
+          background-repeat: no-repeat !important;
+          background-size: cover !important;
+        }
 
-            <div className="text-center space-y-2">
-              <h2 className="text-3xl text-gray-900">E.M. Cayetano Trading</h2>
-              <p className="text-lg text-gray-600">Inventory Management System</p>
-            </div>
+        .auth-screen-shell,
+        .login-page {
+          box-sizing: border-box;
+          min-height: 100dvh;
+          min-height: 100svh;
+          min-height: 100vh;
+          margin: 0 !important;
+          padding: 0 !important;
+          overflow-x: hidden;
+        }
 
-            <form onSubmit={handleLogin} className="space-y-6">
-              <div className="space-y-2">
-                <Label htmlFor="username" className="text-gray-800">Username</Label>
-                <Input
-                  id="username"
-                  type="text"
-                  placeholder="Enter your username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm"
-                />
+        .login-page {
+          max-width: none !important;
+          background: transparent !important;
+          background-color: transparent !important;
+          background-image: none !important;
+        }
+
+        @media (min-width: 1024px) {
+          .login-brand-rule {
+            display: block;
+            width: 4.25rem;
+            height: 3px;
+            margin: 0.75rem auto 0;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #ffff00, #ff0000);
+          }
+
+          .login-mobile-copy {
+            display: block;
+            max-width: 24rem;
+            margin: 0.75rem auto 0;
+            color: #475569;
+            font-size: 0.95rem;
+            line-height: 1.45;
+          }
+
+          .login-field-control {
+            padding-left: 3.25rem !important;
+          }
+
+          .login-field-icon {
+            display: flex;
+            left: 1.1rem !important;
+            width: 1.08rem;
+            height: 1.08rem;
+          }
+
+          .login-password-input {
+            padding-right: 3rem !important;
+          }
+        }
+
+        @media (max-width: 1023px) {
+          html,
+          body,
+          #root,
+          .auth-screen-shell {
+            min-height: 100dvh;
+            min-height: 100svh;
+            min-height: 100vh;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            background-color: #fff7ed !important;
+            background-image:
+              radial-gradient(circle at 88% 8%, rgba(255, 255, 0, 0.35), transparent 24%),
+              radial-gradient(circle at 0% 100%, rgba(255, 0, 0, 0.13), transparent 28%),
+              linear-gradient(145deg, #fffbeb 0%, #fff7ed 48%, #fee2e2 100%) !important;
+            background-repeat: no-repeat !important;
+            background-size: cover !important;
+          }
+
+          .login-page {
+            width: 100%;
+            max-width: 100%;
+            min-width: 0;
+            min-height: 100dvh;
+            min-height: 100svh;
+            min-height: 100vh;
+            display: block;
+            overflow-x: hidden;
+            background: transparent !important;
+            background-color: transparent !important;
+            background-image: none !important;
+          }
+
+          .login-form-pane {
+            width: 100%;
+            max-width: 100%;
+            min-height: 100dvh;
+            min-height: 100svh;
+            min-height: 100vh;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem 1rem 1.1rem;
+            background: transparent !important;
+            overflow-x: hidden;
+          }
+
+          .login-card {
+            width: min(100%, 420px);
+            max-width: 420px;
+            margin-left: auto;
+            margin-right: auto;
+            border-radius: 1.25rem;
+            border-color: rgba(226, 232, 240, 0.75);
+            background: rgba(255, 255, 255, 0.72) !important;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 18px 38px rgba(15, 23, 42, 0.14);
+          }
+
+          .login-card-content {
+            padding: 0.9rem 1.05rem 1rem;
+            gap: 0;
+          }
+
+          .login-brand {
+            margin-bottom: 1rem;
+          }
+
+          .login-logo {
+            width: 4.35rem;
+            height: 4.35rem;
+          }
+
+          .login-title {
+            font-size: clamp(1.35rem, 5.8vw, 1.7rem);
+            line-height: 1.12;
+            font-weight: 500;
+          }
+
+          .login-subtitle {
+            font-size: 0.88rem;
+            line-height: 1.35;
+          }
+
+          .login-mobile-copy {
+            display: block;
+            max-width: 19rem;
+            margin: 0.5rem auto 0;
+            color: #475569;
+            font-size: 0.84rem;
+            line-height: 1.4;
+          }
+
+          .login-brand-rule {
+            display: block;
+            width: 3.5rem;
+            height: 3px;
+            margin: 0.55rem auto 0;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #ffff00, #ff0000);
+          }
+
+          .login-form {
+            gap: 0.85rem;
+          }
+
+          .login-field {
+            gap: 0.45rem;
+          }
+
+          .login-field label {
+            font-size: 0.88rem;
+          }
+
+          .login-field-control {
+            min-height: 2.75rem;
+            padding-left: 3.15rem !important;
+            font-size: 0.92rem;
+            line-height: 1.25;
+          }
+
+          .login-field-icon {
+            display: flex;
+            left: 1.05rem !important;
+            width: 1.05rem;
+            height: 1.05rem;
+          }
+
+          .login-password-input {
+            padding-right: 2.75rem !important;
+          }
+
+          .login-button {
+            min-height: 2.85rem;
+            padding-top: 0;
+            padding-bottom: 0;
+            font-weight: 500;
+          }
+
+          .login-links {
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 0.75rem;
+            margin-top: 0.35rem;
+          }
+
+          .login-link-divider {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0 !important;
+            margin: 0;
+          }
+
+          .login-link-divider span:not(.login-divider-text) {
+            height: 1px;
+            flex: 1;
+            background: rgba(203, 213, 225, 0.95);
+          }
+
+          .login-divider-text {
+            color: #64748b;
+            font-size: 0.78rem;
+            line-height: 1;
+          }
+
+          .login-forgot-link,
+          .login-register-link {
+            display: inline-flex;
+            min-height: 2rem;
+            align-items: center;
+            justify-content: center;
+            border-radius: 999px;
+          }
+
+          .login-register-row {
+            display: flex;
+            min-height: 2.35rem;
+            align-items: center;
+            justify-content: center;
+            gap: 0.25rem;
+            border-radius: 0.95rem;
+            color: #1f2937;
+            line-height: 1.35;
+          }
+        }
+
+        @media (max-width: 390px) {
+          .login-form-pane {
+            padding: 0.85rem 0.7rem 0.9rem;
+          }
+
+          .login-card-content {
+            padding: 0.85rem;
+          }
+
+          .login-logo {
+            width: 4rem;
+            height: 4rem;
+          }
+        }
+      `}</style>
+
+      <div className="login-form-pane flex-1 flex items-center justify-center p-12 bg-gradient-to-br from-yellow-50 via-orange-50 to-red-50">
+        <Card className="login-card w-full max-w-lg rounded-3xl shadow-2xl border border-gray-200 bg-white">
+          <CardContent className="login-card-content px-12 py-10 space-y-8">
+            <div className="login-brand">
+              <div className="flex justify-center mb-4">
+                <img src={emcLogoSrc} alt="EMC Logo" className="login-logo w-24 h-24 object-contain" />
               </div>
 
-              <div className="space-y-2">
+              <div className="text-center space-y-2">
+                <h2 className="login-title text-3xl text-gray-900">E.M. Cayetano Trading</h2>
+                <p className="login-subtitle text-lg text-gray-600">Inventory Management System</p>
+                <span className="login-brand-rule" aria-hidden="true" />
+                <p className="login-mobile-copy">
+                  Welcome back! Sign in to continue managing your inventory with ease.
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleLogin} className="login-form space-y-6">
+              <div className="login-field space-y-2">
+                <Label htmlFor="username" className="text-gray-800">Username</Label>
+                <div className="relative">
+                  <User className="login-field-icon pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                  <Input
+                    id="username"
+                    type="text"
+                    placeholder="Enter your username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="login-field-control rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="login-field space-y-2">
                 <Label htmlFor="password" className="text-gray-800">Password</Label>
                 <div className="relative">
+                  <Lock className="login-field-icon pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
                   <Input
                     id="password"
                     type={showPassword ? "text" : "password"}
                     placeholder="Enter your password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm pr-10"
+                    className="login-field-control login-password-input rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm pr-10"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 transition-colors"
+                    className="absolute right-3 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-lg text-gray-500 transition-colors hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#FFFF00] focus:ring-offset-1"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
                   >
                     {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                   </button>
                 </div>
               </div>
 
-              <div className="space-y-2">
+              <div className="login-field space-y-2">
                 <Label htmlFor="branch" className="text-gray-800">Branch</Label>
-                <Select
-                  value={branch}
-                  onValueChange={(value) => {
-                    setBranch(value);
-                    if (!username || !password) {
-                      toast.error("Please fill the other fields", {
-                        id: "login-fill-other-fields",
-                        classNames: {
-                          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
-                        },
-                      });
-                      setBranchHintShown(true);
-                    }
-                  }}
-                >
-                  <SelectTrigger
-                    id="branch"
-                    className="rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm"
+                <div className="relative">
+                  <Store className="login-field-icon pointer-events-none absolute left-4 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                  <Select
+                    value={branch}
+                    onValueChange={(value) => {
+                      setBranch(value);
+                      if (!username || !password) {
+                        toast.error("Please fill the other fields", {
+                          id: "login-fill-other-fields",
+                          classNames: {
+                            toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+                          },
+                        });
+                        setBranchHintShown(true);
+                      }
+                    }}
                   >
-                    <SelectValue placeholder="Select branch" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Manggahan">Manggahan</SelectItem>
-                    <SelectItem value="San Rafael">San Rafael</SelectItem>
-                  </SelectContent>
-                </Select>
+                    <SelectTrigger
+                      id="branch"
+                      className="login-field-control rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm"
+                    >
+                      <SelectValue placeholder="Select branch" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Manggahan">Manggahan</SelectItem>
+                      <SelectItem value="San Rafael">San Rafael</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               <Button
                 type="submit"
-                className="w-full py-6 rounded-xl bg-[#FFFF00] hover:bg-[#e6e600] text-black shadow-lg transition-all duration-300"
+                className="login-button w-full py-6 rounded-xl bg-[#FFFF00] hover:bg-[#e6e600] text-black shadow-lg transition-all duration-300"
                 disabled={isLoggingIn}
               >
                 {isLoggingIn ? (
@@ -188,12 +492,18 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
                 )}
               </Button>
 
-              <div className="mt-4 text-center text-sm">
+              <div className="login-links mt-4 text-center text-sm">
                 <p>
-                  <Link to="/forgot-password" className="text-blue-600 hover:underline">Forgot Password?</Link>
+                  <Link to="/forgot-password" className="login-forgot-link text-blue-600 hover:text-blue-700 hover:underline">Forgot Password?</Link>
                 </p>
-                <p className="mt-2">
-                  Don't have an account? <Link to="/register" className="text-blue-600 hover:underline">Register here</Link>
+                <div className="login-link-divider items-center gap-4 py-3 text-xs text-slate-500">
+                  <span className="h-px flex-1 bg-slate-200" />
+                  <span className="login-divider-text">or</span>
+                  <span className="h-px flex-1 bg-slate-200" />
+                </div>
+                <p className="login-register-row">
+                  <span>Don't have an account?</span>
+                  <Link to="/register" className="login-register-link text-blue-600 hover:text-blue-700 hover:underline">Register here</Link>
                 </p>
               </div>
             </form>
