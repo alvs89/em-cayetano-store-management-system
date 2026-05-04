@@ -687,7 +687,7 @@ export function UserManagementModule() {
         }
 
         .user-management-shell {
-          width: min(100%, 72rem);
+          width: 100%;
         }
 
         .user-summary-grid {
@@ -1209,7 +1209,7 @@ export function UserManagementModule() {
           }
         }
       `}</style>
-      <div className="user-management-shell max-w-6xl mx-auto space-y-6">
+      <div className="user-management-shell w-full space-y-6">
         <PageHeader
           title="User Management"
           subtitle="Manage user accounts, roles, and permissions"

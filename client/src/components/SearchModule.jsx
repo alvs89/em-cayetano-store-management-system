@@ -73,14 +73,12 @@ export function SearchModule() {
         }
 
         .search-products-page > .mb-8 {
-          max-width: 72rem;
-          margin-left: auto;
-          margin-right: auto;
+          width: 100%;
+          max-width: none;
         }
 
         .search-products-shell {
-          width: min(100%, 72rem);
-          margin: 0 auto;
+          width: 100%;
         }
 
         .search-controls-card,

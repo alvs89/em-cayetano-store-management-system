@@ -289,8 +289,8 @@ function AppContent() {
     : "flex h-screen w-full max-w-full flex-row overflow-hidden bg-gray-50";
 
   const mainClassName = isMobileViewport
-    ? "min-w-0 flex-1 overflow-visible"
-    : "min-w-0 flex-1 overflow-y-auto overflow-x-hidden";
+    ? "app-main-content min-w-0 flex-1 overflow-visible"
+    : "app-main-content min-w-0 flex-1 overflow-y-auto overflow-x-hidden";
 
   return (
     <div className={appShellClassName} role="application">

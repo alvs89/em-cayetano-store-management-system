@@ -291,9 +291,7 @@ export function MaintenanceModule({ onNavigate, user }) {
         .maintenance-page > .mb-8,
         .maintenance-layout,
         .maintenance-page > .maintenance-alert-row {
-          width: min(100%, 96rem);
-          margin-left: auto;
-          margin-right: auto;
+          width: 100%;
         }
 
         .maintenance-hero {

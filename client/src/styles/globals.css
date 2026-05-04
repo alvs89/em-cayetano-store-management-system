@@ -216,6 +216,10 @@ body {
   min-height: 100vh;
 }
 
+.app-main-content {
+  scrollbar-gutter: stable;
+}
+
 #root *,
 #root *::before,
 #root *::after {
