@@ -29,6 +29,7 @@ const ForgotPasswordScreen = () => {
           otpIssuedAt: serverTime,
           otpExpiresAt: expiresAt,
           retryAfterSeconds: response.data.retryAfterSeconds || 60,
+          remainingAttempts: response.data.remainingAttempts,
         }
       });
     } catch (error) {

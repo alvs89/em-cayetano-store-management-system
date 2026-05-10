@@ -86,10 +86,17 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
         localStorage.setItem('otp_2fa_expires_at', expiresAt);
         localStorage.removeItem('otp_issued_at');
         localStorage.removeItem('otp_expires_at');
+        const resendCooldownKey = `otp_2fa_resend_available_at_${username.toLowerCase()}`;
+        const resendExhaustedKey = `${resendCooldownKey}_exhausted`;
         localStorage.setItem(
-          `otp_2fa_resend_available_at_${username.toLowerCase()}`,
+          resendCooldownKey,
           (Date.now() + Number(otpResponse.data.retryAfterSeconds || 60) * 1000).toString()
         );
+        if (otpResponse.data.remainingAttempts === 0) {
+          localStorage.setItem(resendExhaustedKey, 'true');
+        } else {
+          localStorage.removeItem(resendExhaustedKey);
+        }
         localStorage.setItem('temp_username', response.data.username);
         localStorage.setItem('temp_email', response.data.email);
         localStorage.setItem('temp_branch_selected', branch);

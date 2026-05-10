@@ -82,6 +82,11 @@ const SetPasswordScreen = () => {
         cooldownStorageKey,
         (Date.now() + Number(location.state.retryAfterSeconds) * 1000).toString()
       );
+      if (location.state?.remainingAttempts === 0) {
+        localStorage.setItem(exhaustedStorageKey, 'true');
+      } else {
+        localStorage.removeItem(exhaustedStorageKey);
+      }
     }
 
     const tickCooldown = () => {
@@ -98,7 +103,7 @@ const SetPasswordScreen = () => {
     tickCooldown();
     const id = setInterval(tickCooldown, 1000);
     return () => clearInterval(id);
-  }, [cooldownStorageKey, exhaustedStorageKey, location.state?.retryAfterSeconds]);
+  }, [cooldownStorageKey, exhaustedStorageKey, location.state?.remainingAttempts, location.state?.retryAfterSeconds]);
 
   const startResendCooldown = (seconds = 60, attemptsExhausted = false) => {
     const safeSeconds = Math.max(1, Number(seconds) || 60);
