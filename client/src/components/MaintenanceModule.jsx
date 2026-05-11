@@ -399,6 +399,28 @@ export function MaintenanceModule({ onNavigate, user }) {
           border-radius: 10px;
           font-weight: 700;
           box-shadow: 0 10px 18px rgba(15, 23, 42, 0.08);
+          transition: background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+        }
+
+        .maintenance-action-button:not(:disabled):hover {
+          box-shadow: 0 12px 22px rgba(15, 23, 42, 0.12);
+          transform: translateY(-1px);
+        }
+
+        .maintenance-restore-button {
+          background-color: #f59e0b;
+          color: #ffffff;
+        }
+
+        .maintenance-restore-button:not(:disabled):hover {
+          background-color: #d97706;
+          color: #ffffff;
+        }
+
+        .maintenance-restore-button:disabled {
+          background-color: #f59e0b;
+          color: #ffffff;
+          opacity: 0.68;
         }
 
         .maintenance-optimization-grid {
@@ -864,12 +886,7 @@ export function MaintenanceModule({ onNavigate, user }) {
                 </div>
                 <Button
                   type="button"
-                  className="maintenance-action-button border-0 text-white hover:bg-amber-600 disabled:text-white"
-                  style={{
-                    backgroundColor: '#F59E0B',
-                    color: '#FFFFFF',
-                    opacity: !isAdmin || isRestoring ? 0.68 : 1,
-                  }}
+                  className="maintenance-action-button maintenance-restore-button border-0"
                   onClick={() => fileInputRef.current && fileInputRef.current.click()}
                   disabled={!isAdmin || isRestoring}
                 >
