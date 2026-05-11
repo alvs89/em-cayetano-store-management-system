@@ -70,6 +70,8 @@ const STATUS_PRIORITY = {
   "In Stock": 3
 };
 
+const formatUnitQuantity = quantity => `${quantity} ${Number(quantity) === 1 ? "unit" : "units"}`;
+
 export function InventoryModule({
   user,
   onNavigate
@@ -367,9 +369,9 @@ export function InventoryModule({
       if (quantity === 0) {
         toast.error(`${newItem.name} added but OUT OF STOCK!`, { description: 'Item needs immediate stocking' });
       } else if (quantity <= reorderLevel) {
-        toast.warning(`${newItem.name} added but LOW ON STOCK!`, { description: `Only ${quantity} units - Consider restocking soon` });
+        toast.warning(`${newItem.name} added but LOW ON STOCK!`, { description: `Only ${formatUnitQuantity(quantity)} - Consider restocking soon` });
       } else {
-        toast.success(`${newItem.name} added successfully!`, { description: `Initial stock: ${quantity} units` });
+        toast.success(`${newItem.name} added successfully!`, { description: `Initial stock: ${formatUnitQuantity(quantity)}` });
       }
     } catch (err) {
       toast.error("Failed to add item", { description: err?.response?.data?.error || err.message });
@@ -397,8 +399,8 @@ export function InventoryModule({
       });
       setIsStockInDialogOpen(false);
       setStockAmount("");
-      toast.success(`Added ${amount} units to ${selectedItem.name}`, {
-        description: `New stock level: ${selectedItem.quantity + amount} units`
+      toast.success(`Added ${formatUnitQuantity(amount)} to ${selectedItem.name}`, {
+        description: `New stock level: ${formatUnitQuantity(selectedItem.quantity + amount)}`
       });
       setSelectedItem(null);
     } catch (err) {
@@ -433,11 +435,11 @@ export function InventoryModule({
       setIsStockOutDialogOpen(false);
       setStockAmount("");
       if (newQuantity === 0) {
-        toast.error(`${selectedItem.name} is now OUT OF STOCK!`, { description: `Removed ${amount} units - Immediate restocking required` });
+        toast.error(`${selectedItem.name} is now OUT OF STOCK!`, { description: `Removed ${formatUnitQuantity(amount)} - Immediate restocking required` });
       } else if (newQuantity <= selectedItem.reorderLevel) {
-        toast.warning(`${selectedItem.name} is now LOW ON STOCK!`, { description: `Removed ${amount} units - Only ${newQuantity} units remaining` });
+        toast.warning(`${selectedItem.name} is now LOW ON STOCK!`, { description: `Removed ${formatUnitQuantity(amount)} - Only ${formatUnitQuantity(newQuantity)} remaining` });
       } else {
-        toast.success(`Removed ${amount} units from ${selectedItem.name}`, { description: `Remaining stock: ${newQuantity} units` });
+        toast.success(`Removed ${formatUnitQuantity(amount)} from ${selectedItem.name}`, { description: `Remaining stock: ${formatUnitQuantity(newQuantity)}` });
       }
       setSelectedItem(null);
     } catch (err) {

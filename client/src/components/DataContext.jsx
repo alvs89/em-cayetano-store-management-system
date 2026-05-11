@@ -8,27 +8,37 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 const formatUnitQuantity = quantity => `${quantity} ${Number(quantity) === 1 ? "unit" : "units"}`;
 
+const getStockAlertEventId = (prefix, item) => {
+  const quantity = Number(item.quantity);
+  const quantityKey = Number.isFinite(quantity) ? quantity : "unknown";
+  const timestampKey = item.lastUpdated || "no-timestamp";
+
+  return `${prefix}-${item.id}-${quantityKey}-${timestampKey}`;
+};
+
 const generateInventoryAlerts = inventory => {
   const alerts = [];
   inventory.forEach(item => {
+    const timestampRaw = item.lastUpdated || new Date().toISOString();
+
     if (item.status === 'Out of Stock') {
       alerts.push({
-        id: `out-${item.id}`,
+        id: getStockAlertEventId('out', item),
         type: 'warning',
         title: 'Out of Stock',
         message: `${item.name} is completely out of stock`,
-        timestampRaw: item.lastUpdated || new Date().toISOString(),
+        timestampRaw,
         read: false,
         actionable: true,
         relatedModule: 'inventory'
       });
     } else if (item.status === 'Low Stock') {
       alerts.push({
-        id: `low-${item.id}`,
+        id: getStockAlertEventId('low', item),
         type: 'warning',
         title: 'Low Stock Alert',
         message: `${item.name} is running low (${formatUnitQuantity(item.quantity)} remaining)`,
-        timestampRaw: item.lastUpdated || new Date().toISOString(),
+        timestampRaw,
         read: false,
         actionable: true,
         relatedModule: 'inventory'

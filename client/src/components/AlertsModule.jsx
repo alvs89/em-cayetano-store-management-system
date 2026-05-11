@@ -42,7 +42,7 @@ const formatRelativeTime = value => {
 
 const formatAlertMessage = message => {
   if (!message) return '';
-  return message.replace(/\b1 units remaining\b/g, '1 unit remaining');
+  return message.replace(/\b1 units\b/g, '1 unit');
 };
 
 const isWithinNewBadgeWindow = value => {
