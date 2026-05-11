@@ -169,6 +169,11 @@ export function AlertsModule({ user, onNavigate }) {
 
   const handleGoToRelated = alert => {
     if (!alert.relatedModule) return;
+
+    if (!alert.read) {
+      markAlertRead(alert.id);
+    }
+
     if (alert.relatedModule === 'user-management' && alert.title === 'New User Registration') {
       localStorage.setItem('user_management_target_tab', 'pending');
     }
@@ -705,7 +710,7 @@ function AlertCard({ alert, onMarkAsRead, onUnmarkAsRead, onDismiss, onGoToRelat
 
   return (
     <div
-      className={`alert-card rounded-lg border p-4 ${!alert.read ? `ring-2 ${tone.ring}` : ''} ${alert.read ? 'opacity-90' : ''}`}
+      className={`alert-card rounded-lg border p-4 transition-all duration-200 ease-out ${!alert.read ? `ring-2 ${tone.ring}` : ''} ${alert.read ? 'opacity-90' : ''}`}
       style={tone.containerStyle}
     >
       <div className="alert-card-shell flex items-start gap-3">
@@ -749,7 +754,13 @@ function AlertCard({ alert, onMarkAsRead, onUnmarkAsRead, onDismiss, onGoToRelat
                 </Button>
               )}
               {alert.actionable && alert.relatedModule && (
-                <Button size="sm" className="alert-view-button h-7 text-xs" onClick={() => onGoToRelated(alert)}>
+                <Button
+                  size="sm"
+                  className="alert-view-button h-7 text-xs"
+                  onClick={() => onGoToRelated(alert)}
+                  aria-label={`View ${alert.title} and mark as read`}
+                  title="View and mark as read"
+                >
                   <Package className="mr-1 h-3 w-3" />
                   View
                 </Button>

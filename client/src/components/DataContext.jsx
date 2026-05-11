@@ -371,6 +371,8 @@ export function DataProvider({ children }) {
   }, []);
 
   const markAlertRead = (id) => {
+    if (readAlertIds.includes(id)) return;
+
     const alert = alerts.find(item => item.id === id);
     setReadAlertIds(prev => (prev.includes(id) ? prev : [...prev, id]));
     auditAction("MARK_ALERT_READ", {
