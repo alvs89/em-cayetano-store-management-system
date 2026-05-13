@@ -11,6 +11,7 @@ import { toast } from "sonner";
 
 import { Link, useNavigate } from 'react-router-dom';
 import { useData } from "./DataContext";
+import { apiUrl } from "../utils/api";
 
 const emcLogoSrc = "/emc-logo.png";
 
@@ -58,7 +59,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
     setIsLoggingIn(true);
 
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/login', {
+      const response = await axios.post(apiUrl('/api/auth/login'), {
         username,
         password,
         branch // This must match the selected branch in your dropdown
@@ -79,7 +80,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
       }
 
       if (response.data.require2fa) {
-        const otpResponse = await axios.post('http://localhost:5000/api/auth/send-otp', { username });
+        const otpResponse = await axios.post(apiUrl('/api/auth/send-otp'), { username });
         const serverTime = otpResponse.data.serverTime || Date.now();
         const expiresAt = otpResponse.data.expiresAt || new Date(Date.now() + 120000).toISOString();
         localStorage.setItem('otp_2fa_issued_at', serverTime.toString());

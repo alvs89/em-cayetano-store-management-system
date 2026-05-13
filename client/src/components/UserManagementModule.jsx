@@ -10,6 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { toast } from "sonner";
+import { API_BASE_URL } from "../utils/api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { useData } from "./DataContext";
 import { PageHeader } from "./PageHeader";
@@ -17,7 +18,7 @@ import { mergeSort } from "../utils/algorithms";
 
 export function UserManagementModule() {
   const { users, setUsers, refreshSystemSummary } = useData();
-  const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+  const API_BASE = API_BASE_URL;
   const authToken = localStorage.getItem("token");
   const sessionUser = (() => {
     try {

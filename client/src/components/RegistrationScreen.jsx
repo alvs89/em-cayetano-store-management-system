@@ -8,6 +8,7 @@ import { Label } from './ui/label';
 import { Button } from './ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { toast } from 'sonner';
+import { apiUrl } from '../utils/api';
 
 const emcLogoSrc = "/emc-logo.png";
 
@@ -42,7 +43,7 @@ const RegistrationScreen = () => {
 
     setLoading(true);
     try {
-      await axios.post('http://localhost:5000/api/auth/register', {
+      await axios.post(apiUrl('/api/auth/register'), {
         fullName: formData.fullName,
         username: formData.username,
         email: formData.email,

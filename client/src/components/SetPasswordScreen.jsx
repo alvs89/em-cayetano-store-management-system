@@ -7,6 +7,12 @@ import { Label } from './ui/label';
 import { Button } from './ui/button';
 import { Eye, EyeOff, ShieldCheck, Mail } from 'lucide-react';
 import { toast } from 'sonner';
+import { apiUrl } from '../utils/api';
+import {
+  VERIFICATION_CODE_LENGTH,
+  handleVerificationCodeChange,
+  handleVerificationCodePaste,
+} from '../utils/verificationCode';
 
 const emcLogoSrc = "/emc-logo.png";
 const EXPIRY_TOLERANCE_MS = 15000; // 15s grace to match backend acceptance
@@ -125,16 +131,9 @@ const SetPasswordScreen = () => {
   };
 
   const handleOtpChange = (value) => {
-    const digitsOnly = value.replace(/\D/g, '').slice(0, 6);
-    if (/\D/.test(value)) {
-      toast.error('Only numbers are allowed for the verification code.', {
-        id: 'set-password-otp-numeric-only',
-        classNames: {
-          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
-        },
-      });
-    }
-    setOtp(digitsOnly);
+    handleVerificationCodeChange(value, setOtp, {
+      toastId: 'set-password-otp-numeric-only',
+    });
   };
 
   const handleReset = async (e) => {
@@ -149,7 +148,7 @@ const SetPasswordScreen = () => {
       return;
     }
     const sanitizedOtp = otp.replace(/\s+/g, '');
-    if (sanitizedOtp.length !== 6) {
+    if (sanitizedOtp.length !== VERIFICATION_CODE_LENGTH) {
       toast.error("Please enter the full 6-digit code", {
         classNames: {
           toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
@@ -159,7 +158,7 @@ const SetPasswordScreen = () => {
     }
     setLoading(true);
     try {
-      await axios.post('http://localhost:5000/api/auth/reset-password', {
+      await axios.post(apiUrl('/api/auth/reset-password'), {
         email,
         otp: sanitizedOtp,
         newPassword
@@ -212,7 +211,7 @@ const SetPasswordScreen = () => {
 
     setResending(true);
     try {
-      const resp = await axios.post('http://localhost:5000/api/auth/forgot-password', { email });
+      const resp = await axios.post(apiUrl('/api/auth/forgot-password'), { email });
       const serverTime = resp.data.serverTime || Date.now();
       const newExpires = resp.data.expiresAt ? new Date(resp.data.expiresAt).getTime() : serverTime + 120000;
       startResendCooldown(resp.data.retryAfterSeconds || 60, resp.data.remainingAttempts === 0);
@@ -286,8 +285,11 @@ const SetPasswordScreen = () => {
                   placeholder="Enter 6-digit code"
                   value={otp}
                   onChange={(e) => handleOtpChange(e.target.value)}
+                  onPaste={(e) => handleVerificationCodePaste(e, otp, setOtp, {
+                    toastId: 'set-password-otp-numeric-only',
+                  })}
                   className="rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm"
-                  maxLength={6}
+                  maxLength={VERIFICATION_CODE_LENGTH}
                   required
                 />
               </div>

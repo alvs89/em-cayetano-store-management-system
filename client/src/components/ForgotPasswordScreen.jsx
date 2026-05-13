@@ -7,6 +7,7 @@ import { Label } from './ui/label';
 import { Button } from './ui/button';
 import { toast } from 'sonner';
 import { Mail } from 'lucide-react';
+import { apiUrl } from '../utils/api';
 
 const emcLogoSrc = "/emc-logo.png";
 const RESEND_WAIT_DESCRIPTION = 'Please wait for the resend code timer to finish before requesting another code.';
@@ -20,7 +21,7 @@ const ForgotPasswordScreen = () => {
     e.preventDefault();
     setLoading(true);
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/forgot-password', { email });
+      const response = await axios.post(apiUrl('/api/auth/forgot-password'), { email });
       const serverTime = response.data.serverTime || Date.now();
       const expiresAt = response.data.expiresAt || new Date(Date.now() + 120000).toISOString();
       navigate('/set-password', {

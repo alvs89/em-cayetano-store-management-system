@@ -8,6 +8,12 @@ import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { apiUrl } from '../utils/api';
+import {
+  VERIFICATION_CODE_LENGTH,
+  handleVerificationCodeChange,
+  handleVerificationCodePaste,
+} from '../utils/verificationCode';
 
 export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
   const [code, setCode] = useState('');
@@ -149,8 +155,9 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
   };
 
   const handleCodeChange = (value) => {
-    const digitsOnly = value.replace(/\D/g, '').slice(0, 6);
-    setCode(digitsOnly);
+    handleVerificationCodeChange(value, setCode, {
+      toastId: 'two-factor-otp-numeric-only',
+    });
   };
 
   const handleVerify = async (e) => {
@@ -164,7 +171,7 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
       });
       return;
     }
-    if (code.length !== 6) {
+    if (code.length !== VERIFICATION_CODE_LENGTH) {
       toast.error("Please enter the full 6-digit code", {
         classNames: {
           toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
@@ -177,7 +184,7 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
     let verifySucceeded = false;
     try {
       // 1. Verify with Backend
-      const response = await axios.post('http://localhost:5000/api/auth/verify-otp', {
+      const response = await axios.post(apiUrl('/api/auth/verify-otp'), {
         username,
         code,
         branch: selectedBranch
@@ -269,7 +276,7 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
 
     setResending(true);
     try {
-      const resp = await axios.post('http://localhost:5000/api/auth/send-otp', { username });
+      const resp = await axios.post(apiUrl('/api/auth/send-otp'), { username });
       const serverTime = resp.data.serverTime || Date.now();
       const expiresAt = resp.data.expiresAt || new Date(Date.now() + 120000).toISOString();
 
@@ -376,8 +383,11 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
                   placeholder="Enter 6-digit code"
                   value={code}
                   onChange={(e) => handleCodeChange(e.target.value)}
+                  onPaste={(e) => handleVerificationCodePaste(e, code, setCode, {
+                    toastId: 'two-factor-otp-numeric-only',
+                  })}
                   className="h-12 rounded-xl border-gray-300 text-center text-xl tracking-[0.45em] font-semibold focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm"
-                  maxLength={6}
+                  maxLength={VERIFICATION_CODE_LENGTH}
                 />
               </div>
 
