@@ -18,6 +18,12 @@ const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
 const OTP_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const OTP_RATE_LIMIT_MAX_RESENDS = 5;
 const OTP_RATE_LIMIT_MAX_REQUESTS = OTP_RATE_LIMIT_MAX_RESENDS + 1; // initial send + allowed resends
+const APP_TIME_ZONE = 'Asia/Manila';
+const APP_TIMESTAMP_OFFSET = '+08:00';
+const SYSTEM_LOG_RETENTION_DAYS = Math.max(
+  1,
+  Number.parseInt(process.env.SYSTEM_LOG_RETENTION_DAYS || '30', 10) || 30
+);
 const ALLOWED_ROLES = ['Admin', 'Employee'];
 const ALLOWED_BRANCHES = ['Manggahan', 'San Rafael'];
 const OFFICIAL_INVENTORY_CATEGORIES = [
@@ -66,9 +72,10 @@ const CATEGORY_ALIASES = {
 // or Redis-backed rate limiting so attempts are shared across server instances.
 const otpRequestBuckets = new Map();
 
-// PostgreSQL TIMESTAMP values are stored without timezone metadata. The database
-// uses UTC timestamps, so parse them as UTC instead of the Node process timezone.
-types.setTypeParser(1114, (value) => new Date(`${value}Z`));
+// PostgreSQL TIMESTAMP values are stored without timezone metadata. This system
+// stores them as Philippine local time, so parse them with an explicit +08:00
+// offset instead of the Node process timezone.
+types.setTypeParser(1114, (value) => new Date(`${value.replace(' ', 'T')}${APP_TIMESTAMP_OFFSET}`));
 
 app.use(cors());
 app.use(express.json());
@@ -84,7 +91,25 @@ pool.on('error', (err) => {
   console.error('Unexpected error on idle database client:', err);
 });
 
+pool.on('connect', (client) => {
+  client.query(`SET TIME ZONE '${APP_TIME_ZONE}'; SET search_path TO public;`).catch((err) => {
+    console.error('Failed to initialize database session settings:', err.message);
+  });
+});
+
+const PHILIPPINE_NOW_SQL = `(CURRENT_TIMESTAMP AT TIME ZONE '${APP_TIME_ZONE}')`;
+
 async function ensureSchema() {
+  await pool.query('CREATE SCHEMA IF NOT EXISTS public;');
+  await pool.query('SET search_path TO public;');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      migration_key TEXT PRIMARY KEY,
+      applied_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
+    );
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       user_id SERIAL PRIMARY KEY,
@@ -102,7 +127,7 @@ async function ensureSchema() {
       reset_otp_code VARCHAR(10),
       reset_otp_expires TIMESTAMP,
       token_version INTEGER DEFAULT 0,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
     );
   `);
 
@@ -111,7 +136,7 @@ async function ensureSchema() {
       product_id SERIAL PRIMARY KEY,
       name VARCHAR(150) NOT NULL,
       category VARCHAR(50) NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
     );
   `);
 
@@ -123,7 +148,7 @@ async function ensureSchema() {
       stock_level INTEGER DEFAULT 0,
       min_stock_level INTEGER DEFAULT 5,
       status VARCHAR(20) DEFAULT 'In Stock',
-      last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      last_updated TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
       UNIQUE (product_id, branch)
     );
   `);
@@ -143,7 +168,7 @@ async function ensureSchema() {
       note TEXT,
       actor_id INT REFERENCES users(user_id) ON DELETE SET NULL,
       actor_name TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
     );
   `);
 
@@ -159,7 +184,7 @@ async function ensureSchema() {
       min_stock_level INTEGER DEFAULT 5,
       status VARCHAR(20) DEFAULT 'In Stock',
       last_updated TIMESTAMP,
-      archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      archived_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
       archived_by INT REFERENCES users(user_id) ON DELETE SET NULL
     );
   `);
@@ -172,7 +197,7 @@ async function ensureSchema() {
       target_id INT,
       target_name TEXT,
       action TEXT,
-      created_at TIMESTAMP DEFAULT NOW()
+      created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
     );
   `);
 
@@ -182,8 +207,68 @@ async function ensureSchema() {
       action VARCHAR(20) NOT NULL,
       actor_id INT,
       actor_name TEXT,
-      created_at TIMESTAMP DEFAULT NOW()
+      created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
     );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS system_logs (
+      id SERIAL PRIMARY KEY,
+      event_type VARCHAR(80) NOT NULL,
+      severity VARCHAR(20) DEFAULT 'info' CHECK (severity IN ('debug', 'info', 'warning', 'error')),
+      message TEXT NOT NULL,
+      context JSONB DEFAULT '{}'::jsonb,
+      actor_id INT REFERENCES users(user_id) ON DELETE SET NULL,
+      actor_name TEXT,
+      is_security BOOLEAN DEFAULT false,
+      created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
+    );
+  `);
+
+  await pool.query(`
+    ALTER TABLE users
+    ALTER COLUMN created_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+
+  await pool.query(`
+    ALTER TABLE products
+    ALTER COLUMN created_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+
+  await pool.query(`
+    ALTER TABLE branch_inventory
+    ALTER COLUMN last_updated SET DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+
+  await pool.query(`
+    ALTER TABLE stock_movements
+    ALTER COLUMN created_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+
+  await pool.query(`
+    ALTER TABLE archived_inventory
+    ALTER COLUMN archived_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+
+  await pool.query(`
+    ALTER TABLE audit_logs
+    ALTER COLUMN created_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+
+  await pool.query(`
+    ALTER TABLE backup_logs
+    ALTER COLUMN created_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+
+  await pool.query(`
+    ALTER TABLE system_logs
+    ALTER COLUMN created_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_system_logs_cleanup
+    ON system_logs (created_at)
+    WHERE is_security = false AND severity IN ('debug', 'info');
   `);
 
   await pool.query(`
@@ -201,7 +286,7 @@ async function ensureSchema() {
 
   await pool.query(`
     ALTER TABLE products
-    ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL};
   `);
 
   await pool.query(`
@@ -230,7 +315,7 @@ async function ensureSchema() {
         COALESCE(p.stock_level, 0),
         COALESCE(p.min_stock_level, 5),
         COALESCE(p.status, 'In Stock'),
-        COALESCE(p.last_updated, CURRENT_TIMESTAMP)
+        COALESCE(p.last_updated, ${PHILIPPINE_NOW_SQL})
       FROM products p
       WHERE NOT EXISTS (
         SELECT 1
@@ -246,6 +331,57 @@ async function ensureSchema() {
       DROP COLUMN IF EXISTS status,
       DROP COLUMN IF EXISTS last_updated
     `);
+  }
+
+  await migrateTimestampStorageToPhilippineTime();
+}
+
+async function migrateTimestampStorageToPhilippineTime() {
+  const migrationKey = 'philippine_timestamp_storage_v1';
+  const alreadyApplied = await pool.query(
+    'SELECT 1 FROM schema_migrations WHERE migration_key = $1',
+    [migrationKey]
+  );
+
+  if (alreadyApplied.rowCount > 0) {
+    return;
+  }
+
+  const timestampColumns = [
+    ['users', ['created_at', 'otp_expires', 'login_otp_expires', 'reset_otp_expires']],
+    ['products', ['created_at']],
+    ['branch_inventory', ['last_updated']],
+    ['stock_movements', ['created_at']],
+    ['archived_inventory', ['last_updated', 'archived_at']],
+    ['audit_logs', ['created_at']],
+    ['backup_logs', ['created_at']],
+    ['system_logs', ['created_at']]
+  ];
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    for (const [table, columns] of timestampColumns) {
+      for (const column of columns) {
+        await client.query(`
+          UPDATE ${table}
+          SET ${column} = ${column} + INTERVAL '8 hours'
+          WHERE ${column} IS NOT NULL
+        `);
+      }
+    }
+
+    await client.query(
+      'INSERT INTO schema_migrations (migration_key) VALUES ($1)',
+      [migrationKey]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
 }
 
@@ -444,14 +580,28 @@ function canonicalizeInventoryCategory(value) {
   return CATEGORY_ALIASES[normalized] || null;
 }
 
-async function findOrCreateProduct(client, { name, category }) {
-  const canonicalCategory = canonicalizeInventoryCategory(category);
-  const cleanName = cleanInventoryName(name);
-  if (!canonicalCategory) {
-    const error = new Error('Invalid inventory category');
+function parseNonNegativeInteger(value, fieldName, { max = null } = {}) {
+  const normalizedValue = value === '' || value === null || value === undefined ? 0 : Number(value);
+
+  if (!Number.isInteger(normalizedValue) || normalizedValue < 0) {
+    const error = new Error(`${fieldName} must be a non-negative whole number`);
     error.statusCode = 400;
     throw error;
   }
+
+  if (Number.isInteger(max) && normalizedValue > max) {
+    const error = new Error(`${fieldName} must be ${max} or less`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return normalizedValue;
+}
+
+async function findProductByIdentity(client, { name, category }) {
+  const canonicalCategory = canonicalizeInventoryCategory(category);
+  const cleanName = cleanInventoryName(name);
+  if (!canonicalCategory || !cleanName) return null;
 
   const existing = await client.query(
     `SELECT product_id, name, category
@@ -462,8 +612,22 @@ async function findOrCreateProduct(client, { name, category }) {
     [cleanName, canonicalCategory]
   );
 
-  if (existing.rowCount > 0) {
-    return existing.rows[0].product_id;
+  return existing.rows[0] || null;
+}
+
+async function findOrCreateProduct(client, { name, category }) {
+  const canonicalCategory = canonicalizeInventoryCategory(category);
+  const cleanName = cleanInventoryName(name);
+  if (!canonicalCategory) {
+    const error = new Error('Invalid inventory category');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const existing = await findProductByIdentity(client, { name: cleanName, category: canonicalCategory });
+
+  if (existing) {
+    return existing.product_id;
   }
 
   const inserted = await client.query(
@@ -602,6 +766,32 @@ async function recordAuditLog(db, {
       Number.isInteger(Number(targetId)) ? Number(targetId) : null,
       targetName || null,
       action
+    ]
+  );
+}
+
+async function recordSystemLog(db, {
+  eventType,
+  severity = 'info',
+  message,
+  context = {},
+  actorId = null,
+  actorName = null,
+  isSecurity = false
+}) {
+  if (!eventType || !message) return;
+
+  await db.query(
+    `INSERT INTO system_logs (event_type, severity, message, context, actor_id, actor_name, is_security)
+     VALUES ($1, $2, $3, $4::jsonb, $5, COALESCE($6, (SELECT full_name FROM users WHERE user_id = $5)), $7)`,
+    [
+      eventType,
+      ['debug', 'info', 'warning', 'error'].includes(severity) ? severity : 'info',
+      message,
+      JSON.stringify(context || {}),
+      Number.isInteger(Number(actorId)) ? Number(actorId) : null,
+      actorName || null,
+      Boolean(isSecurity)
     ]
   );
 }
@@ -799,6 +989,93 @@ function formatRetryAfter(seconds) {
   return `${minuteText} and ${remainingSeconds} second${remainingSeconds === 1 ? '' : 's'}`;
 }
 
+function getPostgresToolPath(envKey, commandName) {
+  return process.env[envKey] || commandName;
+}
+
+function getPostgresToolError(err, commandName) {
+  if (err && err.code === 'ENOENT') {
+    return `${commandName} was not found. Install PostgreSQL client tools or set the ${commandName === 'pg_dump' ? 'PG_DUMP_PATH' : 'PSQL_PATH'} environment variable to the full executable path.`;
+  }
+
+  return err?.message || `${commandName} failed`;
+}
+
+const RESTORE_APP_TABLES = [
+  'schema_migrations',
+  'system_logs',
+  'stock_movements',
+  'archived_inventory',
+  'branch_inventory',
+  'products',
+  'audit_logs',
+  'backup_logs',
+  'users'
+];
+
+function getRestoreValidationError(sql) {
+  const normalized = String(sql || '').toLowerCase();
+  const requiredMarkers = [
+    'postgresql database dump',
+    'create table public.users',
+    'create table public.products',
+    'create table public.branch_inventory'
+  ];
+
+  if (!requiredMarkers.every(marker => normalized.includes(marker))) {
+    return 'The selected file does not look like a valid E.M. Cayetano PostgreSQL backup.';
+  }
+
+  const blockedPatterns = [
+    /\bdrop\s+database\b/i,
+    /\bcreate\s+database\b/i,
+    /\\connect\b/i,
+    /\\c\b/i
+  ];
+
+  if (blockedPatterns.some(pattern => pattern.test(sql))) {
+    return 'The backup contains database-level commands that are not allowed in this restore operation.';
+  }
+
+  return null;
+}
+
+function buildRestoreScript(sql) {
+  const stagingSchema = `restore_validation_${Date.now()}`;
+  const escapedStagingSchema = stagingSchema.replace(/"/g, '""');
+  const stagedSql = sql
+    .replace(/\bpublic\./g, `${stagingSchema}.`)
+    .replace(/'public\./g, `'${stagingSchema}.`);
+  const dropStatements = RESTORE_APP_TABLES
+    .map(table => `DROP TABLE IF EXISTS public.${table} CASCADE;`)
+    .join('\n');
+
+  return [
+    '-- Restore script generated by the E.M. Cayetano maintenance module.',
+    '-- The uploaded backup is loaded into a temporary schema first.',
+    '-- Live application tables are replaced only after the backup proves it can restore successfully.',
+    'SET client_min_messages = warning;',
+    `DROP SCHEMA IF EXISTS "${escapedStagingSchema}" CASCADE;`,
+    `CREATE SCHEMA "${escapedStagingSchema}";`,
+    '',
+    stagedSql,
+    '',
+    dropStatements,
+    '',
+    sql,
+    '',
+    `DROP SCHEMA IF EXISTS "${escapedStagingSchema}" CASCADE;`
+  ].join('\n');
+}
+
+function toPhilippineTimestamp(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  return new Date(date.getTime() + 8 * 60 * 60 * 1000)
+    .toISOString()
+    .replace('T', ' ')
+    .replace('Z', '');
+}
+
 function checkOtpRateLimit(identifier) {
   const now = Date.now();
   const recentRequests = (otpRequestBuckets.get(identifier) || [])
@@ -826,7 +1103,7 @@ function checkOtpRateLimit(identifier) {
       1,
       Math.ceil((OTP_RESEND_COOLDOWN_MS - (now - lastRequestAt)) / 1000)
     );
-    const message = `Please wait ${formatRetryAfter(retryAfterSeconds)} before requesting another code.`;
+    const message = `A verification code was already sent. Please wait ${formatRetryAfter(retryAfterSeconds)} before another code can be sent.`;
     otpRequestBuckets.set(identifier, recentRequests);
     return {
       allowed: false,
@@ -898,6 +1175,18 @@ async function authenticate(req, res, next) {
 
     return next();
   } catch (err) {
+    if (err && err.code === '42P01') {
+      console.error('Authentication failed because a required table is missing:', err.message);
+      try {
+        await ensureSchema();
+      } catch (schemaErr) {
+        console.error('Schema recovery failed after authentication table error:', schemaErr.message);
+      }
+      return res.status(503).json({
+        error: 'Database is not ready. Please wait a moment and try again.'
+      });
+    }
+
     console.error('JWT verify failed:', err.message);
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
@@ -996,6 +1285,21 @@ app.post('/api/auth/login', async (req, res) => {
       email: user.email
     });
   } catch (err) {
+    if (err && err.code === '42P01') {
+      console.error('Login failed because a required table is missing:', err.message);
+      try {
+        await ensureSchema();
+      } catch (schemaErr) {
+        console.error('Schema recovery failed after login table error:', schemaErr.message);
+        return res.status(503).json({
+          error: 'Database is not ready. Please restart the server and try again.'
+        });
+      }
+      return res.status(503).json({
+        error: 'Database tables were restored. Please try logging in again.'
+      });
+    }
+
     console.error('Login error:', err);
     return res.status(500).json({ error: 'Server Error' });
   }
@@ -1023,7 +1327,7 @@ app.post('/api/auth/send-otp', async (req, res) => {
 
     await pool.query(
       'UPDATE users SET login_otp_code = $1, login_otp_expires = $2 WHERE user_id = $3',
-      [otp, expiresAt, user.user_id]
+      [otp, toPhilippineTimestamp(expiresAt), user.user_id]
     );
 
     await sendOtpEmail(user, otp, '2FA Login Verification', 'Use this code to complete your login.');
@@ -1115,7 +1419,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 
     await pool.query(
       'UPDATE users SET reset_otp_code = $1, reset_otp_expires = $2 WHERE email = $3',
-      [otp, expiresAt, email]
+      [otp, toPhilippineTimestamp(expiresAt), email]
     );
 
     await sendOtpEmail(user, otp, 'Password Reset Verification', 'Use this code to reset your password.');
@@ -1443,12 +1747,23 @@ app.get('/api/system/summary', authenticate, async (req, res) => {
        LIMIT 1`
     );
 
+    const latestRestoreResult = await pool.query(
+      `SELECT action, actor_name, created_at
+       FROM backup_logs
+       WHERE action = 'restore'
+       ORDER BY created_at DESC
+       LIMIT 1`
+    );
+
     return res.json({
       databaseStatus: 'Online',
       activeUserCount: activeUsersResult.rows[0]?.count || 0,
       pendingRegistrations: pendingUsersResult.rows,
       lastBackupAt: latestBackupResult.rows[0]?.created_at || null,
-      lastBackupBy: latestBackupResult.rows[0]?.actor_name || null
+      lastBackupBy: latestBackupResult.rows[0]?.actor_name || null,
+      lastRestoreAt: latestRestoreResult.rows[0]?.created_at || null,
+      lastRestoreBy: latestRestoreResult.rows[0]?.actor_name || null,
+      serverTime: new Date().toISOString()
     });
   } catch (err) {
     console.error('System summary error:', err);
@@ -1461,21 +1776,6 @@ app.get('/api/inventory', authenticate, async (req, res) => {
     if (!req.user.branch) {
       return res.status(400).json({ error: 'Branch is required to load inventory' });
     }
-
-    const defaultStatus = computeInventoryStatus(0, 5);
-
-    await pool.query(
-      `INSERT INTO branch_inventory (product_id, branch, stock_level, min_stock_level, status)
-       SELECT p.product_id, $1::varchar, 0, 5, $2
-       FROM products p
-       WHERE NOT EXISTS (
-         SELECT 1
-         FROM branch_inventory bi
-         WHERE bi.product_id = p.product_id
-           AND bi.branch = $1::varchar
-       )`,
-      [req.user.branch, defaultStatus]
-    );
 
     const result = await pool.query(
       `SELECT
@@ -1491,6 +1791,12 @@ app.get('/api/inventory', authenticate, async (req, res) => {
        FROM branch_inventory bi
        INNER JOIN products p ON p.product_id = bi.product_id
        WHERE bi.branch = $1
+         AND NOT EXISTS (
+           SELECT 1
+           FROM archived_inventory ai
+           WHERE ai.product_id = bi.product_id
+             AND ai.branch = bi.branch
+         )
        ORDER BY p.name ASC`,
       [req.user.branch]
     );
@@ -1574,6 +1880,9 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Valid product name and category are required' });
     }
 
+    const stockLevel = parseNonNegativeInteger(stock_level, 'Stock level');
+    const minStockLevel = parseNonNegativeInteger(min_stock_level, 'Reorder level', { max: 20 });
+
     const archivedDuplicate = await client.query(
       `SELECT archived_inventory_id, category
        FROM archived_inventory
@@ -1591,7 +1900,7 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
     }
 
     const productId = await findOrCreateProduct(client, { name: cleanName, category: canonicalCategory });
-    const status = computeInventoryStatus(Number(stock_level || 0), Number(min_stock_level || 0));
+    const status = computeInventoryStatus(stockLevel, minStockLevel);
 
     const duplicateCheck = await client.query(
       `SELECT inventory_id
@@ -1609,7 +1918,7 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
       `INSERT INTO branch_inventory (product_id, branch, stock_level, min_stock_level, status)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, status, last_updated`,
-      [productId, req.user.branch, Number(stock_level || 0), Number(min_stock_level || 0), status]
+      [productId, req.user.branch, stockLevel, minStockLevel, status]
     );
 
     const merged = await client.query(
@@ -1637,7 +1946,7 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
       action: 'ADD_ITEM'
     });
 
-    if (Number(stock_level || 0) > 0) {
+    if (stockLevel > 0) {
       await recordStockMovement(client, {
         inventoryId: createdItem.inventory_id,
         productId: createdItem.product_id,
@@ -1645,9 +1954,9 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
         category: createdItem.category,
         branch: createdItem.branch,
         action: 'initial_stock',
-        quantityChanged: Number(stock_level || 0),
+        quantityChanged: stockLevel,
         previousQuantity: 0,
-        newQuantity: Number(stock_level || 0),
+        newQuantity: stockLevel,
         note: 'Initial stock recorded when item was added.',
         actorId: req.user.id
       });
@@ -1657,6 +1966,9 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
     return res.status(201).json({ product: mapInventoryRow(createdItem) });
   } catch (err) {
     await client.query('ROLLBACK');
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     console.error('Add product error:', err);
     return res.status(500).json({ error: 'Failed to add product' });
   } finally {
@@ -1680,7 +1992,8 @@ app.put('/api/inventory/:id', authenticate, requireAdmin, async (req, res) => {
          p.category,
          bi.branch,
          bi.stock_level,
-         bi.min_stock_level
+         bi.min_stock_level,
+         bi.status
        FROM branch_inventory bi
        INNER JOIN products p ON p.product_id = bi.product_id
        WHERE bi.inventory_id = $1 AND bi.branch = $2`,
@@ -1695,8 +2008,11 @@ app.put('/api/inventory/:id', authenticate, requireAdmin, async (req, res) => {
     const inventoryRow = existingInventory.rows[0];
     const productId = inventoryRow.product_id;
     const previousQuantity = Number(inventoryRow.stock_level || 0);
-    const nextQuantity = Number(stock_level || 0);
-    const status = computeInventoryStatus(Number(stock_level || 0), Number(min_stock_level || 0));
+    const nextQuantity = parseNonNegativeInteger(stock_level, 'Stock level');
+    const nextMinStockLevel = parseNonNegativeInteger(min_stock_level, 'Reorder level', { max: 20 });
+    const status = computeInventoryStatus(nextQuantity, nextMinStockLevel);
+    const previousStatus = inventoryRow.status || computeInventoryStatus(previousQuantity, Number(inventoryRow.min_stock_level || 0));
+    const shouldRefreshInventoryTimestamp = previousQuantity !== nextQuantity || previousStatus !== status;
     const cleanName = cleanInventoryName(name);
     const canonicalCategory = canonicalizeInventoryCategory(category);
     if (!cleanName || !canonicalCategory) {
@@ -1704,23 +2020,74 @@ app.put('/api/inventory/:id', authenticate, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Valid product name and category are required' });
     }
 
-    await client.query(
-      `UPDATE products
-       SET name = $1,
-           category = $2
-       WHERE product_id = $3`,
-      [cleanName, canonicalCategory, productId]
+    const activeDuplicate = await client.query(
+      `SELECT bi.inventory_id
+       FROM branch_inventory bi
+       INNER JOIN products p ON p.product_id = bi.product_id
+       WHERE bi.branch = $1
+         AND bi.inventory_id <> $2
+         AND LOWER(REGEXP_REPLACE(TRIM(p.name), '\\s+', ' ', 'g')) = LOWER($3)
+         AND LOWER(p.category) = LOWER($4)
+       LIMIT 1`,
+      [req.user.branch, id, cleanName, canonicalCategory]
+    );
+
+    if (activeDuplicate.rowCount > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Another active inventory item already uses this name and category' });
+    }
+
+    const archivedDuplicate = await client.query(
+      `SELECT archived_inventory_id
+       FROM archived_inventory
+       WHERE branch = $1
+         AND LOWER(REGEXP_REPLACE(TRIM(name), '\\s+', ' ', 'g')) = LOWER($2)
+         AND LOWER(category) = LOWER($3)
+       LIMIT 1`,
+      [req.user.branch, cleanName, canonicalCategory]
+    );
+
+    if (archivedDuplicate.rowCount > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: 'An archived item with the same name and category already exists. Please restore the archived item instead of creating a duplicate record.'
+      });
+    }
+
+    const identityChanged =
+      normalizeInventoryText(inventoryRow.name) !== normalizeInventoryText(cleanName) ||
+      canonicalizeInventoryCategory(inventoryRow.category) !== canonicalCategory;
+
+    let targetProductId = productId;
+    if (identityChanged) {
+      targetProductId = await findOrCreateProduct(client, { name: cleanName, category: canonicalCategory });
+    } else {
+      await client.query(
+        `UPDATE products
+         SET name = $1,
+             category = $2
+         WHERE product_id = $3`,
+        [cleanName, canonicalCategory, productId]
+      );
+    }
+
+    const branchUsage = await client.query(
+      `SELECT COUNT(*)::int AS count
+       FROM branch_inventory
+       WHERE product_id = $1`,
+      [productId]
     );
 
     const result = await client.query(
       `UPDATE branch_inventory
-       SET stock_level = $1,
-           min_stock_level = $2,
-           status = $3,
-           last_updated = CURRENT_TIMESTAMP
-       WHERE inventory_id = $4 AND branch = $5
+       SET product_id = $1,
+           stock_level = $2,
+           min_stock_level = $3,
+           status = $4,
+           last_updated = CASE WHEN $7 THEN ${PHILIPPINE_NOW_SQL} ELSE last_updated END
+       WHERE inventory_id = $5 AND branch = $6
        RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, status, last_updated`,
-      [Number(stock_level || 0), Number(min_stock_level || 0), status, id, req.user.branch]
+      [targetProductId, nextQuantity, nextMinStockLevel, status, id, req.user.branch, shouldRefreshInventoryTimestamp]
     );
 
     if (result.rowCount === 0) {
@@ -1744,6 +2111,19 @@ app.put('/api/inventory/:id', authenticate, requireAdmin, async (req, res) => {
        WHERE bi.inventory_id = $1`,
       [id]
     );
+
+    if (identityChanged && (branchUsage.rows[0]?.count || 0) <= 1) {
+      await client.query(
+        `DELETE FROM products
+         WHERE product_id = $1
+           AND NOT EXISTS (
+             SELECT 1
+             FROM branch_inventory
+             WHERE product_id = $1
+           )`,
+        [productId]
+      );
+    }
 
     const updatedItem = merged.rows[0];
     const allowedMovementActions = ['stock_in', 'stock_out'];
@@ -1781,7 +2161,7 @@ app.put('/api/inventory/:id', authenticate, requireAdmin, async (req, res) => {
       if (inventoryRow.name !== cleanName) changedFields.push('name');
       if (inventoryRow.category !== canonicalCategory) changedFields.push('category');
       if (previousQuantity !== nextQuantity) changedFields.push('quantity');
-      if (Number(inventoryRow.min_stock_level || 0) !== Number(min_stock_level || 0)) changedFields.push('reorder level');
+      if (Number(inventoryRow.min_stock_level || 0) !== nextMinStockLevel) changedFields.push('reorder level');
       if (changedFields.length > 0) {
         await recordAuditLog(client, {
           actorId: req.user.id,
@@ -1796,6 +2176,9 @@ app.put('/api/inventory/:id', authenticate, requireAdmin, async (req, res) => {
     return res.json({ product: mapInventoryRow(updatedItem) });
   } catch (err) {
     await client.query('ROLLBACK');
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     console.error('Update product error:', err);
     return res.status(500).json({ error: 'Failed to update product' });
   } finally {
@@ -1913,6 +2296,7 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
     const archivedResult = await client.query(
       `SELECT
          archived_inventory_id,
+         original_inventory_id,
          product_id,
          name,
          category,
@@ -1937,29 +2321,69 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
     });
 
     const existingInventory = await client.query(
-      `SELECT inventory_id
+      `SELECT inventory_id, stock_level, min_stock_level, status, last_updated
        FROM branch_inventory
        WHERE product_id = $1 AND branch = $2`,
       [productId, archivedItem.branch]
     );
 
+    let restoredInventoryId;
     if (existingInventory.rowCount > 0) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'This product already exists in the current branch inventory' });
+      const activeItem = existingInventory.rows[0];
+      const isStaleArchiveConflict =
+        Number(activeItem.stock_level || 0) === 0 &&
+        activeItem.status === 'Out of Stock';
+
+      if (!isStaleArchiveConflict) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: 'This archived item already exists as an active inventory item. Review the active item before restoring the archived copy.'
+        });
+      }
+
+      const reconciled = await client.query(
+        `UPDATE branch_inventory
+         SET stock_level = $1,
+             min_stock_level = $2,
+             status = $3,
+             last_updated = ${PHILIPPINE_NOW_SQL}
+         WHERE inventory_id = $4 AND branch = $5
+         RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, status, last_updated`,
+        [
+          archivedItem.stock_level,
+          archivedItem.min_stock_level,
+          computeInventoryStatus(Number(archivedItem.stock_level || 0), Number(archivedItem.min_stock_level || 0)),
+          activeItem.inventory_id,
+          archivedItem.branch
+        ]
+      );
+      restoredInventoryId = reconciled.rows[0].inventory_id;
+    } else {
+      const restored = await client.query(
+        `INSERT INTO branch_inventory (product_id, branch, stock_level, min_stock_level, status, last_updated)
+         VALUES ($1, $2, $3, $4, $5, ${PHILIPPINE_NOW_SQL})
+         RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, status, last_updated`,
+        [
+          productId,
+          archivedItem.branch,
+          archivedItem.stock_level,
+          archivedItem.min_stock_level,
+          computeInventoryStatus(Number(archivedItem.stock_level || 0), Number(archivedItem.min_stock_level || 0)),
+        ]
+      );
+      restoredInventoryId = restored.rows[0].inventory_id;
     }
 
-    const restored = await client.query(
-      `INSERT INTO branch_inventory (product_id, branch, stock_level, min_stock_level, status, last_updated)
-       VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
-       RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, status, last_updated`,
-      [
-        productId,
-        archivedItem.branch,
-        archivedItem.stock_level,
-        archivedItem.min_stock_level,
-        archivedItem.status,
-      ]
-    );
+    if (archivedItem.original_inventory_id) {
+      await client.query(
+        `UPDATE stock_movements
+         SET inventory_id = $1,
+             product_id = $2
+         WHERE inventory_id = $3
+           AND branch = $4`,
+        [restoredInventoryId, productId, archivedItem.original_inventory_id, archivedItem.branch]
+      );
+    }
 
     await client.query(
       `DELETE FROM archived_inventory
@@ -1981,12 +2405,12 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
        FROM branch_inventory bi
        INNER JOIN products p ON p.product_id = bi.product_id
        WHERE bi.inventory_id = $1`,
-      [restored.rows[0].inventory_id]
+      [restoredInventoryId]
     );
 
     await recordAuditLog(client, {
       actorId: req.user.id,
-      targetId: restored.rows[0].inventory_id,
+      targetId: restoredInventoryId,
       targetName: archivedItem.name,
       action: 'RESTORE_ITEM'
     });
@@ -2009,12 +2433,13 @@ app.get('/api/maintenance/backup', authenticate, requireAdmin, async (req, res) 
   }
 
   execFile(
-    'pg_dump',
+    getPostgresToolPath('PG_DUMP_PATH', 'pg_dump'),
     ['--no-owner', '--no-privileges', '--format=plain', `--dbname=${dbUrl}`],
     (err, stdout, stderr) => {
       if (err) {
-        console.error('Backup failed:', stderr || err.message);
-        return res.status(500).json({ error: 'Backup failed', details: stderr || err.message });
+        const details = stderr || getPostgresToolError(err, 'pg_dump');
+        console.error('Backup failed:', details);
+        return res.status(500).json({ error: 'Backup failed', details });
       }
 
       pool.query(
@@ -2031,12 +2456,284 @@ app.get('/api/maintenance/backup', authenticate, requireAdmin, async (req, res) 
       }).catch((logErr) => {
         console.error('Backup audit log insert failed:', logErr.message);
       });
+      recordSystemLog(pool, {
+        eventType: 'DATABASE_BACKUP',
+        severity: 'info',
+        message: 'Database backup was generated.',
+        context: { delivery: 'download' },
+        actorId: req.user.id
+      }).catch((logErr) => {
+        console.error('Backup system log insert failed:', logErr.message);
+      });
 
       res.setHeader('Content-disposition', `attachment; filename=backup_${Date.now()}.sql`);
       res.setHeader('Content-Type', 'application/sql');
       return res.send(stdout);
     }
   );
+});
+
+app.post('/api/maintenance/clear-logs', authenticate, requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const cleanupResult = await client.query(
+      `DELETE FROM system_logs
+       WHERE is_security = false
+         AND severity IN ('debug', 'info')
+         AND created_at < (${PHILIPPINE_NOW_SQL} - ($1::int * INTERVAL '1 day'))
+       RETURNING id`,
+      [SYSTEM_LOG_RETENTION_DAYS]
+    );
+
+    await recordSystemLog(client, {
+      eventType: 'SYSTEM_LOG_CLEANUP',
+      severity: 'info',
+      message: cleanupResult.rowCount > 0
+        ? `Cleared ${cleanupResult.rowCount} eligible non-critical system log(s).`
+        : 'System log cleanup completed with no eligible records.',
+      context: {
+        clearedCount: cleanupResult.rowCount,
+        retentionDays: SYSTEM_LOG_RETENTION_DAYS,
+        criteria: 'non-security debug/info logs older than retention window'
+      },
+      actorId: req.user.id
+    });
+
+    await recordAuditLog(client, {
+      actorId: req.user.id,
+      targetName: 'System Logs',
+      action: cleanupResult.rowCount > 0
+        ? `CLEAR_LOGS: ${cleanupResult.rowCount} removed`
+        : 'CLEAR_LOGS: no eligible records'
+    });
+
+    await client.query('COMMIT');
+
+    const clearedCount = cleanupResult.rowCount;
+    return res.json({
+      message: clearedCount > 0
+        ? 'Old non-critical system logs cleared successfully.'
+        : `No eligible non-critical logs older than ${SYSTEM_LOG_RETENTION_DAYS} days were found to clear.`,
+      clearedCount,
+      retentionDays: SYSTEM_LOG_RETENTION_DAYS
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Clear logs error:', err);
+    return res.status(500).json({ error: 'Failed to clear logs' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/maintenance/optimize', authenticate, requireAdmin, async (req, res) => {
+  const tables = [
+    'users',
+    'products',
+    'branch_inventory',
+    'stock_movements',
+    'archived_inventory',
+    'audit_logs',
+    'backup_logs',
+    'system_logs'
+  ];
+
+  try {
+    for (const table of tables) {
+      await pool.query(`ANALYZE ${table}`);
+    }
+
+    await recordAuditLog(pool, {
+      actorId: req.user.id,
+      targetName: 'Database Optimization',
+      action: 'OPTIMIZE_DATABASE'
+    });
+    await recordSystemLog(pool, {
+      eventType: 'DATABASE_OPTIMIZATION',
+      severity: 'info',
+      message: 'Database table statistics were refreshed.',
+      context: { analyzedTables: tables },
+      actorId: req.user.id
+    });
+
+    return res.json({
+      message: 'Database optimized successfully.',
+      analyzedTables: tables
+    });
+  } catch (err) {
+    console.error('Optimize database error:', err);
+    return res.status(500).json({ error: 'Optimization failed' });
+  }
+});
+
+app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const scopeBranch = req.user.branch;
+    const [
+      duplicateInventory,
+      invalidInventory,
+      missingProducts,
+      orphanMovements,
+      activeArchivedConflicts,
+      invalidUsers
+    ] = await Promise.all([
+      pool.query(
+        `SELECT branch, product_id, COUNT(*)::int AS count
+         FROM branch_inventory
+         WHERE branch = $1
+         GROUP BY branch, product_id
+         HAVING COUNT(*) > 1`,
+        [scopeBranch]
+      ),
+      pool.query(
+        `SELECT bi.inventory_id, p.name, bi.branch, bi.stock_level, bi.min_stock_level, bi.status
+         FROM branch_inventory bi
+         INNER JOIN products p ON p.product_id = bi.product_id
+         WHERE bi.branch = $1
+           AND (
+             bi.stock_level < 0
+             OR bi.min_stock_level < 0
+             OR bi.status IS NULL
+             OR TRIM(bi.status) = ''
+           )`,
+        [scopeBranch]
+      ),
+      pool.query(
+        `SELECT DISTINCT p.product_id
+         FROM products p
+         INNER JOIN branch_inventory bi ON bi.product_id = p.product_id
+         WHERE bi.branch = $1
+           AND (
+             p.name IS NULL
+             OR TRIM(p.name) = ''
+             OR p.category IS NULL
+             OR TRIM(p.category) = ''
+           )`,
+        [scopeBranch]
+      ),
+      pool.query(
+        `SELECT sm.movement_id
+         FROM stock_movements sm
+         LEFT JOIN branch_inventory bi ON bi.inventory_id = sm.inventory_id
+         LEFT JOIN archived_inventory ai
+           ON ai.original_inventory_id = sm.inventory_id
+          AND ai.branch = sm.branch
+         WHERE sm.inventory_id IS NOT NULL
+           AND sm.branch = $1
+           AND bi.inventory_id IS NULL
+           AND ai.archived_inventory_id IS NULL`,
+        [scopeBranch]
+      ),
+      pool.query(
+        `SELECT ai.archived_inventory_id, ai.name, ai.category, ai.branch
+         FROM archived_inventory ai
+         INNER JOIN products p
+           ON LOWER(TRIM(p.name)) = LOWER(TRIM(ai.name))
+          AND LOWER(TRIM(p.category)) = LOWER(TRIM(ai.category))
+         INNER JOIN branch_inventory bi
+           ON bi.product_id = p.product_id
+          AND bi.branch = ai.branch
+         WHERE ai.branch = $1`,
+        [scopeBranch]
+      ),
+      pool.query(
+        `SELECT user_id, username, role, branch, status
+         FROM users
+         WHERE (
+             branch = $1
+             OR (role = 'Employee' AND (branch IS NULL OR TRIM(branch) = ''))
+           )
+           AND (
+             role NOT IN ('Admin', 'Employee')
+             OR status NOT IN ('Active', 'Pending', 'Inactive', 'Rejected')
+             OR (role = 'Employee' AND (branch IS NULL OR TRIM(branch) = ''))
+           )`,
+        [scopeBranch]
+      )
+    ]);
+
+    const inventoryStatusResult = await pool.query(
+      `SELECT bi.inventory_id, p.name, bi.branch, bi.stock_level, bi.min_stock_level, bi.status
+       FROM branch_inventory bi
+       INNER JOIN products p ON p.product_id = bi.product_id
+       WHERE bi.branch = $1`,
+      [scopeBranch]
+    );
+
+    const statusMismatches = inventoryStatusResult.rows.filter(row => (
+      row.status !== computeInventoryStatus(Number(row.stock_level || 0), Number(row.min_stock_level || 0))
+    ));
+
+    const checks = [
+      {
+        key: 'duplicate_inventory',
+        label: 'Duplicate inventory records',
+        count: duplicateInventory.rowCount
+      },
+      {
+        key: 'invalid_inventory_values',
+        label: 'Invalid stock or reorder values',
+        count: invalidInventory.rowCount
+      },
+      {
+        key: 'missing_product_fields',
+        label: 'Products with missing name or category',
+        count: missingProducts.rowCount
+      },
+      {
+        key: 'orphan_stock_movements',
+        label: 'Stock movements linked to missing inventory records',
+        count: orphanMovements.rowCount
+      },
+      {
+        key: 'active_archived_conflicts',
+        label: 'Archived records that also exist in active inventory',
+        count: activeArchivedConflicts.rowCount
+      },
+      {
+        key: 'invalid_users',
+        label: 'Users with invalid role, status, or branch',
+        count: invalidUsers.rowCount
+      },
+      {
+        key: 'status_mismatches',
+        label: 'Inventory records with inconsistent stock status',
+        count: statusMismatches.length
+      }
+    ];
+
+    const issueCount = checks.reduce((total, check) => total + check.count, 0);
+
+    await recordAuditLog(pool, {
+      actorId: req.user.id,
+      targetName: 'Data Integrity Check',
+      action: issueCount > 0 ? `CHECK_DATA_INTEGRITY: ${issueCount} issue(s)` : 'CHECK_DATA_INTEGRITY: no issues'
+    });
+    await recordSystemLog(pool, {
+      eventType: 'DATA_INTEGRITY_CHECK',
+      severity: issueCount > 0 ? 'warning' : 'info',
+      message: issueCount > 0
+        ? `Data integrity check found ${issueCount} issue(s).`
+        : 'Data integrity check completed with no issues.',
+      context: { issueCount, checks, scopeBranch },
+      actorId: req.user.id
+    });
+
+    return res.json({
+      message: issueCount > 0
+        ? 'Current branch data integrity check completed with issues.'
+        : 'No current branch data integrity issues found.',
+      issueCount,
+      checks,
+      scopeBranch,
+      checkedAt: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('Integrity check error:', err);
+    return res.status(500).json({ error: 'Data integrity check failed' });
+  }
 });
 
 app.post(
@@ -2057,36 +2754,66 @@ app.post(
     const tempFile = path.join(os.tmpdir(), `restore_${Date.now()}.sql`);
 
     try {
-      fs.writeFileSync(tempFile, req.body);
-      execFile('psql', [dbUrl, '-f', tempFile], (err, stdout, stderr) => {
-        try {
-          fs.unlinkSync(tempFile);
-        } catch (unlinkErr) {
-          console.error('Failed to remove temp restore file:', unlinkErr.message);
+      const uploadedSql = req.body.toString('utf8');
+      const validationError = getRestoreValidationError(uploadedSql);
+      if (validationError) {
+        return res.status(400).json({ error: validationError });
+      }
+
+      fs.writeFileSync(tempFile, buildRestoreScript(uploadedSql));
+      execFile(
+        getPostgresToolPath('PSQL_PATH', 'psql'),
+        ['--dbname', dbUrl, '-v', 'ON_ERROR_STOP=1', '--single-transaction', '-f', tempFile],
+        async (err, stdout, stderr) => {
+          try {
+            fs.unlinkSync(tempFile);
+          } catch (unlinkErr) {
+            console.error('Failed to remove temp restore file:', unlinkErr.message);
+          }
+
+          if (err) {
+            const details = stderr || getPostgresToolError(err, 'psql');
+            console.error('Restore failed:', details);
+            return res.status(500).json({ error: 'Restore failed', details });
+          }
+
+          try {
+            await ensureSchema();
+          } catch (schemaErr) {
+            console.error('Post-restore schema initialization failed:', schemaErr.message);
+            return res.status(500).json({
+              error: 'Restore completed, but schema initialization failed',
+              details: schemaErr.message
+            });
+          }
+
+          pool.query(
+            `INSERT INTO backup_logs (action, actor_id, actor_name)
+             VALUES ($1, $2, (SELECT full_name FROM users WHERE user_id = $2))`,
+            ['restore', req.user.id]
+          ).catch((logErr) => {
+            console.error('Restore log insert failed:', logErr.message);
+          });
+          recordAuditLog(pool, {
+            actorId: req.user.id,
+            targetName: 'Database Restore',
+            action: 'RESTORE_DATABASE'
+          }).catch((logErr) => {
+            console.error('Restore audit log insert failed:', logErr.message);
+          });
+          recordSystemLog(pool, {
+            eventType: 'DATABASE_RESTORE',
+            severity: 'warning',
+            message: 'Database restore completed from an uploaded SQL backup.',
+            context: { source: 'uploaded_sql_backup' },
+            actorId: req.user.id
+          }).catch((logErr) => {
+            console.error('Restore system log insert failed:', logErr.message);
+          });
+
+          return res.json({ message: 'Database restored successfully', output: stdout });
         }
-
-        if (err) {
-          console.error('Restore failed:', stderr || err.message);
-          return res.status(500).json({ error: 'Restore failed', details: stderr || err.message });
-        }
-
-        pool.query(
-          `INSERT INTO backup_logs (action, actor_id, actor_name)
-           VALUES ($1, $2, (SELECT full_name FROM users WHERE user_id = $2))`,
-          ['restore', req.user.id]
-        ).catch((logErr) => {
-          console.error('Restore log insert failed:', logErr.message);
-        });
-        recordAuditLog(pool, {
-          actorId: req.user.id,
-          targetName: 'Database Restore',
-          action: 'RESTORE_DATABASE'
-        }).catch((logErr) => {
-          console.error('Restore audit log insert failed:', logErr.message);
-        });
-
-        return res.json({ message: 'Database restored successfully', output: stdout });
-      });
+      );
     } catch (err) {
       console.error('Restore write failed:', err);
       return res.status(500).json({ error: 'Restore failed', details: err.message });
