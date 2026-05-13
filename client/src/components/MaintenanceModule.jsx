@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
+import { API_BASE_URL } from '../utils/api';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -8,6 +9,7 @@ import {
   Info,
   Loader2,
   PieChart,
+  RotateCcw,
   Server,
   Settings,
   ShieldCheck,
@@ -18,6 +20,7 @@ import {
 } from 'lucide-react';
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
+import { Input } from './ui/input';
 import { toast } from 'sonner';
 import { PageHeader } from './PageHeader';
 import { useData } from './DataContext';
@@ -31,7 +34,9 @@ import {
   AlertDialogTitle,
 } from './ui/alert-dialog';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+const API_BASE = API_BASE_URL;
+const MAX_RESTORE_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+const RESTORE_CONFIRMATION_TEXT = 'RESTORE';
 
 const compactDateTime = value => {
   if (!value) return 'No backup recorded yet';
@@ -46,36 +51,41 @@ const compactDateTime = value => {
   });
 };
 
+const formatEnvironmentLabel = value => {
+  const normalized = String(value || '').trim();
+  if (!normalized) return 'Production';
+  return normalized
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, char => char.toUpperCase());
+};
+
 const maintenanceActionCopy = {
   clearLogs: {
-    title: 'Clear old system logs?',
+    title: 'Clear old system-wide logs?',
     label: 'Clear Logs',
     loadingLabel: 'Clearing...',
     toneClass: 'bg-red-600 hover:bg-red-700',
+    endpoint: '/api/maintenance/clear-logs',
     description:
-      'This action should remove old, non-critical system logs only. It must never delete inventory records, user accounts, reports, archived records, backup files, or security audit logs.',
-    placeholder:
-      'This control is ready for a future logs cleanup endpoint. No records were changed.',
+      'This removes only eligible non-critical system-wide logs after the configured retention period. Inventory records, user accounts, reports, archived records, backups, and security audit trails are kept safe.',
   },
   optimize: {
-    title: 'Optimize database?',
+    title: 'Optimize application database tables?',
     label: 'Optimize',
     loadingLabel: 'Optimizing...',
     toneClass: 'bg-blue-600 hover:bg-blue-700',
+    endpoint: '/api/maintenance/optimize',
     description:
-      'This action should run safe maintenance tasks such as analyzing database tables, refreshing statistics, or cleaning temporary data. It should not perform destructive changes.',
-    placeholder:
-      'This control is ready for a future optimization endpoint. No records were changed.',
+      'This runs safe maintenance on application database tables by refreshing table statistics. It does not delete inventory, user, report, archive, or backup records.',
   },
   integrity: {
-    title: 'Check data integrity now?',
+    title: 'Check current branch data integrity?',
     label: 'Check Now',
     loadingLabel: 'Checking...',
     toneClass: 'bg-blue-600 hover:bg-blue-700',
+    endpoint: '/api/maintenance/integrity-check',
     description:
-      'This action should inspect possible data issues and show a summary. It should not repair or modify records without a separate confirmation.',
-    placeholder:
-      'This control is ready for a future integrity-check endpoint. No records were changed.',
+      'This scans the signed-in branch for possible inventory, active/archive conflicts, stock movement, and user data issues. It is read-only and will not repair, delete, or overwrite records.',
   },
 };
 
@@ -131,22 +141,26 @@ function InfoRow({ label, value, valueClassName = '' }) {
 }
 
 export function MaintenanceModule({ onNavigate, user }) {
-  const { auditAction } = useData();
   const fileInputRef = useRef();
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [selectedRestoreFile, setSelectedRestoreFile] = useState(null);
+  const [restoreConfirmation, setRestoreConfirmation] = useState('');
+  const [showBackupDialog, setShowBackupDialog] = useState(false);
   const [showRestoreDialog, setShowRestoreDialog] = useState(false);
   const [pendingMaintenanceAction, setPendingMaintenanceAction] = useState(null);
-  const [activePlaceholderAction, setActivePlaceholderAction] = useState(null);
+  const [activeMaintenanceAction, setActiveMaintenanceAction] = useState(null);
+  const [maintenanceResult, setMaintenanceResult] = useState(null);
   const [summary, setSummary] = useState({
     activeUserCount: 0,
     pendingRegistrations: [],
     lastBackupAt: null,
+    lastRestoreAt: null,
     databaseStatus: 'Checking...'
   });
 
-  const isAdmin = user?.role === 'Admin' || user?.role === 'Owner';
+  const isAdmin = user?.role === 'Admin';
+  const currentBranch = user?.branch || 'All branches';
 
   const loadSummary = async () => {
     try {
@@ -159,7 +173,7 @@ export function MaintenanceModule({ onNavigate, user }) {
       console.error('Failed to load maintenance summary:', err);
       setSummary(prev => ({
         ...prev,
-        databaseStatus: 'Unavailable'
+        databaseStatus: 'Offline'
       }));
     }
   };
@@ -168,7 +182,7 @@ export function MaintenanceModule({ onNavigate, user }) {
     loadSummary();
   }, []);
 
-  const handleBackup = async () => {
+  const confirmBackup = async () => {
     if (!isAdmin || isBackingUp) return;
     setIsBackingUp(true);
     try {
@@ -193,6 +207,7 @@ export function MaintenanceModule({ onNavigate, user }) {
       toast.error('Backup failed', description ? { description } : undefined);
     } finally {
       setIsBackingUp(false);
+      setShowBackupDialog(false);
     }
   };
 
@@ -208,19 +223,40 @@ export function MaintenanceModule({ onNavigate, user }) {
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
+    if (file.size > MAX_RESTORE_FILE_SIZE_BYTES) {
+      toast.error('Restore failed', { description: 'Backup file must be 10 MB or smaller.' });
+      setSelectedRestoreFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
     setSelectedRestoreFile(file);
     setShowRestoreDialog(true);
   };
 
   const resetRestoreSelection = () => {
     setSelectedRestoreFile(null);
+    setRestoreConfirmation('');
     setShowRestoreDialog(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const confirmRestore = async () => {
     if (!selectedRestoreFile || !isAdmin || isRestoring) return;
+    if (restoreConfirmation.trim().toUpperCase() !== RESTORE_CONFIRMATION_TEXT) {
+      toast.error('Restore confirmation required', {
+        description: `Type ${RESTORE_CONFIRMATION_TEXT} to confirm this database restore.`,
+      });
+      return;
+    }
     setIsRestoring(true);
+    const restoreToastId = 'database-restore-progress';
+    toast.loading('Database restore in progress...', {
+      id: restoreToastId,
+      description: 'Screens may briefly refresh while restored records reload.',
+      classNames: {
+        toast: 'rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900',
+      },
+    });
     try {
       const token = localStorage.getItem('token');
       const sql = await selectedRestoreFile.arrayBuffer();
@@ -233,47 +269,72 @@ export function MaintenanceModule({ onNavigate, user }) {
         body: sql,
       });
       if (!res.ok) throw new Error(await getFetchErrorMessage(res, 'Restore failed'));
-      toast.success('Database restored successfully.');
+      window.dispatchEvent(new Event('database-restored'));
+      toast.success('Database restored successfully.', {
+        id: restoreToastId,
+        description: 'Records are being refreshed now. If a screen has not updated yet, wait a few seconds or refresh the page.',
+        classNames: {
+          toast: 'rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900',
+        },
+      });
       await loadSummary();
     } catch (err) {
-      toast.error('Restore failed', { description: err.message });
+      toast.error('Restore failed', {
+        id: restoreToastId,
+        description: err.message,
+        classNames: {
+          toast: 'rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900',
+        },
+      });
     } finally {
       setIsRestoring(false);
       resetRestoreSelection();
     }
   };
 
-  // Placeholder UI actions until dedicated maintenance endpoints are available.
-  const requestPlaceholderAction = actionKey => {
-    if (!isAdmin || activePlaceholderAction) return;
+  const requestMaintenanceAction = actionKey => {
+    if (!isAdmin || activeMaintenanceAction) return;
     setPendingMaintenanceAction(actionKey);
   };
 
-  const confirmPlaceholderAction = async () => {
-    if (!pendingMaintenanceAction || activePlaceholderAction) return;
+  const confirmMaintenanceAction = async () => {
+    if (!pendingMaintenanceAction || activeMaintenanceAction) return;
     const action = maintenanceActionCopy[pendingMaintenanceAction];
-    setActivePlaceholderAction(pendingMaintenanceAction);
-    await new Promise(resolve => window.setTimeout(resolve, 450));
-    const auditMap = {
-      clearLogs: 'CLEAR_LOGS',
-      optimize: 'OPTIMIZE_DATABASE',
-      integrity: 'CHECK_DATA_INTEGRITY',
-    };
-    auditAction?.(auditMap[pendingMaintenanceAction], {
-      targetName: action.label,
-    });
-    toast.info(`${action.label} is not connected yet`, {
-      description: action.placeholder,
-    });
-    setActivePlaceholderAction(null);
-    setPendingMaintenanceAction(null);
+    setActiveMaintenanceAction(pendingMaintenanceAction);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}${action.endpoint}`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error(await getFetchErrorMessage(res, `${action.label} failed`));
+      const data = await res.json();
+      setMaintenanceResult({
+        action: pendingMaintenanceAction,
+        ...data,
+      });
+
+      if (pendingMaintenanceAction === 'clearLogs' && Number(data.clearedCount || 0) === 0) {
+        toast.info(data.message || 'No eligible logs were found to clear.');
+      } else {
+        toast.success(data.message || `${action.label} completed successfully.`);
+      }
+      await loadSummary();
+    } catch (err) {
+      toast.error(`${action.label} failed`, { description: err.message });
+    } finally {
+      setActiveMaintenanceAction(null);
+      setPendingMaintenanceAction(null);
+    }
   };
 
   const databaseOnline = summary.databaseStatus === 'Online';
   const lastBackup = compactDateTime(summary.lastBackupAt);
+  const lastRestore = compactDateTime(summary.lastRestoreAt);
   const appVersion = import.meta.env.VITE_APP_VERSION || '1.0.0';
-  const appEnvironment = import.meta.env.VITE_APP_ENV || import.meta.env.MODE || 'Production';
+  const appEnvironment = formatEnvironmentLabel(import.meta.env.VITE_APP_ENV || import.meta.env.MODE || 'Production');
   const pendingAction = pendingMaintenanceAction ? maintenanceActionCopy[pendingMaintenanceAction] : null;
+  const displayedTime = compactDateTime(summary.serverTime || new Date().toISOString());
 
   return (
     <div className="maintenance-page min-h-screen bg-gray-50">
@@ -529,6 +590,73 @@ export function MaintenanceModule({ onNavigate, user }) {
           padding: 18px 22px;
         }
 
+        .maintenance-restore-file-name,
+        .maintenance-restore-keyword {
+          color: #dc2626;
+          font-weight: 700;
+        }
+
+        .maintenance-restore-label {
+          display: block;
+          color: #0f172a;
+          font-size: 0.9rem;
+          font-weight: 600;
+          line-height: 1.25;
+        }
+
+        .maintenance-restore-input {
+          margin-top: 10px;
+          height: 46px;
+          width: 100%;
+          border-radius: 10px;
+          border: 1px solid #cbd5e1;
+          background: #ffffff;
+          color: #0f172a;
+          font-size: 1rem;
+          box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04);
+        }
+
+        .maintenance-restore-input:focus {
+          border-color: #dc2626;
+          box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.16);
+        }
+
+        .maintenance-restore-cancel,
+        .maintenance-restore-submit {
+          min-height: 42px;
+          border-radius: 10px;
+          font-weight: 700;
+        }
+
+        .maintenance-restore-cancel {
+          border-color: #cbd5e1;
+          background: #ffffff;
+          color: #0f172a;
+        }
+
+        .maintenance-restore-cancel:hover {
+          background: #f8fafc;
+          color: #0f172a;
+        }
+
+        .maintenance-restore-submit {
+          background: #dc2626;
+          color: #ffffff;
+          box-shadow: 0 8px 16px rgba(220, 38, 38, 0.14);
+        }
+
+        .maintenance-restore-submit:not(:disabled):hover {
+          background: #b91c1c;
+          color: #ffffff;
+        }
+
+        .maintenance-restore-submit:disabled {
+          background: #dc2626;
+          color: #ffffff;
+          opacity: 0.6;
+          box-shadow: none;
+        }
+
         @media (max-width: 1180px) {
           .maintenance-layout {
             grid-template-columns: 1fr;
@@ -763,6 +891,73 @@ export function MaintenanceModule({ onNavigate, user }) {
             font-size: 0.9rem;
             line-height: 1.45;
           }
+
+          .maintenance-confirm-dialog [data-slot="alert-dialog-header"] {
+            align-items: center;
+            text-align: center;
+          }
+
+          .maintenance-confirm-dialog [data-slot="alert-dialog-header"] > .flex {
+            display: block;
+            width: 100%;
+          }
+
+          .maintenance-confirm-dialog .maintenance-dialog-icon {
+            display: none;
+          }
+
+          .maintenance-confirm-dialog [data-slot="alert-dialog-title"] {
+            text-align: center;
+            font-size: 1rem;
+            line-height: 1.25;
+            font-weight: 800;
+          }
+
+          .maintenance-confirm-dialog [data-slot="alert-dialog-description"] {
+            text-align: center;
+            font-size: 0.88rem;
+            line-height: 1.45;
+          }
+
+          .maintenance-confirm-dialog [data-slot="alert-dialog-footer"] {
+            display: flex;
+            flex-direction: column-reverse;
+            gap: 10px;
+            margin-top: 18px;
+          }
+
+          .maintenance-confirm-dialog [data-slot="alert-dialog-footer"] > button {
+            width: 100%;
+            min-height: 44px;
+            justify-content: center;
+          }
+
+          .maintenance-confirm-dialog [data-slot="alert-dialog-footer"] > button:last-child {
+            order: 2;
+          }
+
+          .maintenance-confirm-dialog [data-slot="alert-dialog-footer"] > button:first-child {
+            order: 1;
+          }
+
+          .maintenance-restore-label {
+            font-size: 0.9rem;
+            text-align: center;
+          }
+
+          .maintenance-restore-input {
+            height: 44px;
+            font-size: 1rem;
+            text-align: left;
+          }
+
+          .maintenance-restore-cancel,
+          .maintenance-restore-submit {
+            min-width: 0;
+            min-height: 42px;
+            width: 100%;
+            font-size: 0.95rem;
+          }
         }
 
         @media (max-width: 420px) {
@@ -810,6 +1005,7 @@ export function MaintenanceModule({ onNavigate, user }) {
             font-size: 1.65rem;
           }
 
+
           .maintenance-card-content {
             padding: 16px;
           }
@@ -841,7 +1037,7 @@ export function MaintenanceModule({ onNavigate, user }) {
               icon={<Database className="h-6 w-6" />}
               tone="red"
               title="Database Backup & Restore"
-              description="Create a backup copy of the system database or restore data from a previous backup."
+              description="Create or restore full-system database backups covering all branches."
             />
 
             <div className="maintenance-action-grid mt-7">
@@ -851,7 +1047,7 @@ export function MaintenanceModule({ onNavigate, user }) {
                 </IconTile>
                 <h3 className="text-base font-bold text-slate-950">Create Backup</h3>
                 <p className="maintenance-action-copy">
-                  Create a backup of the current database and system records.
+                  Create a full-system backup of the current database, including all branch records.
                 </p>
                 <div>
                   <div className="maintenance-meta-row">
@@ -862,7 +1058,7 @@ export function MaintenanceModule({ onNavigate, user }) {
                 <Button
                   type="button"
                   className="maintenance-action-button bg-red-600 text-white hover:bg-red-700 disabled:bg-red-600 disabled:text-white disabled:opacity-60"
-                  onClick={handleBackup}
+                  onClick={() => setShowBackupDialog(true)}
                   disabled={!isAdmin || isBackingUp}
                 >
                   {isBackingUp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
@@ -876,12 +1072,12 @@ export function MaintenanceModule({ onNavigate, user }) {
                 </IconTile>
                 <h3 className="text-base font-bold text-slate-950">Restore Database</h3>
                 <p className="maintenance-action-copy">
-                  Restore the system using a previous backup file. This may overwrite current data.
+                  Restore the full system using a previous backup file. This may overwrite records for all branches.
                 </p>
                 <div>
                   <div className="maintenance-meta-row">
                     <span className="maintenance-meta-label">Last Restore</span>
-                    <span className="maintenance-meta-value">Never restored</span>
+                    <span className="maintenance-meta-value">{lastRestore}</span>
                   </div>
                 </div>
                 <Button
@@ -905,7 +1101,10 @@ export function MaintenanceModule({ onNavigate, user }) {
 
             <div className="maintenance-alert-row mt-6 rounded-lg border border-blue-200 bg-blue-50 text-base text-slate-700">
               <Info className="mt-0.5 h-5 w-5 text-blue-600" />
-              <p>Please create a backup before restoring to prevent data loss.</p>
+              <div className="grid gap-1">
+                <p>Please create a backup before restoring to prevent data loss.</p>
+                <p>Backup and restore actions apply to the full database, including San Rafael and Manggahan records.</p>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -936,7 +1135,8 @@ export function MaintenanceModule({ onNavigate, user }) {
             <Button
               type="button"
               className="mt-10 h-12 w-full max-w-[260px] justify-center rounded-lg bg-green-600 font-semibold text-white shadow-sm hover:bg-green-700"
-              onClick={() => onNavigate('user-management')}
+              onClick={() => isAdmin && onNavigate('user-management')}
+              disabled={!isAdmin}
             >
               <Users className="h-4 w-4" />
               Manage Users
@@ -950,7 +1150,7 @@ export function MaintenanceModule({ onNavigate, user }) {
               icon={<TrendingUp className="h-6 w-6" />}
               tone="blue"
               title="System Optimization"
-              description="Optimize system performance and clean up unnecessary data to ensure smooth operation."
+              description="Optimize application database table performance and clean up eligible non-critical system-wide logs."
             />
 
             <div className="maintenance-optimization-grid mt-8">
@@ -959,15 +1159,15 @@ export function MaintenanceModule({ onNavigate, user }) {
                   <Trash2 className="h-6 w-6" />
                 </IconTile>
                 <h3 className="text-base font-bold text-slate-950">Clear System Logs</h3>
-                <p className="mt-2 min-h-16 text-base leading-7 text-slate-600">Remove old system logs that are no longer needed.</p>
+                <p className="mt-2 min-h-16 text-base leading-7 text-slate-600">Remove eligible non-critical system-wide logs after the configured retention period.</p>
                 <Button
                   type="button"
                   className="maintenance-tool-button mt-auto"
-                  onClick={() => requestPlaceholderAction('clearLogs')}
-                  disabled={!isAdmin || Boolean(activePlaceholderAction)}
+                  onClick={() => requestMaintenanceAction('clearLogs')}
+                  disabled={!isAdmin || Boolean(activeMaintenanceAction)}
                 >
-                  {activePlaceholderAction === 'clearLogs' && <Loader2 className="h-4 w-4 animate-spin" />}
-                  {activePlaceholderAction === 'clearLogs' ? maintenanceActionCopy.clearLogs.loadingLabel : maintenanceActionCopy.clearLogs.label}
+                  {activeMaintenanceAction === 'clearLogs' && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {activeMaintenanceAction === 'clearLogs' ? maintenanceActionCopy.clearLogs.loadingLabel : maintenanceActionCopy.clearLogs.label}
                 </Button>
               </div>
 
@@ -976,15 +1176,15 @@ export function MaintenanceModule({ onNavigate, user }) {
                   <Server className="h-6 w-6" />
                 </IconTile>
                 <h3 className="text-base font-bold text-slate-950">Optimize Database</h3>
-                <p className="mt-2 min-h-16 text-base leading-7 text-slate-600">Optimize database tables for better performance.</p>
+                <p className="mt-2 min-h-16 text-base leading-7 text-slate-600">Refresh application table statistics for better performance.</p>
                 <Button
                   type="button"
                   className="maintenance-tool-button mt-auto"
-                  onClick={() => requestPlaceholderAction('optimize')}
-                  disabled={!isAdmin || Boolean(activePlaceholderAction)}
+                  onClick={() => requestMaintenanceAction('optimize')}
+                  disabled={!isAdmin || Boolean(activeMaintenanceAction)}
                 >
-                  {activePlaceholderAction === 'optimize' && <Loader2 className="h-4 w-4 animate-spin" />}
-                  {activePlaceholderAction === 'optimize' ? maintenanceActionCopy.optimize.loadingLabel : maintenanceActionCopy.optimize.label}
+                  {activeMaintenanceAction === 'optimize' && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {activeMaintenanceAction === 'optimize' ? maintenanceActionCopy.optimize.loadingLabel : maintenanceActionCopy.optimize.label}
                 </Button>
               </div>
 
@@ -993,18 +1193,65 @@ export function MaintenanceModule({ onNavigate, user }) {
                   <PieChart className="h-6 w-6" />
                 </IconTile>
                 <h3 className="text-base font-bold text-slate-950">Check Data Integrity</h3>
-                <p className="mt-2 min-h-16 text-base leading-7 text-slate-600">Check for possible data integrity issues without changing records.</p>
+                <p className="mt-2 min-h-16 text-base leading-7 text-slate-600">Check signed-in branch data integrity issues without changing records.</p>
                 <Button
                   type="button"
                   className="maintenance-tool-button mt-auto"
-                  onClick={() => requestPlaceholderAction('integrity')}
-                  disabled={!isAdmin || Boolean(activePlaceholderAction)}
+                  onClick={() => requestMaintenanceAction('integrity')}
+                  disabled={!isAdmin || Boolean(activeMaintenanceAction)}
                 >
-                  {activePlaceholderAction === 'integrity' && <Loader2 className="h-4 w-4 animate-spin" />}
-                  {activePlaceholderAction === 'integrity' ? maintenanceActionCopy.integrity.loadingLabel : maintenanceActionCopy.integrity.label}
+                  {activeMaintenanceAction === 'integrity' && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {activeMaintenanceAction === 'integrity' ? maintenanceActionCopy.integrity.loadingLabel : maintenanceActionCopy.integrity.label}
                 </Button>
               </div>
             </div>
+
+            {!maintenanceResult && (
+              <div className="maintenance-alert-row mt-6 rounded-lg border border-blue-100 bg-blue-50 text-base text-slate-700">
+                <Info className="mt-0.5 h-5 w-5 text-blue-600" />
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-900">No maintenance action has been run yet.</p>
+                  <p className="mt-1 text-sm leading-6 text-slate-600">
+                    Choose an action above to clean eligible logs, optimize application database tables, or check the signed-in branch for data integrity issues.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {maintenanceResult && (
+              <div className="maintenance-alert-row mt-6 rounded-lg border border-slate-200 bg-slate-50 text-base text-slate-700">
+                <Info className="mt-0.5 h-5 w-5 text-blue-600" />
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-900">{maintenanceResult.message}</p>
+                  {maintenanceResult.action === 'integrity' && Array.isArray(maintenanceResult.checks) && (
+                    <div className="mt-2 grid gap-1 text-sm text-slate-600">
+                      <span>Scope: Signed-in branch ({maintenanceResult.scopeBranch || currentBranch}).</span>
+                      {maintenanceResult.checks
+                        .filter(check => Number(check.count || 0) > 0)
+                        .map(check => (
+                          <span key={check.key}>
+                            {check.count} {Number(check.count) === 1 ? 'issue' : 'issues'} found: {check.label}
+                          </span>
+                        ))}
+                      {Number(maintenanceResult.issueCount || 0) === 0 && (
+                        <span>All scanned records passed the current integrity checks.</span>
+                      )}
+                    </div>
+                  )}
+                  {maintenanceResult.action === 'optimize' && Array.isArray(maintenanceResult.analyzedTables) && (
+                    <p className="mt-2 text-sm text-slate-600">
+                      Application tables analyzed: {maintenanceResult.analyzedTables.join(', ')}.
+                    </p>
+                  )}
+                  {maintenanceResult.action === 'clearLogs' && (
+                    <p className="mt-2 text-sm text-slate-600">
+                      Logs removed: {Number(maintenanceResult.clearedCount || 0)}.
+                      {maintenanceResult.retentionDays ? ` System-wide retention rule: older than ${maintenanceResult.retentionDays} days.` : ''}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -1016,7 +1263,7 @@ export function MaintenanceModule({ onNavigate, user }) {
               </div>
               <div>
                 <h2 className="text-lg font-bold text-slate-950">System Information</h2>
-                <p className="mt-1.5 text-base leading-6 text-slate-600">View important system details.</p>
+                <p className="mt-1.5 text-base leading-6 text-slate-600">View important system details and maintenance scope.</p>
               </div>
             </div>
 
@@ -1028,8 +1275,12 @@ export function MaintenanceModule({ onNavigate, user }) {
               />
               <InfoRow label="Application Version" value={appVersion} />
               <InfoRow label="Environment" value={appEnvironment} />
-              <InfoRow label="Server Time" value={new Date().toLocaleString()} />
+              <InfoRow label="Current Branch" value={currentBranch} />
+              <InfoRow label="Backup/Restore Scope" value="Full system, all branches" />
+              <InfoRow label="Integrity Check Scope" value={`Signed-in branch (${currentBranch})`} />
+              <InfoRow label="System Time" value={displayedTime} />
               <InfoRow label="Last Backup" value={lastBackup} />
+              <InfoRow label="Last Restore" value={lastRestore} />
             </div>
           </CardContent>
         </Card>
@@ -1040,35 +1291,87 @@ export function MaintenanceModule({ onNavigate, user }) {
         <span>Only authorized administrators can access this page.</span>
       </div>
 
-      <AlertDialog open={showRestoreDialog} onOpenChange={(open) => {
-        if (!open && !isRestoring) resetRestoreSelection();
-        setShowRestoreDialog(open);
+      <AlertDialog open={showBackupDialog} onOpenChange={(open) => {
+        if (!open && !isBackingUp) setShowBackupDialog(false);
       }}>
-        <AlertDialogContent className="maintenance-dialog max-w-lg rounded-xl border border-gray-200 bg-white p-6 shadow-lg">
+        <AlertDialogContent className="maintenance-dialog maintenance-confirm-dialog max-w-lg rounded-xl border border-gray-200 bg-white p-6 shadow-lg">
           <AlertDialogHeader showBrand={false}>
             <div className="flex items-start gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-50 text-amber-600">
-                <AlertTriangle className="h-6 w-6" />
+              <div className="maintenance-dialog-icon flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-red-50 text-red-600">
+                <Download className="h-6 w-6" />
               </div>
               <div className="min-w-0">
-                <AlertDialogTitle>Restore database backup?</AlertDialogTitle>
+                <AlertDialogTitle>Create database backup?</AlertDialogTitle>
                 <AlertDialogDescription className="mt-2 text-sm leading-6 text-slate-600">
-                  Restoring <span className="font-semibold text-slate-900">{selectedRestoreFile?.name}</span> may overwrite current records. Create a fresh backup first if you have not already done so.
+                  The system will generate and download a full-system backup of the current database records, including all branch inventory, users, reports, archive records, and logs. Keep this file secure because it may contain inventory and account information.
                 </AlertDialogDescription>
               </div>
             </div>
           </AlertDialogHeader>
           <AlertDialogFooter className="mt-6">
-            <AlertDialogCancel disabled={isRestoring} onClick={resetRestoreSelection}>
+            <AlertDialogCancel disabled={isBackingUp}>
+              Cancel
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              onClick={confirmBackup}
+              disabled={isBackingUp}
+              className="bg-red-600 text-white hover:bg-red-700"
+            >
+              {isBackingUp && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {isBackingUp ? 'Creating Backup...' : 'Create Backup'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={showRestoreDialog} onOpenChange={(open) => {
+        if (!open && !isRestoring) resetRestoreSelection();
+        setShowRestoreDialog(open);
+      }}>
+        <AlertDialogContent className="maintenance-dialog maintenance-confirm-dialog max-w-lg rounded-xl border border-gray-200 bg-white p-6 shadow-lg">
+          <AlertDialogHeader showBrand={false}>
+            <div className="flex items-start gap-4">
+              <div className="maintenance-dialog-icon flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-red-50 text-red-600">
+                <AlertTriangle className="h-6 w-6" />
+              </div>
+              <div className="min-w-0">
+                <AlertDialogTitle>Restore database backup?</AlertDialogTitle>
+                <AlertDialogDescription className="mt-2 text-sm leading-6 text-slate-600">
+                Restoring <span className="maintenance-restore-file-name">{selectedRestoreFile?.name}</span> may overwrite the full system database, including all branch records. Create a fresh backup first if you have not already done so.
+                </AlertDialogDescription>
+                <div className="mt-4">
+                  <label htmlFor="restore-confirmation" className="maintenance-restore-label">
+                    Type <span className="maintenance-restore-keyword">{RESTORE_CONFIRMATION_TEXT}</span> to continue
+                  </label>
+                  <Input
+                    id="restore-confirmation"
+                    value={restoreConfirmation}
+                    onChange={(event) => setRestoreConfirmation(event.target.value)}
+                    disabled={isRestoring}
+                    className="maintenance-restore-input"
+                    autoComplete="off"
+                    autoFocus
+                  />
+                </div>
+              </div>
+            </div>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="mt-6">
+            <AlertDialogCancel
+              disabled={isRestoring}
+              onClick={resetRestoreSelection}
+              className="maintenance-restore-cancel"
+            >
               Cancel
             </AlertDialogCancel>
             <Button
               type="button"
               onClick={confirmRestore}
-              disabled={isRestoring}
-              className="bg-amber-500 text-white hover:bg-amber-600"
+              disabled={isRestoring || restoreConfirmation.trim().toUpperCase() !== RESTORE_CONFIRMATION_TEXT}
+              className="maintenance-restore-submit"
             >
-              {isRestoring && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {isRestoring ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <RotateCcw className="mr-2 h-5 w-5" />}
               {isRestoring ? 'Restoring...' : 'Restore Database'}
             </Button>
           </AlertDialogFooter>
@@ -1076,12 +1379,12 @@ export function MaintenanceModule({ onNavigate, user }) {
       </AlertDialog>
 
       <AlertDialog open={Boolean(pendingAction)} onOpenChange={(open) => {
-        if (!open && !activePlaceholderAction) setPendingMaintenanceAction(null);
+        if (!open && !activeMaintenanceAction) setPendingMaintenanceAction(null);
       }}>
-        <AlertDialogContent className="maintenance-dialog max-w-lg rounded-xl border border-gray-200 bg-white p-6 shadow-lg">
+        <AlertDialogContent className="maintenance-dialog maintenance-confirm-dialog max-w-lg rounded-xl border border-gray-200 bg-white p-6 shadow-lg">
           <AlertDialogHeader showBrand={false}>
             <div className="flex items-start gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
+              <div className="maintenance-dialog-icon flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
                 <Info className="h-6 w-6" />
               </div>
               <div className="min-w-0">
@@ -1093,17 +1396,17 @@ export function MaintenanceModule({ onNavigate, user }) {
             </div>
           </AlertDialogHeader>
           <AlertDialogFooter className="mt-6">
-            <AlertDialogCancel disabled={Boolean(activePlaceholderAction)}>
+            <AlertDialogCancel disabled={Boolean(activeMaintenanceAction)}>
               Cancel
             </AlertDialogCancel>
             <Button
               type="button"
-              onClick={confirmPlaceholderAction}
-              disabled={Boolean(activePlaceholderAction)}
+              onClick={confirmMaintenanceAction}
+              disabled={Boolean(activeMaintenanceAction)}
               className={pendingAction?.toneClass || 'bg-blue-600 hover:bg-blue-700'}
             >
-              {activePlaceholderAction && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {activePlaceholderAction ? pendingAction?.loadingLabel : 'Continue'}
+              {activeMaintenanceAction && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {activeMaintenanceAction ? pendingAction?.loadingLabel : 'Continue'}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
