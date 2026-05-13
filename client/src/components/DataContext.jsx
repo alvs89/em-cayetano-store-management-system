@@ -1,10 +1,8 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
+import { apiUrl } from "../utils/api";
 
 const DataContext = createContext(undefined);
-
-// Inventory API helpers
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 const formatUnitQuantity = quantity => `${quantity} ${Number(quantity) === 1 ? "unit" : "units"}`;
 
@@ -145,7 +143,7 @@ export function DataProvider({ children }) {
         setInventory([]);
         return;
       }
-      const res = await axios.get(`${API_BASE}/api/inventory`, {
+      const res = await axios.get(apiUrl("/api/inventory"), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       // Map backend fields to frontend shape
@@ -177,7 +175,7 @@ export function DataProvider({ children }) {
         setArchivedInventory([]);
         return;
       }
-      const res = await axios.get(`${API_BASE}/api/archive`, {
+      const res = await axios.get(apiUrl("/api/archive"), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       const items = (res.data.archivedProducts || []).map((p) => ({
@@ -207,7 +205,7 @@ export function DataProvider({ children }) {
         setStockMovements([]);
         return;
       }
-      const res = await axios.get(`${API_BASE}/api/stock-movements`, {
+      const res = await axios.get(apiUrl("/api/stock-movements"), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       const movements = (res.data.movements || []).map((movement) => ({
@@ -240,7 +238,7 @@ export function DataProvider({ children }) {
         setSystemSummary({ pendingRegistrations: [], lastBackupAt: null });
         return;
       }
-      const response = await axios.get(`${API_BASE}/api/system/summary`, {
+      const response = await axios.get(apiUrl("/api/system/summary"), {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
       setSystemSummary(response.data || {});
@@ -271,8 +269,10 @@ export function DataProvider({ children }) {
     };
 
     window.addEventListener('auth-state-changed', handleAuthStateChanged);
+    window.addEventListener('database-restored', handleAuthStateChanged);
     return () => {
       window.removeEventListener('auth-state-changed', handleAuthStateChanged);
+      window.removeEventListener('database-restored', handleAuthStateChanged);
     };
   }, [fetchInventory, fetchArchivedInventory, fetchStockMovements, refreshSystemSummary]);
 
@@ -367,7 +367,7 @@ export function DataProvider({ children }) {
       if (!token) return;
 
       await axios.post(
-        `${API_BASE}/api/audit-logs`,
+        apiUrl("/api/audit-logs"),
         {
           action,
           target_id: target.targetId,
@@ -417,7 +417,7 @@ export function DataProvider({ children }) {
   const addInventoryItem = async (item) => {
     const token = localStorage.getItem("token");
     const res = await axios.post(
-      `${API_BASE}/api/inventory`,
+      apiUrl("/api/inventory"),
       {
         name: item.name,
         category: item.category,
@@ -435,25 +435,30 @@ export function DataProvider({ children }) {
   // Update inventory item (stock in/out, edit)
   const updateInventoryItem = async (id, updates) => {
     const token = localStorage.getItem("token");
-    // Optimistic UI update: set the updated quantity and timestamp immediately
+    // Optimistic UI update: only refresh the visible timestamp for stock quantity changes.
+    // Name/category/reorder edits should not make existing stock alerts look newly created.
     setInventory((prev) =>
       prev.map((it) =>
         it.id === id
-          ? {
-              ...it,
-              name: updates.name ?? it.name,
-              category: updates.category ?? it.category,
-              quantity: typeof updates.quantity === 'number' ? updates.quantity : it.quantity,
-              reorderLevel: updates.reorderLevel ?? it.reorderLevel,
-              lastUpdated: new Date().toISOString(),
-            }
+          ? (() => {
+              const nextQuantity = typeof updates.quantity === 'number' ? updates.quantity : it.quantity;
+              const quantityChanged = nextQuantity !== it.quantity;
+              return {
+                ...it,
+                name: updates.name ?? it.name,
+                category: updates.category ?? it.category,
+                quantity: nextQuantity,
+                reorderLevel: updates.reorderLevel ?? it.reorderLevel,
+                lastUpdated: quantityChanged ? new Date().toISOString() : it.lastUpdated,
+              };
+            })()
           : it
       )
     );
 
     try {
       const res = await axios.put(
-        `${API_BASE}/api/inventory/${id}`,
+        apiUrl(`/api/inventory/${id}`),
         {
           name: updates.name,
           category: updates.category,
@@ -483,23 +488,9 @@ export function DataProvider({ children }) {
   // Archive (delete) inventory item
   const archiveInventoryItem = async (id) => {
     const token = localStorage.getItem("token");
-    const itemToArchive = inventory.find(item => item.id === id);
-
-    if (itemToArchive) {
-      const archivedAt = new Date().toISOString();
-      setInventory(prev => prev.filter(item => item.id !== id));
-      setArchivedInventory(prev => [
-        {
-          ...itemToArchive,
-          originalInventoryId: itemToArchive.originalInventoryId || itemToArchive.id,
-          archivedAt,
-        },
-        ...prev,
-      ]);
-    }
 
     try {
-      await axios.delete(`${API_BASE}/api/inventory/${id}`, {
+      await axios.delete(apiUrl(`/api/inventory/${id}`), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       await fetchInventory();
@@ -515,24 +506,10 @@ export function DataProvider({ children }) {
 
   const restoreArchivedInventoryItem = async (id) => {
     const token = localStorage.getItem("token");
-    const itemToRestore = archivedInventory.find(item => item.id === id);
-
-    if (itemToRestore) {
-      const { archivedAt, originalInventoryId, ...restoredItem } = itemToRestore;
-      setArchivedInventory(prev => prev.filter(item => item.id !== id));
-      setInventory(prev => [
-        {
-          ...restoredItem,
-          id: originalInventoryId || itemToRestore.id,
-          lastUpdated: new Date().toISOString(),
-        },
-        ...prev,
-      ]);
-    }
 
     try {
       const res = await axios.post(
-        `${API_BASE}/api/archive/${id}/restore`,
+        apiUrl(`/api/archive/${id}/restore`),
         {},
         { headers: token ? { Authorization: `Bearer ${token}` } : {} }
       );

@@ -510,7 +510,7 @@ export function ArchiveModule({
   }), /*#__PURE__*/React.createElement(Input, {
     // Text search across name or ID.
     className: "pl-10",
-    placeholder: "Search by name or ID...",
+    placeholder: "Search archived items by name or item ID",
     value: searchQuery,
     onChange: e => setSearchQuery(e.target.value)
   })), /*#__PURE__*/React.createElement("div", {
@@ -838,7 +838,7 @@ export function ArchiveModule({
     }
   }, /*#__PURE__*/React.createElement(Button, {
     variant: "outline",
-    className: "border-slate-200 bg-white text-slate-950 hover:bg-slate-50",
+    className: "modal-button-cancel border-slate-200 bg-white text-slate-950 hover:bg-slate-50",
     style: {
       height: "38px",
       minWidth: "88px",
@@ -852,7 +852,7 @@ export function ArchiveModule({
     }
   }, "Cancel"), /*#__PURE__*/React.createElement(Button, {
     onClick: handleUnarchiveItem,
-    className: "font-semibold shadow-lg transition-transform duration-150 active:scale-95",
+    className: "modal-button-success font-semibold shadow-lg transition-transform duration-150 active:scale-95",
     style: {
       height: "38px",
       minWidth: "132px",

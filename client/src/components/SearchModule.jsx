@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Filter, Package, Search } from "lucide-react";
-import { linearSearchAll, sortByIdAsc, sortByNameAsc, sortByNameDesc, binarySearch } from "../utils/algorithms";
+import { linearSearchAll, sortByNameAsc, sortByNameDesc } from "../utils/algorithms";
 import { formatDateTime } from "../utils/format";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
@@ -23,27 +23,15 @@ export function SearchModule() {
   useEffect(() => {
     let results = [];
 
-    if (searchQuery && searchQuery.match(/^[A-Z]\d{3}$/i)) {
-      const sortedByID = sortByIdAsc([...inventory]);
-      const index = binarySearch(
-        sortedByID,
-        searchQuery.toUpperCase(),
-        (item, target) => item.id.localeCompare(target)
-      );
-      if (index !== -1) {
-        results = [sortedByID[index]];
-      }
-    } else {
-      results = linearSearchAll(inventory, product => {
-        const productName = (product.name || "").toLowerCase();
-        const productId = (product.id || "").toLowerCase();
-        const query = searchQuery.toLowerCase();
-        const matchesSearch = searchQuery === "" || productName.includes(query) || productId.includes(query);
-        const matchesCategory = categoryFilter === "all" || product.category === categoryFilter;
-        const matchesStatus = statusFilter === "all" || product.status === statusFilter;
-        return matchesSearch && matchesCategory && matchesStatus;
-      });
-    }
+    results = linearSearchAll(inventory, product => {
+      const productName = (product.name || "").toLowerCase();
+      const productId = (product.id || "").toLowerCase();
+      const query = searchQuery.toLowerCase();
+      const matchesSearch = searchQuery === "" || productName.includes(query) || productId.includes(query);
+      const matchesCategory = categoryFilter === "all" || product.category === categoryFilter;
+      const matchesStatus = statusFilter === "all" || product.status === statusFilter;
+      return matchesSearch && matchesCategory && matchesStatus;
+    });
 
     if (sortBy === "name") {
       results = sortOrder === "asc" ? sortByNameAsc(results) : sortByNameDesc(results);
@@ -357,7 +345,7 @@ export function SearchModule() {
                 <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
                 <Input
                   className="h-12 pl-10"
-                  placeholder="Search by product name or ID..."
+                  placeholder="Search active products by name or ID"
                   value={searchQuery}
                   onChange={event => setSearchQuery(event.target.value)}
                 />

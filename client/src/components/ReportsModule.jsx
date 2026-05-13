@@ -127,6 +127,30 @@ export function ReportsModule({
   const reportInventory = inventory.filter(isItemInReportPeriod);
   const reportMovements = (stockMovements || []).filter(isMovementInReportPeriod);
 
+  const normalizeMovementName = value => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+  const getCurrentInventoryForMovement = movement =>
+    inventory.find(item => String(item.id) === String(movement.inventoryId));
+
+  const getMovementItemNameDetails = movement => {
+    const historicalName = movement.itemName || 'Unknown item';
+    const currentItem = getCurrentInventoryForMovement(movement);
+    const currentName = currentItem?.name || '';
+    const hasCurrentRename =
+      currentName &&
+      normalizeMovementName(currentName) !== normalizeMovementName(historicalName);
+
+    return {
+      historicalName,
+      currentName: hasCurrentRename ? currentName : ''
+    };
+  };
+
+  const formatMovementItemNameForExport = movement => {
+    const { historicalName, currentName } = getMovementItemNameDetails(movement);
+    return currentName ? `${historicalName} (Current name: ${currentName})` : historicalName;
+  };
+
   // Calculate statistics from inventory records inside the selected report period
   const totalItems = reportInventory.length;
   const totalQuantity = reportInventory.reduce((sum, item) => sum + item.quantity, 0);
@@ -427,7 +451,7 @@ export function ReportsModule({
         const movementData = movements.map(movement => [
           movement.id,
           formatDateTime(movement.createdAt),
-          movement.itemName,
+          formatMovementItemNameForExport(movement),
           movement.category,
           getMovementLabel(movement.action),
           movement.quantityChanged.toString(),
@@ -1058,10 +1082,19 @@ export function ReportsModule({
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {getFilteredMovements().map(movement => (
+                  {getFilteredMovements().map(movement => {
+                    const itemNameDetails = getMovementItemNameDetails(movement);
+                    return (
                         <TableRow key={movement.id}>
                           <TableCell>{formatDateTime(movement.createdAt)}</TableCell>
-                          <TableCell>{movement.itemName}</TableCell>
+                          <TableCell>
+                            <div className="space-y-1">
+                              <div className="font-medium text-slate-900">{itemNameDetails.historicalName}</div>
+                              {itemNameDetails.currentName && (
+                                <div className="text-xs text-slate-500">Current name: {itemNameDetails.currentName}</div>
+                              )}
+                            </div>
+                          </TableCell>
                           <TableCell>{movement.category}</TableCell>
                           <TableCell>
                             <Badge className={getMovementBadgeClass(movement.action)}>
@@ -1073,16 +1106,22 @@ export function ReportsModule({
                           <TableCell>{movement.newQuantity}</TableCell>
                           <TableCell>{movement.actorName || 'System'}</TableCell>
                         </TableRow>
-                      ))}
+                    );
+                  })}
                     </TableBody>
                   </Table>
                 </div>
                 <div className="reports-movement-mobile-list">
-                  {getFilteredMovements().map(movement => (
+                  {getFilteredMovements().map(movement => {
+                    const itemNameDetails = getMovementItemNameDetails(movement);
+                    return (
                     <article key={movement.id} className="reports-movement-card">
                       <div className="reports-movement-top">
                         <div className="min-w-0">
-                          <h4 className="reports-movement-name">{movement.itemName}</h4>
+                          <h4 className="reports-movement-name">{itemNameDetails.historicalName}</h4>
+                          {itemNameDetails.currentName && (
+                            <p className="reports-movement-meta">Current name: {itemNameDetails.currentName}</p>
+                          )}
                           <p className="reports-movement-meta">{movement.category} • {formatDateTime(movement.createdAt)}</p>
                         </div>
                         <Badge className={`shrink-0 ${getMovementBadgeClass(movement.action)}`}>
@@ -1116,7 +1155,8 @@ export function ReportsModule({
                         </div>
                       </div>
                     </article>
-                  ))}
+                    );
+                  })}
                 </div>
               </>
             )}

@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState } from "react";
-import { Plus, Minus, Archive, Search, Filter, ArrowUpDown, AlertTriangle, Info, PackagePlus, PackageMinus, CheckCircle, Box } from "lucide-react";
+import { Plus, Minus, Archive, Search, Filter, ArrowUpDown, AlertTriangle, Info, PackagePlus, PackageMinus, CheckCircle, Box, Pencil } from "lucide-react";
 import { linearSearch, linearSearchAll, mergeSort } from "../utils/algorithms";
 import { formatDateTime } from "../utils/format";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -59,6 +59,7 @@ const CATEGORY_ALIASES = {
 };
 
 const normalizeDuplicateKeyPart = value => String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+const isWholeNumberText = value => /^\d+$/.test(String(value ?? "").trim());
 const normalizeCategory = value => {
   const normalized = normalizeDuplicateKeyPart(value);
   if (!normalized) return "";
@@ -90,11 +91,17 @@ export function InventoryModule({
   const [isStockInDialogOpen, setIsStockInDialogOpen] = useState(false);
   const [isStockOutDialogOpen, setIsStockOutDialogOpen] = useState(false);
   const [isArchiveDialogOpen, setIsArchiveDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState(null);
   const [stockAmount, setStockAmount] = useState("");
   const [discardPrompt, setDiscardPrompt] = useState(null);
   const [archivedDuplicatePrompt, setArchivedDuplicatePrompt] = useState(null);
   const [isRestoringArchivedDuplicate, setIsRestoringArchivedDuplicate] = useState(false);
+  const [editItem, setEditItem] = useState({
+    name: "",
+    category: "",
+    reorderLevel: ""
+  });
 
   // 🔄 Sorting state: track which column and direction to sort
   const [sortBy, setSortBy] = useState('name');
@@ -211,6 +218,11 @@ export function InventoryModule({
     return stockAmount !== "";
   };
 
+  const hasEditItemChanges = () => {
+    if (!selectedItem) return false;
+    return editItem.name.trim() !== selectedItem.name || normalizeCategory(editItem.category) !== normalizeCategory(selectedItem.category) || String(editItem.reorderLevel) !== String(selectedItem.reorderLevel);
+  };
+
   const closeAddItemDialog = () => {
     setIsAddDialogOpen(false);
     resetAddItemForm();
@@ -220,6 +232,16 @@ export function InventoryModule({
     setIsStockInDialogOpen(false);
     setSelectedItem(null);
     resetStockForm();
+  };
+
+  const closeEditDialog = () => {
+    setIsEditDialogOpen(false);
+    setSelectedItem(null);
+    setEditItem({
+      name: "",
+      category: "",
+      reorderLevel: ""
+    });
   };
 
   const requestCloseAddItemDialog = () => {
@@ -246,6 +268,14 @@ export function InventoryModule({
     closeStockOutDialog();
   };
 
+  const requestCloseEditDialog = () => {
+    if (hasEditItemChanges()) {
+      setDiscardPrompt("editItem");
+      return;
+    }
+    closeEditDialog();
+  };
+
   const discardDialogCopy = {
     addItem: {
       title: "Discard new item?",
@@ -258,6 +288,10 @@ export function InventoryModule({
     stockOut: {
       title: "Discard stock-out entry?",
       description: "You have entered a stock-out quantity. Closing this form will clear the quantity and keep the inventory unchanged."
+    },
+    editItem: {
+      title: "Discard item edits?",
+      description: "You have unsaved item detail changes. Closing this form will keep the current inventory record unchanged."
     }
   };
 
@@ -274,6 +308,10 @@ export function InventoryModule({
     }
     if (prompt === "stockOut") {
       closeStockOutDialog();
+      return;
+    }
+    if (prompt === "editItem") {
+      closeEditDialog();
     }
   };
 
@@ -320,13 +358,28 @@ export function InventoryModule({
     }
   };
 
+  const openEditDialog = item => {
+    setSelectedItem(item);
+    setEditItem({
+      name: item.name || "",
+      category: normalizeCategory(item.category) || item.category || "",
+      reorderLevel: String(item.reorderLevel ?? 10)
+    });
+    setIsEditDialogOpen(true);
+  };
+
   const handleAddItem = async () => {
     if (!newItem.name || !newItem.category || !newItem.quantity || !newItem.reorderLevel) {
       toast.error("Please fill in all fields before adding an item.");
       return;
     }
     const quantity = parseInt(newItem.quantity);
-    const reorderLevel = parseInt(newItem.reorderLevel);
+    if (!isWholeNumberText(newItem.reorderLevel)) {
+      toast.error("Reorder Level must be a whole number.");
+      return;
+    }
+
+    const reorderLevel = Number(newItem.reorderLevel);
     if (isNaN(quantity) || quantity < 0) {
       toast.error("Please enter a valid quantity.");
       return;
@@ -447,6 +500,42 @@ export function InventoryModule({
     }
   };
 
+  const handleEditItem = async () => {
+    if (!selectedItem) return;
+    const cleanName = editItem.name.trim().replace(/\s+/g, " ");
+    const canonicalCategory = normalizeCategory(editItem.category);
+    if (!isWholeNumberText(editItem.reorderLevel)) {
+      toast.error("Reorder Level must be a whole number.");
+      return;
+    }
+
+    const reorderLevel = Number(editItem.reorderLevel);
+
+    if (!cleanName || !canonicalCategory) {
+      toast.error("Please provide a valid item name and category.");
+      return;
+    }
+    if (isNaN(reorderLevel) || reorderLevel < 0 || reorderLevel > 20) {
+      toast.error("Reorder Level must be between 0 and 20.");
+      return;
+    }
+
+    try {
+      await updateInventoryItem(selectedItem.id, {
+        name: cleanName,
+        category: canonicalCategory,
+        quantity: selectedItem.quantity,
+        reorderLevel
+      });
+      toast.success(`${cleanName} updated successfully`, {
+        description: "Item details were saved without changing stock quantity."
+      });
+      closeEditDialog();
+    } catch (err) {
+      toast.error("Failed to update item", { description: err?.response?.data?.error || err.message });
+    }
+  };
+
   // Archive Item
   const handleArchiveItem = async () => {
     if (!selectedItem) return;
@@ -463,6 +552,191 @@ export function InventoryModule({
     }
   };
   const getStatusBadgeClass = status => status === "In Stock" ? "bg-green-100 text-green-700" : status === "Low Stock" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700";
+  const renderEditDialog = () => (
+    <Dialog
+      open={isEditDialogOpen}
+      onOpenChange={open => {
+        if (open) {
+          setIsEditDialogOpen(true);
+        } else {
+          requestCloseEditDialog();
+        }
+      }}
+    >
+      <DialogContent
+        className="inventory-dialog-content border border-slate-200 bg-white shadow-2xl"
+        onOpenAutoFocus={event => event.preventDefault()}
+        style={{
+          width: "min(560px, calc(100vw - 32px))",
+          maxWidth: "560px",
+          padding: "22px",
+          borderRadius: "14px",
+          gap: "16px"
+        }}
+      >
+        <DialogHeader
+          className="inventory-dialog-header space-y-0 text-left"
+          style={{
+            display: "flex",
+            flexDirection: "row",
+            alignItems: "flex-start",
+            gap: "16px",
+            paddingRight: "28px"
+          }}
+        >
+          <div
+            className="shrink-0"
+            style={{
+              width: "58px",
+              height: "58px",
+              borderRadius: "999px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%)",
+              boxShadow: "inset 0 1px 8px rgba(37, 99, 235, 0.1)"
+            }}
+          >
+            <Pencil className="text-blue-700" style={{ width: "28px", height: "28px" }} />
+          </div>
+          <div className="pt-2">
+            <DialogTitle
+              className="font-bold tracking-tight text-slate-950"
+              style={{ fontSize: "26px", lineHeight: "1.1" }}
+            >
+              Edit Item Details
+            </DialogTitle>
+            <DialogDescription
+              className="mt-3 leading-relaxed text-slate-600"
+              style={{ fontSize: "14px" }}
+            >
+              Update item identity details without changing stock quantity.
+            </DialogDescription>
+          </div>
+        </DialogHeader>
+
+        <div
+          className="flex items-center text-blue-950"
+          style={{
+            gap: "12px",
+            border: "1px solid #BFDBFE",
+            background: "#EFF6FF",
+            borderRadius: "10px",
+            padding: "10px 12px"
+          }}
+        >
+          <Info className="shrink-0 text-blue-600" style={{ width: "18px", height: "18px" }} />
+          <p style={{ fontSize: "13px" }}>
+            Stock quantity remains controlled through Stock In and Stock Out so movement history stays accurate.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label
+              htmlFor="edit-item-name"
+              className="font-semibold text-slate-950"
+              style={{ display: "block", marginBottom: "8px", fontSize: "14px", lineHeight: "1.25" }}
+            >
+              Item Name
+            </Label>
+            <Input
+              id="edit-item-name"
+              value={editItem.name}
+              onChange={e => setEditItem({ ...editItem, name: e.target.value })}
+              placeholder="e.g., Steel Hammer"
+              className="border-slate-300 bg-white text-slate-950"
+              style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label
+              htmlFor="edit-category"
+              className="font-semibold text-slate-950"
+              style={{ display: "block", marginBottom: "8px", fontSize: "14px", lineHeight: "1.25" }}
+            >
+              Category
+            </Label>
+            <Select
+              value={editItem.category}
+              onValueChange={value => setEditItem({ ...editItem, category: value })}
+            >
+              <SelectTrigger
+                id="edit-category"
+                className="border-slate-300 bg-white text-slate-950"
+                style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
+              >
+                <SelectValue placeholder="Select a category" />
+              </SelectTrigger>
+              <SelectContent>
+                {OFFICIAL_INVENTORY_CATEGORIES.map(category => (
+                  <SelectItem key={category} value={category}>{category}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label
+              htmlFor="edit-reorder-level"
+              className="font-semibold text-slate-950"
+              style={{ display: "block", marginBottom: "8px", fontSize: "14px", lineHeight: "1.25" }}
+            >
+              Reorder Level (Max 20)
+            </Label>
+            <Input
+              id="edit-reorder-level"
+              type="number"
+              min="0"
+              max="20"
+              step="1"
+              inputMode="numeric"
+              value={editItem.reorderLevel}
+              onChange={e => setEditItem({ ...editItem, reorderLevel: e.target.value })}
+              placeholder="10"
+              className="border-slate-300 bg-white text-slate-950"
+              style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
+            />
+            <p className="text-slate-600" style={{ fontSize: "12px" }}>
+              Determines when the item is marked as Low Stock.
+            </p>
+          </div>
+        </div>
+
+        <DialogFooter
+          className="inventory-dialog-footer pt-2"
+          style={{ display: "flex", flexDirection: "row", justifyContent: "flex-end", gap: "10px" }}
+        >
+          <Button
+            variant="outline"
+            className="modal-button-cancel border-slate-200 bg-white text-slate-950 hover:bg-slate-50"
+            style={{ height: "38px", minWidth: "88px", borderRadius: "10px", padding: "0 18px", fontSize: "13px" }}
+            onClick={requestCloseEditDialog}
+          >
+            Cancel
+          </Button>
+          <Button
+            className="modal-button-primary font-semibold shadow-lg"
+            onClick={handleEditItem}
+            disabled={!hasEditItemChanges()}
+            style={{
+              height: "38px",
+              minWidth: "132px",
+              borderRadius: "10px",
+              padding: "0 18px",
+              fontSize: "13px",
+              background: hasEditItemChanges() ? "#2563EB" : "#94A3B8",
+              color: "#FFFFFF",
+              boxShadow: hasEditItemChanges() ? "0 14px 24px rgba(37, 99, 235, 0.18)" : "none"
+            }}
+          >
+            Save Changes
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
   return /*#__PURE__*/React.createElement("div", {
     className: "inventory-page min-h-screen bg-gray-50 p-4 md:p-8"
   }, /*#__PURE__*/React.createElement("style", null, `
@@ -866,7 +1140,7 @@ export function InventoryModule({
     className: "absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400"
   }), /*#__PURE__*/React.createElement(Input, {
     className: "pl-10",
-    placeholder: "Search by name or ID...",
+    placeholder: "Search active inventory by item name or ID",
     value: searchQuery,
     onChange: e => setSearchQuery(e.target.value)
   })), /*#__PURE__*/React.createElement("div", {
@@ -1100,6 +1374,8 @@ export function InventoryModule({
     type: "number",
     min: "0",
     max: "20",
+    step: "1",
+    inputMode: "numeric",
     value: newItem.reorderLevel,
     onChange: e => setNewItem({
       ...newItem,
@@ -1241,7 +1517,7 @@ export function InventoryModule({
     }
   }, /*#__PURE__*/React.createElement(Button, {
     variant: "outline",
-    className: "border-slate-200 bg-white text-slate-950 hover:bg-slate-50",
+    className: "modal-button-cancel border-slate-200 bg-white text-slate-950 hover:bg-slate-50",
     style: {
       height: "38px",
       minWidth: "88px",
@@ -1251,7 +1527,7 @@ export function InventoryModule({
     },
     onClick: requestCloseAddItemDialog
   }, "Cancel"), /*#__PURE__*/React.createElement(Button, {
-    className: "font-semibold shadow-lg",
+    className: "modal-button-dark font-semibold shadow-lg",
     onClick: handleAddItem,
     disabled: Boolean(archivedDuplicatePrompt),
     style: {
@@ -1328,6 +1604,14 @@ export function InventoryModule({
       setIsStockOutDialogOpen(true);
     }
   }, /*#__PURE__*/React.createElement(Minus, {
+    className: "w-4 h-4"
+  })), user.role === "Admin" && /*#__PURE__*/React.createElement(Button, {
+    size: "sm",
+    variant: "outline",
+    className: "border-blue-500 text-blue-700 hover:bg-blue-50",
+    title: "Edit item details",
+    onClick: () => openEditDialog(item)
+  }, /*#__PURE__*/React.createElement(Pencil, {
     className: "w-4 h-4"
   })), user.role === "Admin" && /*#__PURE__*/React.createElement(Button, {
     size: "sm",
@@ -1419,6 +1703,13 @@ export function InventoryModule({
     className: "mr-1 h-4 w-4"
   }), "Stock Out"), user.role === "Admin" && /*#__PURE__*/React.createElement(Button, {
     variant: "outline",
+    className: "border-blue-500 text-blue-700 hover:bg-blue-50",
+    title: "Edit item details",
+    onClick: () => openEditDialog(item)
+  }, /*#__PURE__*/React.createElement(Pencil, {
+    className: "mr-1 h-4 w-4"
+  }), "Edit"), user.role === "Admin" && /*#__PURE__*/React.createElement(Button, {
+    variant: "outline",
     className: "border-amber-400 text-amber-800 hover:bg-amber-100 hover:border-amber-500 hover:text-amber-950",
     title: "Archive: Remove item from list",
     onClick: () => {
@@ -1427,7 +1718,7 @@ export function InventoryModule({
     }
   }, /*#__PURE__*/React.createElement(Archive, {
     className: "mr-1 h-4 w-4"
-  }), "Archive")))))), /*#__PURE__*/React.createElement(Dialog, {
+  }), "Archive")))))), renderEditDialog(), /*#__PURE__*/React.createElement(Dialog, {
     open: isStockInDialogOpen,
     onOpenChange: open => {
       if (open) {
@@ -1566,7 +1857,7 @@ export function InventoryModule({
     }
   }, /*#__PURE__*/React.createElement(Button, {
     variant: "outline",
-    className: "border-slate-200 bg-white text-slate-950 hover:bg-slate-50",
+    className: "modal-button-cancel border-slate-200 bg-white text-slate-950 hover:bg-slate-50",
     style: {
       height: "38px",
       minWidth: "88px",
@@ -1576,7 +1867,7 @@ export function InventoryModule({
     },
     onClick: requestCloseStockInDialog
   }, "Cancel"), /*#__PURE__*/React.createElement(Button, {
-    className: "font-semibold shadow-lg",
+    className: "modal-button-success font-semibold shadow-lg",
     onClick: handleStockIn,
     style: {
       height: "38px",
@@ -1727,7 +2018,7 @@ export function InventoryModule({
     }
   }, /*#__PURE__*/React.createElement(Button, {
     variant: "outline",
-    className: "border-slate-200 bg-white text-slate-950 hover:bg-slate-50",
+    className: "modal-button-cancel border-slate-200 bg-white text-slate-950 hover:bg-slate-50",
     style: {
       height: "38px",
       minWidth: "88px",
@@ -1737,7 +2028,7 @@ export function InventoryModule({
     },
     onClick: requestCloseStockOutDialog
   }, "Cancel"), /*#__PURE__*/React.createElement(Button, {
-    className: "font-semibold shadow-lg",
+    className: "modal-button-danger font-semibold shadow-lg",
     onClick: handleStockOut,
     style: {
       height: "38px",
@@ -1944,7 +2235,7 @@ export function InventoryModule({
     }
   }, /*#__PURE__*/React.createElement(Button, {
     variant: "outline",
-    className: "border-slate-200 bg-white text-slate-950 hover:bg-slate-50",
+    className: "modal-button-cancel border-slate-200 bg-white text-slate-950 hover:bg-slate-50",
     style: {
       height: "38px",
       minWidth: "88px",
@@ -1957,7 +2248,7 @@ export function InventoryModule({
       setSelectedItem(null);
     }
   }, "Cancel"), /*#__PURE__*/React.createElement(Button, {
-    className: "font-semibold shadow-lg transition-transform duration-150 active:scale-95",
+    className: "modal-button-dark font-semibold shadow-lg transition-transform duration-150 active:scale-95",
     onClick: handleArchiveItem,
     style: {
       height: "38px",
@@ -2010,7 +2301,7 @@ export function InventoryModule({
       gap: "10px"
     }
   }, /*#__PURE__*/React.createElement(AlertDialogCancel, {
-    className: "border-slate-200 bg-white text-slate-950 hover:bg-slate-50",
+    className: "modal-button-cancel border-slate-200 bg-white text-slate-950 hover:bg-slate-50",
     style: {
       height: "38px",
       borderRadius: "10px",
