@@ -72,7 +72,7 @@ const RegistrationScreen = () => {
   };
 
   return (
-    <div className="register-page min-h-screen flex bg-gradient-to-br from-yellow-50 via-orange-50 to-red-50">
+    <div className="register-page auth-gradient-page min-h-screen flex">
       <style>{`
         .register-page {
           width: 100%;
@@ -276,7 +276,7 @@ const RegistrationScreen = () => {
         }
       `}</style>
 
-      <div className="register-form-pane flex-1 flex flex-col items-center justify-center p-12 bg-gradient-to-br from-yellow-50 via-orange-50 to-red-50">
+      <div className="register-form-pane auth-gradient-pane flex-1 flex flex-col items-center justify-center p-12 bg-transparent">
         <Card className="register-card w-full max-w-lg rounded-3xl shadow-2xl border border-gray-200 bg-white">
           <CardContent className="register-card-content px-12 py-10 space-y-8">
             <div className="register-brand">
@@ -435,7 +435,7 @@ const RegistrationScreen = () => {
         </Card>
       </div>
 
-      <div className="flex-1 hidden lg:flex flex-col justify-center items-start bg-gradient-to-br from-yellow-50 via-orange-50 to-red-50 p-16 relative overflow-hidden">
+      <div className="auth-gradient-pane flex-1 hidden lg:flex flex-col justify-center items-start bg-transparent p-16 relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-full opacity-30">
           <div className="absolute top-10 right-10 w-72 h-72 bg-[#FFFF00] rounded-full blur-3xl" />
           <div className="absolute bottom-20 left-10 w-96 h-96 bg-[#FF0000] rounded-full blur-3xl" />

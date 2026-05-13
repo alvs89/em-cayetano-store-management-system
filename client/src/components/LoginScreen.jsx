@@ -14,6 +14,7 @@ import { useData } from "./DataContext";
 import { apiUrl } from "../utils/api";
 
 const emcLogoSrc = "/emc-logo.png";
+const LOGIN_BACKGROUND_CLASS = "login-screen-active";
 
 export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegister }) {
   const { users } = useData();
@@ -24,6 +25,16 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
   const [showPassword, setShowPassword] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    document.documentElement.classList.add(LOGIN_BACKGROUND_CLASS);
+    document.body.classList.add(LOGIN_BACKGROUND_CLASS);
+
+    return () => {
+      document.documentElement.classList.remove(LOGIN_BACKGROUND_CLASS);
+      document.body.classList.remove(LOGIN_BACKGROUND_CLASS);
+    };
+  }, []);
 
   // Show a hint if branch is chosen before username/password
   useEffect(() => {
@@ -124,7 +135,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
   };
 
   return (
-    <div className="login-page min-h-screen flex">
+    <div className="login-page auth-gradient-page min-h-screen flex">
       <style>{`
         html,
         body,
@@ -132,9 +143,27 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
         .auth-screen-shell,
         .login-page {
           width: 100%;
-          min-height: 100%;
+          min-height: 100dvh;
+          min-height: 100svh;
+          min-height: 100vh;
           margin: 0;
           padding: 0;
+          background-color: #fff7ed !important;
+          background-image:
+            radial-gradient(circle at 88% 8%, rgba(255, 255, 0, 0.35), transparent 24%),
+            radial-gradient(circle at 0% 100%, rgba(255, 0, 0, 0.13), transparent 28%),
+            linear-gradient(145deg, #fffbeb 0%, #fff7ed 48%, #fee2e2 100%) !important;
+          background-repeat: no-repeat !important;
+          background-size: cover !important;
+        }
+
+        html.${LOGIN_BACKGROUND_CLASS},
+        body.${LOGIN_BACKGROUND_CLASS} {
+          min-width: 100%;
+          min-height: 100dvh;
+          min-height: 100svh;
+          min-height: 100vh;
+          overflow-x: hidden;
           background-color: #fff7ed !important;
           background-image:
             radial-gradient(circle at 88% 8%, rgba(255, 255, 0, 0.35), transparent 24%),
@@ -153,13 +182,52 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
           margin: 0 !important;
           padding: 0 !important;
           overflow-x: hidden;
+          background-color: #fff7ed !important;
+          background-image:
+            radial-gradient(circle at 88% 8%, rgba(255, 255, 0, 0.35), transparent 24%),
+            radial-gradient(circle at 0% 100%, rgba(255, 0, 0, 0.13), transparent 28%),
+            linear-gradient(145deg, #fffbeb 0%, #fff7ed 48%, #fee2e2 100%) !important;
+          background-repeat: no-repeat !important;
+          background-size: cover !important;
         }
 
         .login-page {
+          position: fixed;
+          inset: 0;
           max-width: none !important;
-          background: transparent !important;
-          background-color: transparent !important;
-          background-image: none !important;
+          width: 100vw;
+          height: 100dvh;
+          min-height: 100dvh;
+          overflow-x: hidden;
+          overflow-y: auto;
+          isolation: isolate;
+          background-color: #fff7ed !important;
+          background-image:
+            radial-gradient(circle at 88% 8%, rgba(255, 255, 0, 0.35), transparent 24%),
+            radial-gradient(circle at 0% 100%, rgba(255, 0, 0, 0.13), transparent 28%),
+            linear-gradient(145deg, #fffbeb 0%, #fff7ed 48%, #fee2e2 100%) !important;
+          background-repeat: no-repeat !important;
+          background-size: cover !important;
+        }
+
+        .login-page::before {
+          content: "";
+          position: fixed;
+          inset: 0;
+          z-index: -1;
+          pointer-events: none;
+          background-color: #fff7ed;
+          background-image:
+            radial-gradient(circle at 88% 8%, rgba(255, 255, 0, 0.35), transparent 24%),
+            radial-gradient(circle at 0% 100%, rgba(255, 0, 0, 0.13), transparent 28%),
+            linear-gradient(145deg, #fffbeb 0%, #fff7ed 48%, #fee2e2 100%);
+          background-repeat: no-repeat;
+          background-size: cover;
+        }
+
+        .login-form-pane {
+          position: relative;
+          z-index: 1;
         }
 
         @media (min-width: 1024px) {
@@ -218,7 +286,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
           }
 
           .login-page {
-            width: 100%;
+            width: 100vw;
             max-width: 100%;
             min-width: 0;
             min-height: 100dvh;
@@ -226,9 +294,6 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
             min-height: 100vh;
             display: block;
             overflow-x: hidden;
-            background: transparent !important;
-            background-color: transparent !important;
-            background-image: none !important;
           }
 
           .login-form-pane {
@@ -401,7 +466,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
         }
       `}</style>
 
-      <div className="login-form-pane flex-1 flex items-center justify-center p-12 bg-gradient-to-br from-yellow-50 via-orange-50 to-red-50">
+      <div className="login-form-pane auth-gradient-pane flex-1 flex items-center justify-center p-12 bg-transparent">
         <Card className="login-card w-full max-w-lg rounded-3xl shadow-2xl border border-gray-200 bg-white">
           <CardContent className="login-card-content px-12 py-10 space-y-8">
             <div className="login-brand">
@@ -526,7 +591,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
         </Card>
       </div>
 
-      <div className="flex-1 hidden lg:flex flex-col justify-center items-start bg-gradient-to-br from-yellow-50 via-orange-50 to-red-50 p-16 relative overflow-hidden">
+      <div className="auth-gradient-pane flex-1 hidden lg:flex flex-col justify-center items-start bg-transparent p-16 relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-full opacity-30">
           <div className="absolute top-10 right-10 w-72 h-72 bg-[#FFFF00] rounded-full blur-3xl" />
           <div className="absolute bottom-20 left-10 w-96 h-96 bg-[#FF0000] rounded-full blur-3xl" />

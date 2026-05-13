@@ -252,7 +252,7 @@ function AppContent() {
 
   if (!currentUser) {
     return (
-      <main className="auth-screen-shell min-h-screen w-full">
+      <main className="auth-screen-shell auth-gradient-surface min-h-screen w-full">
         {currentScreen === "login" && (
           <LoginScreen
             onLogin={handleLogin}
@@ -285,7 +285,7 @@ function AppContent() {
   }
 
   const appShellClassName = isMobileViewport
-    ? "flex min-h-screen w-full max-w-full flex-col overflow-x-hidden bg-gray-50"
+    ? "mobile-app-shell flex min-h-screen w-full max-w-full flex-col overflow-x-hidden bg-gray-50"
     : "flex h-screen w-full max-w-full flex-row overflow-hidden bg-gray-50";
 
   const mainClassName = isMobileViewport

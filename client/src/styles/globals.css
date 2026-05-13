@@ -216,6 +216,74 @@ body {
   min-height: 100vh;
 }
 
+.auth-gradient-surface {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  min-height: 100dvh;
+  min-height: 100svh;
+  min-height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background-color: #fff7ed;
+  background-image:
+    radial-gradient(circle at 88% 8%, rgba(255, 255, 0, 0.36), transparent 24%),
+    radial-gradient(circle at 0% 100%, rgba(255, 0, 0, 0.14), transparent 30%),
+    linear-gradient(145deg, #fffbeb 0%, #fff7ed 48%, #fee2e2 100%);
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-attachment: fixed;
+  isolation: isolate;
+}
+
+.auth-gradient-surface::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: inherit;
+}
+
+.auth-gradient-page {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  min-height: 100dvh;
+  min-height: 100svh;
+  min-height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background-color: #fff7ed !important;
+  background-image:
+    radial-gradient(circle at 88% 8%, rgba(255, 255, 0, 0.36), transparent 24%),
+    radial-gradient(circle at 0% 100%, rgba(255, 0, 0, 0.14), transparent 30%),
+    linear-gradient(145deg, #fffbeb 0%, #fff7ed 48%, #fee2e2 100%) !important;
+  background-repeat: no-repeat !important;
+  background-size: cover !important;
+  background-attachment: fixed !important;
+  isolation: isolate;
+}
+
+.auth-gradient-page::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-color: #fff7ed;
+  background-image:
+    radial-gradient(circle at 88% 8%, rgba(255, 255, 0, 0.36), transparent 24%),
+    radial-gradient(circle at 0% 100%, rgba(255, 0, 0, 0.14), transparent 30%),
+    linear-gradient(145deg, #fffbeb 0%, #fff7ed 48%, #fee2e2 100%);
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.auth-gradient-pane {
+  background: transparent !important;
+}
+
 .app-main-content {
   scrollbar-gutter: stable;
 }
@@ -333,8 +401,41 @@ body {
   margin: 0 !important;
 }
 
+#root .mobile-app-shell {
+  padding: 0 !important;
+  margin: 0 !important;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+#root .mobile-top-bar {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  z-index: 40;
+  margin: 0 !important;
+  margin-top: 0 !important;
+  width: auto;
+  max-width: none;
+  min-width: 0;
+  border-radius: 0 !important;
+  border-left: 0 !important;
+  border-right: 0 !important;
+  box-shadow: 0 1px 0 rgba(226, 232, 240, 0.9);
+}
+
+#root .mobile-app-shell > .mobile-top-bar:first-child {
+  top: 0 !important;
+}
+
+#root .mobile-app-shell > .app-main-content {
+  padding-top: 4rem;
+}
+
 @media (max-width: 900px) {
-  #root :is(.min-h-screen.bg-gray-50, .min-h-screen.bg-slate-50):not(.login-page):not(.auth-screen-shell) {
+  #root :is(.min-h-screen.bg-gray-50, .min-h-screen.bg-slate-50):not(.login-page):not(.auth-screen-shell):not(.mobile-app-shell) {
     padding: 0.875rem;
   }
 
@@ -371,7 +472,7 @@ body {
 }
 
 @media (max-width: 760px) {
-  #root :is(.min-h-screen.bg-gray-50, .min-h-screen.bg-slate-50):not(.login-page):not(.auth-screen-shell) {
+  #root :is(.min-h-screen.bg-gray-50, .min-h-screen.bg-slate-50):not(.login-page):not(.auth-screen-shell):not(.mobile-app-shell) {
     padding: 0.625rem;
   }
 
@@ -457,7 +558,7 @@ body {
 }
 
 @media (max-width: 420px) {
-  #root :is(.min-h-screen.bg-gray-50, .min-h-screen.bg-slate-50):not(.login-page):not(.auth-screen-shell) {
+  #root :is(.min-h-screen.bg-gray-50, .min-h-screen.bg-slate-50):not(.login-page):not(.auth-screen-shell):not(.mobile-app-shell) {
     padding: 0.5rem;
   }
 
