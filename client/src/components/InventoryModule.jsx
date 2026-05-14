@@ -212,6 +212,8 @@ const STATUS_PRIORITY = {
   "In Stock": 3
 };
 
+const INVENTORY_ITEMS_PER_PAGE = 50;
+
 const formatUnitQuantity = quantity => `${quantity} ${Number(quantity) === 1 ? "unit" : "units"}`;
 
 export function InventoryModule({
@@ -248,6 +250,7 @@ export function InventoryModule({
   // 🔄 Sorting state: track which column and direction to sort
   const [sortBy, setSortBy] = useState('name');
   const [sortOrder, setSortOrder] = useState('asc');
+  const [currentPage, setCurrentPage] = useState(1);
   const categories = OFFICIAL_INVENTORY_CATEGORIES;
   const currentBranch = normalizeDuplicateKeyPart(user?.branch);
   const buildDuplicateKey = item => [
@@ -297,23 +300,20 @@ export function InventoryModule({
     }
   })();
 
-  // 🔀 Handle column header click to change sort
-  const getDisplayedRangeLabel = column => {
-    if (filteredInventory.length === 0) return "No items";
-    if (column === 'id') {
-      const ids = filteredInventory.map(item => getInventoryId(item)).filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-      if (ids.length === 0) return "No IDs";
-      return sortOrder === 'asc' ? `${ids[0]}-${ids[ids.length - 1]}` : `${ids[ids.length - 1]}-${ids[0]}`;
-    }
-    if (column === 'quantity') {
-      const quantities = filteredInventory.map(item => Number(item.quantity ?? 0));
-      const min = Math.min(...quantities);
-      const max = Math.max(...quantities);
-      return sortOrder === 'asc' ? `${min}-${max}` : `${max}-${min}`;
-    }
-    return null;
-  };
+  const totalPages = Math.max(1, Math.ceil(sortedInventory.length / INVENTORY_ITEMS_PER_PAGE));
+  const paginatedInventory = sortedInventory.slice((currentPage - 1) * INVENTORY_ITEMS_PER_PAGE, currentPage * INVENTORY_ITEMS_PER_PAGE);
+  const paginationStart = sortedInventory.length === 0 ? 0 : (currentPage - 1) * INVENTORY_ITEMS_PER_PAGE + 1;
+  const paginationEnd = Math.min(currentPage * INVENTORY_ITEMS_PER_PAGE, sortedInventory.length);
 
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, categoryFilter, sortBy, sortOrder]);
+
+  React.useEffect(() => {
+    setCurrentPage(page => Math.min(Math.max(page, 1), totalPages));
+  }, [totalPages]);
+
+  // 🔀 Handle column header click to change sort
   const handleSort = column => {
     if (sortBy === column) {
       // Toggle sort order if clicking the same column
@@ -337,6 +337,27 @@ export function InventoryModule({
     className: `h-4 w-4 shrink-0 transition-transform ${sortBy === column ? 'opacity-100' : 'opacity-45'} ${sortBy === column && sortOrder === 'desc' ? 'rotate-180' : ''}`,
     "aria-hidden": "true"
   })));
+
+  const renderInventoryPagination = () => sortedInventory.length > INVENTORY_ITEMS_PER_PAGE ? /*#__PURE__*/React.createElement("div", {
+    className: "inventory-pagination",
+    "aria-label": "Inventory pagination"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "inventory-pagination-summary"
+  }, "Showing ", paginationStart, "-", paginationEnd, " of ", sortedInventory.length, " items"), /*#__PURE__*/React.createElement("div", {
+    className: "inventory-pagination-actions"
+  }, /*#__PURE__*/React.createElement(Button, {
+    type: "button",
+    variant: "outline",
+    disabled: currentPage <= 1,
+    onClick: () => setCurrentPage(page => Math.max(1, page - 1))
+  }, "Previous"), /*#__PURE__*/React.createElement("span", {
+    className: "inventory-pagination-page"
+  }, "Page ", currentPage, " of ", totalPages), /*#__PURE__*/React.createElement(Button, {
+    type: "button",
+    variant: "outline",
+    disabled: currentPage >= totalPages,
+    onClick: () => setCurrentPage(page => Math.min(totalPages, page + 1))
+  }, "Next Page"))) : null;
 
   const resetStockForm = () => {
     setStockAmount("");
@@ -470,20 +491,13 @@ export function InventoryModule({
     if (sortBy === 'date') return 'Last Updated';
     return sortBy.charAt(0).toUpperCase() + sortBy.slice(1);
   })();
-  const orderLabel = (() => {
-    if (sortBy === 'id' || sortBy === 'quantity') return sortOrder === 'asc' ? '1–9' : '9–1';
-    if (sortBy === 'date') return sortOrder === 'asc' ? 'Old–New' : 'New–Old';
-    return sortOrder === 'asc' ? 'A–Z' : 'Z–A';
-  })();
-
   const displayOrderLabel = (() => {
-    if (sortBy === 'id') return sortOrder === 'asc' ? '1–9' : '9–1';
-    if (sortBy === 'quantity') return sortOrder === 'asc' ? '0–9' : '9–0';
-    if (sortBy === 'date') return sortOrder === 'asc' ? 'Old–New' : 'New–Old';
-    return sortOrder === 'asc' ? 'A–Z' : 'Z–A';
+    if (sortBy === 'id' || sortBy === 'quantity') return sortOrder === 'asc' ? 'Low to High' : 'High to Low';
+    if (sortBy === 'date') return sortOrder === 'asc' ? 'Oldest First' : 'Newest First';
+    return sortOrder === 'asc' ? 'A to Z' : 'Z to A';
   })();
 
-  const realtimeDisplayOrderLabel = filteredInventory.length === 0 ? "No items" : sortBy === 'id' || sortBy === 'quantity' ? getDisplayedRangeLabel(sortBy) : displayOrderLabel;
+  const realtimeDisplayOrderLabel = filteredInventory.length === 0 ? "No items" : displayOrderLabel;
 
   const restoreArchivedDuplicate = async archivedItem => {
     if (!archivedItem || isRestoringArchivedDuplicate) return;
@@ -1019,6 +1033,31 @@ export function InventoryModule({
       display: none;
     }
 
+    .inventory-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      border-top: 1px solid #e2e8f0;
+      padding: 16px 24px 20px;
+    }
+
+    .inventory-pagination-summary,
+    .inventory-pagination-page {
+      color: #475569;
+      font-size: 14px;
+    }
+
+    .inventory-pagination-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .inventory-pagination-actions button {
+      min-width: 104px;
+    }
+
     .inventory-action-stock-in,
     .inventory-action-stock-out,
     .inventory-action-edit,
@@ -1153,6 +1192,26 @@ export function InventoryModule({
         gap: 10px;
         padding: 0 16px 16px;
         margin-top: -36px;
+      }
+
+      .inventory-pagination {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 14px 16px 16px;
+      }
+
+      .inventory-pagination-summary,
+      .inventory-pagination-page {
+        text-align: center;
+      }
+
+      .inventory-pagination-actions {
+        display: grid;
+        grid-template-columns: 1fr;
+      }
+
+      .inventory-pagination-actions button {
+        width: 100%;
       }
 
       .inventory-mobile-sortbar {
@@ -1960,7 +2019,7 @@ export function InventoryModule({
     className: "mb-2 font-semibold text-slate-700"
   }, inventory.length === 0 ? "No Inventory Items" : "No Inventory Items Found"), /*#__PURE__*/React.createElement("p", {
     className: "text-sm text-slate-500"
-  }, inventory.length === 0 ? "Items added to inventory will appear here." : "Try adjusting your search or category filter."))) : sortedInventory.map(item => /*#__PURE__*/React.createElement(TableRow, {
+  }, inventory.length === 0 ? "Items added to inventory will appear here." : "Try adjusting your search or category filter."))) : paginatedInventory.map(item => /*#__PURE__*/React.createElement(TableRow, {
     key: item.id
   }, /*#__PURE__*/React.createElement(TableCell, {
     className: "font-mono text-sm align-middle"
@@ -2039,7 +2098,7 @@ export function InventoryModule({
     className: "mb-2 font-semibold text-slate-700"
   }, inventory.length === 0 ? "No Inventory Items" : "No Inventory Items Found"), /*#__PURE__*/React.createElement("p", {
     className: "text-sm text-slate-500"
-  }, inventory.length === 0 ? "Items added to inventory will appear here." : "Try adjusting your search or category filter.")) : sortedInventory.map(item => /*#__PURE__*/React.createElement("article", {
+  }, inventory.length === 0 ? "Items added to inventory will appear here." : "Try adjusting your search or category filter.")) : paginatedInventory.map(item => /*#__PURE__*/React.createElement("article", {
     key: item.id,
     className: "inventory-mobile-card"
   }, /*#__PURE__*/React.createElement("div", {
@@ -2109,7 +2168,7 @@ export function InventoryModule({
     }
   }, /*#__PURE__*/React.createElement(Archive, {
     className: "mr-1 h-4 w-4"
-  }), "Archive")))))), renderEditDialog(), /*#__PURE__*/React.createElement(Dialog, {
+  }), "Archive")))))), renderInventoryPagination(), renderEditDialog(), /*#__PURE__*/React.createElement(Dialog, {
     open: isStockInDialogOpen,
     onOpenChange: open => {
       if (open) {

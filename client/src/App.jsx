@@ -651,7 +651,7 @@ function MobileTopBar({ title, unreadAlertCount, onOpenSidebar, onAlertsClick })
 
       <button
         type="button"
-        className="relative flex h-11 w-11 items-center justify-center rounded-xl text-gray-800 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-[#FFFF00] focus:ring-offset-2"
+        className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-gray-800 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-[#FFFF00] focus:ring-offset-2"
         onClick={onAlertsClick}
         aria-label="Open alerts"
       >
@@ -785,16 +785,28 @@ function MobileNavItem({ icon, label, active, onClick, badge }) {
 
 function MobileAlertBadge({ count, inline = false }) {
   const label = count > 99 ? "99+" : count > 9 ? "9+" : String(count);
+  const badgeSize = inline
+    ? {
+        minWidth: label.length === 1 ? "22px" : "30px",
+        height: "22px",
+        padding: label.length === 1 ? "0" : "0 7px",
+        fontSize: "12px",
+      }
+    : {
+        minWidth: label.length === 1 ? "18px" : "26px",
+        height: "18px",
+        padding: label.length === 1 ? "0" : "0 6px",
+        fontSize: label.length === 1 ? "11px" : "10px",
+      };
 
   return (
     <span
-      className={`${inline ? "ml-auto" : "absolute right-1 top-1 shadow-sm ring-2 ring-white"} flex items-center justify-center rounded-full bg-[#FF0000] text-center text-xs font-semibold leading-none text-white`}
+      className={`${inline ? "ml-auto shrink-0" : "absolute -right-1 -top-1 shadow-sm ring-2 ring-white"} flex items-center justify-center rounded-full bg-[#FF0000] text-center font-semibold leading-none text-white`}
       style={{
-        minWidth: label.length === 1 ? "20px" : "28px",
-        height: "20px",
-        padding: label.length === 1 ? "0" : "0 7px",
+        ...badgeSize,
         borderRadius: "999px",
       }}
+      aria-label={`${count} unread alerts`}
     >
       {label}
     </span>

@@ -19,6 +19,8 @@ const STATUS_PRIORITY = {
   "In Stock": 3
 };
 
+const ARCHIVE_ITEMS_PER_PAGE = 50;
+
 export function ArchiveModule({
   user
 }) {
@@ -34,6 +36,7 @@ export function ArchiveModule({
   const [showUnarchiveDialog, setShowUnarchiveDialog] = useState(false);
   const [sortBy, setSortBy] = useState("date");
   const [sortOrder, setSortOrder] = useState("desc");
+  const [currentPage, setCurrentPage] = useState(1);
   // Build category list on the fly so dropdown reflects current archive contents.
   const categories = Array.from(new Set(archivedInventory.map(item => item.category)));
 
@@ -44,7 +47,7 @@ export function ArchiveModule({
     return matchesSearch && matchesCategory;
   });
 
-  const getArchiveId = item => item.originalInventoryId || item.id || "";
+  const getArchiveId = item => item.id || "";
   const getArchiveDate = item => new Date(item.archivedAt || item.lastUpdated || 0).getTime();
 
   const sortedArchive = [...filteredArchive].sort((a, b) => {
@@ -67,21 +70,18 @@ export function ArchiveModule({
     }
   });
 
-  const getDisplayedRangeLabel = column => {
-    if (filteredArchive.length === 0) return "No items";
-    if (column === "id") {
-      const ids = filteredArchive.map(item => getArchiveId(item)).filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-      if (ids.length === 0) return "No IDs";
-      return sortOrder === "asc" ? `${ids[0]}-${ids[ids.length - 1]}` : `${ids[ids.length - 1]}-${ids[0]}`;
-    }
-    if (column === "quantity") {
-      const quantities = filteredArchive.map(item => Number(item.quantity ?? 0));
-      const min = Math.min(...quantities);
-      const max = Math.max(...quantities);
-      return sortOrder === "asc" ? `${min}-${max}` : `${max}-${min}`;
-    }
-    return null;
-  };
+  const totalPages = Math.max(1, Math.ceil(sortedArchive.length / ARCHIVE_ITEMS_PER_PAGE));
+  const paginatedArchive = sortedArchive.slice((currentPage - 1) * ARCHIVE_ITEMS_PER_PAGE, currentPage * ARCHIVE_ITEMS_PER_PAGE);
+  const paginationStart = sortedArchive.length === 0 ? 0 : (currentPage - 1) * ARCHIVE_ITEMS_PER_PAGE + 1;
+  const paginationEnd = Math.min(currentPage * ARCHIVE_ITEMS_PER_PAGE, sortedArchive.length);
+
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, categoryFilter, sortBy, sortOrder]);
+
+  React.useEffect(() => {
+    setCurrentPage(page => Math.min(Math.max(page, 1), totalPages));
+  }, [totalPages]);
 
   const handleSort = column => {
     if (sortBy === column) {
@@ -104,19 +104,39 @@ export function ArchiveModule({
     "aria-hidden": "true"
   })));
 
+  const renderArchivePagination = () => sortedArchive.length > ARCHIVE_ITEMS_PER_PAGE ? /*#__PURE__*/React.createElement("div", {
+    className: "archive-pagination",
+    "aria-label": "Archive pagination"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "archive-pagination-summary"
+  }, "Showing ", paginationStart, "-", paginationEnd, " of ", sortedArchive.length, " archived items"), /*#__PURE__*/React.createElement("div", {
+    className: "archive-pagination-actions"
+  }, /*#__PURE__*/React.createElement(Button, {
+    type: "button",
+    variant: "outline",
+    disabled: currentPage <= 1,
+    onClick: () => setCurrentPage(page => Math.max(1, page - 1))
+  }, "Previous"), /*#__PURE__*/React.createElement("span", {
+    className: "archive-pagination-page"
+  }, "Page ", currentPage, " of ", totalPages), /*#__PURE__*/React.createElement(Button, {
+    type: "button",
+    variant: "outline",
+    disabled: currentPage >= totalPages,
+    onClick: () => setCurrentPage(page => Math.min(totalPages, page + 1))
+  }, "Next Page"))) : null;
+
   const sortLabel = (() => {
     if (sortBy === "id") return "ID";
     if (sortBy === "date") return "Archived Date";
     return sortBy.charAt(0).toUpperCase() + sortBy.slice(1);
   })();
   const orderLabel = (() => {
-    if (sortBy === "id") return sortOrder === "asc" ? "1–9" : "9–1";
-    if (sortBy === "quantity") return sortOrder === "asc" ? "0–9" : "9–0";
-    if (sortBy === "date") return sortOrder === "asc" ? "Old–New" : "New–Old";
-    return sortOrder === "asc" ? "A–Z" : "Z–A";
+    if (sortBy === "id" || sortBy === "quantity") return sortOrder === "asc" ? "Low to High" : "High to Low";
+    if (sortBy === "date") return sortOrder === "asc" ? "Oldest First" : "Newest First";
+    return sortOrder === "asc" ? "A to Z" : "Z to A";
   })();
 
-  const realtimeOrderLabel = filteredArchive.length === 0 ? "No items" : sortBy === "id" || sortBy === "quantity" ? getDisplayedRangeLabel(sortBy) : orderLabel;
+  const realtimeOrderLabel = filteredArchive.length === 0 ? "No items" : orderLabel;
 
   // Restore a selected item back to active inventory after confirmation.
   const handleUnarchiveItem = async () => {
@@ -138,6 +158,31 @@ export function ArchiveModule({
   }, /*#__PURE__*/React.createElement("style", null, `
     .archive-mobile-list {
       display: none;
+    }
+
+    .archive-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      border-top: 1px solid #e2e8f0;
+      padding: 16px 24px 20px;
+    }
+
+    .archive-pagination-summary,
+    .archive-pagination-page {
+      color: #475569;
+      font-size: 14px;
+    }
+
+    .archive-pagination-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .archive-pagination-actions button {
+      min-width: 104px;
     }
 
     @media (max-width: 760px) {
@@ -204,6 +249,26 @@ export function ArchiveModule({
         gap: 10px;
         padding: 0 16px 16px;
         margin-top: -36px;
+      }
+
+      .archive-pagination {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 14px 16px 16px;
+      }
+
+      .archive-pagination-summary,
+      .archive-pagination-page {
+        text-align: center;
+      }
+
+      .archive-pagination-actions {
+        display: grid;
+        grid-template-columns: 1fr;
+      }
+
+      .archive-pagination-actions button {
+        width: 100%;
       }
 
       .archive-mobile-sortbar {
@@ -284,45 +349,66 @@ export function ArchiveModule({
         border: 1px solid #e2e8f0;
         border-radius: 14px;
         background: #ffffff;
-        padding: 14px;
+        padding: 16px 18px;
         box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
       }
 
       .archive-mobile-card-top {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 10px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(128px, auto);
+        grid-template-areas:
+          "info date"
+          "meta date"
+          "actions actions";
+        align-items: start;
+        column-gap: 16px;
+        row-gap: 12px;
+      }
+
+      .archive-mobile-card-top > .min-w-0 {
+        grid-area: info;
+        width: 100%;
       }
 
       .archive-mobile-name {
         min-width: 0;
         overflow-wrap: anywhere;
         color: #0f172a;
-        font-size: 15px;
+        font-size: 16px;
         font-weight: 800;
-        line-height: 1.35;
+        line-height: 1.25;
       }
 
       .archive-mobile-id {
-        margin-top: 3px;
+        margin-top: 5px;
         color: #64748b;
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-        font-size: 11px;
+        font-size: 12px;
       }
 
       .archive-mobile-meta {
+        grid-area: meta;
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(84px, auto);
-        gap: 10px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0;
+        width: 100%;
+        max-width: 192px;
         margin-top: 12px;
+        overflow: hidden;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        background: #f8fafc;
       }
 
       .archive-mobile-field {
         min-width: 0;
-        border-radius: 12px;
-        background: #f8fafc;
-        padding: 10px;
+        border-radius: 0;
+        background: transparent;
+        padding: 10px 12px;
+      }
+
+      .archive-mobile-field + .archive-mobile-field {
+        border-left: 1px solid #e2e8f0;
       }
 
       .archive-mobile-label {
@@ -331,38 +417,73 @@ export function ArchiveModule({
         font-size: 11px;
         font-weight: 700;
         text-transform: uppercase;
+        white-space: nowrap;
       }
 
       .archive-mobile-value {
         display: block;
-        margin-top: 3px;
+        margin-top: 5px;
         color: #172033;
-        font-size: 13px;
-        font-weight: 650;
+        font-size: 14px;
+        font-weight: 800;
         line-height: 1.35;
-        overflow-wrap: anywhere;
+        overflow-wrap: break-word;
       }
 
       .archive-mobile-date {
-        margin-top: 10px;
+        grid-area: date;
+        margin-top: 0;
         color: #64748b;
         font-size: 12px;
         line-height: 1.4;
+        text-align: right;
       }
 
       .archive-mobile-actions {
+        grid-area: actions;
         display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
         margin-top: 12px;
       }
 
       .archive-mobile-actions button {
         min-height: 40px;
-        flex: 1 1 132px;
+        width: auto;
+        min-width: 116px;
+        flex: 0 0 auto;
         border-radius: 12px;
-        padding: 0 12px;
+        padding: 0 16px;
         font-size: 13px;
+      }
+
+      @media (max-width: 420px) {
+        .archive-mobile-card-top {
+          grid-template-columns: minmax(0, 1fr);
+          grid-template-areas:
+            "info"
+            "date"
+            "meta"
+            "actions";
+        }
+
+        .archive-mobile-date {
+          text-align: left;
+        }
+
+        .archive-mobile-meta {
+          max-width: none;
+        }
+
+        .archive-mobile-actions {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .archive-mobile-actions button {
+          width: 100%;
+        }
       }
 
       .archive-mobile-empty {
@@ -510,7 +631,7 @@ export function ArchiveModule({
   }), /*#__PURE__*/React.createElement(Input, {
     // Text search across name or ID.
     className: "pl-10",
-    placeholder: "Search archived items by name or item ID",
+    placeholder: "Search archived items by archive ID, original ID, or name",
     value: searchQuery,
     onChange: e => setSearchQuery(e.target.value)
   })), /*#__PURE__*/React.createElement("div", {
@@ -557,11 +678,11 @@ export function ArchiveModule({
     className: "mb-2 font-semibold text-slate-700"
   }, archivedInventory.length === 0 ? "No Archived Items" : "No Archived Items Found"), /*#__PURE__*/React.createElement("p", {
     className: "text-sm text-slate-500"
-  }, archivedInventory.length === 0 ? "Items archived from inventory will appear here." : "Try adjusting your search or category filter."))) : sortedArchive.map(item => /*#__PURE__*/React.createElement(TableRow, {
+  }, archivedInventory.length === 0 ? "Items archived from inventory will appear here." : "Try adjusting your search or category filter."))) : paginatedArchive.map(item => /*#__PURE__*/React.createElement(TableRow, {
     key: item.id
   }, /*#__PURE__*/React.createElement(TableCell, {
     className: "font-mono text-sm"
-  }, item.originalInventoryId || item.id), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, {
+  }, getArchiveId(item)), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-right"
   }, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
     className: item.status === "In Stock" ? "bg-green-100 text-green-700" : item.status === "Low Stock" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"
@@ -602,7 +723,7 @@ export function ArchiveModule({
     className: "mb-2 font-semibold text-slate-700"
   }, archivedInventory.length === 0 ? "No Archived Items" : "No Archived Items Found"), /*#__PURE__*/React.createElement("p", {
     className: "text-sm text-slate-500"
-  }, archivedInventory.length === 0 ? "Items archived from inventory will appear here." : "Try adjusting your search or category filter.")) : sortedArchive.map(item => /*#__PURE__*/React.createElement("article", {
+  }, archivedInventory.length === 0 ? "Items archived from inventory will appear here." : "Try adjusting your search or category filter.")) : paginatedArchive.map(item => /*#__PURE__*/React.createElement("article", {
     key: item.id,
     className: "archive-mobile-card"
   }, /*#__PURE__*/React.createElement("div", {
@@ -613,9 +734,9 @@ export function ArchiveModule({
     className: "archive-mobile-name"
   }, item.name), /*#__PURE__*/React.createElement("p", {
     className: "archive-mobile-id"
-  }, "ID: ", item.originalInventoryId || item.id)), /*#__PURE__*/React.createElement(Badge, {
-    className: `archive-status-badge ${item.status === "In Stock" ? "bg-green-100 text-green-700" : item.status === "Low Stock" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"}`
-  }, item.status)), /*#__PURE__*/React.createElement("div", {
+  }, "Archive ID: ", getArchiveId(item))), /*#__PURE__*/React.createElement("p", {
+    className: "archive-mobile-date"
+  }, formatDateTime(item.archivedAt || item.lastUpdated)), /*#__PURE__*/React.createElement("div", {
     className: "archive-mobile-meta"
   }, /*#__PURE__*/React.createElement("div", {
     className: "archive-mobile-field"
@@ -629,11 +750,11 @@ export function ArchiveModule({
     className: "archive-mobile-label"
   }, "Quantity"), /*#__PURE__*/React.createElement("span", {
     className: "archive-mobile-value"
-  }, item.quantity, " ", item.quantity === 1 ? "unit" : "units"))), /*#__PURE__*/React.createElement("p", {
-    className: "archive-mobile-date"
-  }, "Archived Date: ", formatDateTime(item.archivedAt || item.lastUpdated)), user.role === "Admin" && /*#__PURE__*/React.createElement("div", {
+  }, item.quantity, " ", item.quantity === 1 ? "unit" : "units"))), /*#__PURE__*/React.createElement("div", {
     className: "archive-mobile-actions"
-  }, /*#__PURE__*/React.createElement(Button, {
+  }, /*#__PURE__*/React.createElement(Badge, {
+    className: `archive-status-badge ${item.status === "In Stock" ? "bg-green-100 text-green-700" : item.status === "Low Stock" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"}`
+  }, item.status), user.role === "Admin" && /*#__PURE__*/React.createElement(Button, {
     variant: "outline",
     className: "border-green-400 bg-green-50 text-green-800 hover:bg-green-100 hover:border-green-500 hover:text-green-950",
     title: "Restore to Inventory",
@@ -641,9 +762,7 @@ export function ArchiveModule({
       setSelectedItem(item);
       setShowUnarchiveDialog(true);
     }
-  }, /*#__PURE__*/React.createElement(ArchiveRestore, {
-    className: "mr-2 h-4 w-4"
-  }), "Restore")))))), /*#__PURE__*/React.createElement(Dialog, {
+  }, "Restore")))))), renderArchivePagination(), /*#__PURE__*/React.createElement(Dialog, {
     open: showUnarchiveDialog,
     onOpenChange: open => {
       setShowUnarchiveDialog(open);
@@ -782,7 +901,7 @@ export function ArchiveModule({
     className: "font-semibold text-slate-600"
   }, "ID:"), /*#__PURE__*/React.createElement("span", {
     className: "font-medium text-slate-950"
-  }, selectedItem?.originalInventoryId || selectedItem?.id), /*#__PURE__*/React.createElement("span", {
+  }, getArchiveId(selectedItem || {})), /*#__PURE__*/React.createElement("span", {
     className: "font-semibold text-slate-600"
   }, "Category:"), /*#__PURE__*/React.createElement("span", {
     className: "font-medium text-slate-950"
@@ -869,5 +988,5 @@ export function ArchiveModule({
       width: "16px",
       height: "16px"
     }
-  }), "Restore Item")))));
+  }), "Restore Item"))))));
 }
