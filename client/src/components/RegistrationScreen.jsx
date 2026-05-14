@@ -104,6 +104,7 @@ const RegistrationScreen = () => {
     <div className="register-page auth-gradient-page min-h-screen flex">
       <style>{`
         .register-page {
+          --register-column-gap: clamp(1.75rem, 3.5vh, 2.5rem);
           width: 100%;
           min-height: 100dvh;
           min-height: 100svh;
@@ -155,6 +156,75 @@ const RegistrationScreen = () => {
           line-height: 1.45;
         }
 
+        .register-form-pane {
+          min-height: 100dvh;
+          min-height: 100svh;
+          min-height: 100vh;
+          justify-content: flex-start !important;
+          padding-top: 0 !important;
+          padding-bottom: 0 !important;
+          overflow-y: visible;
+        }
+
+        .register-card {
+          width: min(100%, 46rem);
+          max-width: 46rem;
+          margin: var(--register-column-gap) auto;
+        }
+
+        .register-form-pane::after {
+          content: "";
+          flex: 0 0 0.25rem;
+          width: 100%;
+        }
+
+        .register-info-pane {
+          position: sticky;
+          top: 0;
+          height: 100dvh;
+          height: 100svh;
+          height: 100vh;
+          min-height: 100dvh;
+          min-height: 100svh;
+          min-height: 100vh;
+          align-self: stretch;
+        }
+
+        .register-card-content {
+          padding-top: clamp(1.35rem, 2.4vh, 2rem) !important;
+          padding-bottom: clamp(1.35rem, 2.4vh, 2rem) !important;
+        }
+
+        .register-card-content > :not([hidden]) ~ :not([hidden]) {
+          margin-top: 1.35rem !important;
+        }
+
+        .register-brand {
+          margin-bottom: 0.25rem;
+        }
+
+        .register-logo {
+          width: clamp(4rem, 7vh, 5rem);
+          height: clamp(4rem, 7vh, 5rem);
+        }
+
+        .register-form {
+          gap: 0.8rem;
+        }
+
+        .register-field {
+          gap: 0.4rem;
+        }
+
+        .register-field-control {
+          min-height: 2.75rem;
+        }
+
+        .register-notice {
+          padding-top: 0.85rem !important;
+          padding-bottom: 0.85rem !important;
+        }
+
         @media (max-width: 1023px) {
           .register-page {
             display: block;
@@ -168,9 +238,14 @@ const RegistrationScreen = () => {
             min-height: 100vh;
             align-items: center;
             justify-content: center;
-            padding: 1rem 1rem 1.15rem;
+            padding: 1rem 1rem 1.15rem !important;
             background: transparent !important;
             overflow-x: hidden;
+            overflow-y: visible;
+          }
+
+          .register-form-pane::after {
+            content: none;
           }
 
           .register-card {
@@ -187,6 +262,10 @@ const RegistrationScreen = () => {
 
           .register-card-content {
             padding: 1rem 1.05rem 1.05rem;
+          }
+
+          .register-card-content > :not([hidden]) ~ :not([hidden]) {
+            margin-top: 1rem !important;
           }
 
           .register-brand {
@@ -291,7 +370,7 @@ const RegistrationScreen = () => {
 
         @media (max-width: 390px) {
           .register-form-pane {
-            padding: 0.85rem 0.7rem 0.95rem;
+            padding: 0.85rem 0.7rem 0.95rem !important;
           }
 
           .register-card-content {
@@ -306,7 +385,7 @@ const RegistrationScreen = () => {
       `}</style>
 
       <div className="register-form-pane auth-gradient-pane flex-1 flex flex-col items-center justify-center p-12 bg-transparent">
-        <Card className="register-card w-full max-w-lg rounded-3xl shadow-2xl border border-gray-200 bg-white">
+        <Card className="register-card w-full rounded-3xl shadow-2xl border border-gray-200 bg-white">
           <CardContent className="register-card-content px-12 py-10 space-y-8">
             <div className="register-brand">
               <div className="flex justify-center mb-4">
@@ -470,7 +549,7 @@ const RegistrationScreen = () => {
         </Card>
       </div>
 
-      <div className="auth-gradient-pane flex-1 hidden lg:flex flex-col justify-center items-start bg-transparent p-16 relative overflow-hidden">
+      <div className="register-info-pane auth-gradient-pane flex-1 hidden lg:flex flex-col justify-center items-start bg-transparent p-16 relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-full opacity-30">
           <div className="absolute top-10 right-10 w-72 h-72 bg-[#FFFF00] rounded-full blur-3xl" />
           <div className="absolute bottom-20 left-10 w-96 h-96 bg-[#FF0000] rounded-full blur-3xl" />
