@@ -9,6 +9,7 @@ import { Button } from './ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { toast } from 'sonner';
 import { apiUrl } from '../utils/api';
+import { PASSWORD_HELP_TEXT, validatePasswordPolicy } from '../utils/passwordPolicy';
 
 const emcLogoSrc = "/emc-logo.png";
 
@@ -30,10 +31,38 @@ const RegistrationScreen = () => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
+  const handlePasswordFieldChange = (field) => (value) => {
+    if (value.length > 64) {
+      toast.error("Password must not exceed 64 characters.", {
+        toastId: `registration-${field}-max-length`,
+        classNames: {
+          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+        },
+      });
+      return;
+    }
+    handleChange(field)(value);
+  };
+
   const handleRegister = async (e) => {
     e.preventDefault();
     if (formData.password !== formData.confirmPassword) {
-      toast.error("Passwords do not match", {
+      toast.error("Passwords do not match.", {
+        classNames: {
+          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+        },
+      });
+      return;
+    }
+
+    const passwordError = validatePasswordPolicy(formData.password, {
+      fullName: formData.fullName,
+      username: formData.username,
+      email: formData.email
+    });
+
+    if (passwordError) {
+      toast.error(passwordError, {
         classNames: {
           toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
         },
@@ -353,8 +382,9 @@ const RegistrationScreen = () => {
                       id="password"
                       type={showPassword ? "text" : "password"}
                       value={formData.password}
-                      onChange={(e) => handleChange('password')(e.target.value)}
-                      placeholder="Password"
+                      onChange={(e) => handlePasswordFieldChange('password')(e.target.value)}
+                      placeholder="Enter password"
+                      autoComplete="new-password"
                       className="register-field-control register-password-control rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm pr-10"
                       required
                     />
@@ -376,8 +406,9 @@ const RegistrationScreen = () => {
                       id="confirmPassword"
                       type={showConfirmPassword ? "text" : "password"}
                       value={formData.confirmPassword}
-                      onChange={(e) => handleChange('confirmPassword')(e.target.value)}
+                      onChange={(e) => handlePasswordFieldChange('confirmPassword')(e.target.value)}
                       placeholder="Confirm Password"
+                      autoComplete="new-password"
                       className="register-field-control register-password-control rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm pr-10"
                       required
                     />
@@ -392,6 +423,10 @@ const RegistrationScreen = () => {
                   </div>
                 </div>
               </div>
+
+              <p className="text-sm leading-relaxed text-slate-600">
+                {PASSWORD_HELP_TEXT}
+              </p>
 
               <div className="register-field space-y-2">
                 <Label htmlFor="branch" className="text-gray-800 flex items-center gap-1">Branch <span className="text-red-600">*</span></Label>

@@ -20,6 +20,26 @@ const OTP_RATE_LIMIT_MAX_RESENDS = 5;
 const OTP_RATE_LIMIT_MAX_REQUESTS = OTP_RATE_LIMIT_MAX_RESENDS + 1; // initial send + allowed resends
 const APP_TIME_ZONE = 'Asia/Manila';
 const APP_TIMESTAMP_OFFSET = '+08:00';
+const PASSWORD_MIN_LENGTH = 8;
+const PASSWORD_MAX_LENGTH = 64;
+const COMMON_PASSWORDS = new Set([
+  '12345678',
+  '123456789',
+  '1234567890',
+  'password',
+  'password1',
+  'password12',
+  'password123',
+  'admin123',
+  'admin1234',
+  'qwerty123',
+  'qwerty1234',
+  'letmein123',
+  'welcome123',
+  'store123',
+  'emcayetano',
+  'emcayetano123'
+]);
 const SYSTEM_LOG_RETENTION_DAYS = Math.max(
   1,
   Number.parseInt(process.env.SYSTEM_LOG_RETENTION_DAYS || '30', 10) || 30
@@ -1036,6 +1056,56 @@ function normalizeBranch(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function normalizePasswordComparison(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function getAccountPasswordTerms({ fullName, username, email } = {}) {
+  const terms = [];
+  const normalizedUsername = normalizePasswordComparison(username);
+  const emailValue = String(email || '').toLowerCase().trim();
+  const emailLocalPart = normalizePasswordComparison(emailValue.split('@')[0]);
+  const nameParts = String(fullName || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .map(normalizePasswordComparison)
+    .filter(part => part.length >= 4);
+
+  if (normalizedUsername.length >= 4) terms.push(normalizedUsername);
+  if (emailLocalPart.length >= 4) terms.push(emailLocalPart);
+  terms.push(...nameParts);
+
+  return Array.from(new Set(terms));
+}
+
+function validatePasswordPolicy(password, accountDetails = {}) {
+  const passwordText = String(password || '');
+  const normalizedPassword = normalizePasswordComparison(passwordText);
+
+  if (!passwordText.trim() || !/[a-z0-9]/i.test(passwordText)) {
+    return 'Password must include at least one letter or number.';
+  }
+
+  if (passwordText.length < PASSWORD_MIN_LENGTH) {
+    return `Password must be at least ${PASSWORD_MIN_LENGTH} characters long.`;
+  }
+
+  if (passwordText.length > PASSWORD_MAX_LENGTH) {
+    return `Password must not exceed ${PASSWORD_MAX_LENGTH} characters.`;
+  }
+
+  if (COMMON_PASSWORDS.has(normalizedPassword)) {
+    return 'This password is too common. Please choose a stronger password.';
+  }
+
+  const matchingAccountTerm = getAccountPasswordTerms(accountDetails).find(term => normalizedPassword.includes(term));
+  if (matchingAccountTerm) {
+    return 'This password is too similar to your account details. Please choose a stronger password.';
+  }
+
+  return null;
+}
+
 function isAdmin(user) {
   return user && user.role === 'Admin';
 }
@@ -1452,6 +1522,11 @@ app.post('/api/auth/register', async (req, res) => {
     return res.status(400).json({ error: 'Invalid branch selection' });
   }
 
+  const passwordError = validatePasswordPolicy(password, { fullName, username, email });
+  if (passwordError) {
+    return res.status(400).json({ error: passwordError });
+  }
+
   const safeRole = ALLOWED_ROLES.includes(role) ? role : 'Employee';
 
   try {
@@ -1694,6 +1769,15 @@ app.post('/api/auth/reset-password', async (req, res) => {
 
     if (user.reset_otp_code !== otp || Date.now() - expiresMs > 15000) {
       return res.status(400).json({ error: 'Invalid or expired code' });
+    }
+
+    const passwordError = validatePasswordPolicy(newPassword, {
+      fullName: user.full_name,
+      username: user.username,
+      email: user.email
+    });
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
     }
 
     const newHash = await bcrypt.hash(newPassword, 10);

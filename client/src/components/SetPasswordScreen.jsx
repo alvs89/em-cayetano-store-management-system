@@ -13,6 +13,7 @@ import {
   handleVerificationCodeChange,
   handleVerificationCodePaste,
 } from '../utils/verificationCode';
+import { PASSWORD_HELP_TEXT, validatePasswordPolicy } from '../utils/passwordPolicy';
 
 const emcLogoSrc = "/emc-logo.png";
 const EXPIRY_TOLERANCE_MS = 15000; // 15s grace to match backend acceptance
@@ -42,7 +43,9 @@ const formatCooldownTime = (seconds) => {
 const SetPasswordScreen = () => {
   const [otp, setOtp] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [remainingMs, setRemainingMs] = useState(120000);
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
@@ -136,6 +139,19 @@ const SetPasswordScreen = () => {
     });
   };
 
+  const handlePasswordFieldChange = (setter, toastId) => (value) => {
+    if (value.length > 64) {
+      toast.error("Password must not exceed 64 characters.", {
+        toastId,
+        classNames: {
+          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+        },
+      });
+      return;
+    }
+    setter(value);
+  };
+
   const handleReset = async (e) => {
     e.preventDefault();
     const isPastGrace = remainingMs < -EXPIRY_TOLERANCE_MS;
@@ -156,6 +172,26 @@ const SetPasswordScreen = () => {
       });
       return;
     }
+
+    if (newPassword !== confirmPassword) {
+      toast.error("Passwords do not match.", {
+        classNames: {
+          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+        },
+      });
+      return;
+    }
+
+    const passwordError = validatePasswordPolicy(newPassword, { email });
+    if (passwordError) {
+      toast.error(passwordError, {
+        classNames: {
+          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+        },
+      });
+      return;
+    }
+
     setLoading(true);
     try {
       await axios.post(apiUrl('/api/auth/reset-password'), {
@@ -302,7 +338,8 @@ const SetPasswordScreen = () => {
                     type={showNewPassword ? "text" : "password"}
                     placeholder="Enter new password"
                     value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
+                    onChange={(e) => handlePasswordFieldChange(setNewPassword, 'set-password-new-max-length')(e.target.value)}
+                    autoComplete="new-password"
                     className="rounded-xl border-gray-300 pr-12 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm"
                     required
                   />
@@ -317,10 +354,38 @@ const SetPasswordScreen = () => {
                 </div>
               </div>
 
+              <div className="space-y-2">
+                <Label htmlFor="confirmPassword" className="text-gray-800 flex items-center gap-1">Confirm Password <span className="text-red-600">*</span></Label>
+                <div className="relative">
+                  <Input
+                    id="confirmPassword"
+                    type={showConfirmPassword ? "text" : "password"}
+                    placeholder="Confirm new password"
+                    value={confirmPassword}
+                    onChange={(e) => handlePasswordFieldChange(setConfirmPassword, 'set-password-confirm-max-length')(e.target.value)}
+                    autoComplete="new-password"
+                    className="rounded-xl border-gray-300 pr-12 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword((current) => !current)}
+                    className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-gray-500 transition-colors hover:text-gray-700 focus:outline-none"
+                    aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+                  >
+                    {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  </button>
+                </div>
+              </div>
+
+              <p className="text-sm leading-relaxed text-slate-600">
+                {PASSWORD_HELP_TEXT}
+              </p>
+
               <Button
                 type="submit"
                 className="w-full py-6 rounded-xl bg-[#FFFF00] hover:bg-[#e6e600] text-black shadow-lg transition-all duration-300"
-                disabled={!otp || !newPassword || loading}
+                disabled={!otp || !newPassword || !confirmPassword || loading}
               >
                 {loading ? "Submitting..." : "Reset Password"}
               </Button>
