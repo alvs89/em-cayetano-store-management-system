@@ -2,7 +2,6 @@ require('dotenv').config();
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 
-// Use the Cloud URL from your .env (Neon/Postgres)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
@@ -10,10 +9,25 @@ const pool = new Pool({
   }
 });
 
-// One-time helper: reset or recreate the seeded admin user's password to admin123.
+// One-time helper: reset or recreate the seeded admin user's password.
+// Set ADMIN_RESET_PASSWORD in server/.env before running this script.
 async function resetAdmin() {
   const username = 'admin';
-  const newPassword = 'admin123';
+  const newPassword = process.env.ADMIN_RESET_PASSWORD;
+
+  if (!process.env.DATABASE_URL) {
+    console.error('DATABASE_URL is required before running reset-admin.js.');
+    process.exitCode = 1;
+    await pool.end();
+    return;
+  }
+
+  if (!newPassword || newPassword.length < 8) {
+    console.error('ADMIN_RESET_PASSWORD must be set in server/.env and must be at least 8 characters long.');
+    process.exitCode = 1;
+    await pool.end();
+    return;
+  }
 
   try {
     await pool.query('CREATE SCHEMA IF NOT EXISTS public;');
@@ -39,7 +53,8 @@ async function resetAdmin() {
         created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')
       );
     `);
-    console.log(`🔐 Hashing password for user: ${username}...`);
+
+    console.log(`Hashing password for user: ${username}...`);
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
@@ -58,12 +73,13 @@ async function resetAdmin() {
     );
 
     if (result.rows.length > 0) {
-      console.log(`✅ SUCCESS: Password for '${username}' has been updated to 'admin123'.`);
+      console.log(`SUCCESS: Password for '${username}' has been updated.`);
     } else {
-      console.error(`❌ ERROR: User '${username}' not found in the database. Please run the INSERT SQL in Neon first.`);
+      console.error(`ERROR: User '${username}' was not updated.`);
     }
   } catch (err) {
-    console.error('❌ Database Error:', err.message);
+    console.error('Database Error:', err.message);
+    process.exitCode = 1;
   } finally {
     await pool.end();
   }

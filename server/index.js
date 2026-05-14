@@ -24,6 +24,11 @@ const SYSTEM_LOG_RETENTION_DAYS = Math.max(
   1,
   Number.parseInt(process.env.SYSTEM_LOG_RETENTION_DAYS || '30', 10) || 30
 );
+const JWT_SECRET = process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' ? null : 'dev-secret');
+const CORS_ALLOWED_ORIGINS = (process.env.CORS_ORIGIN || process.env.CLIENT_URL || '')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
 const ALLOWED_ROLES = ['Admin', 'Employee'];
 const ALLOWED_BRANCHES = ['Manggahan', 'San Rafael'];
 const OFFICIAL_INVENTORY_CATEGORIES = [
@@ -66,6 +71,53 @@ const CATEGORY_ALIASES = {
   miscellaneous: 'Other',
   other: 'Other'
 };
+const INVENTORY_UNIT_ALIASES = {
+  ounce: 'oz',
+  ounces: 'oz',
+  oz: 'oz',
+  a: 'a',
+  amp: 'a',
+  amps: 'a',
+  ampere: 'a',
+  amperes: 'a',
+  v: 'v',
+  volt: 'v',
+  volts: 'v',
+  w: 'w',
+  watt: 'w',
+  watts: 'w',
+  in: 'in',
+  inch: 'in',
+  inches: 'in',
+  mm: 'mm',
+  millimeter: 'mm',
+  millimeters: 'mm',
+  cm: 'cm',
+  centimeter: 'cm',
+  centimeters: 'cm',
+  m: 'm',
+  meter: 'm',
+  meters: 'm',
+  kg: 'kg',
+  kilogram: 'kg',
+  kilograms: 'kg',
+  g: 'g',
+  gram: 'g',
+  grams: 'g',
+  l: 'l',
+  liter: 'l',
+  liters: 'l',
+  litre: 'l',
+  litres: 'l',
+  ft: 'ft',
+  foot: 'ft',
+  feet: 'ft',
+  feets: 'ft',
+  pc: 'pc',
+  pcs: 'pc',
+  piece: 'pc',
+  pieces: 'pc'
+};
 
 // In-memory OTP request tracking is suitable for this single-server/local setup.
 // For multi-instance production deployments, replace this with database-backed
@@ -77,7 +129,23 @@ const otpRequestBuckets = new Map();
 // offset instead of the Node process timezone.
 types.setTypeParser(1114, (value) => new Date(`${value.replace(' ', 'T')}${APP_TIMESTAMP_OFFSET}`));
 
-app.use(cors());
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET must be configured in production.');
+}
+
+if (process.env.NODE_ENV === 'production' && CORS_ALLOWED_ORIGINS.length === 0) {
+  throw new Error('CORS_ORIGIN must be configured in production.');
+}
+
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || CORS_ALLOWED_ORIGINS.length === 0 || CORS_ALLOWED_ORIGINS.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error('Not allowed by CORS'));
+  }
+}));
 app.use(express.json());
 
 const pool = new Pool({
@@ -571,8 +639,123 @@ function normalizeInventoryText(value) {
   return String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+function singularizeInventoryToken(token) {
+  const normalizedToken = token.replace(/([a-z])\1{2,}/g, '$1$1');
+  if (!/^[a-z]+$/.test(normalizedToken) || normalizedToken.length <= 3 || /(ss|us|is)$/.test(normalizedToken)) return normalizedToken;
+  if (normalizedToken.endsWith('ies') && normalizedToken.length > 4) return `${normalizedToken.slice(0, -3)}y`;
+  if (normalizedToken.endsWith('es') && /(ches|shes|xes|zes|ses)$/.test(normalizedToken)) return normalizedToken.slice(0, -2);
+  if (normalizedToken.endsWith('s')) return normalizedToken.slice(0, -1);
+  return normalizedToken;
+}
+
+function normalizeInventoryIdentityToken(token) {
+  const cleanedToken = String(token ?? '').replace(/\.$/, '');
+  const directUnitAlias = INVENTORY_UNIT_ALIASES[cleanedToken];
+  if (directUnitAlias) return directUnitAlias;
+  const singularToken = singularizeInventoryToken(cleanedToken);
+  return INVENTORY_UNIT_ALIASES[singularToken] || singularToken;
+}
+
+function normalizeInventoryIdentityName(value) {
+  return normalizeInventoryText(value)
+    .replace(/[“”]/g, '"')
+    .replace(/[’']/g, '')
+    .replace(/(\d+(?:\/\d+)?)\s*"/g, '$1 in')
+    .replace(/\bby\b/g, 'x')
+    .replace(/(\d)\s*(?:x|\u00d7|\*)\s*(\d)/gi, '$1x$2')
+    .replace(/(\d)\s*(?:x|\u00d7|\*)\s*(\d)/gi, '$1x$2')
+    .replace(/([a-z])-([a-z])/g, '$1 $2')
+    .replace(/(\d+)\s*\/\s*(\d+)/g, '$1/$2')
+    .replace(/#\s*(\d+)/g, '#$1')
+    .replace(/[^a-z0-9#./-]+/g, ' ')
+    .replace(/(\d)([a-z]+)/g, '$1 $2')
+    .replace(/([a-z]+)(\d)/g, '$1 $2')
+    .replace(/(\d)\s*[x×]\s*(\d)/gi, '$1x$2')
+    .replace(/(\d)\s*[x×]\s*(\d)/gi, '$1x$2')
+    .replace(/(\d+x\d+)\s*x\s*(\d)/gi, '$1x$2')
+    .split(' ')
+    .filter(Boolean)
+    .map(normalizeInventoryIdentityToken)
+    .join(' ');
+}
+
+function getInventoryIdentityTokens(value) {
+  return normalizeInventoryIdentityName(value).split(' ').filter(Boolean);
+}
+
+function isNumericIdentityToken(value) {
+  return /\d/.test(value);
+}
+
+function levenshteinDistance(left, right) {
+  if (left === right) return 0;
+  if (!left) return right.length;
+  if (!right) return left.length;
+
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  const current = Array(right.length + 1).fill(0);
+
+  for (let i = 1; i <= left.length; i += 1) {
+    current[0] = i;
+    for (let j = 1; j <= right.length; j += 1) {
+      const substitutionCost = left[i - 1] === right[j - 1] ? 0 : 1;
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + substitutionCost
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+
+  return previous[right.length];
+}
+
+function areInventoryNameTokensSimilar(left, right) {
+  if (left === right) return true;
+  if (left.length < 4 || right.length < 4) return false;
+  const distance = levenshteinDistance(left, right);
+  return distance <= (Math.max(left.length, right.length) >= 6 ? 2 : 1);
+}
+
+function areLikelyDuplicateInventoryNames(leftName, rightName) {
+  const leftTokens = getInventoryIdentityTokens(leftName);
+  const rightTokens = getInventoryIdentityTokens(rightName);
+  if (!leftTokens.length || leftTokens.length !== rightTokens.length) return false;
+
+  const leftNumeric = leftTokens.filter(isNumericIdentityToken).join('|');
+  const rightNumeric = rightTokens.filter(isNumericIdentityToken).join('|');
+  if (leftNumeric !== rightNumeric) return false;
+
+  let fuzzyMatches = 0;
+  for (let index = 0; index < leftTokens.length; index += 1) {
+    if (!areInventoryNameTokensSimilar(leftTokens[index], rightTokens[index])) return false;
+    if (leftTokens[index] !== rightTokens[index]) fuzzyMatches += 1;
+  }
+
+  return fuzzyMatches > 0;
+}
+
 function cleanInventoryName(value) {
   return String(value ?? '').trim().replace(/\s+/g, ' ');
+}
+
+function getMeaningfulInventoryNameTokens(value) {
+  return getInventoryIdentityTokens(value).filter(token => /[a-z0-9]/.test(token));
+}
+
+function validateInventoryNameQuality(value) {
+  const cleanName = cleanInventoryName(value);
+  if (!cleanName) return 'Valid product name and category are required';
+  if (cleanName.length > 150) return 'Item name must be 150 characters or less';
+  if (!/[a-z0-9]/i.test(cleanName)) return 'Item name must include letters or numbers';
+
+  const tokens = getMeaningfulInventoryNameTokens(cleanName);
+  if (tokens.length < 2) {
+    return 'Include the item size or specification, such as "Claw Hammer 16 oz."';
+  }
+
+  return null;
 }
 
 function canonicalizeInventoryCategory(value) {
@@ -602,17 +785,16 @@ async function findProductByIdentity(client, { name, category }) {
   const canonicalCategory = canonicalizeInventoryCategory(category);
   const cleanName = cleanInventoryName(name);
   if (!canonicalCategory || !cleanName) return null;
+  const normalizedIdentityName = normalizeInventoryIdentityName(cleanName);
 
   const existing = await client.query(
     `SELECT product_id, name, category
      FROM products
-     WHERE LOWER(REGEXP_REPLACE(TRIM(name), '\\s+', ' ', 'g')) = LOWER($1)
-       AND LOWER(category) = LOWER($2)
-     LIMIT 1`,
-    [cleanName, canonicalCategory]
+     WHERE LOWER(category) = LOWER($1)`,
+    [canonicalCategory]
   );
 
-  return existing.rows[0] || null;
+  return existing.rows.find(row => normalizeInventoryIdentityName(row.name) === normalizedIdentityName) || null;
 }
 
 async function findOrCreateProduct(client, { name, category }) {
@@ -638,6 +820,52 @@ async function findOrCreateProduct(client, { name, category }) {
   );
 
   return inserted.rows[0].product_id;
+}
+
+async function findSimilarActiveInventoryItem(client, { branch, name, category, excludeInventoryId = null }) {
+  const targetIdentityName = normalizeInventoryIdentityName(name);
+  const canonicalCategory = canonicalizeInventoryCategory(category);
+  if (!branch || !targetIdentityName || !canonicalCategory) return null;
+
+  const result = await client.query(
+    `SELECT bi.inventory_id, p.name, p.category
+     FROM branch_inventory bi
+     INNER JOIN products p ON p.product_id = bi.product_id
+     WHERE bi.branch = $1
+       AND ($2::int IS NULL OR bi.inventory_id <> $2::int)
+       AND LOWER(p.category) = LOWER($3)`,
+    [branch, excludeInventoryId, canonicalCategory]
+  );
+
+  const exactMatch = result.rows.find(row => normalizeInventoryIdentityName(row.name) === targetIdentityName);
+  if (exactMatch) return { ...exactMatch, match_type: 'exact' };
+
+  const fuzzyMatch = result.rows.find(row => areLikelyDuplicateInventoryNames(row.name, name));
+  if (fuzzyMatch) return { ...fuzzyMatch, match_type: 'similar' };
+
+  return null;
+}
+
+async function findSimilarArchivedInventoryItem(client, { branch, name, category }) {
+  const targetIdentityName = normalizeInventoryIdentityName(name);
+  const canonicalCategory = canonicalizeInventoryCategory(category);
+  if (!branch || !targetIdentityName || !canonicalCategory) return null;
+
+  const result = await client.query(
+    `SELECT archived_inventory_id, name, category
+     FROM archived_inventory
+     WHERE branch = $1
+       AND LOWER(category) = LOWER($2)`,
+    [branch, canonicalCategory]
+  );
+
+  const exactMatch = result.rows.find(row => normalizeInventoryIdentityName(row.name) === targetIdentityName);
+  if (exactMatch) return { ...exactMatch, match_type: 'exact' };
+
+  const fuzzyMatch = result.rows.find(row => areLikelyDuplicateInventoryNames(row.name, name));
+  if (fuzzyMatch) return { ...fuzzyMatch, match_type: 'similar' };
+
+  return null;
 }
 
 function mapInventoryRow(row) {
@@ -770,6 +998,14 @@ async function recordAuditLog(db, {
   );
 }
 
+async function recordAuditLogSafely(db, details) {
+  try {
+    await recordAuditLog(db, details);
+  } catch (err) {
+    console.error('Audit log write failed:', err.message);
+  }
+}
+
 async function recordSystemLog(db, {
   eventType,
   severity = 'info',
@@ -812,7 +1048,7 @@ function signToken(user, branchOverride) {
       branch: branchOverride || user.branch,
       tokenVersion: user.token_version || 0
     },
-    process.env.JWT_SECRET || 'dev-secret',
+    JWT_SECRET,
     { expiresIn: '8h' }
   );
 }
@@ -1148,7 +1384,7 @@ async function authenticate(req, res, next) {
   const token = authHeader.slice('Bearer '.length).trim();
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret');
+    const decoded = jwt.verify(token, JWT_SECRET);
     const result = await pool.query(
       'SELECT user_id, role, branch, token_version, status FROM users WHERE user_id = $1',
       [decoded.id]
@@ -1547,7 +1783,7 @@ app.post('/api/admin/users/:id/approve', authenticate, requireAdmin, async (req,
     }
 
     const user = update.rows[0];
-    await recordAuditLog(pool, {
+    await recordAuditLogSafely(pool, {
       actorId: req.user.id,
       targetId: user.user_id,
       targetName: user.full_name,
@@ -1587,7 +1823,7 @@ app.post('/api/admin/users/:id/reject', authenticate, requireAdmin, async (req, 
     );
 
     const user = update.rows[0];
-    await recordAuditLog(pool, {
+    await recordAuditLogSafely(pool, {
       actorId: req.user.id,
       targetId: user.user_id,
       targetName: user.full_name,
@@ -1651,7 +1887,7 @@ app.post('/api/admin/users/:id/role', authenticate, requireAdmin, async (req, re
     );
 
     const updatedUser = updated.rows[0];
-    await recordAuditLog(pool, {
+    await recordAuditLogSafely(pool, {
       actorId: req.user.id,
       targetId: updatedUser.user_id,
       targetName: updatedUser.full_name,
@@ -1705,7 +1941,7 @@ app.post('/api/admin/users/:id/branch', authenticate, requireAdmin, async (req, 
     );
 
     const updatedUser = updated.rows[0];
-    await recordAuditLog(pool, {
+    await recordAuditLogSafely(pool, {
       actorId: req.user.id,
       targetId: updatedUser.user_id,
       targetName: updatedUser.full_name,
@@ -1867,7 +2103,7 @@ app.get('/api/stock-movements', authenticate, async (req, res) => {
 });
 
 app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
-  const { name, category, stock_level, min_stock_level } = req.body;
+  const { name, category, stock_level, min_stock_level, allow_similar_duplicate = false } = req.body;
 
   const client = await pool.connect();
   try {
@@ -1875,27 +2111,76 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
 
     const cleanName = cleanInventoryName(name);
     const canonicalCategory = canonicalizeInventoryCategory(category);
-    if (!cleanName || !canonicalCategory) {
+    const nameQualityError = validateInventoryNameQuality(cleanName);
+    if (nameQualityError || !canonicalCategory) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Valid product name and category are required' });
+      return res.status(400).json({ error: nameQualityError || 'Valid product name and category are required' });
     }
 
     const stockLevel = parseNonNegativeInteger(stock_level, 'Stock level');
     const minStockLevel = parseNonNegativeInteger(min_stock_level, 'Reorder level', { max: 20 });
 
-    const archivedDuplicate = await client.query(
-      `SELECT archived_inventory_id, category
-       FROM archived_inventory
-       WHERE branch = $1
-         AND LOWER(REGEXP_REPLACE(TRIM(name), '\\s+', ' ', 'g')) = LOWER($2)
-       LIMIT 20`,
-      [req.user.branch, cleanName]
-    );
+    const archivedDuplicate = await findSimilarArchivedInventoryItem(client, {
+      branch: req.user.branch,
+      name: cleanName,
+      category: canonicalCategory
+    });
 
-    if (archivedDuplicate.rows.some(row => canonicalizeInventoryCategory(row.category) === canonicalCategory)) {
+    if (archivedDuplicate?.match_type === 'exact') {
       await client.query('ROLLBACK');
+      await recordAuditLogSafely(pool, {
+        actorId: req.user.id,
+        targetId: archivedDuplicate.archived_inventory_id,
+        targetName: cleanName,
+        action: `BLOCKED_EXACT_ARCHIVED_DUPLICATE: attempted "${cleanName}"`
+      });
       return res.status(400).json({
         error: 'An archived item with the same name and category already exists. Please restore the archived item instead of creating a duplicate record.'
+      });
+    }
+
+    if (archivedDuplicate && !allow_similar_duplicate) {
+      await client.query('ROLLBACK');
+      await recordAuditLogSafely(pool, {
+        actorId: req.user.id,
+        targetId: archivedDuplicate.archived_inventory_id,
+        targetName: cleanName,
+        action: `REVIEW_SIMILAR_ARCHIVED_DUPLICATE: "${cleanName}" similar to "${archivedDuplicate.name}"`
+      });
+      return res.status(409).json({
+        error: `A similar archived item already exists: ${archivedDuplicate.name}. Restore it if this is the same product, or confirm that this is a separate item.`
+      });
+    }
+
+    const activeSimilarDuplicate = await findSimilarActiveInventoryItem(client, {
+      branch: req.user.branch,
+      name: cleanName,
+      category: canonicalCategory
+    });
+
+    if (activeSimilarDuplicate?.match_type === 'exact') {
+      await client.query('ROLLBACK');
+      await recordAuditLogSafely(pool, {
+        actorId: req.user.id,
+        targetId: activeSimilarDuplicate.inventory_id,
+        targetName: cleanName,
+        action: `BLOCKED_EXACT_ACTIVE_DUPLICATE: attempted "${cleanName}"`
+      });
+      return res.status(400).json({
+        error: `This product already exists in the current branch inventory: ${activeSimilarDuplicate.name}. Use Stock In if this is the same product.`
+      });
+    }
+
+    if (activeSimilarDuplicate && !allow_similar_duplicate) {
+      await client.query('ROLLBACK');
+      await recordAuditLogSafely(pool, {
+        actorId: req.user.id,
+        targetId: activeSimilarDuplicate.inventory_id,
+        targetName: cleanName,
+        action: `REVIEW_SIMILAR_ACTIVE_DUPLICATE: "${cleanName}" similar to "${activeSimilarDuplicate.name}"`
+      });
+      return res.status(409).json({
+        error: `A similar active item already exists: ${activeSimilarDuplicate.name}. Use Stock In if this is the same product, or confirm that this is a separate item.`
       });
     }
 
@@ -1946,6 +2231,15 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
       action: 'ADD_ITEM'
     });
 
+    if (allow_similar_duplicate && (activeSimilarDuplicate || archivedDuplicate)) {
+      await recordAuditLog(client, {
+        actorId: req.user.id,
+        targetId: createdItem.inventory_id,
+        targetName: createdItem.name,
+        action: `CONFIRMED_SIMILAR_ITEM_CREATION: created "${createdItem.name}"`
+      });
+    }
+
     if (stockLevel > 0) {
       await recordStockMovement(client, {
         inventoryId: createdItem.inventory_id,
@@ -1978,7 +2272,7 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
 
 app.put('/api/inventory/:id', authenticate, requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { name, category, stock_level, min_stock_level, movement_action, movement_quantity, movement_note } = req.body;
+  const { name, category, stock_level, min_stock_level, movement_action, movement_quantity, movement_note, allow_similar_duplicate = false } = req.body;
 
   const client = await pool.connect();
   try {
@@ -2015,48 +2309,91 @@ app.put('/api/inventory/:id', authenticate, requireAdmin, async (req, res) => {
     const shouldRefreshInventoryTimestamp = previousQuantity !== nextQuantity || previousStatus !== status;
     const cleanName = cleanInventoryName(name);
     const canonicalCategory = canonicalizeInventoryCategory(category);
-    if (!cleanName || !canonicalCategory) {
+    const nameQualityError = validateInventoryNameQuality(cleanName);
+    if (nameQualityError || !canonicalCategory) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Valid product name and category are required' });
-    }
-
-    const activeDuplicate = await client.query(
-      `SELECT bi.inventory_id
-       FROM branch_inventory bi
-       INNER JOIN products p ON p.product_id = bi.product_id
-       WHERE bi.branch = $1
-         AND bi.inventory_id <> $2
-         AND LOWER(REGEXP_REPLACE(TRIM(p.name), '\\s+', ' ', 'g')) = LOWER($3)
-         AND LOWER(p.category) = LOWER($4)
-       LIMIT 1`,
-      [req.user.branch, id, cleanName, canonicalCategory]
-    );
-
-    if (activeDuplicate.rowCount > 0) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Another active inventory item already uses this name and category' });
-    }
-
-    const archivedDuplicate = await client.query(
-      `SELECT archived_inventory_id
-       FROM archived_inventory
-       WHERE branch = $1
-         AND LOWER(REGEXP_REPLACE(TRIM(name), '\\s+', ' ', 'g')) = LOWER($2)
-         AND LOWER(category) = LOWER($3)
-       LIMIT 1`,
-      [req.user.branch, cleanName, canonicalCategory]
-    );
-
-    if (archivedDuplicate.rowCount > 0) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({
-        error: 'An archived item with the same name and category already exists. Please restore the archived item instead of creating a duplicate record.'
-      });
+      return res.status(400).json({ error: nameQualityError || 'Valid product name and category are required' });
     }
 
     const identityChanged =
       normalizeInventoryText(inventoryRow.name) !== normalizeInventoryText(cleanName) ||
       canonicalizeInventoryCategory(inventoryRow.category) !== canonicalCategory;
+
+    let reviewedSimilarDuplicate = null;
+    if (identityChanged) {
+      const activeDuplicate = await findSimilarActiveInventoryItem(client, {
+        branch: req.user.branch,
+        name: cleanName,
+        category: canonicalCategory,
+        excludeInventoryId: Number(id)
+      });
+
+      if (activeDuplicate?.match_type === 'exact') {
+        await client.query('ROLLBACK');
+        await recordAuditLogSafely(pool, {
+          actorId: req.user.id,
+          targetId: activeDuplicate.inventory_id,
+          targetName: cleanName,
+          action: `BLOCKED_EXACT_ACTIVE_DUPLICATE_EDIT: attempted "${cleanName}"`
+        });
+        return res.status(400).json({
+          error: `Another active inventory item already uses this name and category: ${activeDuplicate.name}. Use that existing item if this is the same product.`
+        });
+      }
+
+      if (activeDuplicate && !allow_similar_duplicate) {
+        await client.query('ROLLBACK');
+        await recordAuditLogSafely(pool, {
+          actorId: req.user.id,
+          targetId: activeDuplicate.inventory_id,
+          targetName: cleanName,
+          action: `REVIEW_SIMILAR_ACTIVE_DUPLICATE_EDIT: "${cleanName}" similar to "${activeDuplicate.name}"`
+        });
+        return res.status(409).json({
+          error: `The edited item name is very similar to an active item: ${activeDuplicate.name}. Review the match before updating this item.`
+        });
+      }
+
+      if (activeDuplicate) {
+        reviewedSimilarDuplicate = activeDuplicate;
+      }
+
+      const archivedDuplicate = await findSimilarArchivedInventoryItem(client, {
+        branch: req.user.branch,
+        name: cleanName,
+        category: canonicalCategory
+      });
+
+      if (archivedDuplicate?.match_type === 'exact') {
+        await client.query('ROLLBACK');
+        await recordAuditLogSafely(pool, {
+          actorId: req.user.id,
+          targetId: archivedDuplicate.archived_inventory_id,
+          targetName: cleanName,
+          action: `BLOCKED_EXACT_ARCHIVED_DUPLICATE_EDIT: attempted "${cleanName}"`
+        });
+        return res.status(400).json({
+          error: 'An archived item with the same name and category already exists. Please restore the archived item instead of creating a duplicate record.'
+        });
+      }
+
+      if (archivedDuplicate && !allow_similar_duplicate) {
+        await client.query('ROLLBACK');
+        await recordAuditLogSafely(pool, {
+          actorId: req.user.id,
+          targetId: archivedDuplicate.archived_inventory_id,
+          targetName: cleanName,
+          action: `REVIEW_SIMILAR_ARCHIVED_DUPLICATE_EDIT: "${cleanName}" similar to "${archivedDuplicate.name}"`
+        });
+        return res.status(409).json({
+          error: `The edited item name is very similar to an archived item: ${archivedDuplicate.name}. Review the match before updating this item.`
+        });
+      }
+
+      if (archivedDuplicate) {
+        reviewedSimilarDuplicate = archivedDuplicate;
+      }
+    }
 
     let targetProductId = productId;
     if (identityChanged) {
@@ -2129,13 +2466,22 @@ app.put('/api/inventory/:id', authenticate, requireAdmin, async (req, res) => {
     const allowedMovementActions = ['stock_in', 'stock_out'];
     const action = allowedMovementActions.includes(movement_action) ? movement_action : null;
     const inferredQuantityChanged = Math.abs(nextQuantity - previousQuantity);
-    const quantityChanged = Number(movement_quantity || inferredQuantityChanged);
+    const quantityChanged = movement_quantity === undefined || movement_quantity === null || movement_quantity === ''
+      ? inferredQuantityChanged
+      : parseNonNegativeInteger(movement_quantity, 'Movement quantity');
     if (action && quantityChanged > 0 && previousQuantity !== nextQuantity) {
       const expectedDirectionIsValid =
         (action === 'stock_in' && nextQuantity > previousQuantity) ||
         (action === 'stock_out' && nextQuantity < previousQuantity);
 
       if (expectedDirectionIsValid) {
+        if (quantityChanged !== inferredQuantityChanged) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            error: 'Movement quantity must match the stock quantity change.'
+          });
+        }
+
         await recordStockMovement(client, {
           inventoryId: updatedItem.inventory_id,
           productId: updatedItem.product_id,
@@ -2169,6 +2515,14 @@ app.put('/api/inventory/:id', authenticate, requireAdmin, async (req, res) => {
           targetName: updatedItem.name,
           action: 'UPDATE_ITEM'
         });
+        if (allow_similar_duplicate && reviewedSimilarDuplicate) {
+          await recordAuditLog(client, {
+            actorId: req.user.id,
+            targetId: updatedItem.inventory_id,
+            targetName: updatedItem.name,
+            action: `CONFIRMED_SIMILAR_ITEM_UPDATE: updated "${updatedItem.name}"`
+          });
+        }
       }
     }
 
@@ -2326,6 +2680,21 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
        WHERE product_id = $1 AND branch = $2`,
       [productId, archivedItem.branch]
     );
+
+    if (existingInventory.rowCount === 0) {
+      const activeSimilarDuplicate = await findSimilarActiveInventoryItem(client, {
+        branch: archivedItem.branch,
+        name: archivedItem.name,
+        category: canonicalizeInventoryCategory(archivedItem.category) || 'Other'
+      });
+
+      if (activeSimilarDuplicate) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: `A similar active inventory item already exists: ${activeSimilarDuplicate.name}. Review the active item before restoring this archived copy.`
+        });
+      }
+    }
 
     let restoredInventoryId;
     if (existingInventory.rowCount > 0) {
@@ -2545,7 +2914,7 @@ app.post('/api/maintenance/optimize', authenticate, requireAdmin, async (req, re
       await pool.query(`ANALYZE ${table}`);
     }
 
-    await recordAuditLog(pool, {
+    await recordAuditLogSafely(pool, {
       actorId: req.user.id,
       targetName: 'Database Optimization',
       action: 'OPTIMIZE_DATABASE'
@@ -2706,7 +3075,7 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
 
     const issueCount = checks.reduce((total, check) => total + check.count, 0);
 
-    await recordAuditLog(pool, {
+    await recordAuditLogSafely(pool, {
       actorId: req.user.id,
       targetName: 'Data Integrity Check',
       action: issueCount > 0 ? `CHECK_DATA_INTEGRITY: ${issueCount} issue(s)` : 'CHECK_DATA_INTEGRITY: no issues'

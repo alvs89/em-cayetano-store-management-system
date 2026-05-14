@@ -9,13 +9,13 @@
 
 Make sure you:
 1. ✅ Type username in **lowercase** (`admin`, not `Admin` or `ADMIN`)
-2. ✅ Type password **exactly** as shown (`admin123` or `emp123`)
+2. ✅ Type password **exactly** as shown (`your configured admin password` or `your configured employee password`)
 3. ✅ **Select a branch** from the dropdown (Manggahan or San Rafael)
 4. ✅ Check for typos - passwords are case-sensitive!
 
 **Test these credentials:**
 - Username: `admin` 
-- Password: `admin123`
+- Password: `your configured admin password`
 - Branch: `Manggahan`
 - 2FA Code: `123456`
 
@@ -31,17 +31,17 @@ Make sure you:
 
 **Admin Account:**
 - **Username:** `admin` (lowercase)
-- **Password:** `admin123` (exact spelling)
+- **Password:** `your configured admin password` (exact spelling)
 - **Branch:** Select either `Manggahan` or `San Rafael`
 
 **Employee Account:**
 - **Username:** `employee` (lowercase)
-- **Password:** `emp123` (exact spelling)
+- **Password:** `your configured employee password` (exact spelling)
 - **Branch:** Select either `Manggahan` or `San Rafael`
 
 **Alternative Employee:**
 - **Username:** `preyes` (lowercase)
-- **Password:** `emp123` (exact spelling)
+- **Password:** `your configured employee password` (exact spelling)
 - **Branch:** Select either `Manggahan` or `San Rafael` (San Rafael recommended)
 
 ⚠️ **Important:** Passwords are case-sensitive. Type them exactly as shown!
@@ -76,7 +76,7 @@ After successful 2FA verification, you'll be automatically redirected to the **D
 ```
 1. Start → Login Screen
    ├─ Username: admin (or employee)
-   ├─ Password: admin123 (or emp123)
+   ├─ Password: your configured admin password (or your configured employee password)
    └─ Branch: Manggahan or San Rafael
    
 2. Click "Login" → 2FA Screen (automatic redirect)
@@ -126,7 +126,7 @@ All of this happens in milliseconds!
 ### "Invalid username or password" error?
 - Double-check you're using the correct credentials
 - Make sure you've selected a branch
-- Try: `admin` / `admin123` with any branch
+- Try: `admin` / `your configured admin password` with any branch
 
 ### "Invalid verification code" error?
 - The demo code is always: `123456`
@@ -215,19 +215,19 @@ When you're done:
 ├─────────────────────────────────────────────┤
 │  Admin Login:                               │
 │    Username: admin                          │
-│    Password: admin123                       │
+│    Password: your configured admin password                       │
 │    Branch: Manggahan or San Rafael          │
 │    2FA Code: 123456                         │
 ├─────────────────────────────────────────────┤
 │  Employee Login:                            │
 │    Username: employee                       │
-│    Password: emp123                         │
+│    Password: your configured employee password                         │
 │    Branch: Manggahan or San Rafael          │
 │    2FA Code: 123456                         │
 ├─────────────────────────────────────────────┤
 │  Additional Employee:                       │
 │    Username: preyes                         │
-│    Password: emp123                         │
+│    Password: your configured employee password                         │
 │    Branch: San Rafael (recommended)         │
 │    2FA Code: 123456                         │
 └─────────────────────────────────────────────┘

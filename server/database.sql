@@ -59,8 +59,8 @@ CREATE TABLE archived_inventory (
 -- 5. INITIAL SEED DATA (System Admin)
 -- Creates the first admin account to allow initial login.
 -- Username: admin
--- Password: admin123 (Managed via server-side hardcoded check for now)
--- Note: password_hash is a placeholder; run reset-admin.js to set a real bcrypt hash.
+-- Password: set securely by running reset-admin.js with ADMIN_RESET_PASSWORD configured.
+-- Note: password_hash is a placeholder and must be replaced with a real bcrypt hash before use.
 INSERT INTO users (full_name, username, email, password_hash, role, branch, status)
 VALUES (
     'System Admin', 

@@ -139,6 +139,7 @@ export function AlertsModule({ user, onNavigate }) {
     unmarkAlertRead,
   } = useData();
   const [alertToDismiss, setAlertToDismiss] = useState(null);
+  const [activeTab, setActiveTab] = useState('all');
 
   const handleMarkAsRead = id => {
     markAlertRead(id);
@@ -150,16 +151,6 @@ export function AlertsModule({ user, onNavigate }) {
     dismissAlert(alertToDismiss.id);
     setAlertToDismiss(null);
     toast.success('Alert dismissed');
-  };
-
-  const handleMarkAllAsRead = () => {
-    markAllAlertsRead();
-    toast.success('All alerts marked as read');
-  };
-
-  const handleUnmarkAllAsRead = () => {
-    unmarkAllAlertsRead();
-    toast.message('All alerts marked as unread');
   };
 
   const handleUnmarkAsRead = id => {
@@ -189,6 +180,26 @@ export function AlertsModule({ user, onNavigate }) {
   const sortedUnreadAlerts = sortedAlerts.filter(alert => !alert.read);
   const sortedWarningAlerts = sortedAlerts.filter(alert => alert.type === 'warning');
   const sortedInfoAlerts = sortedAlerts.filter(alert => alert.type === 'info');
+  const alertsByTab = {
+    all: sortedAlerts,
+    unread: sortedUnreadAlerts,
+    warnings: sortedWarningAlerts,
+    info: sortedInfoAlerts,
+  };
+  const activeTabAlerts = alertsByTab[activeTab] || sortedAlerts;
+  const activeTabUnreadAlerts = activeTabAlerts.filter(alert => !alert.read);
+
+  const handleMarkAllAsRead = () => {
+    if (activeTabUnreadAlerts.length === 0) return;
+    markAllAlertsRead(activeTabUnreadAlerts.map(alert => alert.id));
+    toast.success(`${activeTabUnreadAlerts.length} alert${activeTabUnreadAlerts.length === 1 ? '' : 's'} marked as read`);
+  };
+
+  const handleUnmarkAllAsRead = () => {
+    if (activeTabAlerts.length === 0) return;
+    unmarkAllAlertsRead(activeTabAlerts.map(alert => alert.id));
+    toast.message(`${activeTabAlerts.length} alert${activeTabAlerts.length === 1 ? '' : 's'} marked as unread`);
+  };
 
   const renderAlertCards = list => list.map(alert => (
     <AlertCard
@@ -518,8 +529,8 @@ export function AlertsModule({ user, onNavigate }) {
               <CardTitle>Notifications</CardTitle>
               <CardDescription>All system alerts and notifications</CardDescription>
             </div>
-            {alerts.length > 0 && (
-              unreadAlertCount > 0 ? (
+            {activeTabAlerts.length > 0 && (
+              activeTabUnreadAlerts.length > 0 ? (
                 <Button variant="outline" onClick={handleMarkAllAsRead} className="alerts-mark-all-button shadow-md">
                   <CheckCircle className="mr-2 h-4 w-4" />
                   Mark All as Read
@@ -535,7 +546,7 @@ export function AlertsModule({ user, onNavigate }) {
         </CardHeader>
 
         <CardContent data-alerts-content>
-          <Tabs defaultValue="all">
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList className="alerts-tabs-list mb-4">
               <TabsTrigger value="all">All ({alerts.length})</TabsTrigger>
               <TabsTrigger value="unread">Unread ({unreadAlertCount})</TabsTrigger>

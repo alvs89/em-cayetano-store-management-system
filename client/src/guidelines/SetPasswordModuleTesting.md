@@ -40,7 +40,7 @@ This tests the complete approval and password setup flow:
 
 2. **Login as Admin**
    - Username: `admin`
-   - Password: `admin123`
+   - Password: `your configured admin password`
    - Branch: `Manggahan`
    - Click "Login"
 
@@ -200,13 +200,13 @@ Once you're on the Set Password screen, test these scenarios:
 ### **Existing Active Users:**
 - **Admin Account:**
   - Username: `admin`
-  - Password: `admin123`
+  - Password: `your configured admin password`
   - Branch: `Manggahan`
   - Role: Admin
 
 - **Employee Account 1:**
   - Username: `employee`
-  - Password: `emp123`
+  - Password: `your configured employee password`
   - Branch: `Manggahan`
   - Role: Employee
 

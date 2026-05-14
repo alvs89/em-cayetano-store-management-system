@@ -57,8 +57,149 @@ const CATEGORY_ALIASES = {
   miscellaneous: "Other",
   other: "Other"
 };
+const INVENTORY_UNIT_ALIASES = {
+  ounce: "oz",
+  ounces: "oz",
+  oz: "oz",
+  a: "a",
+  amp: "a",
+  amps: "a",
+  ampere: "a",
+  amperes: "a",
+  v: "v",
+  volt: "v",
+  volts: "v",
+  w: "w",
+  watt: "w",
+  watts: "w",
+  in: "in",
+  inch: "in",
+  inches: "in",
+  mm: "mm",
+  millimeter: "mm",
+  millimeters: "mm",
+  cm: "cm",
+  centimeter: "cm",
+  centimeters: "cm",
+  m: "m",
+  meter: "m",
+  meters: "m",
+  kg: "kg",
+  kilogram: "kg",
+  kilograms: "kg",
+  g: "g",
+  gram: "g",
+  grams: "g",
+  l: "l",
+  liter: "l",
+  liters: "l",
+  litre: "l",
+  litres: "l",
+  ft: "ft",
+  foot: "ft",
+  feet: "ft",
+  feets: "ft",
+  pc: "pc",
+  pcs: "pc",
+  piece: "pc",
+  pieces: "pc"
+};
 
 const normalizeDuplicateKeyPart = value => String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+const singularizeDuplicateToken = token => {
+  const normalizedToken = token.replace(/([a-z])\1{2,}/g, "$1$1");
+  if (!/^[a-z]+$/.test(normalizedToken) || normalizedToken.length <= 3 || /(ss|us|is)$/.test(normalizedToken)) return normalizedToken;
+  if (normalizedToken.endsWith("ies") && normalizedToken.length > 4) return `${normalizedToken.slice(0, -3)}y`;
+  if (normalizedToken.endsWith("es") && /(ches|shes|xes|zes|ses)$/.test(normalizedToken)) return normalizedToken.slice(0, -2);
+  if (normalizedToken.endsWith("s")) return normalizedToken.slice(0, -1);
+  return normalizedToken;
+};
+const normalizeInventoryIdentityToken = token => {
+  const cleanedToken = String(token ?? "").replace(/\.$/, "");
+  const directUnitAlias = INVENTORY_UNIT_ALIASES[cleanedToken];
+  if (directUnitAlias) return directUnitAlias;
+  const singularToken = singularizeDuplicateToken(cleanedToken);
+  return INVENTORY_UNIT_ALIASES[singularToken] || singularToken;
+};
+const normalizeInventoryIdentityName = value =>
+  normalizeDuplicateKeyPart(value)
+    .replace(/[“”]/g, '"')
+    .replace(/[’']/g, "")
+    .replace(/(\d+(?:\/\d+)?)\s*"/g, "$1 in")
+    .replace(/\bby\b/g, "x")
+    .replace(/(\d)\s*(?:x|\u00d7|\*)\s*(\d)/gi, "$1x$2")
+    .replace(/(\d)\s*(?:x|\u00d7|\*)\s*(\d)/gi, "$1x$2")
+    .replace(/([a-z])-([a-z])/g, "$1 $2")
+    .replace(/(\d+)\s*\/\s*(\d+)/g, "$1/$2")
+    .replace(/#\s*(\d+)/g, "#$1")
+    .replace(/[^a-z0-9#./-]+/g, " ")
+    .replace(/(\d)([a-z]+)/g, "$1 $2")
+    .replace(/([a-z]+)(\d)/g, "$1 $2")
+    .replace(/(\d)\s*[x×]\s*(\d)/gi, "$1x$2")
+    .replace(/(\d)\s*[x×]\s*(\d)/gi, "$1x$2")
+    .replace(/(\d+x\d+)\s*x\s*(\d)/gi, "$1x$2")
+    .split(" ")
+    .filter(Boolean)
+    .map(normalizeInventoryIdentityToken)
+    .join(" ");
+const getInventoryIdentityTokens = value => normalizeInventoryIdentityName(value).split(" ").filter(Boolean);
+const validateInventoryNameQuality = value => {
+  const cleanName = String(value ?? "").trim().replace(/\s+/g, " ");
+  if (!cleanName) return "Please provide a valid item name.";
+  if (cleanName.length > 150) return "Item name must be 150 characters or less.";
+  if (!/[a-z0-9]/i.test(cleanName)) return "Item name must include letters or numbers.";
+  if (getInventoryIdentityTokens(cleanName).filter(token => /[a-z0-9]/.test(token)).length < 2) {
+    return "Include the item size or specification, such as \"Claw Hammer 16 oz.\"";
+  }
+  return null;
+};
+const isNumericIdentityToken = value => /\d/.test(value);
+const levenshteinDistance = (left, right) => {
+  if (left === right) return 0;
+  if (!left) return right.length;
+  if (!right) return left.length;
+
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  const current = Array(right.length + 1).fill(0);
+
+  for (let i = 1; i <= left.length; i += 1) {
+    current[0] = i;
+    for (let j = 1; j <= right.length; j += 1) {
+      const substitutionCost = left[i - 1] === right[j - 1] ? 0 : 1;
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + substitutionCost
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+
+  return previous[right.length];
+};
+const areInventoryNameTokensSimilar = (left, right) => {
+  if (left === right) return true;
+  if (left.length < 4 || right.length < 4) return false;
+  const distance = levenshteinDistance(left, right);
+  return distance <= (Math.max(left.length, right.length) >= 6 ? 2 : 1);
+};
+const areLikelyDuplicateInventoryNames = (leftName, rightName) => {
+  const leftTokens = getInventoryIdentityTokens(leftName);
+  const rightTokens = getInventoryIdentityTokens(rightName);
+  if (!leftTokens.length || leftTokens.length !== rightTokens.length) return false;
+
+  const leftNumeric = leftTokens.filter(isNumericIdentityToken).join("|");
+  const rightNumeric = rightTokens.filter(isNumericIdentityToken).join("|");
+  if (leftNumeric !== rightNumeric) return false;
+
+  let fuzzyMatches = 0;
+  for (let index = 0; index < leftTokens.length; index += 1) {
+    if (!areInventoryNameTokensSimilar(leftTokens[index], rightTokens[index])) return false;
+    if (leftTokens[index] !== rightTokens[index]) fuzzyMatches += 1;
+  }
+
+  return fuzzyMatches > 0;
+};
 const isWholeNumberText = value => /^\d+$/.test(String(value ?? "").trim());
 const normalizeCategory = value => {
   const normalized = normalizeDuplicateKeyPart(value);
@@ -96,6 +237,7 @@ export function InventoryModule({
   const [stockAmount, setStockAmount] = useState("");
   const [discardPrompt, setDiscardPrompt] = useState(null);
   const [archivedDuplicatePrompt, setArchivedDuplicatePrompt] = useState(null);
+  const [similarDuplicatePrompt, setSimilarDuplicatePrompt] = useState(null);
   const [isRestoringArchivedDuplicate, setIsRestoringArchivedDuplicate] = useState(false);
   const [editItem, setEditItem] = useState({
     name: "",
@@ -109,7 +251,7 @@ export function InventoryModule({
   const categories = OFFICIAL_INVENTORY_CATEGORIES;
   const currentBranch = normalizeDuplicateKeyPart(user?.branch);
   const buildDuplicateKey = item => [
-    normalizeDuplicateKeyPart(item.name),
+    normalizeInventoryIdentityName(item.name),
     normalizeDuplicateKeyPart(normalizeCategory(item.category)),
     normalizeDuplicateKeyPart(item.branch || user?.branch)
   ].join("|");
@@ -208,6 +350,7 @@ export function InventoryModule({
       reorderLevel: "10"
     });
     setArchivedDuplicatePrompt(null);
+    setSimilarDuplicatePrompt(null);
   };
 
   const hasAddItemChanges = () => {
@@ -368,11 +511,18 @@ export function InventoryModule({
     setIsEditDialogOpen(true);
   };
 
-  const handleAddItem = async () => {
+  const handleAddItem = async ({ allowSimilarDuplicate = false } = {}) => {
     if (!newItem.name || !newItem.category || !newItem.quantity || !newItem.reorderLevel) {
       toast.error("Please fill in all fields before adding an item.");
       return;
     }
+    const cleanName = newItem.name.trim().replace(/\s+/g, " ");
+    const nameQualityError = validateInventoryNameQuality(cleanName);
+    if (nameQualityError) {
+      toast.error("Please enter a more specific item name", { description: nameQualityError });
+      return;
+    }
+
     const quantity = parseInt(newItem.quantity);
     if (!isWholeNumberText(newItem.reorderLevel)) {
       toast.error("Reorder Level must be a whole number.");
@@ -389,18 +539,36 @@ export function InventoryModule({
       return;
     }
     const newItemDuplicateKey = [
-      normalizeDuplicateKeyPart(newItem.name),
+      normalizeInventoryIdentityName(cleanName),
       normalizeDuplicateKeyPart(normalizeCategory(newItem.category)),
       currentBranch
     ].join("|");
 
-    // Check for duplicate active item by normalized name + category + branch.
+    // Check for duplicate active item by normalized item identity + category + branch.
     const existingItem = linearSearch(inventory, item => buildDuplicateKey(item) === newItemDuplicateKey);
     if (existingItem) {
-      toast.error("Item already exists!", {
-        description: `"${newItem.name}" in category "${newItem.category}" is already in inventory (ID: ${existingItem.id}). Use Stock In to add more units.`
+      toast.error("Possible duplicate item found", {
+        description: `"${existingItem.name}" already exists in ${normalizeCategory(newItem.category)} (ID: ${existingItem.id}). Use Stock In if this is the same product.`
       });
 
+      return;
+    }
+
+    const similarActiveItem = linearSearch(
+      inventory,
+      item =>
+        normalizeDuplicateKeyPart(normalizeCategory(item.category)) === normalizeDuplicateKeyPart(normalizeCategory(newItem.category)) &&
+        normalizeDuplicateKeyPart(item.branch || user?.branch) === currentBranch &&
+        areLikelyDuplicateInventoryNames(item.name, cleanName)
+    );
+
+    if (similarActiveItem && !allowSimilarDuplicate) {
+      setSimilarDuplicatePrompt({
+        item: similarActiveItem,
+        source: "active",
+        proposedName: cleanName,
+        proposedCategory: normalizeCategory(newItem.category)
+      });
       return;
     }
 
@@ -409,26 +577,55 @@ export function InventoryModule({
       setArchivedDuplicatePrompt(archivedDuplicate);
       return;
     }
+    const similarArchivedItem = linearSearch(
+      archivedInventory,
+      item =>
+        normalizeDuplicateKeyPart(normalizeCategory(item.category)) === normalizeDuplicateKeyPart(normalizeCategory(newItem.category)) &&
+        normalizeDuplicateKeyPart(item.branch || user?.branch) === currentBranch &&
+        areLikelyDuplicateInventoryNames(item.name, cleanName)
+    );
+
+    if (similarArchivedItem && !allowSimilarDuplicate) {
+      setSimilarDuplicatePrompt({
+        item: similarArchivedItem,
+        source: "archived",
+        proposedName: cleanName,
+        proposedCategory: normalizeCategory(newItem.category)
+      });
+      return;
+    }
     setArchivedDuplicatePrompt(null);
+    setSimilarDuplicatePrompt(null);
     try {
       await addInventoryItem({
-        name: newItem.name,
+        name: cleanName,
         category: normalizeCategory(newItem.category),
         quantity,
-        reorderLevel
+        reorderLevel,
+        allowSimilarDuplicate
       });
       setIsAddDialogOpen(false);
       setNewItem({ name: "", category: "", quantity: "", reorderLevel: "10" });
       if (quantity === 0) {
-        toast.error(`${newItem.name} added but OUT OF STOCK!`, { description: 'Item needs immediate stocking' });
+        toast.error(`${cleanName} added but OUT OF STOCK!`, { description: 'Item needs immediate stocking' });
       } else if (quantity <= reorderLevel) {
-        toast.warning(`${newItem.name} added but LOW ON STOCK!`, { description: `Only ${formatUnitQuantity(quantity)} - Consider restocking soon` });
+        toast.warning(`${cleanName} added but LOW ON STOCK!`, { description: `Only ${formatUnitQuantity(quantity)} - Consider restocking soon` });
       } else {
-        toast.success(`${newItem.name} added successfully!`, { description: `Initial stock: ${formatUnitQuantity(quantity)}` });
+        toast.success(`${cleanName} added successfully!`, { description: `Initial stock: ${formatUnitQuantity(quantity)}` });
       }
     } catch (err) {
       toast.error("Failed to add item", { description: err?.response?.data?.error || err.message });
     }
+  };
+
+  const confirmAddSimilarItem = () => {
+    const action = similarDuplicatePrompt?.action;
+    setSimilarDuplicatePrompt(null);
+    if (action === "edit") {
+      handleEditItem({ allowSimilarDuplicate: true });
+      return;
+    }
+    handleAddItem({ allowSimilarDuplicate: true });
   };
 
   // 📦 Stock In
@@ -500,7 +697,7 @@ export function InventoryModule({
     }
   };
 
-  const handleEditItem = async () => {
+  const handleEditItem = async ({ allowSimilarDuplicate = false } = {}) => {
     if (!selectedItem) return;
     const cleanName = editItem.name.trim().replace(/\s+/g, " ");
     const canonicalCategory = normalizeCategory(editItem.category);
@@ -515,9 +712,86 @@ export function InventoryModule({
       toast.error("Please provide a valid item name and category.");
       return;
     }
+    const nameQualityError = validateInventoryNameQuality(cleanName);
+    if (nameQualityError) {
+      toast.error("Please enter a more specific item name", { description: nameQualityError });
+      return;
+    }
     if (isNaN(reorderLevel) || reorderLevel < 0 || reorderLevel > 20) {
       toast.error("Reorder Level must be between 0 and 20.");
       return;
+    }
+
+    const editedItemDuplicateKey = [
+      normalizeInventoryIdentityName(cleanName),
+      normalizeDuplicateKeyPart(canonicalCategory),
+      currentBranch
+    ].join("|");
+    const activeExactDuplicate = linearSearch(
+      inventory,
+      item => item.id !== selectedItem.id && buildDuplicateKey(item) === editedItemDuplicateKey
+    );
+    if (activeExactDuplicate) {
+      toast.error("Failed to update item", {
+        description: `"${activeExactDuplicate.name}" already exists in ${canonicalCategory}. Use that existing item if this is the same product.`
+      });
+      return;
+    }
+
+    const archivedExactDuplicate = linearSearch(
+      archivedInventory,
+      item => buildDuplicateKey(item) === editedItemDuplicateKey
+    );
+    if (archivedExactDuplicate) {
+      toast.error("Failed to update item", {
+        description: "An archived item with the same name and category already exists. Please restore the archived item instead of creating a duplicate record."
+      });
+      return;
+    }
+
+    const identityChanged =
+      normalizeInventoryIdentityName(selectedItem.name) !== normalizeInventoryIdentityName(cleanName) ||
+      normalizeDuplicateKeyPart(normalizeCategory(selectedItem.category)) !== normalizeDuplicateKeyPart(canonicalCategory);
+
+    if (identityChanged && !allowSimilarDuplicate) {
+      const similarActiveItem = linearSearch(
+        inventory,
+        item =>
+          item.id !== selectedItem.id &&
+          normalizeDuplicateKeyPart(normalizeCategory(item.category)) === normalizeDuplicateKeyPart(canonicalCategory) &&
+          normalizeDuplicateKeyPart(item.branch || user?.branch) === currentBranch &&
+          areLikelyDuplicateInventoryNames(item.name, cleanName)
+      );
+
+      if (similarActiveItem) {
+        setSimilarDuplicatePrompt({
+          item: similarActiveItem,
+          source: "active",
+          action: "edit",
+          proposedName: cleanName,
+          proposedCategory: canonicalCategory
+        });
+        return;
+      }
+
+      const similarArchivedItem = linearSearch(
+        archivedInventory,
+        item =>
+          normalizeDuplicateKeyPart(normalizeCategory(item.category)) === normalizeDuplicateKeyPart(canonicalCategory) &&
+          normalizeDuplicateKeyPart(item.branch || user?.branch) === currentBranch &&
+          areLikelyDuplicateInventoryNames(item.name, cleanName)
+      );
+
+      if (similarArchivedItem) {
+        setSimilarDuplicatePrompt({
+          item: similarArchivedItem,
+          source: "archived",
+          action: "edit",
+          proposedName: cleanName,
+          proposedCategory: canonicalCategory
+        });
+        return;
+      }
     }
 
     try {
@@ -525,7 +799,8 @@ export function InventoryModule({
         name: cleanName,
         category: canonicalCategory,
         quantity: selectedItem.quantity,
-        reorderLevel
+        reorderLevel,
+        allowSimilarDuplicate
       });
       toast.success(`${cleanName} updated successfully`, {
         description: "Item details were saved without changing stock quantity."
@@ -742,6 +1017,65 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement("style", null, `
     .inventory-mobile-list {
       display: none;
+    }
+
+    .inventory-action-stock-in,
+    .inventory-action-stock-out,
+    .inventory-action-edit,
+    .inventory-action-archive {
+      transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+    }
+
+    .inventory-action-stock-in:not(:disabled):hover {
+      background: #DCFCE7 !important;
+      border-color: #16A34A !important;
+      color: #15803D !important;
+      box-shadow: 0 8px 18px rgba(22, 163, 74, 0.16);
+      transform: translateY(-1px);
+    }
+
+    .inventory-action-stock-out:not(:disabled):hover {
+      background: #FEE2E2 !important;
+      border-color: #DC2626 !important;
+      color: #B91C1C !important;
+      box-shadow: 0 8px 18px rgba(220, 38, 38, 0.16);
+      transform: translateY(-1px);
+    }
+
+    .inventory-action-edit:not(:disabled):hover {
+      background: #DBEAFE !important;
+      border-color: #2563EB !important;
+      color: #1D4ED8 !important;
+      box-shadow: 0 8px 18px rgba(37, 99, 235, 0.16);
+      transform: translateY(-1px);
+    }
+
+    .inventory-action-archive:not(:disabled):hover {
+      background: #FEF3C7 !important;
+      border-color: #D97706 !important;
+      color: #92400E !important;
+      box-shadow: 0 8px 18px rgba(217, 119, 6, 0.18);
+      transform: translateY(-1px);
+    }
+
+    .inventory-action-stock-in:not(:disabled):focus-visible {
+      border-color: #16A34A !important;
+      box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.22);
+    }
+
+    .inventory-action-stock-out:not(:disabled):focus-visible {
+      border-color: #DC2626 !important;
+      box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.22);
+    }
+
+    .inventory-action-edit:not(:disabled):focus-visible {
+      border-color: #2563EB !important;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22);
+    }
+
+    .inventory-action-archive:not(:disabled):focus-visible {
+      border-color: #D97706 !important;
+      box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.22);
     }
 
     @media (max-width: 760px) {
@@ -1006,6 +1340,56 @@ export function InventoryModule({
         padding: 16px !important;
         border-radius: 14px !important;
         gap: 10px !important;
+      }
+
+      .inventory-duplicate-dialog {
+        max-width: min(100vw - 24px, 420px) !important;
+      }
+
+      .inventory-duplicate-main {
+        grid-template-columns: 1fr !important;
+        gap: 12px !important;
+      }
+
+      .inventory-duplicate-icon-panel {
+        display: none !important;
+      }
+
+      .inventory-duplicate-copy {
+        text-align: center;
+      }
+
+      .inventory-duplicate-accent {
+        margin-left: auto;
+        margin-right: auto;
+      }
+
+      .inventory-duplicate-note {
+        grid-template-columns: 1fr !important;
+        align-items: stretch !important;
+        gap: 14px !important;
+        text-align: center;
+      }
+
+      .inventory-duplicate-note-icon {
+        display: none !important;
+      }
+
+      .inventory-duplicate-dialog .inventory-alert-dialog-footer {
+        width: 100% !important;
+        flex-direction: column-reverse !important;
+        gap: 10px !important;
+      }
+
+      .inventory-duplicate-dialog .inventory-alert-dialog-footer button {
+        width: 100% !important;
+        min-height: 48px !important;
+        border-radius: 12px !important;
+        font-size: 14px !important;
+      }
+
+      .inventory-duplicate-dialog .inventory-alert-dialog-footer button:last-child {
+        box-shadow: 0 10px 18px rgba(220, 38, 38, 0.18) !important;
       }
 
       .inventory-dialog-header {
@@ -1279,12 +1663,13 @@ export function InventoryModule({
     value: newItem.name,
     onChange: e => {
       setArchivedDuplicatePrompt(null);
+      setSimilarDuplicatePrompt(null);
       setNewItem({
         ...newItem,
         name: e.target.value
       });
     },
-    placeholder: "e.g., Steel Hammer",
+    placeholder: "e.g., Claw Hammer 16 oz",
     className: "border-slate-300 bg-white text-slate-950",
     style: {
       height: "42px",
@@ -1292,7 +1677,12 @@ export function InventoryModule({
       fontSize: "14px",
       padding: "0 14px"
     }
-  })), /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "text-slate-600",
+    style: {
+      fontSize: "12px"
+    }
+  }, "Enter a specific item name with its size or specification. Example: Claw Hammer 16 oz.")), /*#__PURE__*/React.createElement("div", {
     className: "space-y-1.5"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "category",
@@ -1307,6 +1697,7 @@ export function InventoryModule({
     value: newItem.category,
     onValueChange: value => {
       setArchivedDuplicatePrompt(null);
+      setSimilarDuplicatePrompt(null);
       setNewItem({
         ...newItem,
         category: value
@@ -1584,7 +1975,7 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement(Button, {
     size: "sm",
     variant: "outline",
-    className: "border-green-500 text-green-700 hover:bg-green-50",
+    className: "inventory-action-stock-in border-green-500 text-green-700 hover:bg-green-50",
     title: "Stock In: Add new stock",
     onClick: () => {
       resetStockForm();
@@ -1596,7 +1987,7 @@ export function InventoryModule({
   })), /*#__PURE__*/React.createElement(Button, {
     size: "sm",
     variant: "outline",
-    className: "border-red-500 text-red-700 hover:bg-red-50",
+    className: "inventory-action-stock-out border-red-500 text-red-700 hover:bg-red-50",
     title: "Stock Out: Deduct stock",
     onClick: () => {
       resetStockForm();
@@ -1608,7 +1999,7 @@ export function InventoryModule({
   })), user.role === "Admin" && /*#__PURE__*/React.createElement(Button, {
     size: "sm",
     variant: "outline",
-    className: "border-blue-500 text-blue-700 hover:bg-blue-50",
+    className: "inventory-action-edit border-blue-500 text-blue-700 hover:bg-blue-100",
     title: "Edit item details",
     onClick: () => openEditDialog(item)
   }, /*#__PURE__*/React.createElement(Pencil, {
@@ -1616,7 +2007,7 @@ export function InventoryModule({
   })), user.role === "Admin" && /*#__PURE__*/React.createElement(Button, {
     size: "sm",
     variant: "outline",
-    className: "border-amber-400 text-amber-800 hover:bg-amber-100 hover:border-amber-500 hover:text-amber-950 transition-colors",
+    className: "inventory-action-archive border-amber-400 text-amber-800 hover:bg-amber-100 hover:border-amber-500 hover:text-amber-950",
     title: "Archive: Remove item from list",
     onClick: () => {
       setSelectedItem(item);
@@ -1681,7 +2072,7 @@ export function InventoryModule({
     className: "inventory-mobile-actions"
   }, /*#__PURE__*/React.createElement(Button, {
     variant: "outline",
-    className: "border-green-500 text-green-700 hover:bg-green-50",
+    className: "inventory-action-stock-in border-green-500 text-green-700 hover:bg-green-50",
     title: "Stock In: Add new stock",
     onClick: () => {
       resetStockForm();
@@ -1692,7 +2083,7 @@ export function InventoryModule({
     className: "mr-1 h-4 w-4"
   }), "Stock In"), /*#__PURE__*/React.createElement(Button, {
     variant: "outline",
-    className: "border-red-500 text-red-700 hover:bg-red-50",
+    className: "inventory-action-stock-out border-red-500 text-red-700 hover:bg-red-50",
     title: "Stock Out: Deduct stock",
     onClick: () => {
       resetStockForm();
@@ -1703,14 +2094,14 @@ export function InventoryModule({
     className: "mr-1 h-4 w-4"
   }), "Stock Out"), user.role === "Admin" && /*#__PURE__*/React.createElement(Button, {
     variant: "outline",
-    className: "border-blue-500 text-blue-700 hover:bg-blue-50",
+    className: "inventory-action-edit border-blue-500 text-blue-700 hover:bg-blue-100",
     title: "Edit item details",
     onClick: () => openEditDialog(item)
   }, /*#__PURE__*/React.createElement(Pencil, {
     className: "mr-1 h-4 w-4"
   }), "Edit"), user.role === "Admin" && /*#__PURE__*/React.createElement(Button, {
     variant: "outline",
-    className: "border-amber-400 text-amber-800 hover:bg-amber-100 hover:border-amber-500 hover:text-amber-950",
+    className: "inventory-action-archive border-amber-400 text-amber-800 hover:bg-amber-100 hover:border-amber-500 hover:text-amber-950",
     title: "Archive: Remove item from list",
     onClick: () => {
       setSelectedItem(item);
@@ -2267,6 +2658,146 @@ export function InventoryModule({
       height: "16px"
     }
   }), "Archive Item"))), /*#__PURE__*/React.createElement(AlertDialog, {
+    open: Boolean(similarDuplicatePrompt),
+    onOpenChange: open => {
+      if (!open) {
+        setSimilarDuplicatePrompt(null);
+      }
+    }
+  }, /*#__PURE__*/React.createElement(AlertDialogContent, {
+    className: "inventory-alert-dialog-content inventory-duplicate-dialog border bg-white shadow-2xl",
+    style: {
+      width: "min(560px, calc(100vw - 32px))",
+      maxWidth: "560px",
+      padding: "24px",
+      borderRadius: "14px",
+      gap: "18px",
+      borderColor: "#FF0000",
+      borderWidth: "1px",
+      boxShadow: "0 22px 50px rgba(15, 23, 42, 0.20)"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "inventory-duplicate-main",
+    style: {
+      display: "grid",
+      gridTemplateColumns: "56px minmax(0, 1fr)",
+      gap: "16px",
+      alignItems: "start"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "inventory-duplicate-icon-panel",
+    style: {
+      display: "flex",
+      justifyContent: "center",
+      paddingTop: "2px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex shrink-0 items-center justify-center",
+    style: {
+      width: "52px",
+      height: "52px",
+      borderRadius: "14px",
+      background: "#FEF2F2",
+      border: "1px solid #FECACA",
+      color: "#FF0000"
+    }
+  }, /*#__PURE__*/React.createElement(AlertTriangle, {
+    style: {
+      width: "26px",
+      height: "26px"
+    }
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "inventory-duplicate-copy min-w-0",
+    style: {}
+  }, /*#__PURE__*/React.createElement(AlertDialogTitle, {
+    className: "font-bold leading-tight text-slate-950",
+    style: {
+      fontSize: "22px",
+      letterSpacing: "0"
+    }
+  }, "Possible duplicate item"), /*#__PURE__*/React.createElement("div", {
+    className: "inventory-duplicate-accent",
+    style: {
+      width: "48px",
+      height: "3px",
+      borderRadius: "999px",
+      background: "#FF0000",
+      marginTop: "10px",
+      marginBottom: "16px"
+    }
+  }), /*#__PURE__*/React.createElement(AlertDialogDescription, {
+    className: "text-sm leading-6 text-slate-700"
+  }, similarDuplicatePrompt?.source === "archived" ? "An archived item named " : "An active item named ", /*#__PURE__*/React.createElement("span", {
+    className: "font-bold text-red-600"
+  }, `"${similarDuplicatePrompt?.item?.name || "Matching item"}"`), " looks very similar to ", /*#__PURE__*/React.createElement("span", {
+    className: "font-bold text-red-600"
+  }, `"${similarDuplicatePrompt?.proposedName || newItem.name || "this item"}"`), similarDuplicatePrompt?.action === "edit" ? ". If this is the same product, review the edit and use the existing item. If it is truly a different product, you may update it anyway." : similarDuplicatePrompt?.source === "archived" ? ". If this is the same product, cancel and restore the archived record. If it is truly a different product, you may add it as a separate record." : ". If this is the same product, cancel and use Stock In. If it is truly a different product, you may add it as a separate record."), /*#__PURE__*/React.createElement("div", {
+    className: "mt-3 flex max-w-full flex-col items-start text-sm leading-5 text-slate-600"
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "font-semibold text-slate-800"
+  }, "Category:"), " ", /*#__PURE__*/React.createElement("span", {
+    className: "text-slate-950"
+  }, normalizeCategory(similarDuplicatePrompt?.proposedCategory || similarDuplicatePrompt?.item?.category || newItem.category))), similarDuplicatePrompt?.item?.id ? /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "font-semibold text-slate-800"
+  }, "ID:"), " ", /*#__PURE__*/React.createElement("span", {
+    className: "text-slate-950"
+  }, similarDuplicatePrompt.item.id)) : null))), /*#__PURE__*/React.createElement("div", {
+    className: "inventory-duplicate-note",
+    style: {
+      display: "grid",
+      gridTemplateColumns: "minmax(0, 1fr) auto",
+      alignItems: "center",
+      gap: "14px",
+      borderTop: "1px solid #E5E7EB",
+      marginTop: "2px",
+      paddingTop: "18px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-3 text-slate-700"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "inventory-duplicate-note-icon flex shrink-0 items-center justify-center",
+    style: {
+      width: "32px",
+      height: "32px",
+      borderRadius: "999px",
+      background: "#FEF9C3",
+      color: "#FF0000"
+    }
+  }, /*#__PURE__*/React.createElement(Info, {
+    style: {
+      width: "17px",
+      height: "17px"
+    }
+  })), /*#__PURE__*/React.createElement("span", {
+    className: "text-sm leading-5 text-slate-600"
+  }, "Please review before proceeding.")), /*#__PURE__*/React.createElement(AlertDialogFooter, {
+    className: "inventory-alert-dialog-footer px-0 pb-0",
+    style: {
+      display: "flex",
+      flexDirection: "row",
+      justifyContent: "flex-end",
+      gap: "10px"
+    }
+  }, /*#__PURE__*/React.createElement(AlertDialogCancel, {
+    className: "modal-button-cancel border-slate-200 bg-white text-slate-950 hover:bg-slate-50",
+    style: {
+      height: "38px",
+      borderRadius: "10px",
+      padding: "0 18px",
+      fontSize: "13px"
+    },
+    onClick: () => setSimilarDuplicatePrompt(null)
+  }, similarDuplicatePrompt?.action === "edit" ? "Review Edit" : "Review Item"), /*#__PURE__*/React.createElement(AlertDialogAction, {
+    className: "modal-button-danger bg-red-600 font-semibold text-white hover:bg-red-700",
+    style: {
+      height: "38px",
+      minWidth: "124px",
+      borderRadius: "10px",
+      padding: "0 18px",
+      fontSize: "13px"
+    },
+    onClick: confirmAddSimilarItem
+  }, similarDuplicatePrompt?.action === "edit" ? "Update Anyway" : "Add Anyway"))))), /*#__PURE__*/React.createElement(AlertDialog, {
     open: Boolean(discardPrompt),
     onOpenChange: open => {
       if (!open) {

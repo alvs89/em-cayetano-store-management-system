@@ -53,6 +53,7 @@ function AppContent() {
   const navigate = useNavigate();
   const location = useLocation();
   const [currentScreen, setCurrentScreen] = useState("login");
+  const [visitedScreens, setVisitedScreens] = useState(() => new Set(["dashboard"]));
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
@@ -177,10 +178,35 @@ function AppContent() {
   useEffect(() => {
     if (currentUser) {
       setCurrentScreen("dashboard");
+      setVisitedScreens(new Set(["dashboard"]));
     } else {
       setCurrentScreen("login");
+      setVisitedScreens(new Set(["dashboard"]));
     }
   }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const appScreens = new Set([
+      "dashboard",
+      "inventory",
+      "archive",
+      "reports",
+      "user-management",
+      "search",
+      "help",
+      "alerts",
+    ]);
+
+    if (!appScreens.has(currentScreen)) return;
+
+    setVisitedScreens(prev => {
+      if (prev.has(currentScreen)) return prev;
+      const next = new Set(prev);
+      next.add(currentScreen);
+      return next;
+    });
+  }, [currentScreen, currentUser]);
 
   useEffect(() => {
     if (!isMobileSidebarOpen) return;
@@ -291,6 +317,21 @@ function AppContent() {
   const mainClassName = isMobileViewport
     ? "app-main-content min-w-0 flex-1 overflow-visible"
     : "app-main-content min-w-0 flex-1 overflow-y-auto overflow-x-hidden";
+
+  const renderScreenPane = (screen, content) => {
+    if (!visitedScreens.has(screen) && currentScreen !== screen) return null;
+    const isActive = currentScreen === screen;
+
+    return (
+      <section
+        key={screen}
+        className={isActive ? "block" : "hidden"}
+        aria-hidden={!isActive}
+      >
+        {content}
+      </section>
+    );
+  };
 
   return (
     <div className={appShellClassName} role="application">
@@ -493,17 +534,17 @@ function AppContent() {
       </AlertDialog>
 
       <main className={mainClassName} aria-live="polite">
-        {currentScreen === "dashboard" && <Dashboard onNavigate={navigateTo} user={currentUser} activeBranch={activeBranch} />}
-        {currentScreen === "inventory" && <InventoryModule user={currentUser} onNavigate={navigateTo} />}
-        {currentScreen === "archive" && <ArchiveModule user={currentUser} />}
-        {currentScreen === "reports" && <ReportsModule user={currentUser} />}
-        {currentScreen === "maintenance" && <MaintenanceModule onNavigate={navigateTo} user={currentUser} />}
-        {currentScreen === "user-management" && <UserManagementModule />}
-        {currentScreen === "search" && <SearchModule user={currentUser} />}
-        {currentScreen === "help" && <HelpModule user={currentUser} />}
-        {currentScreen === "alerts" && (
-          <AlertsModule user={currentUser} onNavigate={navigateTo} />
+        {renderScreenPane("dashboard", <Dashboard onNavigate={navigateTo} user={currentUser} activeBranch={activeBranch} />)}
+        {renderScreenPane("inventory", <InventoryModule user={currentUser} onNavigate={navigateTo} />)}
+        {renderScreenPane("archive", <ArchiveModule user={currentUser} />)}
+        {renderScreenPane("reports", <ReportsModule user={currentUser} />)}
+        {currentUser.role === "Admin" && currentScreen === "maintenance" && (
+          <MaintenanceModule onNavigate={navigateTo} user={currentUser} />
         )}
+        {currentUser.role === "Admin" && renderScreenPane("user-management", <UserManagementModule />)}
+        {renderScreenPane("search", <SearchModule user={currentUser} />)}
+        {renderScreenPane("help", <HelpModule user={currentUser} />)}
+        {renderScreenPane("alerts", <AlertsModule user={currentUser} onNavigate={navigateTo} />)}
       </main>
     </div>
   );

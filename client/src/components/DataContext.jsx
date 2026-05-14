@@ -402,15 +402,17 @@ export function DataProvider({ children }) {
     });
   };
 
-  const markAllAlertsRead = () => {
-    setReadAlertIds(alerts.map(alert => alert.id));
+  const markAllAlertsRead = (targetAlertIds = null) => {
+    const idsToMark = Array.isArray(targetAlertIds) ? targetAlertIds : alerts.map(alert => alert.id);
+    setReadAlertIds(prev => Array.from(new Set([...prev, ...idsToMark])));
     auditAction("MARK_ALL_ALERTS_READ", {
-      targetName: `${alerts.length} alert${alerts.length === 1 ? "" : "s"}`,
+      targetName: `${idsToMark.length} alert${idsToMark.length === 1 ? "" : "s"}`,
     });
   };
 
-  const unmarkAllAlertsRead = () => {
-    setReadAlertIds(prev => prev.filter(alertId => !alerts.some(alert => alert.id === alertId)));
+  const unmarkAllAlertsRead = (targetAlertIds = null) => {
+    const idsToUnmark = Array.isArray(targetAlertIds) ? targetAlertIds : alerts.map(alert => alert.id);
+    setReadAlertIds(prev => prev.filter(alertId => !idsToUnmark.includes(alertId)));
   };
 
   // Add new inventory item
@@ -423,6 +425,7 @@ export function DataProvider({ children }) {
         category: item.category,
         stock_level: item.quantity,
         min_stock_level: item.reorderLevel,
+        allow_similar_duplicate: Boolean(item.allowSimilarDuplicate),
       },
       { headers: token ? { Authorization: `Bearer ${token}` } : {} }
     );
@@ -467,6 +470,7 @@ export function DataProvider({ children }) {
           movement_action: updates.movementAction,
           movement_quantity: updates.movementQuantity,
           movement_note: updates.movementNote,
+          allow_similar_duplicate: Boolean(updates.allowSimilarDuplicate),
         },
         { headers: token ? { Authorization: `Bearer ${token}` } : {} }
       );

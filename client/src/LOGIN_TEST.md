@@ -10,7 +10,7 @@ Copy and paste these exact values:
 ### Test 1: Admin Login
 ```
 Username: admin
-Password: admin123
+Password: your configured admin password
 Branch: Manggahan
 2FA Code: 123456
 ```
@@ -18,7 +18,7 @@ Branch: Manggahan
 ### Test 2: Employee Login
 ```
 Username: employee
-Password: emp123
+Password: your configured employee password
 Branch: San Rafael
 2FA Code: 123456
 ```
@@ -26,7 +26,7 @@ Branch: San Rafael
 ### Test 3: Alternative Employee Login
 ```
 Username: preyes
-Password: emp123
+Password: your configured employee password
 Branch: San Rafael
 2FA Code: 123456
 ```
@@ -42,7 +42,7 @@ Branch: San Rafael
 
 ### Step 2: Enter Credentials
 - [ ] Type `admin` in Username field (all lowercase)
-- [ ] Type `admin123` in Password field (exactly as shown)
+- [ ] Type `your configured admin password` in Password field (exactly as shown)
 - [ ] Click Branch dropdown and select `Manggahan`
 - [ ] All three fields are filled
 
@@ -80,7 +80,7 @@ Branch: San Rafael
 
 **Solution:**
 - Clear both fields completely
-- Type slowly and carefully: `admin` then `admin123`
+- Type slowly and carefully: `admin` then `your configured admin password`
 - Select branch from dropdown (don't type it)
 - Try again
 
@@ -93,7 +93,7 @@ Branch: San Rafael
 **Solution:**
 - Check all three fields:
   - Username: `admin`
-  - Password: `admin123`
+  - Password: `your configured admin password`
   - Branch: Must select from dropdown
 
 ---
@@ -156,7 +156,7 @@ In Network tab (F12 → Network):
 
 ### What Happens Behind the Scenes
 
-When you click "Login" with `admin` / `admin123`:
+When you click "Login" with `admin` / `your configured admin password`:
 
 1. **Linear Search Algorithm** executes:
    - Searches user array for username "admin"
