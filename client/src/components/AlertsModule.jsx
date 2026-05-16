@@ -140,6 +140,7 @@ export function AlertsModule({ user, onNavigate }) {
   } = useData();
   const [alertToDismiss, setAlertToDismiss] = useState(null);
   const [activeTab, setActiveTab] = useState('all');
+  const isAdmin = user?.role === 'Admin';
 
   const handleMarkAsRead = id => {
     markAlertRead(id);
@@ -167,6 +168,9 @@ export function AlertsModule({ user, onNavigate }) {
 
     if (alert.relatedModule === 'user-management' && alert.title === 'New User Registration') {
       localStorage.setItem('user_management_target_tab', 'pending');
+      window.dispatchEvent(new CustomEvent('user-management-target-tab', {
+        detail: { tab: 'pending' }
+      }));
     }
     onNavigate(alert.relatedModule);
   };
@@ -184,10 +188,16 @@ export function AlertsModule({ user, onNavigate }) {
     all: sortedAlerts,
     unread: sortedUnreadAlerts,
     warnings: sortedWarningAlerts,
-    info: sortedInfoAlerts,
+    ...(isAdmin ? { info: sortedInfoAlerts } : {}),
   };
   const activeTabAlerts = alertsByTab[activeTab] || sortedAlerts;
   const activeTabUnreadAlerts = activeTabAlerts.filter(alert => !alert.read);
+
+  useEffect(() => {
+    if (!isAdmin && activeTab === 'info') {
+      setActiveTab('all');
+    }
+  }, [activeTab, isAdmin]);
 
   const handleMarkAllAsRead = () => {
     if (activeTabUnreadAlerts.length === 0) return;
@@ -515,11 +525,13 @@ export function AlertsModule({ user, onNavigate }) {
         icon={<Bell className="h-8 w-8" />}
       />
 
-      <div className="alerts-summary-grid mb-6 grid grid-cols-1 gap-6 md:grid-cols-4">
+      <div className={`alerts-summary-grid mb-6 grid grid-cols-1 gap-6 ${isAdmin ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
         <SummaryCard label="Total Alerts" value={alerts.length} icon={<Bell className="h-6 w-6 text-blue-600" />} iconClassName="bg-blue-100" />
         <SummaryCard label="Unread" value={unreadAlertCount} icon={<Bell className="h-6 w-6 text-orange-600" />} iconClassName="bg-orange-100" />
         <SummaryCard label="Warnings" value={warningAlertCount} icon={<AlertTriangle className="h-6 w-6 text-red-600" />} iconClassName="bg-red-100" />
-        <SummaryCard label="Info" value={infoAlertCount + successAlertCount} icon={<Info className="h-6 w-6 text-teal-600" />} iconClassName="bg-teal-100" />
+        {isAdmin && (
+          <SummaryCard label="Info" value={infoAlertCount + successAlertCount} icon={<Info className="h-6 w-6 text-teal-600" />} iconClassName="bg-teal-100" />
+        )}
       </div>
 
       <Card className="alerts-panel">
@@ -551,7 +563,7 @@ export function AlertsModule({ user, onNavigate }) {
               <TabsTrigger value="all">All ({alerts.length})</TabsTrigger>
               <TabsTrigger value="unread">Unread ({unreadAlertCount})</TabsTrigger>
               <TabsTrigger value="warnings">Warnings ({warningAlertCount})</TabsTrigger>
-              <TabsTrigger value="info">Info ({infoAlertCount})</TabsTrigger>
+              {isAdmin && <TabsTrigger value="info">Info ({infoAlertCount})</TabsTrigger>}
             </TabsList>
 
             <TabsContent value="all" className="alerts-tab-content space-y-3">
@@ -572,11 +584,13 @@ export function AlertsModule({ user, onNavigate }) {
               ) : renderAlertCards(sortedWarningAlerts)}
             </TabsContent>
 
-            <TabsContent value="info" className="alerts-tab-content space-y-3">
-              {infoAlertCount === 0 ? (
-                <EmptyAlerts icon={<Info className="mx-auto mb-4 h-16 w-16 text-blue-300" />} message="No info alerts at this time" />
-              ) : renderAlertCards(sortedInfoAlerts)}
-            </TabsContent>
+            {isAdmin && (
+              <TabsContent value="info" className="alerts-tab-content space-y-3">
+                {infoAlertCount === 0 ? (
+                  <EmptyAlerts icon={<Info className="mx-auto mb-4 h-16 w-16 text-blue-300" />} message="No info alerts at this time" />
+                ) : renderAlertCards(sortedInfoAlerts)}
+              </TabsContent>
+            )}
           </Tabs>
         </CardContent>
       </Card>

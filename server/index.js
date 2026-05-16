@@ -34,6 +34,20 @@ const COMMON_PASSWORDS = new Set([
   'admin1234',
   'qwerty123',
   'qwerty1234',
+  'abcdefgh',
+  'abcdefghi',
+  'abcdefghij',
+  'abcdefg123',
+  'abcdef123',
+  'abc12345',
+  'abc123456',
+  'abcd1234',
+  'qwertyui',
+  'qwertyuiop',
+  'asdfghjk',
+  'asdfghjkl',
+  'zxcvbnm1',
+  'zxcvbnm12',
   'letmein123',
   'welcome123',
   'store123',
@@ -2075,6 +2089,23 @@ app.get('/api/system/summary', authenticate, async (req, res) => {
        LIMIT 1`
     );
 
+    const recentSystemEventsResult = isAdmin(req.user)
+      ? await pool.query(
+          `SELECT id, event_type, severity, message, context, actor_name, created_at
+           FROM system_logs
+           WHERE event_type IN (
+             'DATABASE_BACKUP',
+             'DATABASE_RESTORE',
+             'SYSTEM_LOG_CLEANUP',
+             'DATABASE_OPTIMIZATION',
+             'DATA_INTEGRITY_CHECK'
+           )
+             AND created_at >= (${PHILIPPINE_NOW_SQL} - INTERVAL '7 days')
+           ORDER BY created_at DESC, id DESC
+           LIMIT 12`
+        )
+      : { rows: [] };
+
     return res.json({
       databaseStatus: 'Online',
       activeUserCount: activeUsersResult.rows[0]?.count || 0,
@@ -2083,6 +2114,7 @@ app.get('/api/system/summary', authenticate, async (req, res) => {
       lastBackupBy: latestBackupResult.rows[0]?.actor_name || null,
       lastRestoreAt: latestRestoreResult.rows[0]?.created_at || null,
       lastRestoreBy: latestRestoreResult.rows[0]?.actor_name || null,
+      recentSystemEvents: recentSystemEventsResult.rows,
       serverTime: new Date().toISOString()
     });
   } catch (err) {
@@ -2354,7 +2386,7 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-app.put('/api/inventory/:id', authenticate, requireAdmin, async (req, res) => {
+app.put('/api/inventory/:id', authenticate, async (req, res) => {
   const { id } = req.params;
   const { name, category, stock_level, min_stock_level, movement_action, movement_quantity, movement_note, allow_similar_duplicate = false } = req.body;
 
@@ -2402,6 +2434,48 @@ app.put('/api/inventory/:id', authenticate, requireAdmin, async (req, res) => {
     const identityChanged =
       normalizeInventoryText(inventoryRow.name) !== normalizeInventoryText(cleanName) ||
       canonicalizeInventoryCategory(inventoryRow.category) !== canonicalCategory;
+    const reorderLevelChanged = Number(inventoryRow.min_stock_level || 0) !== nextMinStockLevel;
+    const quantityChanged = previousQuantity !== nextQuantity;
+    const allowedMovementActions = ['stock_in', 'stock_out'];
+    const action = allowedMovementActions.includes(movement_action) ? movement_action : null;
+    const inferredQuantityChanged = Math.abs(nextQuantity - previousQuantity);
+    const parsedMovementQuantity = movement_quantity === undefined || movement_quantity === null || movement_quantity === ''
+      ? inferredQuantityChanged
+      : parseNonNegativeInteger(movement_quantity, 'Movement quantity');
+    const expectedDirectionIsValid =
+      (action === 'stock_in' && nextQuantity > previousQuantity) ||
+      (action === 'stock_out' && nextQuantity < previousQuantity);
+    const isValidStockMovementRequest =
+      action &&
+      quantityChanged &&
+      expectedDirectionIsValid &&
+      parsedMovementQuantity > 0 &&
+      parsedMovementQuantity === inferredQuantityChanged &&
+      !identityChanged &&
+      !reorderLevelChanged;
+
+    if (action && quantityChanged && !expectedDirectionIsValid) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: action === 'stock_in'
+          ? 'Stock In must increase the current stock quantity.'
+          : 'Stock Out must decrease the current stock quantity.'
+      });
+    }
+
+    if (action && parsedMovementQuantity !== inferredQuantityChanged) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: 'Movement quantity must match the stock quantity change.'
+      });
+    }
+
+    if (!isAdmin(req.user) && !isValidStockMovementRequest) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        error: 'Admin access is required to change item details. Employees can only perform Stock In and Stock Out.'
+      });
+    }
 
     let reviewedSimilarDuplicate = null;
     if (identityChanged) {
@@ -2547,45 +2621,26 @@ app.put('/api/inventory/:id', authenticate, requireAdmin, async (req, res) => {
     }
 
     const updatedItem = merged.rows[0];
-    const allowedMovementActions = ['stock_in', 'stock_out'];
-    const action = allowedMovementActions.includes(movement_action) ? movement_action : null;
-    const inferredQuantityChanged = Math.abs(nextQuantity - previousQuantity);
-    const quantityChanged = movement_quantity === undefined || movement_quantity === null || movement_quantity === ''
-      ? inferredQuantityChanged
-      : parseNonNegativeInteger(movement_quantity, 'Movement quantity');
-    if (action && quantityChanged > 0 && previousQuantity !== nextQuantity) {
-      const expectedDirectionIsValid =
-        (action === 'stock_in' && nextQuantity > previousQuantity) ||
-        (action === 'stock_out' && nextQuantity < previousQuantity);
-
-      if (expectedDirectionIsValid) {
-        if (quantityChanged !== inferredQuantityChanged) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({
-            error: 'Movement quantity must match the stock quantity change.'
-          });
-        }
-
-        await recordStockMovement(client, {
-          inventoryId: updatedItem.inventory_id,
-          productId: updatedItem.product_id,
-          itemName: updatedItem.name,
-          category: updatedItem.category,
-          branch: updatedItem.branch,
-          action,
-          quantityChanged,
-          previousQuantity,
-          newQuantity: nextQuantity,
-          note: movement_note || null,
-          actorId: req.user.id
-        });
-        await recordAuditLog(client, {
-          actorId: req.user.id,
-          targetId: updatedItem.inventory_id,
-          targetName: updatedItem.name,
-          action: action === 'stock_in' ? 'STOCK_IN' : 'STOCK_OUT'
-        });
-      }
+    if (action && parsedMovementQuantity > 0 && previousQuantity !== nextQuantity) {
+      await recordStockMovement(client, {
+        inventoryId: updatedItem.inventory_id,
+        productId: updatedItem.product_id,
+        itemName: updatedItem.name,
+        category: updatedItem.category,
+        branch: updatedItem.branch,
+        action,
+        quantityChanged: parsedMovementQuantity,
+        previousQuantity,
+        newQuantity: nextQuantity,
+        note: movement_note || null,
+        actorId: req.user.id
+      });
+      await recordAuditLog(client, {
+        actorId: req.user.id,
+        targetId: updatedItem.inventory_id,
+        targetName: updatedItem.name,
+        action: action === 'stock_in' ? 'STOCK_IN' : 'STOCK_OUT'
+      });
     } else {
       const changedFields = [];
       if (inventoryRow.name !== cleanName) changedFields.push('name');

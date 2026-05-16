@@ -251,6 +251,7 @@ export function InventoryModule({
   const [sortBy, setSortBy] = useState('name');
   const [sortOrder, setSortOrder] = useState('asc');
   const [currentPage, setCurrentPage] = useState(1);
+  const [highlightedInventoryRowId, setHighlightedInventoryRowId] = useState(null);
   const categories = OFFICIAL_INVENTORY_CATEGORIES;
   const currentBranch = normalizeDuplicateKeyPart(user?.branch);
   const buildDuplicateKey = item => [
@@ -264,6 +265,14 @@ export function InventoryModule({
     quantity: "",
     reorderLevel: "10" // Default reorder level
   });
+  const highlightInventoryRow = React.useCallback(id => {
+    if (!id) return;
+    const normalizedId = String(id);
+    setHighlightedInventoryRowId(normalizedId);
+    window.setTimeout(() => {
+      setHighlightedInventoryRowId(currentId => currentId === normalizedId ? null : currentId);
+    }, 2400);
+  }, []);
 
   // 🔍 Filtered inventory using Linear Search Algorithm
   // Linear Search: O(n) - iterates through each item sequentially
@@ -312,6 +321,31 @@ export function InventoryModule({
   React.useEffect(() => {
     setCurrentPage(page => Math.min(Math.max(page, 1), totalPages));
   }, [totalPages]);
+
+  React.useEffect(() => {
+    if (!highlightedInventoryRowId) return;
+    const highlightedIndex = sortedInventory.findIndex(item => String(item.id) === highlightedInventoryRowId);
+    if (highlightedIndex < 0) return;
+    const highlightedPage = Math.floor(highlightedIndex / INVENTORY_ITEMS_PER_PAGE) + 1;
+    setCurrentPage(page => page === highlightedPage ? page : highlightedPage);
+  }, [highlightedInventoryRowId, sortedInventory]);
+
+  React.useEffect(() => {
+    const pendingHighlightId = localStorage.getItem("inventoryRowHighlightId");
+    if (!pendingHighlightId) return;
+    if (!inventory.some(item => String(item.id) === pendingHighlightId)) return;
+    highlightInventoryRow(pendingHighlightId);
+    localStorage.removeItem("inventoryRowHighlightId");
+  }, [inventory, highlightInventoryRow]);
+
+  React.useEffect(() => {
+    const handleInventoryRowHighlight = event => {
+      const highlightedId = event.detail?.id;
+      if (highlightedId) highlightInventoryRow(highlightedId);
+    };
+    window.addEventListener("inventory-row-highlight", handleInventoryRowHighlight);
+    return () => window.removeEventListener("inventory-row-highlight", handleInventoryRowHighlight);
+  }, [highlightInventoryRow]);
 
   // 🔀 Handle column header click to change sort
   const handleSort = column => {
@@ -503,7 +537,9 @@ export function InventoryModule({
     if (!archivedItem || isRestoringArchivedDuplicate) return;
     setIsRestoringArchivedDuplicate(true);
     try {
-      await restoreArchivedInventoryItem(archivedItem.id);
+      const restoredItem = await restoreArchivedInventoryItem(archivedItem.id);
+      const restoredId = restoredItem?.id || archivedItem.originalInventoryId;
+      if (restoredId) highlightInventoryRow(restoredId);
       closeAddItemDialog();
       toast.success(`${archivedItem.name} restored successfully!`, {
         description: "Item returned to active inventory."
@@ -611,13 +647,14 @@ export function InventoryModule({
     setArchivedDuplicatePrompt(null);
     setSimilarDuplicatePrompt(null);
     try {
-      await addInventoryItem({
+      const addedItem = await addInventoryItem({
         name: cleanName,
         category: normalizeCategory(newItem.category),
         quantity,
         reorderLevel,
         allowSimilarDuplicate
       });
+      highlightInventoryRow(addedItem?.id);
       setIsAddDialogOpen(false);
       setNewItem({ name: "", category: "", quantity: "", reorderLevel: "10" });
       if (quantity === 0) {
@@ -654,13 +691,14 @@ export function InventoryModule({
       return;
     }
     try {
-      await updateInventoryItem(selectedItem.id, {
+      const updatedItem = await updateInventoryItem(selectedItem.id, {
         ...selectedItem,
         quantity: selectedItem.quantity + amount,
         movementAction: 'stock_in',
         movementQuantity: amount,
         movementNote: `Stock In recorded from inventory module.`
       });
+      highlightInventoryRow(updatedItem?.id || selectedItem.id);
       setIsStockInDialogOpen(false);
       setStockAmount("");
       toast.success(`Added ${formatUnitQuantity(amount)} to ${selectedItem.name}`, {
@@ -689,13 +727,14 @@ export function InventoryModule({
     }
     try {
       const newQuantity = selectedItem.quantity - amount;
-      await updateInventoryItem(selectedItem.id, {
+      const updatedItem = await updateInventoryItem(selectedItem.id, {
         ...selectedItem,
         quantity: newQuantity,
         movementAction: 'stock_out',
         movementQuantity: amount,
         movementNote: `Stock Out recorded from inventory module.`
       });
+      highlightInventoryRow(updatedItem?.id || selectedItem.id);
       setIsStockOutDialogOpen(false);
       setStockAmount("");
       if (newQuantity === 0) {
@@ -809,13 +848,14 @@ export function InventoryModule({
     }
 
     try {
-      await updateInventoryItem(selectedItem.id, {
+      const updatedItem = await updateInventoryItem(selectedItem.id, {
         name: cleanName,
         category: canonicalCategory,
         quantity: selectedItem.quantity,
         reorderLevel,
         allowSimilarDuplicate
       });
+      highlightInventoryRow(updatedItem?.id || selectedItem.id);
       toast.success(`${cleanName} updated successfully`, {
         description: "Item details were saved without changing stock quantity."
       });
@@ -831,12 +871,14 @@ export function InventoryModule({
     const itemToArchive = selectedItem;
     setIsArchiveDialogOpen(false);
     setSelectedItem(null);
+    localStorage.setItem("archiveRowHighlightOriginalId", String(itemToArchive.id));
     try {
       await archiveInventoryItem(itemToArchive.id);
       toast.success(`${itemToArchive.name} archived successfully!`, {
         description: 'Item moved to archive. View in Archive page.'
       });
     } catch (err) {
+      localStorage.removeItem("archiveRowHighlightOriginalId");
       toast.error("Failed to archive item", { description: err?.response?.data?.error || err.message });
     }
   };
@@ -1031,6 +1073,37 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement("style", null, `
     .inventory-mobile-list {
       display: none;
+    }
+
+    .inventory-row-highlight {
+      animation: inventoryRowHighlightPulse 2.4s ease-out;
+      box-shadow: inset 4px 0 0 #F59E0B;
+    }
+
+    .inventory-row-highlight > td {
+      background: #FFF7D6 !important;
+      transition: background-color 240ms ease, box-shadow 240ms ease;
+    }
+
+    .inventory-mobile-card.inventory-row-highlight {
+      background: #FFF7D6 !important;
+      border-color: #F59E0B !important;
+      box-shadow: inset 4px 0 0 #F59E0B, 0 14px 28px rgba(245, 158, 11, 0.14);
+    }
+
+    @keyframes inventoryRowHighlightPulse {
+      0% {
+        background: #FEF3C7;
+        box-shadow: inset 4px 0 0 #F59E0B, 0 0 0 0 rgba(245, 158, 11, 0.24);
+      }
+      65% {
+        background: #FFF7D6;
+        box-shadow: inset 4px 0 0 #F59E0B, 0 0 0 8px rgba(245, 158, 11, 0);
+      }
+      100% {
+        background: transparent;
+        box-shadow: inset 0 0 0 transparent, 0 0 0 0 rgba(245, 158, 11, 0);
+      }
     }
 
     .inventory-pagination {
@@ -2020,7 +2093,8 @@ export function InventoryModule({
   }, inventory.length === 0 ? "No Inventory Items" : "No Inventory Items Found"), /*#__PURE__*/React.createElement("p", {
     className: "text-sm text-slate-500"
   }, inventory.length === 0 ? "Items added to inventory will appear here." : "Try adjusting your search or category filter."))) : paginatedInventory.map(item => /*#__PURE__*/React.createElement(TableRow, {
-    key: item.id
+    key: item.id,
+    className: highlightedInventoryRowId === String(item.id) ? "inventory-row-highlight" : ""
   }, /*#__PURE__*/React.createElement(TableCell, {
     className: "font-mono text-sm align-middle"
   }, item.id), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, {
@@ -2100,7 +2174,7 @@ export function InventoryModule({
     className: "text-sm text-slate-500"
   }, inventory.length === 0 ? "Items added to inventory will appear here." : "Try adjusting your search or category filter.")) : paginatedInventory.map(item => /*#__PURE__*/React.createElement("article", {
     key: item.id,
-    className: "inventory-mobile-card"
+    className: `inventory-mobile-card ${highlightedInventoryRowId === String(item.id) ? "inventory-row-highlight" : ""}`
   }, /*#__PURE__*/React.createElement("div", {
     className: "inventory-mobile-card-top"
   }, /*#__PURE__*/React.createElement("div", {
@@ -2293,11 +2367,16 @@ export function InventoryModule({
       width: "18px",
       height: "18px"
     }
-  }), /*#__PURE__*/React.createElement("p", {
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-col gap-1",
     style: {
       fontSize: "13px"
     }
-  }, "Current Stock: ", selectedItem?.quantity ?? 0, " ", (selectedItem?.quantity ?? 0) === 1 ? "unit" : "units")), /*#__PURE__*/React.createElement(DialogFooter, {
+  }, /*#__PURE__*/React.createElement("p", null, /*#__PURE__*/React.createElement("span", {
+    className: "font-semibold"
+  }, "Current Stock: "), selectedItem?.quantity ?? 0, " ", (selectedItem?.quantity ?? 0) === 1 ? "unit" : "units"), /*#__PURE__*/React.createElement("p", null, /*#__PURE__*/React.createElement("span", {
+    className: "font-semibold"
+  }, "Reorder Level: "), selectedItem?.reorderLevel ?? 0, " ", (selectedItem?.reorderLevel ?? 0) === 1 ? "unit" : "units"))), /*#__PURE__*/React.createElement(DialogFooter, {
     className: "inventory-dialog-footer pt-2",
     style: {
       display: "flex",
@@ -2454,11 +2533,16 @@ export function InventoryModule({
       width: "18px",
       height: "18px"
     }
-  }), /*#__PURE__*/React.createElement("p", {
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-col gap-1",
     style: {
       fontSize: "13px"
     }
-  }, "Current Stock: ", selectedItem?.quantity ?? 0, " ", (selectedItem?.quantity ?? 0) === 1 ? "unit" : "units")), /*#__PURE__*/React.createElement(DialogFooter, {
+  }, /*#__PURE__*/React.createElement("p", null, /*#__PURE__*/React.createElement("span", {
+    className: "font-semibold"
+  }, "Current Stock: "), selectedItem?.quantity ?? 0, " ", (selectedItem?.quantity ?? 0) === 1 ? "unit" : "units"), /*#__PURE__*/React.createElement("p", null, /*#__PURE__*/React.createElement("span", {
+    className: "font-semibold"
+  }, "Reorder Level: "), selectedItem?.reorderLevel ?? 0, " ", (selectedItem?.reorderLevel ?? 0) === 1 ? "unit" : "units"))), /*#__PURE__*/React.createElement(DialogFooter, {
     className: "inventory-dialog-footer pt-2",
     style: {
       display: "flex",

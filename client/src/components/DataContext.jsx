@@ -46,6 +46,79 @@ const generateInventoryAlerts = inventory => {
   return alerts;
 };
 
+const parseSystemEventContext = context => {
+  if (!context) return {};
+  if (typeof context === "object") return context;
+  try {
+    return JSON.parse(context);
+  } catch {
+    return {};
+  }
+};
+
+const buildSystemEventAlert = event => {
+  const context = parseSystemEventContext(event.context);
+  const timestampRaw = event.created_at ? new Date(event.created_at).toISOString() : new Date().toISOString();
+  const baseAlert = {
+    id: `system-event-${event.id}`,
+    type: event.severity === "warning" ? "warning" : "info",
+    title: "System Notice",
+    message: event.message || "A system maintenance action was completed.",
+    timestampRaw,
+    read: false,
+    actionable: true,
+    relatedModule: "maintenance"
+  };
+
+  switch (event.event_type) {
+    case "DATABASE_BACKUP":
+      return {
+        ...baseAlert,
+        type: "info",
+        title: "Database Backup Created",
+        message: "A full database backup was generated and downloaded."
+      };
+    case "DATABASE_RESTORE":
+      return {
+        ...baseAlert,
+        type: "info",
+        title: "Database Restore Completed",
+        message: "The system was restored from an uploaded SQL backup."
+      };
+    case "SYSTEM_LOG_CLEANUP": {
+      const clearedCount = Number(context.clearedCount || 0);
+      return {
+        ...baseAlert,
+        type: "info",
+        title: "System Logs Checked",
+        message: clearedCount > 0
+          ? `${clearedCount} eligible non-critical system log${clearedCount === 1 ? "" : "s"} were cleared.`
+          : "System log cleanup completed with no eligible records to remove."
+      };
+    }
+    case "DATABASE_OPTIMIZATION":
+      return {
+        ...baseAlert,
+        type: "info",
+        title: "Database Optimized",
+        message: "Application database table statistics were refreshed."
+      };
+    case "DATA_INTEGRITY_CHECK": {
+      const issueCount = Number(context.issueCount || 0);
+      return {
+        ...baseAlert,
+        type: issueCount > 0 ? "warning" : "info",
+        title: issueCount > 0 ? "Data Integrity Issues Found" : "Data Integrity Check Passed",
+        message: issueCount > 0
+          ? `The latest data integrity check found ${issueCount} issue${issueCount === 1 ? "" : "s"} for review.`
+          : "The latest data integrity check found no issues."
+      };
+    }
+    default:
+      return baseAlert;
+  }
+};
+
 const generateSystemAlerts = (summary, role) => {
   const alerts = [];
 
@@ -92,6 +165,10 @@ const generateSystemAlerts = (summary, role) => {
         relatedModule: 'user-management'
       });
     });
+
+    (summary.recentSystemEvents || []).forEach(event => {
+      alerts.push(buildSystemEventAlert(event));
+    });
   }
 
   return alerts;
@@ -106,7 +183,8 @@ export function DataProvider({ children }) {
   const [inventoryError, setInventoryError] = useState(null);
   const [systemSummary, setSystemSummary] = useState({
     pendingRegistrations: [],
-    lastBackupAt: null
+    lastBackupAt: null,
+    recentSystemEvents: []
   });
   const [dismissedAlertIds, setDismissedAlertIds] = useState(() => {
     try {
@@ -235,7 +313,7 @@ export function DataProvider({ children }) {
     try {
       const token = localStorage.getItem("token");
       if (!token) {
-        setSystemSummary({ pendingRegistrations: [], lastBackupAt: null });
+        setSystemSummary({ pendingRegistrations: [], lastBackupAt: null, recentSystemEvents: [] });
         return;
       }
       const response = await axios.get(apiUrl("/api/system/summary"), {
@@ -270,9 +348,11 @@ export function DataProvider({ children }) {
 
     window.addEventListener('auth-state-changed', handleAuthStateChanged);
     window.addEventListener('database-restored', handleAuthStateChanged);
+    window.addEventListener('maintenance-action-completed', handleAuthStateChanged);
     return () => {
       window.removeEventListener('auth-state-changed', handleAuthStateChanged);
       window.removeEventListener('database-restored', handleAuthStateChanged);
+      window.removeEventListener('maintenance-action-completed', handleAuthStateChanged);
     };
   }, [fetchInventory, fetchArchivedInventory, fetchStockMovements, refreshSystemSummary]);
 

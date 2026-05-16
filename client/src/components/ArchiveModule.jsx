@@ -37,8 +37,17 @@ export function ArchiveModule({
   const [sortBy, setSortBy] = useState("date");
   const [sortOrder, setSortOrder] = useState("desc");
   const [currentPage, setCurrentPage] = useState(1);
+  const [highlightedArchiveRowId, setHighlightedArchiveRowId] = useState(null);
   // Build category list on the fly so dropdown reflects current archive contents.
   const categories = Array.from(new Set(archivedInventory.map(item => item.category)));
+  const highlightArchiveRow = React.useCallback(id => {
+    if (!id) return;
+    const normalizedId = String(id);
+    setHighlightedArchiveRowId(normalizedId);
+    window.setTimeout(() => {
+      setHighlightedArchiveRowId(currentId => currentId === normalizedId ? null : currentId);
+    }, 2400);
+  }, []);
 
   // Apply search and category filters so users can quickly narrow archived items.
   const filteredArchive = archivedInventory.filter(item => {
@@ -82,6 +91,40 @@ export function ArchiveModule({
   React.useEffect(() => {
     setCurrentPage(page => Math.min(Math.max(page, 1), totalPages));
   }, [totalPages]);
+
+  React.useEffect(() => {
+    if (!highlightedArchiveRowId) return;
+    const highlightedIndex = sortedArchive.findIndex(item => String(item.id) === highlightedArchiveRowId);
+    if (highlightedIndex < 0) return;
+    const highlightedPage = Math.floor(highlightedIndex / ARCHIVE_ITEMS_PER_PAGE) + 1;
+    setCurrentPage(page => page === highlightedPage ? page : highlightedPage);
+  }, [highlightedArchiveRowId, sortedArchive]);
+
+  React.useEffect(() => {
+    const pendingOriginalId = localStorage.getItem("archiveRowHighlightOriginalId");
+    if (!pendingOriginalId) return;
+    const matchingArchivedItem = archivedInventory.find(item =>
+      String(item.originalInventoryId || "") === pendingOriginalId ||
+      String(item.id || "") === pendingOriginalId
+    );
+    if (!matchingArchivedItem) return;
+    highlightArchiveRow(matchingArchivedItem.id);
+    localStorage.removeItem("archiveRowHighlightOriginalId");
+  }, [archivedInventory, highlightArchiveRow]);
+
+  React.useEffect(() => {
+    const handleArchiveRowHighlight = event => {
+      const originalInventoryId = event.detail?.originalInventoryId;
+      if (!originalInventoryId) return;
+      const matchingArchivedItem = archivedInventory.find(item =>
+        String(item.originalInventoryId || "") === String(originalInventoryId) ||
+        String(item.id || "") === String(originalInventoryId)
+      );
+      if (matchingArchivedItem) highlightArchiveRow(matchingArchivedItem.id);
+    };
+    window.addEventListener("archive-row-highlight", handleArchiveRowHighlight);
+    return () => window.removeEventListener("archive-row-highlight", handleArchiveRowHighlight);
+  }, [archivedInventory, highlightArchiveRow]);
 
   const handleSort = column => {
     if (sortBy === column) {
@@ -144,12 +187,22 @@ export function ArchiveModule({
     const itemToRestore = selectedItem;
     setShowUnarchiveDialog(false);
     setSelectedItem(null);
+    if (itemToRestore.originalInventoryId) {
+      localStorage.setItem("inventoryRowHighlightId", String(itemToRestore.originalInventoryId));
+    }
     try {
-      await restoreArchivedInventoryItem(itemToRestore.id);
+      const restoredItem = await restoreArchivedInventoryItem(itemToRestore.id);
+      if (restoredItem?.id || itemToRestore.originalInventoryId) {
+        localStorage.setItem("inventoryRowHighlightId", String(restoredItem?.id || itemToRestore.originalInventoryId));
+        window.dispatchEvent(new CustomEvent("inventory-row-highlight", {
+          detail: { id: restoredItem?.id || itemToRestore.originalInventoryId }
+        }));
+      }
       toast.success(`${itemToRestore.name} restored successfully!`, {
         description: "Item returned to active inventory."
       });
     } catch (err) {
+      localStorage.removeItem("inventoryRowHighlightId");
       toast.error("Failed to restore item", { description: err?.response?.data?.error || err.message });
     }
   };
@@ -158,6 +211,37 @@ export function ArchiveModule({
   }, /*#__PURE__*/React.createElement("style", null, `
     .archive-mobile-list {
       display: none;
+    }
+
+    .archive-row-highlight {
+      animation: archiveRowHighlightPulse 2.4s ease-out;
+      box-shadow: inset 4px 0 0 #F59E0B;
+    }
+
+    .archive-row-highlight > td {
+      background: #FFF7D6 !important;
+      transition: background-color 240ms ease, box-shadow 240ms ease;
+    }
+
+    .archive-mobile-card.archive-row-highlight {
+      background: #FFF7D6 !important;
+      border-color: #F59E0B !important;
+      box-shadow: inset 4px 0 0 #F59E0B, 0 14px 28px rgba(245, 158, 11, 0.14);
+    }
+
+    @keyframes archiveRowHighlightPulse {
+      0% {
+        background: #FEF3C7;
+        box-shadow: inset 4px 0 0 #F59E0B, 0 0 0 0 rgba(245, 158, 11, 0.24);
+      }
+      65% {
+        background: #FFF7D6;
+        box-shadow: inset 4px 0 0 #F59E0B, 0 0 0 8px rgba(245, 158, 11, 0);
+      }
+      100% {
+        background: transparent;
+        box-shadow: inset 0 0 0 transparent, 0 0 0 0 rgba(245, 158, 11, 0);
+      }
     }
 
     .archive-pagination {
@@ -679,7 +763,8 @@ export function ArchiveModule({
   }, archivedInventory.length === 0 ? "No Archived Items" : "No Archived Items Found"), /*#__PURE__*/React.createElement("p", {
     className: "text-sm text-slate-500"
   }, archivedInventory.length === 0 ? "Items archived from inventory will appear here." : "Try adjusting your search or category filter."))) : paginatedArchive.map(item => /*#__PURE__*/React.createElement(TableRow, {
-    key: item.id
+    key: item.id,
+    className: highlightedArchiveRowId === String(item.id) ? "archive-row-highlight" : ""
   }, /*#__PURE__*/React.createElement(TableCell, {
     className: "font-mono text-sm"
   }, getArchiveId(item)), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, {
@@ -725,7 +810,7 @@ export function ArchiveModule({
     className: "text-sm text-slate-500"
   }, archivedInventory.length === 0 ? "Items archived from inventory will appear here." : "Try adjusting your search or category filter.")) : paginatedArchive.map(item => /*#__PURE__*/React.createElement("article", {
     key: item.id,
-    className: "archive-mobile-card"
+    className: `archive-mobile-card ${highlightedArchiveRowId === String(item.id) ? "archive-row-highlight" : ""}`
   }, /*#__PURE__*/React.createElement("div", {
     className: "archive-mobile-card-top"
   }, /*#__PURE__*/React.createElement("div", {

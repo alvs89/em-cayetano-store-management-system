@@ -202,6 +202,7 @@ export function MaintenanceModule({ onNavigate, user }) {
       window.URL.revokeObjectURL(url);
       toast.success('Database backup downloaded successfully.');
       await loadSummary();
+      window.dispatchEvent(new Event('maintenance-action-completed'));
     } catch (err) {
       const description = err.message && err.message !== 'Backup failed' ? err.message : undefined;
       toast.error('Backup failed', description ? { description } : undefined);
@@ -278,6 +279,7 @@ export function MaintenanceModule({ onNavigate, user }) {
         },
       });
       await loadSummary();
+      window.dispatchEvent(new Event('maintenance-action-completed'));
     } catch (err) {
       toast.error('Restore failed', {
         id: restoreToastId,
@@ -320,6 +322,7 @@ export function MaintenanceModule({ onNavigate, user }) {
         toast.success(data.message || `${action.label} completed successfully.`);
       }
       await loadSummary();
+      window.dispatchEvent(new Event('maintenance-action-completed'));
     } catch (err) {
       toast.error(`${action.label} failed`, { description: err.message });
     } finally {

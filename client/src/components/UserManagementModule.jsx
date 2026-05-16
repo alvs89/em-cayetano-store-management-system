@@ -55,6 +55,23 @@ export function UserManagementModule() {
   const [pendingSort, setPendingSort] = useState({ key: "fullName", direction: "asc" });
   const [inactiveSort, setInactiveSort] = useState({ key: "fullName", direction: "asc" });
 
+  useEffect(() => {
+    const validTabs = new Set(["active", "pending", "inactive"]);
+    const handleTargetTab = event => {
+      const targetTab = event?.detail?.tab || localStorage.getItem("user_management_target_tab");
+      if (!validTabs.has(targetTab)) return;
+      localStorage.removeItem("user_management_target_tab");
+      setActiveTab(targetTab);
+    };
+
+    window.addEventListener("user-management-target-tab", handleTargetTab);
+    handleTargetTab();
+
+    return () => {
+      window.removeEventListener("user-management-target-tab", handleTargetTab);
+    };
+  }, []);
+
   const normalizeUser = apiUser => ({
     id: (apiUser.user_id || apiUser.id || "").toString(),
     fullName: apiUser.full_name || apiUser.fullName,
