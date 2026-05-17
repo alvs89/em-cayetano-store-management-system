@@ -172,6 +172,19 @@ export function AlertsModule({ user, onNavigate }) {
         detail: { tab: 'pending' }
       }));
     }
+
+    if (alert.relatedModule === 'reports' && alert.reportType) {
+      localStorage.setItem('reports_target_type', alert.reportType);
+      if (alert.reportCategory) {
+        localStorage.setItem('reports_target_category', alert.reportCategory);
+      }
+      window.dispatchEvent(new CustomEvent('reports-target-view', {
+        detail: {
+          reportType: alert.reportType,
+          category: alert.reportCategory || 'all'
+        }
+      }));
+    }
     onNavigate(alert.relatedModule);
   };
 
@@ -198,6 +211,43 @@ export function AlertsModule({ user, onNavigate }) {
       setActiveTab('all');
     }
   }, [activeTab, isAdmin]);
+
+  useEffect(() => {
+    const scrollToTopIfRequested = () => {
+      if (localStorage.getItem('alerts_scroll_to_top') !== 'true') return;
+      localStorage.removeItem('alerts_scroll_to_top');
+      requestAnimationFrame(() => {
+        const alertsPage = document.querySelector('.alerts-page');
+        const appScrollContainer = alertsPage?.closest('.app-main-content');
+        if (appScrollContainer && typeof appScrollContainer.scrollTo === 'function') {
+          appScrollContainer.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+        }
+        window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+        alertsPage?.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'auto' });
+      });
+    };
+
+    const applyTargetTab = tab => {
+      const allowedTabs = ['all', 'unread', 'warnings', ...(isAdmin ? ['info'] : [])];
+      if (allowedTabs.includes(tab)) {
+        setActiveTab(tab);
+        scrollToTopIfRequested();
+      }
+    };
+
+    const storedTargetTab = localStorage.getItem('alerts_target_tab');
+    if (storedTargetTab) {
+      applyTargetTab(storedTargetTab);
+      localStorage.removeItem('alerts_target_tab');
+    }
+
+    const handleTargetTab = event => {
+      applyTargetTab(event.detail?.tab);
+    };
+
+    window.addEventListener('alerts-target-tab', handleTargetTab);
+    return () => window.removeEventListener('alerts-target-tab', handleTargetTab);
+  }, [isAdmin]);
 
   const handleMarkAllAsRead = () => {
     if (activeTabUnreadAlerts.length === 0) return;
@@ -787,7 +837,7 @@ function AlertCard({ alert, onMarkAsRead, onUnmarkAsRead, onDismiss, onGoToRelat
                   title="View and mark as read"
                 >
                   <Package className="mr-1 h-3 w-3" />
-                  View
+                  {alert.actionLabel || 'View'}
                 </Button>
               )}
             </div>

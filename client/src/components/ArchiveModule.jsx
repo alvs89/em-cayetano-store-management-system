@@ -21,6 +21,17 @@ const STATUS_PRIORITY = {
 
 const ARCHIVE_ITEMS_PER_PAGE = 50;
 
+const ARCHIVE_REASON_LABELS = {
+  discontinued: "Discontinued",
+  duplicate_record: "Duplicate Record",
+  wrong_entry: "Wrong Entry",
+  expired: "Expired",
+  no_longer_sold: "No Longer Sold",
+  other: "Other"
+};
+
+const getArchiveReasonLabel = reason => ARCHIVE_REASON_LABELS[reason] || "Not specified";
+
 export function ArchiveModule({
   user
 }) {
@@ -51,12 +62,20 @@ export function ArchiveModule({
 
   // Apply search and category filters so users can quickly narrow archived items.
   const filteredArchive = archivedInventory.filter(item => {
-    const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) || item.id.toLowerCase().includes(searchQuery.toLowerCase()) || item.originalInventoryId?.toLowerCase().includes(searchQuery.toLowerCase());
+    const query = searchQuery.toLowerCase();
+    const matchesSearch =
+      item.name.toLowerCase().includes(query) ||
+      item.archiveCode?.toLowerCase().includes(query) ||
+      item.itemCode?.toLowerCase().includes(query) ||
+      String(item.id || "").toLowerCase().includes(query) ||
+      String(item.originalInventoryId || "").toLowerCase().includes(query) ||
+      item.supplierName?.toLowerCase().includes(query) ||
+      getArchiveReasonLabel(item.archiveReason).toLowerCase().includes(query);
     const matchesCategory = categoryFilter === "all" || item.category === categoryFilter;
     return matchesSearch && matchesCategory;
   });
 
-  const getArchiveId = item => item.id || "";
+  const getArchiveId = item => item.archiveCode || item.id || "";
   const getArchiveDate = item => new Date(item.archivedAt || item.lastUpdated || 0).getTime();
 
   const sortedArchive = [...filteredArchive].sort((a, b) => {
@@ -68,6 +87,8 @@ export function ArchiveModule({
         return a.name.localeCompare(b.name) * direction;
       case "category":
         return a.category.localeCompare(b.category) * direction;
+      case "supplier":
+        return (a.supplierName || "").localeCompare(b.supplierName || "") * direction;
       case "quantity":
         return ((a.quantity ?? 0) - (b.quantity ?? 0)) * direction;
       case "status":
@@ -169,8 +190,9 @@ export function ArchiveModule({
   }, "Next Page"))) : null;
 
   const sortLabel = (() => {
-    if (sortBy === "id") return "ID";
+    if (sortBy === "id") return "Archive ID";
     if (sortBy === "date") return "Archived Date";
+    if (sortBy === "supplier") return "Supplier";
     return sortBy.charAt(0).toUpperCase() + sortBy.slice(1);
   })();
   const orderLabel = (() => {
@@ -476,7 +498,7 @@ export function ArchiveModule({
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 0;
         width: 100%;
-        max-width: 192px;
+        max-width: 384px;
         margin-top: 12px;
         overflow: hidden;
         border: 1px solid #e2e8f0;
@@ -493,6 +515,14 @@ export function ArchiveModule({
 
       .archive-mobile-field + .archive-mobile-field {
         border-left: 1px solid #e2e8f0;
+      }
+
+      .archive-mobile-field:nth-child(odd) {
+        border-left: 0;
+      }
+
+      .archive-mobile-field:nth-child(n + 3) {
+        border-top: 1px solid #e2e8f0;
       }
 
       .archive-mobile-label {
@@ -713,9 +743,9 @@ export function ArchiveModule({
   }, /*#__PURE__*/React.createElement(Search, {
     className: "absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400"
   }), /*#__PURE__*/React.createElement(Input, {
-    // Text search across name or ID.
+    // Text search across archive code, item code, name, or supplier.
     className: "pl-10",
-    placeholder: "Search archived items by archive ID, original ID, or name",
+    placeholder: "Search archived items by archive ID, item code, name, or supplier",
     value: searchQuery,
     onChange: e => setSearchQuery(e.target.value)
   })), /*#__PURE__*/React.createElement("div", {
@@ -749,12 +779,12 @@ export function ArchiveModule({
     className: "p-0"
   }, /*#__PURE__*/React.createElement("div", {
     className: "archive-table-wrap px-6 pb-6"
-  }, /*#__PURE__*/React.createElement(Table, null, /*#__PURE__*/React.createElement(TableHeader, null, /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("id", "ID")), /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("name", "Item Name")), /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("category", "Category")), /*#__PURE__*/React.createElement(TableHead, {
+  }, /*#__PURE__*/React.createElement(Table, null, /*#__PURE__*/React.createElement(TableHeader, null, /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("id", "Archive ID")), /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("name", "Item Name")), /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("category", "Category")), /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("supplier", "Supplier")), /*#__PURE__*/React.createElement(TableHead, {
     className: "text-right"
   }, renderSortButton("quantity", "Quantity", "right")), /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("status", "Status")), /*#__PURE__*/React.createElement(TableHead, {
     className: "text-right"
   }, renderSortButton("date", "Archived Date", "right")), user.role === "Admin" && /*#__PURE__*/React.createElement(TableHead, null, "Actions"))), /*#__PURE__*/React.createElement(TableBody, null, sortedArchive.length === 0 ? /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableCell, {
-    colSpan: user.role === "Admin" ? 7 : 6,
+    colSpan: user.role === "Admin" ? 8 : 7,
     className: "py-12 text-center"
   }, /*#__PURE__*/React.createElement(Archive, {
     className: "mx-auto mb-4 h-14 w-14 text-slate-300"
@@ -768,6 +798,8 @@ export function ArchiveModule({
   }, /*#__PURE__*/React.createElement(TableCell, {
     className: "font-mono text-sm"
   }, getArchiveId(item)), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, {
+    className: "text-sm text-slate-600"
+  }, item.supplierName || "Unassigned"), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-right"
   }, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
     className: item.status === "In Stock" ? "bg-green-100 text-green-700" : item.status === "Low Stock" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"
@@ -789,7 +821,7 @@ export function ArchiveModule({
   }, /*#__PURE__*/React.createElement("div", {
     className: "archive-mobile-sortbar",
     "aria-label": "Sort archived items"
-  }, [["id", "ID"], ["name", "Name"], ["category", "Category"], ["quantity", "Qty"], ["status", "Status"], ["date", "Archived"]].map(([column, label]) => /*#__PURE__*/React.createElement(Button, {
+  }, [["id", "Archive ID"], ["name", "Name"], ["category", "Category"], ["supplier", "Supplier"], ["quantity", "Qty"], ["status", "Status"], ["date", "Archived"]].map(([column, label]) => /*#__PURE__*/React.createElement(Button, {
     key: column,
     type: "button",
     variant: "outline",
@@ -819,7 +851,9 @@ export function ArchiveModule({
     className: "archive-mobile-name"
   }, item.name), /*#__PURE__*/React.createElement("p", {
     className: "archive-mobile-id"
-  }, "Archive ID: ", getArchiveId(item))), /*#__PURE__*/React.createElement("p", {
+  }, "Archive ID: ", getArchiveId(item), item.itemCode ? /*#__PURE__*/React.createElement("span", {
+    className: "ml-2 text-slate-400"
+  }, "Item Code: ", item.itemCode) : null)), /*#__PURE__*/React.createElement("p", {
     className: "archive-mobile-date"
   }, formatDateTime(item.archivedAt || item.lastUpdated)), /*#__PURE__*/React.createElement("div", {
     className: "archive-mobile-meta"
@@ -833,9 +867,21 @@ export function ArchiveModule({
     className: "archive-mobile-field"
   }, /*#__PURE__*/React.createElement("span", {
     className: "archive-mobile-label"
+  }, "Supplier"), /*#__PURE__*/React.createElement("span", {
+    className: "archive-mobile-value"
+  }, item.supplierName || "Unassigned")), /*#__PURE__*/React.createElement("div", {
+    className: "archive-mobile-field"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "archive-mobile-label"
   }, "Quantity"), /*#__PURE__*/React.createElement("span", {
     className: "archive-mobile-value"
-  }, item.quantity, " ", item.quantity === 1 ? "unit" : "units"))), /*#__PURE__*/React.createElement("div", {
+  }, item.quantity, " ", item.quantity === 1 ? "unit" : "units")), /*#__PURE__*/React.createElement("div", {
+    className: "archive-mobile-field"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "archive-mobile-label"
+  }, "Reason"), /*#__PURE__*/React.createElement("span", {
+    className: "archive-mobile-value"
+  }, getArchiveReasonLabel(item.archiveReason)))), /*#__PURE__*/React.createElement("div", {
     className: "archive-mobile-actions"
   }, /*#__PURE__*/React.createElement(Badge, {
     className: `archive-status-badge ${item.status === "In Stock" ? "bg-green-100 text-green-700" : item.status === "Low Stock" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"}`
@@ -984,13 +1030,21 @@ export function ArchiveModule({
     }
   }, /*#__PURE__*/React.createElement("span", {
     className: "font-semibold text-slate-600"
-  }, "ID:"), /*#__PURE__*/React.createElement("span", {
+  }, "Archive ID:"), /*#__PURE__*/React.createElement("span", {
     className: "font-medium text-slate-950"
   }, getArchiveId(selectedItem || {})), /*#__PURE__*/React.createElement("span", {
     className: "font-semibold text-slate-600"
+  }, "Item Code:"), /*#__PURE__*/React.createElement("span", {
+    className: "font-medium text-slate-950"
+  }, selectedItem?.itemCode || "N/A"), /*#__PURE__*/React.createElement("span", {
+    className: "font-semibold text-slate-600"
   }, "Category:"), /*#__PURE__*/React.createElement("span", {
     className: "font-medium text-slate-950"
-  }, selectedItem?.category)), /*#__PURE__*/React.createElement("div", {
+  }, selectedItem?.category), /*#__PURE__*/React.createElement("span", {
+    className: "font-semibold text-slate-600"
+  }, "Supplier:"), /*#__PURE__*/React.createElement("span", {
+    className: "font-medium text-slate-950"
+  }, selectedItem?.supplierName || "Unassigned")), /*#__PURE__*/React.createElement("div", {
     "aria-hidden": "true",
     style: {
       width: "1px",
@@ -1013,7 +1067,11 @@ export function ArchiveModule({
     className: "font-semibold text-slate-600"
   }, "Status:"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement(Badge, {
     className: `archive-status-badge ${selectedItem?.status === "In Stock" ? "bg-green-100 text-green-700" : selectedItem?.status === "Low Stock" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"}`
-  }, selectedItem?.status))))))), /*#__PURE__*/React.createElement("div", {
+  }, selectedItem?.status)), /*#__PURE__*/React.createElement("span", {
+    className: "font-semibold text-slate-600"
+  }, "Reason:"), /*#__PURE__*/React.createElement("span", {
+    className: "font-medium text-slate-950"
+  }, getArchiveReasonLabel(selectedItem?.archiveReason))))))), /*#__PURE__*/React.createElement("div", {
     className: "flex items-center text-slate-800",
     style: {
       gap: "12px",

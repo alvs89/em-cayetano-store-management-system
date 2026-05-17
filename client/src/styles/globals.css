@@ -593,3 +593,52 @@ body {
     padding-bottom: 0.9rem;
   }
 }
+
+/* Keep toast notifications readable above modal overlays and stacked toast states. */
+[data-sonner-toaster] {
+  z-index: 2147483647 !important;
+}
+
+[data-sonner-toast]:not([data-front="true"]) {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+[data-sonner-toast][data-front="true"] {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+[data-sonner-toast][data-front="true"] > *,
+[data-sonner-toast][data-front="true"] [data-content],
+[data-sonner-toast][data-front="true"] [data-title],
+[data-sonner-toast][data-front="true"] [data-description],
+[data-sonner-toast][data-front="true"] [data-icon] {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+[data-sonner-toast][data-front="true"][data-type="success"] [data-title],
+[data-sonner-toast][data-front="true"][data-type="success"] [data-description],
+[data-sonner-toast][data-front="true"][data-type="success"] [data-icon] {
+  color: #047857 !important;
+}
+
+[data-sonner-toast][data-front="true"][data-type="error"] [data-title],
+[data-sonner-toast][data-front="true"][data-type="error"] [data-description],
+[data-sonner-toast][data-front="true"][data-type="error"] [data-icon] {
+  color: #dc2626 !important;
+}
+
+[data-sonner-toast][data-front="true"][data-type="info"] [data-title],
+[data-sonner-toast][data-front="true"][data-type="info"] [data-description],
+[data-sonner-toast][data-front="true"][data-type="info"] [data-icon] {
+  color: #1d4ed8 !important;
+}
+
+[data-sonner-toast][data-front="true"][data-type="warning"] [data-title],
+[data-sonner-toast][data-front="true"][data-type="warning"] [data-description],
+[data-sonner-toast][data-front="true"][data-type="warning"] [data-icon] {
+  color: #a16207 !important;
+}

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+﻿import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   BookOpen,
@@ -39,12 +39,12 @@ const faqs = [
   {
     id: 'add-inventory-item',
     question: 'How do I add a new inventory item?',
-    answer: 'Go to the Inventory page and select Add New Item. Enter the item name, choose the most appropriate category, set the initial quantity, and provide the reorder level. Use “Other” only if the item does not fit any available category.',
+    answer: 'Go to the Inventory page and select Add New Item. Enter the item name, choose the category, supplier if known, initial stock quantity, manual low-stock threshold, and optional reorder planning details. Use "Other" only if the item does not fit any available category.',
   },
   {
     id: 'stock-records',
     question: 'How do I update stock-in and stock-out records?',
-    answer: 'Open the Inventory page, select the item, then choose Stock In to add new deliveries or Stock Out to deduct released or sold items. Always review the quantity before saving to keep inventory records accurate.',
+    answer: 'Open the Inventory page, select the item, then choose Stock In to add new deliveries or Stock Out to deduct released, sold, damaged, expired, or adjusted items. Always select the reason and review the quantity before saving.',
   },
   {
     id: 'reports',
@@ -63,14 +63,14 @@ const faqs = [
   },
   {
     id: 'admin-features',
-    question: 'Why can’t I access some admin features?',
+    question: 'Why cannot I access some admin features?',
     answer: 'Some features are only available to admin users, such as user management, backup, restore, role editing, and account deactivation. Contact the system admin if you believe your access should be updated.',
     adminRelated: true,
   },
   {
     id: 'low-stock',
     question: 'Why is an item marked as low stock?',
-    answer: 'An item is marked as low stock when its current quantity is equal to or below its reorder level. Review low-stock alerts regularly to avoid running out of important products.',
+    answer: 'An item is marked as low stock when its quantity reaches the system recommended reorder point, or the manual low-stock threshold if no planning value is set. Review low-stock alerts and supplier reorder reports regularly.',
   },
   {
     id: 'duplicate-archive',
@@ -89,8 +89,9 @@ const guides = [
       'Click Add New Item.',
       'Enter the item name.',
       'Select the category that best describes the item.',
-      'Enter the initial quantity.',
-      'Set the reorder level.',
+      'Enter the initial stock quantity.',
+      'Set the manual low-stock threshold.',
+      'Enter supplier lead time, safety stock, and average daily sales if available.',
       'Review the details.',
       'Click Add Item.',
     ],
@@ -104,6 +105,7 @@ const guides = [
       'Search or select the item.',
       'Choose Stock In for new deliveries or Stock Out for released items.',
       'Enter the quantity.',
+      'Select the stock movement reason.',
       'Review the updated stock value.',
       'Save the transaction.',
     ],
@@ -162,10 +164,10 @@ const guides = [
 const guidelines = [
   { id: 'accurate-names', text: 'Use accurate item names and categories.' },
   { id: 'check-records', text: 'Check existing active and archived records before adding new items.' },
-  { id: 'other-category', text: 'Use “Other” only when no category fits.' },
+  { id: 'other-category', text: 'Use "Other" only when no category fits.' },
   { id: 'credentials', text: 'Do not share account credentials.' },
-  { id: 'low-stock-alerts', text: 'Review low-stock alerts regularly.' },
-  { id: 'transactions', text: 'Record stock-in and stock-out transactions carefully.' },
+  { id: 'low-stock-alerts', text: 'Review low-stock alerts and supplier reorder reports regularly.' },
+  { id: 'transactions', text: 'Record stock-in and stock-out quantities with the correct movement reason.' },
   { id: 'backups', text: 'Create backups before performing restore actions.', adminRelated: true },
   { id: 'admin-features', text: 'Admin-only features should be used only by authorized users.', adminRelated: true },
 ];
@@ -198,8 +200,8 @@ const troubleshooting = [
   {
     id: 'low-stock-missing',
     title: 'Low-stock alert not showing',
-    cause: 'The reorder level may not be set correctly, or the item quantity is still above the reorder level.',
-    solution: 'Check the item’s current quantity and reorder level from the Inventory page.',
+    cause: 'The reorder point or manual low-stock threshold may not be set correctly, or the item quantity is still above the threshold.',
+    solution: 'Check the item current quantity, manual low-stock threshold, supplier lead time, safety stock, and average daily sales from the Inventory page.',
   },
   {
     id: 'admin-access',

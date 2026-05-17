@@ -37,6 +37,31 @@ export function ReportsModule({
     return () => clearTimeout(timer);
   }, [reportPeriod, selectedReportDate]);
 
+  useEffect(() => {
+    const applyTargetReport = ({ reportType: nextReportType, category = 'all' } = {}) => {
+      if (!nextReportType) return;
+      setReportType(nextReportType);
+      setSelectedCategory(category || 'all');
+    };
+
+    const storedReportType = localStorage.getItem('reports_target_type');
+    if (storedReportType) {
+      applyTargetReport({
+        reportType: storedReportType,
+        category: localStorage.getItem('reports_target_category') || 'all'
+      });
+      localStorage.removeItem('reports_target_type');
+      localStorage.removeItem('reports_target_category');
+    }
+
+    const handleTargetReport = event => {
+      applyTargetReport(event.detail || {});
+    };
+
+    window.addEventListener('reports-target-view', handleTargetReport);
+    return () => window.removeEventListener('reports-target-view', handleTargetReport);
+  }, []);
+
   const getSelectedDate = () => {
     const [year, month, day] = selectedReportDate.split('-').map(Number);
     const date = new Date(year, month - 1, day);
@@ -164,6 +189,9 @@ export function ReportsModule({
   const stockOutUnits = reportMovements
     .filter(movement => movement.action === 'stock_out')
     .reduce((sum, movement) => sum + movement.quantityChanged, 0);
+  const salesMovementUnits = reportMovements
+    .filter(movement => movement.action === 'stock_out' && movement.reason === 'sales')
+    .reduce((sum, movement) => sum + movement.quantityChanged, 0);
 
   // Get unique categories from the selected report period
   const categories = Array.from(new Set(reportInventory.map(item => item.category)));
@@ -183,6 +211,60 @@ export function ReportsModule({
         'Low Stock': 1
       };
       return (priority[a.status] ?? 99) - (priority[b.status] ?? 99);
+    });
+  };
+
+  const getDisplayItemCode = item => item?.itemCode || item?.id || 'N/A';
+
+  const getSalesDemandForItem = item => reportMovements
+    .filter(movement =>
+      movement.action === 'stock_out' &&
+      movement.reason === 'sales' &&
+      (
+        String(movement.inventoryId || '') === String(item.id || '') ||
+        String(movement.productId || '') === String(item.productId || '')
+      )
+    )
+    .reduce((sum, movement) => sum + Number(movement.quantityChanged || 0), 0);
+
+  const getSupplierReorderGroups = () => {
+    const reorderItems = getLowStockItems();
+    const filteredItems = selectedCategory === 'all'
+      ? reorderItems
+      : reorderItems.filter(item => item.category === selectedCategory);
+    const groups = filteredItems.reduce((acc, item) => {
+      const supplier = item.supplierName?.trim() || 'Unassigned Supplier';
+      if (!acc[supplier]) {
+        acc[supplier] = {
+          supplier,
+          itemCount: 0,
+          outOfStock: 0,
+          lowStock: 0,
+          suggestedUnits: 0,
+          items: []
+        };
+      }
+      const reorderPoint = Number(item.activeLowStockThreshold ?? item.recommendedReorderPoint ?? item.reorderLevel ?? 0);
+      const reorderGap = Math.max(0, reorderPoint - Number(item.quantity || 0));
+      const recentSalesDemand = getSalesDemandForItem(item);
+      const suggestedQuantity = Math.max(reorderGap, recentSalesDemand);
+      acc[supplier].itemCount += 1;
+      acc[supplier].outOfStock += item.status === 'Out of Stock' ? 1 : 0;
+      acc[supplier].lowStock += item.status === 'Low Stock' ? 1 : 0;
+      acc[supplier].suggestedUnits += suggestedQuantity;
+      acc[supplier].items.push({
+        ...item,
+        reorderPoint,
+        reorderGap,
+        recentSalesDemand,
+        suggestedQuantity
+      });
+      return acc;
+    }, {});
+
+    return Object.values(groups).sort((a, b) => {
+      if (b.outOfStock !== a.outOfStock) return b.outOfStock - a.outOfStock;
+      return a.supplier.localeCompare(b.supplier);
     });
   };
 
@@ -288,10 +370,10 @@ export function ReportsModule({
       doc.setFont('helvetica', 'normal');
       doc.text(`Category Filter: ${selectedCategory === 'all' ? 'All Categories' : selectedCategory}`, 20, startY + 8);
       doc.text(`Total Items: ${items.length}`, 20, startY + 14);
-      const itemData = items.map(item => [item.id, item.name, item.category, item.quantity.toString(), item.status, formatDateTime(item.lastUpdated)]);
+      const itemData = items.map(item => [getDisplayItemCode(item), item.name, item.category, item.supplierName || 'Unassigned', item.quantity.toString(), item.status, formatDateTime(item.lastUpdated)]);
       autoTable(doc, {
         startY: startY + 20,
-        head: [['ID', 'Item Name', 'Category', 'Quantity', 'Status', 'Last Updated']],
+        head: [['Item Code', 'Item Name', 'Category', 'Supplier', 'Quantity', 'Status', 'Last Updated']],
         body: itemData,
         theme: 'striped',
         headStyles: {
@@ -308,21 +390,24 @@ export function ReportsModule({
         },
         columnStyles: {
           0: {
-            cellWidth: 18
+            cellWidth: 28
           },
           1: {
-            cellWidth: 50
+            cellWidth: 42
           },
           2: {
             cellWidth: 30
           },
           3: {
-            cellWidth: 20
+            cellWidth: 28
           },
           4: {
-            cellWidth: 25
+            cellWidth: 18
           },
           5: {
+            cellWidth: 24
+          },
+          6: {
             cellWidth: 27
           }
         }
@@ -338,10 +423,10 @@ export function ReportsModule({
       if (lowStockList.length === 0) {
         doc.text('No low stock or out-of-stock items found for this report period.', 20, startY + 20);
       } else {
-        const itemData = lowStockList.map(item => [item.id, item.name, item.category, item.quantity.toString(), item.status, formatDateTime(item.lastUpdated)]);
+        const itemData = lowStockList.map(item => [getDisplayItemCode(item), item.name, item.category, item.supplierName || 'Unassigned', item.quantity.toString(), item.status, formatDateTime(item.lastUpdated)]);
         autoTable(doc, {
           startY: startY + 15,
-          head: [['ID', 'Item Name', 'Category', 'Quantity', 'Status', 'Last Updated']],
+          head: [['Item Code', 'Item Name', 'Category', 'Supplier', 'Quantity', 'Status', 'Last Updated']],
           body: itemData,
           theme: 'striped',
           headStyles: {
@@ -358,21 +443,24 @@ export function ReportsModule({
           },
           columnStyles: {
             0: {
-              cellWidth: 18
+              cellWidth: 28
             },
             1: {
-              cellWidth: 50
+              cellWidth: 42
             },
             2: {
               cellWidth: 30
             },
             3: {
-              cellWidth: 20
+              cellWidth: 28
             },
             4: {
-              cellWidth: 25
+              cellWidth: 18
             },
             5: {
+              cellWidth: 24
+            },
+            6: {
               cellWidth: 27
             }
           }
@@ -395,10 +483,10 @@ export function ReportsModule({
         doc.setFont('helvetica', 'normal');
         doc.text(`Total Items: ${cat.itemCount} | Total Units: ${cat.totalQty} | Low Stock: ${cat.lowStock} | Out of Stock: ${cat.outOfStock}`, 20, currentY + 6);
         const categoryItems = reportInventory.filter(item => item.category === cat.category);
-        const itemData = categoryItems.map(item => [item.id, item.name, item.quantity.toString(), item.status, formatDateTime(item.lastUpdated)]);
+        const itemData = categoryItems.map(item => [getDisplayItemCode(item), item.name, item.supplierName || 'Unassigned', item.quantity.toString(), item.status, formatDateTime(item.lastUpdated)]);
         autoTable(doc, {
           startY: currentY + 12,
-          head: [['ID', 'Item Name', 'Quantity', 'Status', 'Last Updated']],
+          head: [['Item Code', 'Item Name', 'Supplier', 'Quantity', 'Status', 'Last Updated']],
           body: itemData,
           theme: 'striped',
           headStyles: {
@@ -415,10 +503,10 @@ export function ReportsModule({
           },
           columnStyles: {
             0: {
-              cellWidth: 20
+              cellWidth: 30
             },
             1: {
-              cellWidth: 70
+              cellWidth: 60
             },
             2: {
               cellWidth: 25
@@ -433,20 +521,86 @@ export function ReportsModule({
         });
         currentY = doc.lastAutoTable.finalY + 10;
       });
-    } else if (reportType === 'movements') {
-      const movements = getFilteredMovements();
+    } else if (reportType === 'supplier-reorder') {
+      const supplierGroups = getSupplierReorderGroups();
       doc.setFontSize(12);
       doc.setFont('helvetica', 'bold');
-      doc.text('STOCK MOVEMENT HISTORY', 20, startY);
+      doc.text('SUPPLIER-BASED REORDER REPORT', 20, startY);
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
       doc.text(`Category Filter: ${selectedCategory === 'all' ? 'All Categories' : selectedCategory}`, 20, startY + 8);
-      doc.text(`Total Movements: ${movements.length}`, 20, startY + 14);
-      doc.text(`Stock In Units: ${stockInUnits}`, 20, startY + 20);
-      doc.text(`Stock Out Units: ${stockOutUnits}`, 20, startY + 26);
+      doc.text(`Supplier Groups: ${supplierGroups.length}`, 20, startY + 14);
+
+      if (supplierGroups.length === 0) {
+        doc.text('No low-stock or out-of-stock items require supplier-based reordering for this report period.', 20, startY + 28);
+      } else {
+        let currentY = startY + 24;
+        supplierGroups.forEach(group => {
+          if (currentY > 245) {
+            doc.addPage();
+            currentY = 20;
+          }
+          doc.setFontSize(11);
+          doc.setFont('helvetica', 'bold');
+          doc.text(`SUPPLIER: ${group.supplier}`, 20, currentY);
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'normal');
+          doc.text(`Items: ${group.itemCount} | Out of Stock: ${group.outOfStock} | Low Stock: ${group.lowStock} | Suggested Units: ${group.suggestedUnits}`, 20, currentY + 6);
+          autoTable(doc, {
+            startY: currentY + 12,
+            head: [['Item Code', 'Item', 'Category', 'Current', 'Reorder Point', 'Sales Demand', 'Suggested Order', 'Status']],
+            body: group.items.map(item => [
+              getDisplayItemCode(item),
+              item.name,
+              item.category,
+              String(item.quantity),
+              String(item.reorderPoint),
+              String(item.recentSalesDemand),
+              String(item.suggestedQuantity),
+              item.status
+            ]),
+            theme: 'striped',
+            headStyles: {
+              fillColor: [71, 85, 105],
+              textColor: 255,
+              fontStyle: 'bold'
+            },
+            styles: {
+              fontSize: 8,
+              cellPadding: 2
+            },
+            alternateRowStyles: {
+              fillColor: [248, 250, 252]
+            }
+          });
+          currentY = doc.lastAutoTable.finalY + 12;
+        });
+      }
+    } else if (reportType === 'movements' || reportType === 'sales-movements') {
+      const isSalesMovementReport = reportType === 'sales-movements';
+      const movements = getFilteredMovements({ salesOnly: isSalesMovementReport });
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text(isSalesMovementReport ? 'SALES-BASED STOCK MOVEMENT REPORT' : 'STOCK MOVEMENT HISTORY', 20, startY);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Category Filter: ${selectedCategory === 'all' ? 'All Categories' : selectedCategory}`, 20, startY + 8);
+      doc.text(`${isSalesMovementReport ? 'Sales Deductions' : 'Total Movements'}: ${movements.length}`, 20, startY + 14);
+      if (isSalesMovementReport) {
+        doc.text(`Quantity Sold: ${salesMovementUnits}`, 20, startY + 20);
+      } else {
+        doc.text(`Stock In Units: ${stockInUnits}`, 20, startY + 20);
+        doc.text(`Stock Out Units: ${stockOutUnits}`, 20, startY + 26);
+      }
 
       if (movements.length === 0) {
-        doc.text('No stock movements found for this report period.', 20, startY + 38);
+        doc.text(
+          isSalesMovementReport
+            ? 'No sales-based stock deductions found for this report period.'
+            : 'No stock movements found for this report period.',
+          20,
+          startY + 38
+        );
       } else {
         const movementData = movements.map(movement => [
           movement.id,
@@ -454,13 +608,14 @@ export function ReportsModule({
           formatMovementItemNameForExport(movement),
           movement.category,
           getMovementLabel(movement.action),
+          getMovementReasonLabel(movement.reason),
           movement.quantityChanged.toString(),
           `${movement.previousQuantity} -> ${movement.newQuantity}`,
           movement.actorName || 'System'
         ]);
         autoTable(doc, {
           startY: startY + 34,
-          head: [['ID', 'Date', 'Item', 'Category', 'Action', 'Qty', 'Before -> After', 'Handled By']],
+          head: [['Movement ID', 'Date', 'Item', 'Category', 'Action', 'Reason', isSalesMovementReport ? 'Qty Sold' : 'Qty', 'Before -> After', 'Handled By']],
           body: movementData,
           theme: 'striped',
           headStyles: {
@@ -508,16 +663,35 @@ export function ReportsModule({
     return 'Adjustment';
   };
 
+  const getMovementReasonLabel = reason => {
+    const labels = {
+      delivery_received: 'Delivery Received',
+      returned_item: 'Returned Item',
+      beginning_balance: 'Beginning Balance',
+      sales: 'Sales',
+      damaged: 'Damaged',
+      expired: 'Expired',
+      lost_missing: 'Lost/Missing',
+      manual_adjustment: 'Manual Adjustment',
+      branch_transfer: 'Branch Transfer',
+      correction: 'Correction'
+    };
+    return labels[reason] || '-';
+  };
+
   const getMovementBadgeClass = action => {
     if (action === 'stock_out') return 'bg-red-100 text-red-700 hover:bg-red-100';
     if (action === 'initial_stock') return 'bg-blue-100 text-blue-700 hover:bg-blue-100';
     return 'bg-green-100 text-green-700 hover:bg-green-100';
   };
 
-  const getFilteredMovements = () => {
-    const filtered = selectedCategory === 'all'
+  const getFilteredMovements = ({ salesOnly = false } = {}) => {
+    const categoryFiltered = selectedCategory === 'all'
       ? reportMovements
       : reportMovements.filter(movement => movement.category === selectedCategory);
+    const filtered = salesOnly
+      ? categoryFiltered.filter(movement => movement.action === 'stock_out' && movement.reason === 'sales')
+      : categoryFiltered;
     return [...filtered].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   };
   return (
@@ -773,11 +947,13 @@ export function ReportsModule({
                     <SelectItem value="detailed">Detailed Inventory</SelectItem>
                     <SelectItem value="low-stock">Low Stock Alert</SelectItem>
                     <SelectItem value="category">Category Analysis</SelectItem>
+                    <SelectItem value="supplier-reorder">Supplier Reorder</SelectItem>
                     <SelectItem value="movements">Stock Movement History</SelectItem>
+                    <SelectItem value="sales-movements">Sales-Based Stock Movement</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              {(reportType === 'detailed' || reportType === 'movements') && (
+              {(reportType === 'detailed' || reportType === 'movements' || reportType === 'sales-movements' || reportType === 'supplier-reorder') && (
                 <div className="flex-1">
                   <label className="text-sm font-medium mb-2 block text-gray-700">Filter by Category</label>
                   <Select value={selectedCategory} onValueChange={setSelectedCategory}>
@@ -799,11 +975,16 @@ export function ReportsModule({
       </Card>
 
       <div className={`reports-metric-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
-        {(reportType === 'movements' ? [
-          { label: 'Movements', value: getFilteredMovements().length, icon: <RefreshCw className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
-          { label: 'Stock In Units', value: stockInUnits, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
-          { label: 'Stock Out Units', value: stockOutUnits, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: stockOutUnits > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
-          { label: 'Categories', value: new Set(getFilteredMovements().map(movement => movement.category)).size, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
+        {(reportType === 'movements' || reportType === 'sales-movements' ? [
+          { label: reportType === 'sales-movements' ? 'Sales Deductions' : 'Movements', value: getFilteredMovements({ salesOnly: reportType === 'sales-movements' }).length, icon: <RefreshCw className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
+          { label: reportType === 'sales-movements' ? 'Quantity Sold' : 'Stock In Units', value: reportType === 'sales-movements' ? salesMovementUnits : stockInUnits, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
+          { label: reportType === 'sales-movements' ? 'Sales Reason' : 'Stock Out Units', value: reportType === 'sales-movements' ? 'Sales' : stockOutUnits, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: reportType === 'sales-movements' || stockOutUnits > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
+          { label: 'Categories', value: new Set(getFilteredMovements({ salesOnly: reportType === 'sales-movements' }).map(movement => movement.category)).size, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
+        ] : reportType === 'supplier-reorder' ? [
+          { label: 'Supplier Groups', value: getSupplierReorderGroups().length, icon: <Package className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
+          { label: 'Reorder Items', value: getSupplierReorderGroups().reduce((sum, group) => sum + group.itemCount, 0), icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: 'border-l-red-500' },
+          { label: 'Out of Stock', value: getSupplierReorderGroups().reduce((sum, group) => sum + group.outOfStock, 0), icon: <AlertTriangle className="w-8 h-8 text-orange-500" />, color: 'border-l-orange-500' },
+          { label: 'Suggested Units', value: getSupplierReorderGroups().reduce((sum, group) => sum + group.suggestedUnits, 0), icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
         ] : [
           { label: 'Total Items', value: totalItems, icon: <Package className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
           { label: 'Total Units', value: totalQuantity, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
@@ -921,9 +1102,10 @@ export function ReportsModule({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>ID</TableHead>
+                  <TableHead>Item Code</TableHead>
                   <TableHead>Item Name</TableHead>
                   <TableHead>Category</TableHead>
+                  <TableHead>Supplier</TableHead>
                   <TableHead>Quantity</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Last Updated</TableHead>
@@ -932,9 +1114,10 @@ export function ReportsModule({
               <TableBody>
                 {getFilteredInventory().map(item => (
                   <TableRow key={item.id}>
-                    <TableCell className="font-mono text-sm">{item.id}</TableCell>
+                    <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
                     <TableCell>{item.name}</TableCell>
                     <TableCell>{item.category}</TableCell>
+                    <TableCell>{item.supplierName || 'Unassigned'}</TableCell>
                     <TableCell>{item.quantity}</TableCell>
                     <TableCell>
                       <Badge className={item.status === 'In Stock' ? 'bg-green-100 text-green-700' : item.status === 'Low Stock' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}>
@@ -966,9 +1149,10 @@ export function ReportsModule({
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>ID</TableHead>
+                    <TableHead>Item Code</TableHead>
                     <TableHead>Item Name</TableHead>
                     <TableHead>Category</TableHead>
+                    <TableHead>Supplier</TableHead>
                     <TableHead>Quantity</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Last Updated</TableHead>
@@ -977,9 +1161,10 @@ export function ReportsModule({
                 <TableBody>
                   {getLowStockItems().map(item => (
                     <TableRow key={item.id}>
-                      <TableCell className="font-mono text-sm">{item.id}</TableCell>
+                      <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
                       <TableCell>{item.name}</TableCell>
                       <TableCell>{item.category}</TableCell>
+                      <TableCell>{item.supplierName || 'Unassigned'}</TableCell>
                       <TableCell className="font-bold">{item.quantity}</TableCell>
                       <TableCell>
                         <Badge className={item.status === 'Low Stock' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}>
@@ -994,6 +1179,72 @@ export function ReportsModule({
             )}
           </CardContent>
         </Card>
+      )}
+
+      {reportType === 'supplier-reorder' && (
+        <div className={`space-y-4 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
+          {getSupplierReorderGroups().length === 0 ? (
+            <Card className="reports-data-card">
+              <CardContent className="py-10 text-center text-slate-500">
+                <AlertTriangle className="mx-auto mb-3 h-12 w-12 text-green-500" />
+                <p>No low-stock or out-of-stock items require supplier-based reordering for this report period.</p>
+              </CardContent>
+            </Card>
+          ) : (
+            getSupplierReorderGroups().map(group => (
+              <Card key={group.supplier} className="reports-data-card">
+                <CardHeader>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <CardTitle>{group.supplier}</CardTitle>
+                      <CardDescription>
+                        {group.itemCount} {group.itemCount === 1 ? 'item' : 'items'} needing reorder attention • Suggested total order: {group.suggestedUnits} units
+                      </CardDescription>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                      {group.outOfStock > 0 && <Badge variant="destructive">{group.outOfStock} Out</Badge>}
+                      {group.lowStock > 0 && <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100">{group.lowStock} Low</Badge>}
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Current Stock</TableHead>
+                        <TableHead>Reorder Point</TableHead>
+                        <TableHead>Sales Demand</TableHead>
+                        <TableHead>Suggested Order</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {group.items.map(item => (
+                        <TableRow key={item.id}>
+                          <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
+                          <TableCell>{item.name}</TableCell>
+                          <TableCell>{item.category}</TableCell>
+                          <TableCell className="font-semibold">{item.quantity}</TableCell>
+                          <TableCell>{item.reorderPoint}</TableCell>
+                          <TableCell>{item.recentSalesDemand}</TableCell>
+                          <TableCell className="font-semibold text-slate-950">{item.suggestedQuantity}</TableCell>
+                          <TableCell>
+                            <Badge className={item.status === 'Low Stock' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}>
+                              {item.status}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            ))
+          )}
+        </div>
       )}
 
       {reportType === 'category' && (
@@ -1021,8 +1272,9 @@ export function ReportsModule({
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>ID</TableHead>
+                        <TableHead>Item Code</TableHead>
                         <TableHead>Item Name</TableHead>
+                        <TableHead>Supplier</TableHead>
                         <TableHead>Quantity</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Last Updated</TableHead>
@@ -1031,8 +1283,9 @@ export function ReportsModule({
                     <TableBody>
                       {categoryItems.map(item => (
                         <TableRow key={item.id}>
-                          <TableCell className="font-mono text-sm">{item.id}</TableCell>
+                          <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
                           <TableCell>{item.name}</TableCell>
+                          <TableCell>{item.supplierName || 'Unassigned'}</TableCell>
                           <TableCell>{item.quantity}</TableCell>
                           <TableCell>
                             <Badge className={item.status === 'In Stock' ? 'bg-green-100 text-green-700' : item.status === 'Low Stock' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}>
@@ -1051,19 +1304,19 @@ export function ReportsModule({
         </div>
       )}
 
-      {reportType === 'movements' && (
+      {(reportType === 'movements' || reportType === 'sales-movements') && (
         <Card className={`reports-data-card transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
           <CardHeader>
-            <CardTitle>Stock Movement History</CardTitle>
+            <CardTitle>{reportType === 'sales-movements' ? 'Sales-Based Stock Movement Report' : 'Stock Movement History'}</CardTitle>
             <CardDescription>
-              {selectedCategory === 'all' ? 'All categories' : `${selectedCategory} category`} - {getFilteredMovements().length} movements
+              {selectedCategory === 'all' ? 'All categories' : `${selectedCategory} category`} - {getFilteredMovements({ salesOnly: reportType === 'sales-movements' }).length} {reportType === 'sales-movements' ? 'sales deductions' : 'movements'}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {getFilteredMovements().length === 0 ? (
+            {getFilteredMovements({ salesOnly: reportType === 'sales-movements' }).length === 0 ? (
               <div className="text-center py-8 text-slate-500">
                 <RefreshCw className="w-12 h-12 mx-auto mb-3 text-slate-400" />
-                <p>No stock movements found for this report period.</p>
+                <p>{reportType === 'sales-movements' ? 'No sales-based stock deductions found for this report period.' : 'No stock movements found for this report period.'}</p>
               </div>
             ) : (
               <>
@@ -1075,14 +1328,15 @@ export function ReportsModule({
                         <TableHead>Item</TableHead>
                         <TableHead>Category</TableHead>
                         <TableHead>Action</TableHead>
-                        <TableHead>Qty</TableHead>
+                        <TableHead>Reason</TableHead>
+                        <TableHead>{reportType === 'sales-movements' ? 'Qty Sold' : 'Qty'}</TableHead>
                         <TableHead>Before</TableHead>
                         <TableHead>After</TableHead>
                         <TableHead>Handled By</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                  {getFilteredMovements().map(movement => {
+                  {getFilteredMovements({ salesOnly: reportType === 'sales-movements' }).map(movement => {
                     const itemNameDetails = getMovementItemNameDetails(movement);
                     return (
                         <TableRow key={movement.id}>
@@ -1101,6 +1355,7 @@ export function ReportsModule({
                               {getMovementLabel(movement.action)}
                             </Badge>
                           </TableCell>
+                          <TableCell>{getMovementReasonLabel(movement.reason)}</TableCell>
                           <TableCell className="font-semibold">{movement.quantityChanged}</TableCell>
                           <TableCell>{movement.previousQuantity}</TableCell>
                           <TableCell>{movement.newQuantity}</TableCell>
@@ -1112,7 +1367,7 @@ export function ReportsModule({
                   </Table>
                 </div>
                 <div className="reports-movement-mobile-list">
-                  {getFilteredMovements().map(movement => {
+                  {getFilteredMovements({ salesOnly: reportType === 'sales-movements' }).map(movement => {
                     const itemNameDetails = getMovementItemNameDetails(movement);
                     return (
                     <article key={movement.id} className="reports-movement-card">
@@ -1130,7 +1385,11 @@ export function ReportsModule({
                       </div>
                       <div className="reports-movement-stats">
                         <div className="reports-movement-stat">
-                          <span>Qty</span>
+                          <span>Reason</span>
+                          <strong>{getMovementReasonLabel(movement.reason)}</strong>
+                        </div>
+                        <div className="reports-movement-stat">
+                          <span>{reportType === 'sales-movements' ? 'Qty Sold' : 'Qty'}</span>
                           <strong>{movement.quantityChanged}</strong>
                         </div>
                         <div className="reports-movement-stat">
@@ -1150,7 +1409,7 @@ export function ReportsModule({
                           <strong>{movement.branch}</strong>
                         </div>
                         <div className="reports-movement-stat">
-                          <span>ID</span>
+                          <span>Movement ID</span>
                           <strong>{movement.id}</strong>
                         </div>
                       </div>
@@ -1661,11 +1920,11 @@ export function ReportsModule({
     className: "reports-mobile-category-stat"
   }, /*#__PURE__*/React.createElement("span", null, "Total Units"), /*#__PURE__*/React.createElement("strong", null, cat.totalQty))))))))), reportType === 'detailed' && /*#__PURE__*/React.createElement(Card, {
     className: `transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`
-  }, /*#__PURE__*/React.createElement(CardHeader, null, /*#__PURE__*/React.createElement(CardTitle, null, "Detailed Inventory"), /*#__PURE__*/React.createElement(CardDescription, null, selectedCategory === 'all' ? 'All items' : `${selectedCategory} category`, " - ", getFilteredInventory().length, " items")), /*#__PURE__*/React.createElement(CardContent, null, /*#__PURE__*/React.createElement(Table, null, /*#__PURE__*/React.createElement(TableHeader, null, /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableHead, null, "ID"), /*#__PURE__*/React.createElement(TableHead, null, "Item Name"), /*#__PURE__*/React.createElement(TableHead, null, "Category"), /*#__PURE__*/React.createElement(TableHead, null, "Quantity"), /*#__PURE__*/React.createElement(TableHead, null, "Status"), /*#__PURE__*/React.createElement(TableHead, null, "Last Updated"))), /*#__PURE__*/React.createElement(TableBody, null, getFilteredInventory().map(item => /*#__PURE__*/React.createElement(TableRow, {
+  }, /*#__PURE__*/React.createElement(CardHeader, null, /*#__PURE__*/React.createElement(CardTitle, null, "Detailed Inventory"), /*#__PURE__*/React.createElement(CardDescription, null, selectedCategory === 'all' ? 'All items' : `${selectedCategory} category`, " - ", getFilteredInventory().length, " items")), /*#__PURE__*/React.createElement(CardContent, null, /*#__PURE__*/React.createElement(Table, null, /*#__PURE__*/React.createElement(TableHeader, null, /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableHead, null, "Item Code"), /*#__PURE__*/React.createElement(TableHead, null, "Item Name"), /*#__PURE__*/React.createElement(TableHead, null, "Category"), /*#__PURE__*/React.createElement(TableHead, null, "Quantity"), /*#__PURE__*/React.createElement(TableHead, null, "Status"), /*#__PURE__*/React.createElement(TableHead, null, "Last Updated"))), /*#__PURE__*/React.createElement(TableBody, null, getFilteredInventory().map(item => /*#__PURE__*/React.createElement(TableRow, {
     key: item.id
   }, /*#__PURE__*/React.createElement(TableCell, {
     className: "font-mono text-sm"
-  }, item.id), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, null, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
+  }, getDisplayItemCode(item)), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, null, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
     className: item.status === 'In Stock' ? 'bg-green-100 text-green-700' : item.status === 'Low Stock' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
   }, item.status)), /*#__PURE__*/React.createElement(TableCell, null, formatDateTime(item.lastUpdated))))))), reportType === 'low-stock' && /*#__PURE__*/React.createElement(Card, {
     className: `transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`
@@ -1673,11 +1932,11 @@ export function ReportsModule({
     className: "text-center py-8 text-slate-500"
   }, /*#__PURE__*/React.createElement(AlertTriangle, {
     className: "w-12 h-12 mx-auto mb-3 text-green-500"
-  }), /*#__PURE__*/React.createElement("p", null, "No low stock items. All inventory levels are adequate.")) : /*#__PURE__*/React.createElement(Table, null, /*#__PURE__*/React.createElement(TableHeader, null, /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableHead, null, "ID"), /*#__PURE__*/React.createElement(TableHead, null, "Item Name"), /*#__PURE__*/React.createElement(TableHead, null, "Category"), /*#__PURE__*/React.createElement(TableHead, null, "Quantity"), /*#__PURE__*/React.createElement(TableHead, null, "Status"), /*#__PURE__*/React.createElement(TableHead, null, "Last Updated"))), /*#__PURE__*/React.createElement(TableBody, null, getLowStockItems().map(item => /*#__PURE__*/React.createElement(TableRow, {
+  }), /*#__PURE__*/React.createElement("p", null, "No low stock items. All inventory levels are adequate.")) : /*#__PURE__*/React.createElement(Table, null, /*#__PURE__*/React.createElement(TableHeader, null, /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableHead, null, "Item Code"), /*#__PURE__*/React.createElement(TableHead, null, "Item Name"), /*#__PURE__*/React.createElement(TableHead, null, "Category"), /*#__PURE__*/React.createElement(TableHead, null, "Quantity"), /*#__PURE__*/React.createElement(TableHead, null, "Status"), /*#__PURE__*/React.createElement(TableHead, null, "Last Updated"))), /*#__PURE__*/React.createElement(TableBody, null, getLowStockItems().map(item => /*#__PURE__*/React.createElement(TableRow, {
     key: item.id
   }, /*#__PURE__*/React.createElement(TableCell, {
     className: "font-mono text-sm"
-  }, item.id), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, {
+  }, getDisplayItemCode(item)), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, {
     className: "font-bold"
   }, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
     className: item.status === 'Low Stock' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
@@ -1693,11 +1952,11 @@ export function ReportsModule({
       className: "flex items-center justify-between"
     }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(CardTitle, null, category), /*#__PURE__*/React.createElement(CardDescription, null, categoryItems.length, " items \u2022 ", categoryQty, " total units")), categoryLowStock > 0 && /*#__PURE__*/React.createElement(Badge, {
       variant: "destructive"
-    }, categoryLowStock, " Low Stock"))), /*#__PURE__*/React.createElement(CardContent, null, /*#__PURE__*/React.createElement(Table, null, /*#__PURE__*/React.createElement(TableHeader, null, /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableHead, null, "ID"), /*#__PURE__*/React.createElement(TableHead, null, "Item Name"), /*#__PURE__*/React.createElement(TableHead, null, "Quantity"), /*#__PURE__*/React.createElement(TableHead, null, "Status"), /*#__PURE__*/React.createElement(TableHead, null, "Last Updated"))), /*#__PURE__*/React.createElement(TableBody, null, categoryItems.map(item => /*#__PURE__*/React.createElement(TableRow, {
+    }, categoryLowStock, " Low Stock"))), /*#__PURE__*/React.createElement(CardContent, null, /*#__PURE__*/React.createElement(Table, null, /*#__PURE__*/React.createElement(TableHeader, null, /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableHead, null, "Item Code"), /*#__PURE__*/React.createElement(TableHead, null, "Item Name"), /*#__PURE__*/React.createElement(TableHead, null, "Quantity"), /*#__PURE__*/React.createElement(TableHead, null, "Status"), /*#__PURE__*/React.createElement(TableHead, null, "Last Updated"))), /*#__PURE__*/React.createElement(TableBody, null, categoryItems.map(item => /*#__PURE__*/React.createElement(TableRow, {
       key: item.id
     }, /*#__PURE__*/React.createElement(TableCell, {
       className: "font-mono text-sm"
-    }, item.id), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
+    }, getDisplayItemCode(item)), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
       className: item.status === 'In Stock' ? 'bg-green-100 text-green-700' : item.status === 'Low Stock' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
     }, item.status)), /*#__PURE__*/React.createElement(TableCell, null, formatDateTime(item.lastUpdated))))))));
   }))));

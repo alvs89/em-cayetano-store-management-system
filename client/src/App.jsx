@@ -1,5 +1,6 @@
 // App shell: handles routing, auth state (login/2FA), and module navigation.
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Home,
   Box,
@@ -9,13 +10,18 @@ import {
   HelpCircle,
   Bell,
   Users,
+  ShieldCheck,
   LogOut,
   Archive,
   ChevronLeft,
   ChevronRight,
   Menu,
   X,
+  Lock,
+  Eye,
+  EyeOff,
 } from "lucide-react";
+import axios from "axios";
 import { LoginScreen } from "./components/LoginScreen";
 import { TwoFactorAuthScreen } from "./components/TwoFactorAuthScreen";
 import RegistrationScreen from './components/RegistrationScreen';
@@ -27,10 +33,13 @@ import { ArchiveModule } from "./components/ArchiveModule";
 import { ReportsModule } from "./components/ReportsModule";
 import { MaintenanceModule } from "./components/MaintenanceModule";
 import { UserManagementModule } from "./components/UserManagementModule";
+import { AuditTrailModule } from "./components/AuditTrailModule";
 import { SearchModule } from "./components/SearchModule";
 import { HelpModule } from "./components/HelpModule";
 import { AlertsModule } from "./components/AlertsModule";
 import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
+import { Label } from "./components/ui/label";
 import { Avatar, AvatarFallback } from "./components/ui/avatar";
 import { Separator } from "./components/ui/separator";
 import {
@@ -46,8 +55,21 @@ import {
 import { toast, Toaster } from "sonner";
 import { DataProvider, useData } from "./components/DataContext";
 import { Routes, Route, useLocation, useNavigate } from 'react-router-dom';
+import { apiUrl } from './utils/api';
+import { PASSWORD_HELP_TEXT, validatePasswordPolicy } from './utils/passwordPolicy';
 
 const emcLogoSrc = "/emc-logo.png"; // Place the logo file in public/emc-logo.png
+const emptyPasswordChangeForm = {
+  currentPassword: "",
+  newPassword: "",
+  confirmPassword: "",
+};
+const hiddenPasswordVisibility = {
+  current: false,
+  next: false,
+  confirm: false,
+};
+const REQUIRED_PASSWORD_TOAST_ID = 'required-password-change-error';
 
 function AppContent() {
   const navigate = useNavigate();
@@ -69,6 +91,7 @@ function AppContent() {
       role: user.role || "User",
       username: user.username || "",
       email: user.email || "",
+      mustChangePassword: Boolean(user.mustChangePassword ?? user.must_change_password),
     };
   };
 
@@ -90,6 +113,10 @@ function AppContent() {
   const [pendingUser, setPendingUser] = useState(null);
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
   const [hasShownInvalidationToast, setHasShownInvalidationToast] = useState(false);
+  const [passwordChangeForm, setPasswordChangeForm] = useState(emptyPasswordChangeForm);
+  const [passwordVisibility, setPasswordVisibility] = useState(hiddenPasswordVisibility);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [showPasswordChangeLogoutDialog, setShowPasswordChangeLogoutDialog] = useState(false);
   const POST_LOGOUT_MSG_KEY = 'postLogoutToast';
 
   // Called after password+2FA success to enter the app
@@ -138,11 +165,79 @@ function AppContent() {
     localStorage.removeItem('active_branch');
     sessionStorage.removeItem(AUTH_SESSION_KEY);
     setCurrentUser(null);
+    setPasswordChangeForm(emptyPasswordChangeForm);
+    setPasswordVisibility(hiddenPasswordVisibility);
+    setShowPasswordChangeLogoutDialog(false);
+    toast.dismiss(REQUIRED_PASSWORD_TOAST_ID);
     window.dispatchEvent(new Event('auth-state-changed'));
     setCurrentScreen("login");
     navigate("/login", { replace: true });
     setShowLogoutDialog(false);
     toast.success("Logged out successfully");
+  };
+
+  const handleRequiredPasswordChange = async (event) => {
+    event.preventDefault();
+    const { currentPassword, newPassword, confirmPassword } = passwordChangeForm;
+    const showPasswordChangeError = (message) => {
+      toast.error(message, {
+        id: REQUIRED_PASSWORD_TOAST_ID,
+        duration: 4500,
+        style: {
+          zIndex: 2147483647,
+          opacity: 1,
+          background: '#fef2f2',
+          color: '#dc2626',
+          borderColor: '#fecaca',
+        },
+        classNames: {
+          toast: '!opacity-100',
+          title: '!text-red-600 !opacity-100',
+          description: '!text-red-600 !opacity-100',
+          icon: '!text-red-600 !opacity-100',
+        },
+      });
+    };
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      showPasswordChangeError("Please complete all password fields.");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      showPasswordChangeError("Passwords do not match.");
+      return;
+    }
+
+    const passwordError = validatePasswordPolicy(newPassword, currentUser || {});
+    if (passwordError) {
+      showPasswordChangeError(passwordError);
+      return;
+    }
+
+    setIsChangingPassword(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.post(apiUrl('/api/auth/change-password'), {
+        currentPassword,
+        newPassword
+      }, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+
+      const updatedUser = normalizeUser(response.data.user);
+      localStorage.setItem('token', response.data.token);
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      setCurrentUser(updatedUser);
+      setPasswordChangeForm(emptyPasswordChangeForm);
+      setPasswordVisibility(hiddenPasswordVisibility);
+      toast.dismiss(REQUIRED_PASSWORD_TOAST_ID);
+      toast.success("Password changed successfully.");
+    } catch (error) {
+      showPasswordChangeError(error.response?.data?.error || "Failed to change password.");
+    } finally {
+      setIsChangingPassword(false);
+    }
   };
 
   // Sidebar navigation handler
@@ -184,6 +279,18 @@ function AppContent() {
       setVisitedScreens(new Set(["dashboard"]));
     }
   }, [currentUser]);
+
+  useEffect(() => {
+    setPasswordChangeForm(emptyPasswordChangeForm);
+    setPasswordVisibility(hiddenPasswordVisibility);
+    setShowPasswordChangeLogoutDialog(false);
+    toast.dismiss(REQUIRED_PASSWORD_TOAST_ID);
+  }, [
+    currentUser?.id,
+    currentUser?.user_id,
+    currentUser?.username,
+    currentUser?.mustChangePassword,
+  ]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -333,8 +440,167 @@ function AppContent() {
     );
   };
 
+  const requiredPasswordChangeModal = currentUser?.mustChangePassword
+    ? createPortal(
+      <div
+        className="fixed inset-0 flex items-center justify-center bg-slate-950/70 px-4 py-6 backdrop-blur-sm"
+        style={{
+          zIndex: 2147483000
+        }}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="required-password-change-title"
+      >
+        <form
+          onSubmit={handleRequiredPasswordChange}
+          className="relative max-h-[calc(100vh-3rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+          style={{ zIndex: 2147483001 }}
+        >
+          <div className="mb-4 flex items-start gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+              <Lock className="h-6 w-6" />
+            </div>
+            <div>
+              <h2 id="required-password-change-title" className="text-xl font-bold text-slate-950">Change Temporary Password</h2>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                Your account was created by an administrator. Please set your own password before continuing.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="required-current-password">Temporary Password</Label>
+              <div className="relative">
+                <Input
+                  id="required-current-password"
+                  type={passwordVisibility.current ? "text" : "password"}
+                  autoComplete="current-password"
+                  value={passwordChangeForm.currentPassword}
+                  onChange={event => setPasswordChangeForm(prev => ({ ...prev, currentPassword: event.target.value }))}
+                  placeholder="Enter your temporary password"
+                  disabled={isChangingPassword}
+                  className="pr-11"
+                />
+                <button
+                  type="button"
+                  onClick={() => setPasswordVisibility(prev => ({ ...prev, current: !prev.current }))}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#FFFF00]"
+                  aria-label={passwordVisibility.current ? "Hide temporary password" : "Show temporary password"}
+                  disabled={isChangingPassword}
+                >
+                  {passwordVisibility.current ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="required-new-password">New Password</Label>
+              <div className="relative">
+                <Input
+                  id="required-new-password"
+                  type={passwordVisibility.next ? "text" : "password"}
+                  autoComplete="new-password"
+                  maxLength={64}
+                  value={passwordChangeForm.newPassword}
+                  onChange={event => setPasswordChangeForm(prev => ({ ...prev, newPassword: event.target.value }))}
+                  placeholder="Enter new password"
+                  disabled={isChangingPassword}
+                  className="pr-11"
+                />
+                <button
+                  type="button"
+                  onClick={() => setPasswordVisibility(prev => ({ ...prev, next: !prev.next }))}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#FFFF00]"
+                  aria-label={passwordVisibility.next ? "Hide new password" : "Show new password"}
+                  disabled={isChangingPassword}
+                >
+                  {passwordVisibility.next ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="required-confirm-password">Confirm New Password</Label>
+              <div className="relative">
+                <Input
+                  id="required-confirm-password"
+                  type={passwordVisibility.confirm ? "text" : "password"}
+                  autoComplete="new-password"
+                  maxLength={64}
+                  value={passwordChangeForm.confirmPassword}
+                  onChange={event => setPasswordChangeForm(prev => ({ ...prev, confirmPassword: event.target.value }))}
+                  placeholder="Confirm new password"
+                  disabled={isChangingPassword}
+                  className="pr-11"
+                />
+                <button
+                  type="button"
+                  onClick={() => setPasswordVisibility(prev => ({ ...prev, confirm: !prev.confirm }))}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#FFFF00]"
+                  aria-label={passwordVisibility.confirm ? "Hide confirm password" : "Show confirm password"}
+                  disabled={isChangingPassword}
+                >
+                  {passwordVisibility.confirm ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                </button>
+              </div>
+            </div>
+            <p className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">
+              {PASSWORD_HELP_TEXT}
+            </p>
+          </div>
+
+          <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowPasswordChangeLogoutDialog(true)}
+              disabled={isChangingPassword}
+            >
+              Logout
+            </Button>
+            <Button type="submit" disabled={isChangingPassword} className="bg-[#FF0000] text-white hover:bg-[#cc0000]">
+              {isChangingPassword ? "Saving..." : "Save New Password"}
+            </Button>
+          </div>
+        </form>
+        {showPasswordChangeLogoutDialog && (
+          <div className="absolute inset-0 flex items-center justify-center bg-slate-950/45 px-4 py-6" style={{ zIndex: 2147483002 }}>
+            <div className="w-full max-w-lg rounded-lg border-2 border-[#FFFF00] bg-white p-6">
+              <h3 className="text-lg font-semibold text-slate-950">Confirm Logout</h3>
+              <p className="mt-3 text-sm leading-6 text-slate-600">
+                Are you sure you want to logout? Your temporary password will still need to be changed the next time you sign in.
+              </p>
+              <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-w-24"
+                  onClick={() => setShowPasswordChangeLogoutDialog(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  className="min-w-24 bg-[#FF0000] text-white hover:bg-[#cc0000]"
+                  onClick={() => {
+                    setShowPasswordChangeLogoutDialog(false);
+                    handleLogout();
+                  }}
+                >
+                  Logout
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>,
+      document.body
+    )
+    : null;
+
   return (
     <div className={appShellClassName} role="application">
+      {requiredPasswordChangeModal}
+
       {isMobileViewport && (
         <>
           <MobileTopBar
@@ -488,6 +754,13 @@ function AppContent() {
                 onClick={() => navigateTo("user-management")}
                 collapsed={isSidebarCollapsed}
               />
+              <NavItem
+                icon={<ShieldCheck className="w-5 h-5" />}
+                label="Audit Trail"
+                active={currentScreen === "audit-trail"}
+                onClick={() => navigateTo("audit-trail")}
+                collapsed={isSidebarCollapsed}
+              />
             </>
           )}
 
@@ -517,7 +790,10 @@ function AppContent() {
       </aside>
 
       <AlertDialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog}>
-        <AlertDialogContent className="bg-white rounded-lg border border-gray-200 p-6 shadow-lg max-w-lg">
+        <AlertDialogContent
+          className="bg-white rounded-lg border-2 border-[#FFFF00] p-6 shadow-none outline-none ring-0 max-w-lg before:hidden"
+          style={{ borderColor: '#FFFF00' }}
+        >
           <AlertDialogHeader showBrand={false}>
             <AlertDialogTitle>Confirm Logout</AlertDialogTitle>
             <AlertDialogDescription>
@@ -542,6 +818,7 @@ function AppContent() {
           <MaintenanceModule onNavigate={navigateTo} user={currentUser} />
         )}
         {currentUser.role === "Admin" && renderScreenPane("user-management", <UserManagementModule />)}
+        {currentUser.role === "Admin" && renderScreenPane("audit-trail", <AuditTrailModule user={currentUser} />)}
         {renderScreenPane("search", <SearchModule user={currentUser} />)}
         {renderScreenPane("help", <HelpModule user={currentUser} />)}
         {renderScreenPane("alerts", <AlertsModule user={currentUser} onNavigate={navigateTo} />)}
@@ -558,6 +835,7 @@ function getScreenTitle(screen) {
     reports: "Reports",
     maintenance: "Maintenance",
     "user-management": "User Management",
+    "audit-trail": "Audit Trail",
     search: "Search Products",
     help: "Help",
     alerts: "Alerts",
@@ -742,6 +1020,7 @@ function MobileSidebarDrawer({
             <>
               <MobileNavItem icon={<Settings className="h-5 w-5" />} label="Maintenance" active={currentScreen === "maintenance"} onClick={() => onNavigate("maintenance")} />
               <MobileNavItem icon={<Users className="h-5 w-5" />} label="User Management" active={currentScreen === "user-management"} onClick={() => onNavigate("user-management")} />
+              <MobileNavItem icon={<ShieldCheck className="h-5 w-5" />} label="Audit Trail" active={currentScreen === "audit-trail"} onClick={() => onNavigate("audit-trail")} />
             </>
           )}
 
@@ -905,7 +1184,24 @@ export default function App() {
           {/* Catch-all */}
           <Route path="*" element={<AppContent />} />
         </Routes>
-        <Toaster richColors position="top-right" />
+        <Toaster
+          richColors
+          visibleToasts={1}
+          position="top-right"
+          style={{ zIndex: 2147483647 }}
+          toastOptions={{
+            style: {
+              zIndex: 2147483647,
+              opacity: 1,
+            },
+            classNames: {
+              toast: '!z-[2147483647] !opacity-100',
+              title: '!opacity-100',
+              description: '!opacity-100',
+              icon: '!opacity-100',
+            },
+          }}
+        />
       </div>
     </DataProvider>
   );

@@ -3,6 +3,7 @@ require('dotenv').config();
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const { execFile } = require('child_process');
 const express = require('express');
 const cors = require('cors');
@@ -222,6 +223,7 @@ async function ensureSchema() {
       role VARCHAR(20) CHECK (role IN ('Admin', 'Employee')) NOT NULL,
       branch VARCHAR(50),
       status VARCHAR(20) DEFAULT 'Active',
+      must_change_password BOOLEAN DEFAULT false,
       otp_code VARCHAR(10),
       otp_expires TIMESTAMP,
       login_otp_code VARCHAR(10),
@@ -238,6 +240,7 @@ async function ensureSchema() {
       product_id SERIAL PRIMARY KEY,
       name VARCHAR(150) NOT NULL,
       category VARCHAR(50) NOT NULL,
+      supplier_name VARCHAR(120),
       created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
     );
   `);
@@ -249,6 +252,9 @@ async function ensureSchema() {
       branch VARCHAR(50) NOT NULL,
       stock_level INTEGER DEFAULT 0,
       min_stock_level INTEGER DEFAULT 5,
+      lead_time_days INTEGER,
+      safety_stock INTEGER,
+      average_daily_sales NUMERIC(10,2),
       status VARCHAR(20) DEFAULT 'In Stock',
       last_updated TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
       UNIQUE (product_id, branch)
@@ -267,6 +273,7 @@ async function ensureSchema() {
       quantity_changed INTEGER NOT NULL,
       previous_quantity INTEGER NOT NULL,
       new_quantity INTEGER NOT NULL,
+      reason VARCHAR(40),
       note TEXT,
       actor_id INT REFERENCES users(user_id) ON DELETE SET NULL,
       actor_name TEXT,
@@ -284,9 +291,14 @@ async function ensureSchema() {
       branch VARCHAR(50) NOT NULL,
       stock_level INTEGER DEFAULT 0,
       min_stock_level INTEGER DEFAULT 5,
+      lead_time_days INTEGER,
+      safety_stock INTEGER,
+      average_daily_sales NUMERIC(10,2),
       status VARCHAR(20) DEFAULT 'In Stock',
+      supplier_name VARCHAR(120),
       last_updated TIMESTAMP,
       archived_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
+      archive_reason VARCHAR(40),
       archived_by INT REFERENCES users(user_id) ON DELETE SET NULL
     );
   `);
@@ -298,7 +310,10 @@ async function ensureSchema() {
       actor_name TEXT,
       target_id INT,
       target_name TEXT,
+      target_type VARCHAR(60),
       action TEXT,
+      reason TEXT,
+      details JSONB DEFAULT '{}'::jsonb,
       created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
     );
   `);
@@ -333,8 +348,18 @@ async function ensureSchema() {
   `);
 
   await pool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false;
+  `);
+
+  await pool.query(`
     ALTER TABLE products
     ALTER COLUMN created_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+
+  await pool.query(`
+    ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS supplier_name VARCHAR(120);
   `);
 
   await pool.query(`
@@ -343,8 +368,35 @@ async function ensureSchema() {
   `);
 
   await pool.query(`
+    ALTER TABLE branch_inventory
+    ADD COLUMN IF NOT EXISTS lead_time_days INTEGER;
+  `);
+
+  await pool.query(`
+    ALTER TABLE branch_inventory
+    ADD COLUMN IF NOT EXISTS safety_stock INTEGER;
+  `);
+
+  await pool.query(`
+    ALTER TABLE branch_inventory
+    ADD COLUMN IF NOT EXISTS average_daily_sales NUMERIC(10,2);
+  `);
+
+  await pool.query(`
+    ALTER TABLE branch_inventory
+    ALTER COLUMN lead_time_days DROP DEFAULT,
+    ALTER COLUMN safety_stock DROP DEFAULT,
+    ALTER COLUMN average_daily_sales DROP DEFAULT;
+  `);
+
+  await pool.query(`
     ALTER TABLE stock_movements
     ALTER COLUMN created_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+
+  await pool.query(`
+    ALTER TABLE stock_movements
+    ADD COLUMN IF NOT EXISTS reason VARCHAR(40);
   `);
 
   await pool.query(`
@@ -353,8 +405,55 @@ async function ensureSchema() {
   `);
 
   await pool.query(`
+    ALTER TABLE archived_inventory
+    ADD COLUMN IF NOT EXISTS archive_reason VARCHAR(40);
+  `);
+
+  await pool.query(`
+    ALTER TABLE archived_inventory
+    ADD COLUMN IF NOT EXISTS supplier_name VARCHAR(120);
+  `);
+
+  await pool.query(`
+    ALTER TABLE archived_inventory
+    ADD COLUMN IF NOT EXISTS lead_time_days INTEGER;
+  `);
+
+  await pool.query(`
+    ALTER TABLE archived_inventory
+    ADD COLUMN IF NOT EXISTS safety_stock INTEGER;
+  `);
+
+  await pool.query(`
+    ALTER TABLE archived_inventory
+    ADD COLUMN IF NOT EXISTS average_daily_sales NUMERIC(10,2);
+  `);
+
+  await pool.query(`
+    ALTER TABLE archived_inventory
+    ALTER COLUMN lead_time_days DROP DEFAULT,
+    ALTER COLUMN safety_stock DROP DEFAULT,
+    ALTER COLUMN average_daily_sales DROP DEFAULT;
+  `);
+
+  await pool.query(`
     ALTER TABLE audit_logs
     ALTER COLUMN created_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+
+  await pool.query(`
+    ALTER TABLE audit_logs
+    ADD COLUMN IF NOT EXISTS target_type VARCHAR(60);
+  `);
+
+  await pool.query(`
+    ALTER TABLE audit_logs
+    ADD COLUMN IF NOT EXISTS reason TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE audit_logs
+    ADD COLUMN IF NOT EXISTS details JSONB DEFAULT '{}'::jsonb;
   `);
 
   await pool.query(`
@@ -669,6 +768,38 @@ function computeInventoryStatus(stockLevel, minStockLevel) {
   return 'In Stock';
 }
 
+function hasReorderPlanningValue(value) {
+  return value !== '' && value !== null && value !== undefined;
+}
+
+function computeReorderPoint({ averageDailySales = null, leadTimeDays = null, safetyStock = null } = {}) {
+  if (
+    !hasReorderPlanningValue(averageDailySales) ||
+    !hasReorderPlanningValue(leadTimeDays) ||
+    !hasReorderPlanningValue(safetyStock)
+  ) {
+    return null;
+  }
+
+  return Math.ceil(
+    Math.max(0, Number(averageDailySales || 0)) * Math.max(0, Number(leadTimeDays || 0)) +
+    Math.max(0, Number(safetyStock || 0))
+  );
+}
+
+function getEffectiveReorderThreshold(row = {}) {
+  const reorderPoint = computeReorderPoint({
+    averageDailySales: row.average_daily_sales ?? row.averageDailySales,
+    leadTimeDays: row.lead_time_days ?? row.leadTimeDays,
+    safetyStock: row.safety_stock ?? row.safetyStock
+  });
+  return reorderPoint !== null ? reorderPoint : Number(row.min_stock_level ?? row.minStockLevel ?? 0);
+}
+
+function computeSuggestedOrderQuantity(row) {
+  return Math.max(0, getEffectiveReorderThreshold(row) - Number(row.stock_level || 0));
+}
+
 function normalizeInventoryText(value) {
   return String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
@@ -774,6 +905,11 @@ function cleanInventoryName(value) {
   return String(value ?? '').trim().replace(/\s+/g, ' ');
 }
 
+function cleanSupplierName(value) {
+  const cleanName = String(value ?? '').trim().replace(/\s+/g, ' ');
+  return cleanName ? cleanName.slice(0, 120) : null;
+}
+
 function getMeaningfulInventoryNameTokens(value) {
   return getInventoryIdentityTokens(value).filter(token => /[a-z0-9]/.test(token));
 }
@@ -815,6 +951,34 @@ function parseNonNegativeInteger(value, fieldName, { max = null } = {}) {
   return normalizedValue;
 }
 
+function parseNonNegativeDecimal(value, fieldName, { max = null } = {}) {
+  const normalizedValue = value === '' || value === null || value === undefined ? 0 : Number(value);
+
+  if (!Number.isFinite(normalizedValue) || normalizedValue < 0) {
+    const error = new Error(`${fieldName} must be a non-negative number`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (Number.isFinite(max) && normalizedValue > max) {
+    const error = new Error(`${fieldName} must be ${max} or less`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return Number(normalizedValue.toFixed(2));
+}
+
+function parseOptionalNonNegativeInteger(value, fieldName, { max = null } = {}) {
+  if (value === '' || value === null || value === undefined) return null;
+  return parseNonNegativeInteger(value, fieldName, { max });
+}
+
+function parseOptionalNonNegativeDecimal(value, fieldName, { max = null } = {}) {
+  if (value === '' || value === null || value === undefined) return null;
+  return parseNonNegativeDecimal(value, fieldName, { max });
+}
+
 async function findProductByIdentity(client, { name, category }) {
   const canonicalCategory = canonicalizeInventoryCategory(category);
   const cleanName = cleanInventoryName(name);
@@ -822,7 +986,7 @@ async function findProductByIdentity(client, { name, category }) {
   const normalizedIdentityName = normalizeInventoryIdentityName(cleanName);
 
   const existing = await client.query(
-    `SELECT product_id, name, category
+    `SELECT product_id, name, category, supplier_name
      FROM products
      WHERE LOWER(category) = LOWER($1)`,
     [canonicalCategory]
@@ -831,9 +995,10 @@ async function findProductByIdentity(client, { name, category }) {
   return existing.rows.find(row => normalizeInventoryIdentityName(row.name) === normalizedIdentityName) || null;
 }
 
-async function findOrCreateProduct(client, { name, category }) {
+async function findOrCreateProduct(client, { name, category, supplierName = null }) {
   const canonicalCategory = canonicalizeInventoryCategory(category);
   const cleanName = cleanInventoryName(name);
+  const cleanSupplier = cleanSupplierName(supplierName);
   if (!canonicalCategory) {
     const error = new Error('Invalid inventory category');
     error.statusCode = 400;
@@ -843,14 +1008,22 @@ async function findOrCreateProduct(client, { name, category }) {
   const existing = await findProductByIdentity(client, { name: cleanName, category: canonicalCategory });
 
   if (existing) {
+    if (cleanSupplier && cleanSupplier !== existing.supplier_name) {
+      await client.query(
+        `UPDATE products
+         SET supplier_name = $1
+         WHERE product_id = $2`,
+        [cleanSupplier, existing.product_id]
+      );
+    }
     return existing.product_id;
   }
 
   const inserted = await client.query(
-    `INSERT INTO products (name, category)
-     VALUES ($1, $2)
+    `INSERT INTO products (name, category, supplier_name)
+     VALUES ($1, $2, $3)
      RETURNING product_id`,
-    [cleanName, canonicalCategory]
+    [cleanName, canonicalCategory, cleanSupplier]
   );
 
   return inserted.rows[0].product_id;
@@ -908,9 +1081,16 @@ function mapInventoryRow(row) {
     product_id: row.product_id,
     name: row.name,
     category: row.category,
+    supplier_name: row.supplier_name,
     stock_level: row.stock_level,
     min_stock_level: row.min_stock_level,
-    status: row.status,
+    lead_time_days: row.lead_time_days,
+    safety_stock: row.safety_stock,
+    average_daily_sales: row.average_daily_sales,
+    recommended_reorder_point: computeReorderPoint(row),
+    active_low_stock_threshold: getEffectiveReorderThreshold(row),
+    suggested_order_quantity: computeSuggestedOrderQuantity(row),
+    status: computeInventoryStatus(Number(row.stock_level || 0), getEffectiveReorderThreshold(row)),
     branch: row.branch,
     last_updated: row.last_updated
   };
@@ -923,11 +1103,19 @@ function mapArchivedInventoryRow(row) {
     product_id: row.product_id,
     name: row.name,
     category: row.category,
+    supplier_name: row.supplier_name,
     stock_level: row.stock_level,
     min_stock_level: row.min_stock_level,
-    status: row.status,
+    lead_time_days: row.lead_time_days,
+    safety_stock: row.safety_stock,
+    average_daily_sales: row.average_daily_sales,
+    recommended_reorder_point: computeReorderPoint(row),
+    active_low_stock_threshold: getEffectiveReorderThreshold(row),
+    suggested_order_quantity: computeSuggestedOrderQuantity(row),
+    status: computeInventoryStatus(Number(row.stock_level || 0), getEffectiveReorderThreshold(row)),
     branch: row.branch,
     last_updated: row.last_updated,
+    archive_reason: row.archive_reason,
     archived_at: row.archived_at
   };
 }
@@ -944,11 +1132,61 @@ function mapStockMovementRow(row) {
     quantity_changed: row.quantity_changed,
     previous_quantity: row.previous_quantity,
     new_quantity: row.new_quantity,
+    reason: row.reason,
     note: row.note,
     actor_id: row.actor_id,
     actor_name: row.actor_name,
     created_at: row.created_at
   };
+}
+
+const STOCK_OUT_REASONS = new Map([
+  ['sales', 'Sales'],
+  ['damaged', 'Damaged'],
+  ['expired', 'Expired'],
+  ['lost_missing', 'Lost/Missing'],
+  ['manual_adjustment', 'Manual Adjustment'],
+  ['branch_transfer', 'Branch Transfer'],
+  ['correction', 'Correction']
+]);
+
+const STOCK_IN_REASONS = new Map([
+  ['delivery_received', 'Delivery Received'],
+  ['returned_item', 'Returned Item'],
+  ['beginning_balance', 'Beginning Balance'],
+  ['manual_adjustment', 'Manual Adjustment'],
+  ['correction', 'Correction']
+]);
+
+const ARCHIVE_REASONS = new Map([
+  ['discontinued', 'Discontinued'],
+  ['duplicate_record', 'Duplicate Record'],
+  ['wrong_entry', 'Wrong Entry'],
+  ['expired', 'Expired'],
+  ['no_longer_sold', 'No Longer Sold'],
+  ['other', 'Other']
+]);
+
+function normalizeStockMovementReasonForAction(action, reason) {
+  const normalized = String(reason || '').trim().toLowerCase();
+  if (action === 'stock_in') return STOCK_IN_REASONS.has(normalized) ? normalized : null;
+  if (action === 'stock_out') return STOCK_OUT_REASONS.has(normalized) ? normalized : null;
+  return null;
+}
+
+function getStockMovementReasonLabel(reason, action = null) {
+  if (action === 'stock_in') return STOCK_IN_REASONS.get(reason) || '';
+  if (action === 'stock_out') return STOCK_OUT_REASONS.get(reason) || '';
+  return STOCK_IN_REASONS.get(reason) || STOCK_OUT_REASONS.get(reason) || '';
+}
+
+function normalizeArchiveReason(reason) {
+  const normalized = String(reason || '').trim().toLowerCase();
+  return ARCHIVE_REASONS.has(normalized) ? normalized : null;
+}
+
+function getArchiveReasonLabel(reason) {
+  return ARCHIVE_REASONS.get(reason) || '';
 }
 
 async function recordStockMovement(client, {
@@ -961,6 +1199,7 @@ async function recordStockMovement(client, {
   quantityChanged,
   previousQuantity,
   newQuantity,
+  reason = null,
   note,
   actorId
 }) {
@@ -979,11 +1218,12 @@ async function recordStockMovement(client, {
        quantity_changed,
        previous_quantity,
        new_quantity,
+       reason,
        note,
        actor_id,
        actor_name
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, (SELECT full_name FROM users WHERE user_id = $11))`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, (SELECT full_name FROM users WHERE user_id = $12))`,
     [
       inventoryId,
       productId,
@@ -994,6 +1234,7 @@ async function recordStockMovement(client, {
       Number(quantityChanged),
       Number(previousQuantity),
       Number(newQuantity),
+      reason || null,
       note || null,
       actorId
     ]
@@ -1015,19 +1256,29 @@ async function recordAuditLog(db, {
   actorName,
   targetId = null,
   targetName = null,
-  action
+  targetType = null,
+  action,
+  reason = null,
+  details = null
 }) {
   if (!actorId || !action) return;
 
+  const safeDetails = details && typeof details === 'object' && !Array.isArray(details)
+    ? details
+    : {};
+
   await db.query(
-    `INSERT INTO audit_logs (actor_id, actor_name, target_id, target_name, action)
-     VALUES ($1, COALESCE($2, (SELECT full_name FROM users WHERE user_id = $1), 'Unknown User'), $3, $4, $5)`,
+    `INSERT INTO audit_logs (actor_id, actor_name, target_id, target_name, target_type, action, reason, details)
+     VALUES ($1, COALESCE($2, (SELECT full_name FROM users WHERE user_id = $1), 'Unknown User'), $3, $4, $5, $6, $7, $8::jsonb)`,
     [
       actorId,
       actorName || null,
       Number.isInteger(Number(targetId)) ? Number(targetId) : null,
       targetName || null,
-      action
+      targetType || null,
+      action,
+      reason || null,
+      JSON.stringify(safeDetails)
     ]
   );
 }
@@ -1120,6 +1371,15 @@ function validatePasswordPolicy(password, accountDetails = {}) {
   return null;
 }
 
+function generateTemporaryPassword() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  let suffix = '';
+  for (let i = 0; i < 10; i += 1) {
+    suffix += alphabet[crypto.randomInt(0, alphabet.length)];
+  }
+  return `Temp-${suffix}`;
+}
+
 function isAdmin(user) {
   return user && user.role === 'Admin';
 }
@@ -1183,6 +1443,34 @@ async function sendActivationEmail(toEmail, fullName) {
           'Contact your administrator if you cannot access your assigned branch.'
         ])}
       `
+    })
+  });
+}
+
+async function sendAdminCreatedAccountEmail(toEmail, fullName, username, temporaryPassword, branch, role) {
+  await sendMail({
+    from: emailFrom('E.M. Cayetano Trading Notifications'),
+    to: toEmail,
+    subject: 'Your E.M. Cayetano account has been created',
+    html: buildEmailShell({
+      eyebrow: 'Account Created',
+      title: 'Your System Account Is Ready',
+      intro: 'An administrator created your account for the E.M. Cayetano Trading store management system.',
+      accent: '#1d4ed8',
+      body: `
+        <p>Hello <strong>${escapeHtml(fullName || 'Team Member')}</strong>,</p>
+        <p>You may now sign in using the temporary credentials below. For security, the system will ask you to change this password after your first successful login.</p>
+        ${buildInfoCard('Username', username || 'Not provided', 'security')}
+        ${buildInfoCard('Temporary Password', temporaryPassword || 'Provided by administrator', 'warning')}
+        ${buildInfoCard('Assigned Branch', branch || 'Not specified', 'security')}
+        ${buildInfoCard('Role', role || 'Employee', 'security')}
+        ${buildBulletList([
+          'Do not share your temporary password with anyone.',
+          'Log in using your assigned branch.',
+          'Choose a new password that is easy for you to remember but hard for others to guess.'
+        ])}
+      `,
+      footerNote: 'If you did not expect this account, please contact your branch administrator.'
     })
   });
 }
@@ -1525,7 +1813,7 @@ app.get('/', (req, res) => {
 });
 
 app.post('/api/auth/register', async (req, res) => {
-  const { fullName, username, email, password, role, branch } = req.body;
+  const { fullName, username, email, password, branch } = req.body;
   const normalizedBranch = normalizeBranch(branch);
 
   if (!fullName || !username || !email || !password) {
@@ -1541,7 +1829,7 @@ app.post('/api/auth/register', async (req, res) => {
     return res.status(400).json({ error: passwordError });
   }
 
-  const safeRole = ALLOWED_ROLES.includes(role) ? role : 'Employee';
+  const safeRole = 'Employee';
 
   try {
     const existing = await pool.query(
@@ -1554,8 +1842,8 @@ app.post('/api/auth/register', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
     const inserted = await pool.query(
-      `INSERT INTO users (full_name, username, email, password_hash, role, branch, status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'Pending')
+      `INSERT INTO users (full_name, username, email, password_hash, role, branch, status, must_change_password)
+       VALUES ($1, $2, $3, $4, $5, $6, 'Pending', false)
        RETURNING user_id, username, role, status, branch`,
       [fullName, username, email, passwordHash, safeRole, normalizedBranch]
     );
@@ -1797,7 +2085,11 @@ app.post('/api/auth/reset-password', async (req, res) => {
     const newHash = await bcrypt.hash(newPassword, 10);
     await pool.query(
       `UPDATE users
-       SET password_hash = $1, reset_otp_code = NULL, reset_otp_expires = NULL, token_version = COALESCE(token_version, 0) + 1
+       SET password_hash = $1,
+           reset_otp_code = NULL,
+           reset_otp_expires = NULL,
+           must_change_password = false,
+           token_version = COALESCE(token_version, 0) + 1
        WHERE user_id = $2`,
       [newHash, user.user_id]
     );
@@ -1809,10 +2101,80 @@ app.post('/api/auth/reset-password', async (req, res) => {
   }
 });
 
+app.post('/api/auth/change-password', authenticate, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Current password and new password are required.' });
+  }
+
+  try {
+    const userResult = await pool.query(
+      `SELECT user_id, full_name, username, email, password_hash, role, branch, token_version
+       FROM users
+       WHERE user_id = $1`,
+      [req.user.id]
+    );
+
+    if (userResult.rowCount === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = userResult.rows[0];
+    const currentPasswordMatches = await bcrypt.compare(currentPassword || '', user.password_hash);
+    if (!currentPasswordMatches) {
+      return res.status(400).json({ error: 'Current password is incorrect.' });
+    }
+
+    const passwordError = validatePasswordPolicy(newPassword, {
+      fullName: user.full_name,
+      username: user.username,
+      email: user.email
+    });
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    const updated = await pool.query(
+      `UPDATE users
+       SET password_hash = $1,
+           must_change_password = false,
+           token_version = COALESCE(token_version, 0) + 1
+       WHERE user_id = $2
+       RETURNING user_id, full_name, username, email, role, branch, status, must_change_password, token_version`,
+      [newHash, user.user_id]
+    );
+
+    const updatedUser = updated.rows[0];
+    await recordAuditLogSafely(pool, {
+      actorId: updatedUser.user_id,
+      targetId: updatedUser.user_id,
+      targetName: updatedUser.full_name,
+      targetType: 'user_account',
+      action: 'CHANGE_OWN_PASSWORD',
+      reason: 'User changed temporary or current password.',
+      details: {
+        branch: updatedUser.branch,
+        role: updatedUser.role
+      }
+    });
+
+    return res.json({
+      message: 'Password changed successfully',
+      token: signToken(updatedUser, updatedUser.branch),
+      user: updatedUser
+    });
+  } catch (err) {
+    console.error('Change password error:', err);
+    return res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
 app.get('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT user_id, full_name, username, email, role, branch, status, created_at
+      `SELECT user_id, full_name, username, email, role, branch, status, must_change_password, created_at
        FROM users
        WHERE branch = $1
        ORDER BY created_at DESC NULLS LAST`,
@@ -1826,9 +2188,78 @@ app.get('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
   }
 });
 
+app.post('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
+  const fullName = String(req.body.fullName || req.body.full_name || '').trim();
+  const username = String(req.body.username || '').trim();
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const role = ALLOWED_ROLES.includes(req.body.role) ? req.body.role : 'Employee';
+  const branch = normalizeBranch(req.body.branch || req.user.branch);
+  const temporaryPassword = generateTemporaryPassword();
+
+  if (!fullName || !username || !email) {
+    return res.status(400).json({ error: 'Full name, username, and email are required.' });
+  }
+
+  if (!ALLOWED_BRANCHES.includes(branch)) {
+    return res.status(400).json({ error: 'Invalid branch selection.' });
+  }
+
+  try {
+    const existing = await pool.query(
+      'SELECT 1 FROM users WHERE username = $1 OR email = $2',
+      [username, email]
+    );
+
+    if (existing.rowCount > 0) {
+      return res.status(400).json({ error: 'Username or email already exists.' });
+    }
+
+    const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+    const inserted = await pool.query(
+      `INSERT INTO users (full_name, username, email, password_hash, role, branch, status, must_change_password)
+       VALUES ($1, $2, $3, $4, $5, $6, 'Active', true)
+       RETURNING user_id, full_name, username, email, role, branch, status, must_change_password, created_at`,
+      [fullName, username, email, passwordHash, role, branch]
+    );
+
+    const user = inserted.rows[0];
+    await recordAuditLogSafely(pool, {
+      actorId: req.user.id,
+      targetId: user.user_id,
+      targetName: user.full_name,
+      targetType: 'user_account',
+      action: 'CREATE_USER_ACCOUNT',
+      reason: 'Admin created an official user account with a temporary password.',
+      details: {
+        username: user.username,
+        branch: user.branch,
+        role: user.role,
+        mustChangePassword: true
+      }
+    });
+
+    sendAdminCreatedAccountEmail(user.email, user.full_name, user.username, temporaryPassword, user.branch, user.role)
+      .catch(err => {
+        console.error('Admin-created account email failed:', err.message);
+      });
+
+    return res.status(201).json({
+      message: 'User account created',
+      user,
+      temporaryPassword
+    });
+  } catch (err) {
+    console.error('Create user account error:', err);
+    return res.status(500).json({ error: 'Failed to create user account' });
+  }
+});
+
 app.post('/api/audit-logs', authenticate, async (req, res) => {
   const action = String(req.body.action || '').trim().toUpperCase();
   const targetName = typeof req.body.target_name === 'string' ? req.body.target_name.trim() : null;
+  const targetType = typeof req.body.target_type === 'string' ? req.body.target_type.trim() : null;
+  const reason = typeof req.body.reason === 'string' ? req.body.reason.trim() : null;
+  const details = req.body.details && typeof req.body.details === 'object' ? req.body.details : null;
   const targetId = req.body.target_id;
 
   if (!ALLOWED_CLIENT_AUDIT_ACTIONS.has(action)) {
@@ -1840,7 +2271,10 @@ app.post('/api/audit-logs', authenticate, async (req, res) => {
       actorId: req.user.id,
       targetId,
       targetName,
-      action
+      targetType,
+      action,
+      reason,
+      details
     });
     return res.status(201).json({ message: 'Audit log recorded' });
   } catch (err) {
@@ -1852,7 +2286,7 @@ app.post('/api/audit-logs', authenticate, async (req, res) => {
 app.get('/api/audit-logs', authenticate, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, actor_id, actor_name, target_id, target_name, action, created_at
+      `SELECT id, actor_id, actor_name, target_id, target_name, target_type, action, reason, details, created_at
        FROM audit_logs
        ORDER BY created_at DESC, id DESC
        LIMIT 500`
@@ -1872,7 +2306,7 @@ app.post('/api/admin/users/:id/approve', authenticate, requireAdmin, async (req,
       `UPDATE users
        SET status = 'Active'
        WHERE user_id = $1 AND branch = $2
-       RETURNING user_id, full_name, email, username, branch, status, role, created_at`,
+       RETURNING user_id, full_name, email, username, branch, status, role, must_change_password, created_at`,
       [id, req.user.branch]
     );
 
@@ -1885,7 +2319,16 @@ app.post('/api/admin/users/:id/approve', authenticate, requireAdmin, async (req,
       actorId: req.user.id,
       targetId: user.user_id,
       targetName: user.full_name,
-      action: 'APPROVE_USER'
+      targetType: 'user_account',
+      action: 'APPROVE_USER',
+      reason: 'Pending employee account approved.',
+      details: {
+        username: user.username,
+        branch: user.branch,
+        role: user.role,
+        previousStatus: 'Pending',
+        newStatus: user.status
+      }
     });
     sendActivationEmail(user.email, user.full_name);
 
@@ -1916,7 +2359,7 @@ app.post('/api/admin/users/:id/reject', authenticate, requireAdmin, async (req, 
       `UPDATE users
        SET status = 'Inactive', token_version = COALESCE(token_version, 0) + 1
        WHERE user_id = $1 AND branch = $2
-       RETURNING user_id, full_name, email, username, branch, status, role, created_at`,
+       RETURNING user_id, full_name, email, username, branch, status, role, must_change_password, created_at`,
       [id, req.user.branch]
     );
 
@@ -1925,7 +2368,16 @@ app.post('/api/admin/users/:id/reject', authenticate, requireAdmin, async (req, 
       actorId: req.user.id,
       targetId: user.user_id,
       targetName: user.full_name,
-      action: previous.status === 'Pending' ? 'REJECT_USER' : 'DEACTIVATE_USER'
+      targetType: 'user_account',
+      action: previous.status === 'Pending' ? 'REJECT_USER' : 'DEACTIVATE_USER',
+      reason: previous.status === 'Pending'
+        ? 'Pending employee account rejected.'
+        : 'Active employee account deactivated.',
+      details: {
+        branch: user.branch,
+        previousStatus: previous.status,
+        newStatus: user.status
+      }
     });
     if (previous.status === 'Pending') {
       sendRejectionEmail(user.email, user.full_name, user.branch);
@@ -1980,7 +2432,7 @@ app.post('/api/admin/users/:id/role', authenticate, requireAdmin, async (req, re
       `UPDATE users
        SET role = $1, token_version = COALESCE(token_version, 0) + 1
        WHERE user_id = $2
-       RETURNING user_id, full_name, email, username, branch, role, status, token_version, created_at`,
+       RETURNING user_id, full_name, email, username, branch, role, status, must_change_password, token_version, created_at`,
       [newRole, id]
     );
 
@@ -1989,7 +2441,14 @@ app.post('/api/admin/users/:id/role', authenticate, requireAdmin, async (req, re
       actorId: req.user.id,
       targetId: updatedUser.user_id,
       targetName: updatedUser.full_name,
-      action: `CHANGE_ROLE: ${targetUser.role} to ${newRole}`
+      targetType: 'user_account',
+      action: `CHANGE_ROLE: ${targetUser.role} to ${newRole}`,
+      reason: 'User role changed by admin.',
+      details: {
+        branch: updatedUser.branch,
+        previousRole: targetUser.role,
+        newRole
+      }
     });
 
     sendRoleChangeEmail(updatedUser.email, updatedUser.full_name, targetUser.role, newRole);
@@ -2034,7 +2493,7 @@ app.post('/api/admin/users/:id/branch', authenticate, requireAdmin, async (req, 
       `UPDATE users
        SET branch = $1, token_version = COALESCE(token_version, 0) + 1
        WHERE user_id = $2
-       RETURNING user_id, full_name, email, username, branch, role, status, created_at`,
+       RETURNING user_id, full_name, email, username, branch, role, status, must_change_password, created_at`,
       [newBranch, id]
     );
 
@@ -2043,7 +2502,15 @@ app.post('/api/admin/users/:id/branch', authenticate, requireAdmin, async (req, 
       actorId: req.user.id,
       targetId: updatedUser.user_id,
       targetName: updatedUser.full_name,
-      action: `CHANGE_BRANCH: ${user.branch} to ${newBranch}`
+      targetType: 'user_account',
+      action: `CHANGE_BRANCH: ${user.branch} to ${newBranch}`,
+      reason: 'User branch assignment changed by admin.',
+      details: {
+        previousBranch: user.branch,
+        newBranch,
+        role: updatedUser.role,
+        status: updatedUser.status
+      }
     });
     sendBranchTransferEmail(updatedUser.email, updatedUser.full_name, user.branch, newBranch);
 
@@ -2135,8 +2602,12 @@ app.get('/api/inventory', authenticate, async (req, res) => {
          bi.product_id,
          p.name,
          p.category,
+         p.supplier_name,
          bi.stock_level,
          bi.min_stock_level,
+         bi.lead_time_days,
+         bi.safety_stock,
+         bi.average_daily_sales,
          bi.status,
          bi.branch,
          bi.last_updated
@@ -2168,11 +2639,16 @@ app.get('/api/archive', authenticate, async (req, res) => {
          product_id,
          name,
          category,
+         supplier_name,
          branch,
          stock_level,
          min_stock_level,
+         lead_time_days,
+         safety_stock,
+         average_daily_sales,
          status,
          last_updated,
+         archive_reason,
          archived_at
        FROM archived_inventory
        WHERE branch = $1
@@ -2201,6 +2677,7 @@ app.get('/api/stock-movements', authenticate, async (req, res) => {
          quantity_changed,
          previous_quantity,
          new_quantity,
+         reason,
          note,
          actor_id,
          actor_name,
@@ -2219,13 +2696,24 @@ app.get('/api/stock-movements', authenticate, async (req, res) => {
 });
 
 app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
-  const { name, category, stock_level, min_stock_level, allow_similar_duplicate = false } = req.body;
+  const {
+    name,
+    category,
+    supplier_name,
+    stock_level,
+    min_stock_level,
+    lead_time_days,
+    safety_stock,
+    average_daily_sales,
+    allow_similar_duplicate = false
+  } = req.body;
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
     const cleanName = cleanInventoryName(name);
+    const cleanSupplier = cleanSupplierName(supplier_name);
     const canonicalCategory = canonicalizeInventoryCategory(category);
     const nameQualityError = validateInventoryNameQuality(cleanName);
     if (nameQualityError || !canonicalCategory) {
@@ -2234,7 +2722,10 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
     }
 
     const stockLevel = parseNonNegativeInteger(stock_level, 'Stock level');
-    const minStockLevel = parseNonNegativeInteger(min_stock_level, 'Reorder level', { max: 20 });
+    const minStockLevel = parseNonNegativeInteger(min_stock_level, 'Manual low-stock threshold');
+    const leadTimeDays = parseOptionalNonNegativeInteger(lead_time_days, 'Supplier lead time', { max: 365 });
+    const safetyStock = parseOptionalNonNegativeInteger(safety_stock, 'Safety stock', { max: 100000 });
+    const averageDailySales = parseOptionalNonNegativeDecimal(average_daily_sales, 'Average daily sales', { max: 100000 });
 
     const archivedDuplicate = await findSimilarArchivedInventoryItem(client, {
       branch: req.user.branch,
@@ -2300,8 +2791,13 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
       });
     }
 
-    const productId = await findOrCreateProduct(client, { name: cleanName, category: canonicalCategory });
-    const status = computeInventoryStatus(stockLevel, minStockLevel);
+    const productId = await findOrCreateProduct(client, { name: cleanName, category: canonicalCategory, supplierName: cleanSupplier });
+    const status = computeInventoryStatus(stockLevel, getEffectiveReorderThreshold({
+      min_stock_level: minStockLevel,
+      lead_time_days: leadTimeDays,
+      safety_stock: safetyStock,
+      average_daily_sales: averageDailySales
+    }));
 
     const duplicateCheck = await client.query(
       `SELECT inventory_id
@@ -2316,10 +2812,19 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
     }
 
     const result = await client.query(
-      `INSERT INTO branch_inventory (product_id, branch, stock_level, min_stock_level, status)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, status, last_updated`,
-      [productId, req.user.branch, stockLevel, minStockLevel, status]
+      `INSERT INTO branch_inventory (
+         product_id,
+         branch,
+         stock_level,
+         min_stock_level,
+         lead_time_days,
+         safety_stock,
+         average_daily_sales,
+         status
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
+      [productId, req.user.branch, stockLevel, minStockLevel, leadTimeDays, safetyStock, averageDailySales, status]
     );
 
     const merged = await client.query(
@@ -2328,8 +2833,12 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
          bi.product_id,
          p.name,
          p.category,
+         p.supplier_name,
          bi.stock_level,
          bi.min_stock_level,
+         bi.lead_time_days,
+         bi.safety_stock,
+         bi.average_daily_sales,
          bi.status,
          bi.branch,
          bi.last_updated
@@ -2344,7 +2853,24 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
       actorId: req.user.id,
       targetId: createdItem.inventory_id,
       targetName: createdItem.name,
-      action: 'ADD_ITEM'
+      targetType: 'inventory_item',
+      action: 'ADD_ITEM',
+      details: {
+        branch: createdItem.branch,
+        category: createdItem.category,
+        supplier: createdItem.supplier_name || 'Unassigned',
+        initialQuantity: stockLevel,
+        reorderLevel: minStockLevel,
+        leadTimeDays,
+        safetyStock,
+        averageDailySales,
+        recommendedReorderPoint: computeReorderPoint({
+          averageDailySales,
+          leadTimeDays,
+          safetyStock
+        }),
+        status
+      }
     });
 
     if (allow_similar_duplicate && (activeSimilarDuplicate || archivedDuplicate)) {
@@ -2352,7 +2878,14 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
         actorId: req.user.id,
         targetId: createdItem.inventory_id,
         targetName: createdItem.name,
-        action: `CONFIRMED_SIMILAR_ITEM_CREATION: created "${createdItem.name}"`
+        targetType: 'inventory_item',
+        action: `CONFIRMED_SIMILAR_ITEM_CREATION: created "${createdItem.name}"`,
+        reason: 'Admin confirmed the item is separate from the possible duplicate.',
+        details: {
+          branch: createdItem.branch,
+          category: createdItem.category,
+          reviewedAgainst: activeSimilarDuplicate?.name || archivedDuplicate?.name || null
+        }
       });
     }
 
@@ -2367,6 +2900,7 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
         quantityChanged: stockLevel,
         previousQuantity: 0,
         newQuantity: stockLevel,
+        reason: 'beginning_balance',
         note: 'Initial stock recorded when item was added.',
         actorId: req.user.id
       });
@@ -2386,9 +2920,162 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
   }
 });
 
+app.post('/api/inventory/batch-stock-out', authenticate, async (req, res) => {
+  const { items = [], movement_reason, movement_note } = req.body;
+  const normalizedMovementReason = normalizeStockMovementReasonForAction('stock_out', movement_reason);
+
+  if (!normalizedMovementReason) {
+    return res.status(400).json({ error: 'Please select the stock-out reason for this deduction.' });
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Add at least one item to process a batch Stock Out.' });
+  }
+
+  const aggregatedItems = new Map();
+  try {
+    for (const item of items) {
+      const inventoryId = Number(item?.inventory_id);
+      const quantity = parseNonNegativeInteger(item?.quantity, 'Stock Out quantity');
+      if (!Number.isInteger(inventoryId) || inventoryId <= 0 || quantity <= 0) {
+        return res.status(400).json({ error: 'Each batch Stock Out line must include a valid item and quantity.' });
+      }
+      aggregatedItems.set(inventoryId, (aggregatedItems.get(inventoryId) || 0) + quantity);
+    }
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ error: err.message || 'Invalid batch Stock Out details.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const updatedItems = [];
+    for (const [inventoryId, quantity] of aggregatedItems.entries()) {
+      const currentResult = await client.query(
+        `SELECT
+           bi.inventory_id,
+           bi.product_id,
+           p.name,
+           p.category,
+           p.supplier_name,
+           bi.branch,
+           bi.stock_level,
+           bi.min_stock_level,
+           bi.lead_time_days,
+           bi.safety_stock,
+           bi.average_daily_sales,
+           bi.status,
+           bi.last_updated
+         FROM branch_inventory bi
+         INNER JOIN products p ON p.product_id = bi.product_id
+         WHERE bi.inventory_id = $1 AND bi.branch = $2
+         FOR UPDATE`,
+        [inventoryId, req.user.branch]
+      );
+
+      if (currentResult.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: `Inventory item ${inventoryId} was not found in your branch.` });
+      }
+
+      const currentItem = currentResult.rows[0];
+      const previousQuantity = Number(currentItem.stock_level || 0);
+      if (quantity > previousQuantity) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: `${currentItem.name} has only ${previousQuantity} unit${previousQuantity === 1 ? '' : 's'} available.`
+        });
+      }
+
+      const nextQuantity = previousQuantity - quantity;
+      const nextStatus = computeInventoryStatus(nextQuantity, getEffectiveReorderThreshold(currentItem));
+      const updatedResult = await client.query(
+        `UPDATE branch_inventory
+         SET stock_level = $1,
+             status = $2,
+             last_updated = ${PHILIPPINE_NOW_SQL}
+         WHERE inventory_id = $3 AND branch = $4
+         RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
+        [nextQuantity, nextStatus, inventoryId, req.user.branch]
+      );
+
+      await recordStockMovement(client, {
+        inventoryId,
+        productId: currentItem.product_id,
+        itemName: currentItem.name,
+        category: currentItem.category,
+        branch: currentItem.branch,
+        action: 'stock_out',
+        quantityChanged: quantity,
+        previousQuantity,
+        newQuantity: nextQuantity,
+        reason: normalizedMovementReason,
+        note: movement_note || 'Daily sales or stock-out deduction recorded from inventory module.',
+        actorId: req.user.id
+      });
+
+      await recordAuditLog(client, {
+        actorId: req.user.id,
+        targetId: inventoryId,
+        targetName: currentItem.name,
+        targetType: 'inventory_item',
+        action: `BATCH_STOCK_OUT: ${getStockMovementReasonLabel(normalizedMovementReason, 'stock_out')}`,
+        reason: getStockMovementReasonLabel(normalizedMovementReason, 'stock_out'),
+        details: {
+          branch: currentItem.branch,
+          category: currentItem.category,
+          supplier: currentItem.supplier_name || 'Unassigned',
+          quantityChanged: quantity,
+          previousQuantity,
+          newQuantity: nextQuantity,
+          status: nextStatus,
+          note: movement_note || 'Daily sales or stock-out deduction recorded from inventory module.'
+        }
+      });
+
+      updatedItems.push({
+        ...updatedResult.rows[0],
+        name: currentItem.name,
+        category: currentItem.category,
+        supplier_name: currentItem.supplier_name,
+        lead_time_days: currentItem.lead_time_days,
+        safety_stock: currentItem.safety_stock,
+        average_daily_sales: currentItem.average_daily_sales
+      });
+    }
+
+    await client.query('COMMIT');
+    return res.json({ products: updatedItems.map(mapInventoryRow) });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+    console.error('Batch stock out error:', err);
+    return res.status(500).json({ error: 'Failed to process batch Stock Out' });
+  } finally {
+    client.release();
+  }
+});
+
 app.put('/api/inventory/:id', authenticate, async (req, res) => {
   const { id } = req.params;
-  const { name, category, stock_level, min_stock_level, movement_action, movement_quantity, movement_note, allow_similar_duplicate = false } = req.body;
+  const {
+    name,
+    category,
+    supplier_name,
+    stock_level,
+    min_stock_level,
+    lead_time_days,
+    safety_stock,
+    average_daily_sales,
+    movement_action,
+    movement_quantity,
+    movement_reason,
+    movement_note,
+    allow_similar_duplicate = false
+  } = req.body;
 
   const client = await pool.connect();
   try {
@@ -2400,9 +3087,13 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
          bi.product_id,
          p.name,
          p.category,
+         p.supplier_name,
          bi.branch,
          bi.stock_level,
          bi.min_stock_level,
+         bi.lead_time_days,
+         bi.safety_stock,
+         bi.average_daily_sales,
          bi.status
        FROM branch_inventory bi
        INNER JOIN products p ON p.product_id = bi.product_id
@@ -2419,11 +3110,26 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     const productId = inventoryRow.product_id;
     const previousQuantity = Number(inventoryRow.stock_level || 0);
     const nextQuantity = parseNonNegativeInteger(stock_level, 'Stock level');
-    const nextMinStockLevel = parseNonNegativeInteger(min_stock_level, 'Reorder level', { max: 20 });
-    const status = computeInventoryStatus(nextQuantity, nextMinStockLevel);
-    const previousStatus = inventoryRow.status || computeInventoryStatus(previousQuantity, Number(inventoryRow.min_stock_level || 0));
+    const nextMinStockLevel = parseNonNegativeInteger(min_stock_level, 'Manual low-stock threshold');
+    const nextLeadTimeDays = lead_time_days === undefined
+      ? inventoryRow.lead_time_days
+      : parseOptionalNonNegativeInteger(lead_time_days, 'Supplier lead time', { max: 365 });
+    const nextSafetyStock = safety_stock === undefined
+      ? inventoryRow.safety_stock
+      : parseOptionalNonNegativeInteger(safety_stock, 'Safety stock', { max: 100000 });
+    const nextAverageDailySales = average_daily_sales === undefined
+      ? inventoryRow.average_daily_sales
+      : parseOptionalNonNegativeDecimal(average_daily_sales, 'Average daily sales', { max: 100000 });
+    const status = computeInventoryStatus(nextQuantity, getEffectiveReorderThreshold({
+      min_stock_level: nextMinStockLevel,
+      lead_time_days: nextLeadTimeDays,
+      safety_stock: nextSafetyStock,
+      average_daily_sales: nextAverageDailySales
+    }));
+    const previousStatus = inventoryRow.status || computeInventoryStatus(previousQuantity, getEffectiveReorderThreshold(inventoryRow));
     const shouldRefreshInventoryTimestamp = previousQuantity !== nextQuantity || previousStatus !== status;
     const cleanName = cleanInventoryName(name);
+    const cleanSupplier = cleanSupplierName(supplier_name);
     const canonicalCategory = canonicalizeInventoryCategory(category);
     const nameQualityError = validateInventoryNameQuality(cleanName);
     if (nameQualityError || !canonicalCategory) {
@@ -2434,10 +3140,17 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     const identityChanged =
       normalizeInventoryText(inventoryRow.name) !== normalizeInventoryText(cleanName) ||
       canonicalizeInventoryCategory(inventoryRow.category) !== canonicalCategory;
+    const supplierChanged = cleanSupplier !== cleanSupplierName(inventoryRow.supplier_name);
     const reorderLevelChanged = Number(inventoryRow.min_stock_level || 0) !== nextMinStockLevel;
+    const normalizeNullableNumber = value => (value === null || value === undefined ? null : Number(value));
+    const reorderPlanningChanged =
+      normalizeNullableNumber(inventoryRow.lead_time_days) !== normalizeNullableNumber(nextLeadTimeDays) ||
+      normalizeNullableNumber(inventoryRow.safety_stock) !== normalizeNullableNumber(nextSafetyStock) ||
+      normalizeNullableNumber(inventoryRow.average_daily_sales) !== normalizeNullableNumber(nextAverageDailySales);
     const quantityChanged = previousQuantity !== nextQuantity;
     const allowedMovementActions = ['stock_in', 'stock_out'];
     const action = allowedMovementActions.includes(movement_action) ? movement_action : null;
+    const normalizedMovementReason = action ? normalizeStockMovementReasonForAction(action, movement_reason) : null;
     const inferredQuantityChanged = Math.abs(nextQuantity - previousQuantity);
     const parsedMovementQuantity = movement_quantity === undefined || movement_quantity === null || movement_quantity === ''
       ? inferredQuantityChanged
@@ -2452,7 +3165,9 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       parsedMovementQuantity > 0 &&
       parsedMovementQuantity === inferredQuantityChanged &&
       !identityChanged &&
-      !reorderLevelChanged;
+      !supplierChanged &&
+      !reorderLevelChanged &&
+      !reorderPlanningChanged;
 
     if (action && quantityChanged && !expectedDirectionIsValid) {
       await client.query('ROLLBACK');
@@ -2467,6 +3182,15 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(400).json({
         error: 'Movement quantity must match the stock quantity change.'
+      });
+    }
+
+    if (action && !normalizedMovementReason) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: action === 'stock_in'
+          ? 'Please select the reason for this Stock In transaction.'
+          : 'Please select the reason for this Stock Out transaction.'
       });
     }
 
@@ -2555,14 +3279,15 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
 
     let targetProductId = productId;
     if (identityChanged) {
-      targetProductId = await findOrCreateProduct(client, { name: cleanName, category: canonicalCategory });
+      targetProductId = await findOrCreateProduct(client, { name: cleanName, category: canonicalCategory, supplierName: cleanSupplier });
     } else {
       await client.query(
         `UPDATE products
          SET name = $1,
-             category = $2
-         WHERE product_id = $3`,
-        [cleanName, canonicalCategory, productId]
+             category = $2,
+             supplier_name = $3
+         WHERE product_id = $4`,
+        [cleanName, canonicalCategory, cleanSupplier, productId]
       );
     }
 
@@ -2578,11 +3303,25 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
        SET product_id = $1,
            stock_level = $2,
            min_stock_level = $3,
-           status = $4,
-           last_updated = CASE WHEN $7 THEN ${PHILIPPINE_NOW_SQL} ELSE last_updated END
-       WHERE inventory_id = $5 AND branch = $6
-       RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, status, last_updated`,
-      [targetProductId, nextQuantity, nextMinStockLevel, status, id, req.user.branch, shouldRefreshInventoryTimestamp]
+           lead_time_days = $4,
+           safety_stock = $5,
+           average_daily_sales = $6,
+           status = $7,
+           last_updated = CASE WHEN $10 THEN ${PHILIPPINE_NOW_SQL} ELSE last_updated END
+       WHERE inventory_id = $8 AND branch = $9
+       RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
+      [
+        targetProductId,
+        nextQuantity,
+        nextMinStockLevel,
+        nextLeadTimeDays,
+        nextSafetyStock,
+        nextAverageDailySales,
+        status,
+        id,
+        req.user.branch,
+        shouldRefreshInventoryTimestamp
+      ]
     );
 
     if (result.rowCount === 0) {
@@ -2596,8 +3335,12 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
          bi.product_id,
          p.name,
          p.category,
+         p.supplier_name,
          bi.stock_level,
          bi.min_stock_level,
+         bi.lead_time_days,
+         bi.safety_stock,
+         bi.average_daily_sales,
          bi.status,
          bi.branch,
          bi.last_updated
@@ -2632,6 +3375,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
         quantityChanged: parsedMovementQuantity,
         previousQuantity,
         newQuantity: nextQuantity,
+        reason: normalizedMovementReason,
         note: movement_note || null,
         actorId: req.user.id
       });
@@ -2639,27 +3383,75 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
         actorId: req.user.id,
         targetId: updatedItem.inventory_id,
         targetName: updatedItem.name,
-        action: action === 'stock_in' ? 'STOCK_IN' : 'STOCK_OUT'
+        targetType: 'inventory_item',
+        action: action === 'stock_in'
+          ? `STOCK_IN: ${getStockMovementReasonLabel(normalizedMovementReason, action)}`
+          : `STOCK_OUT: ${getStockMovementReasonLabel(normalizedMovementReason, action)}`,
+        reason: getStockMovementReasonLabel(normalizedMovementReason, action),
+        details: {
+          branch: updatedItem.branch,
+          category: updatedItem.category,
+          supplier: updatedItem.supplier_name || 'Unassigned',
+          quantityChanged: parsedMovementQuantity,
+          previousQuantity,
+          newQuantity: nextQuantity,
+          status: updatedItem.status,
+          note: movement_note || null
+        }
       });
     } else {
       const changedFields = [];
       if (inventoryRow.name !== cleanName) changedFields.push('name');
       if (inventoryRow.category !== canonicalCategory) changedFields.push('category');
+      if (supplierChanged) changedFields.push('supplier');
       if (previousQuantity !== nextQuantity) changedFields.push('quantity');
       if (Number(inventoryRow.min_stock_level || 0) !== nextMinStockLevel) changedFields.push('reorder level');
+      if (reorderPlanningChanged) changedFields.push('reorder planning');
       if (changedFields.length > 0) {
         await recordAuditLog(client, {
           actorId: req.user.id,
           targetId: updatedItem.inventory_id,
           targetName: updatedItem.name,
-          action: 'UPDATE_ITEM'
+          targetType: 'inventory_item',
+          action: 'UPDATE_ITEM',
+          reason: `Updated ${changedFields.join(', ')}.`,
+          details: {
+            branch: updatedItem.branch,
+            changedFields,
+            previous: {
+              name: inventoryRow.name,
+              category: inventoryRow.category,
+              supplier: inventoryRow.supplier_name || 'Unassigned',
+              reorderLevel: Number(inventoryRow.min_stock_level || 0),
+              leadTimeDays: Number(inventoryRow.lead_time_days || 0),
+              safetyStock: Number(inventoryRow.safety_stock || 0),
+              averageDailySales: Number(inventoryRow.average_daily_sales || 0),
+              recommendedReorderPoint: computeReorderPoint(inventoryRow)
+            },
+            current: {
+              name: updatedItem.name,
+              category: updatedItem.category,
+              supplier: updatedItem.supplier_name || 'Unassigned',
+              reorderLevel: nextMinStockLevel,
+              leadTimeDays: nextLeadTimeDays,
+              safetyStock: nextSafetyStock,
+              averageDailySales: nextAverageDailySales,
+              recommendedReorderPoint: computeReorderPoint(updatedItem)
+            }
+          }
         });
         if (allow_similar_duplicate && reviewedSimilarDuplicate) {
           await recordAuditLog(client, {
             actorId: req.user.id,
             targetId: updatedItem.inventory_id,
             targetName: updatedItem.name,
-            action: `CONFIRMED_SIMILAR_ITEM_UPDATE: updated "${updatedItem.name}"`
+            targetType: 'inventory_item',
+            action: `CONFIRMED_SIMILAR_ITEM_UPDATE: updated "${updatedItem.name}"`,
+            reason: 'Admin confirmed the updated item is separate from the possible duplicate.',
+            details: {
+              branch: updatedItem.branch,
+              reviewedAgainst: reviewedSimilarDuplicate.name || null
+            }
           });
         }
       }
@@ -2681,6 +3473,11 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
 
 app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) => {
   const { id } = req.params;
+  const normalizedArchiveReason = normalizeArchiveReason(req.body?.archive_reason);
+
+  if (!normalizedArchiveReason) {
+    return res.status(400).json({ error: 'Please select the reason for archiving this item.' });
+  }
 
   const client = await pool.connect();
   try {
@@ -2692,9 +3489,13 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
          bi.product_id,
          p.name,
          p.category,
+         p.supplier_name,
          bi.branch,
          bi.stock_level,
          bi.min_stock_level,
+         bi.lead_time_days,
+         bi.safety_stock,
+         bi.average_daily_sales,
          bi.status,
          bi.last_updated
        FROM branch_inventory bi
@@ -2715,24 +3516,34 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
          product_id,
          name,
          category,
+         supplier_name,
          branch,
          stock_level,
          min_stock_level,
+         lead_time_days,
+         safety_stock,
+         average_daily_sales,
          status,
          last_updated,
+         archive_reason,
          archived_by
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
       [
         archivedItem.inventory_id,
         archivedItem.product_id,
         archivedItem.name,
         archivedItem.category,
+        archivedItem.supplier_name,
         archivedItem.branch,
         archivedItem.stock_level,
         archivedItem.min_stock_level,
+        archivedItem.lead_time_days,
+        archivedItem.safety_stock,
+        archivedItem.average_daily_sales,
         archivedItem.status,
         archivedItem.last_updated,
+        normalizedArchiveReason,
         req.user.id
       ]
     );
@@ -2765,7 +3576,21 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
       actorId: req.user.id,
       targetId: archivedItem.inventory_id,
       targetName: archivedItem.name,
-      action: 'ARCHIVE_ITEM'
+      targetType: 'inventory_item',
+      action: `ARCHIVE_ITEM: ${getArchiveReasonLabel(normalizedArchiveReason)}`,
+      reason: getArchiveReasonLabel(normalizedArchiveReason),
+      details: {
+        branch: archivedItem.branch,
+        category: archivedItem.category,
+        supplier: archivedItem.supplier_name || 'Unassigned',
+        quantityAtArchive: Number(archivedItem.stock_level || 0),
+        reorderLevel: Number(archivedItem.min_stock_level || 0),
+        leadTimeDays: Number(archivedItem.lead_time_days || 0),
+        safetyStock: Number(archivedItem.safety_stock || 0),
+        averageDailySales: Number(archivedItem.average_daily_sales || 0),
+        recommendedReorderPoint: computeReorderPoint(archivedItem),
+        status: archivedItem.status
+      }
     });
 
     await client.query('COMMIT');
@@ -2793,9 +3618,13 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
          product_id,
          name,
          category,
+         supplier_name,
          branch,
          stock_level,
          min_stock_level,
+         lead_time_days,
+         safety_stock,
+         average_daily_sales,
          status
        FROM archived_inventory
        WHERE archived_inventory_id = $1 AND branch = $2`,
@@ -2810,11 +3639,12 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
     const archivedItem = archivedResult.rows[0];
     const productId = await findOrCreateProduct(client, {
       name: archivedItem.name,
-      category: canonicalizeInventoryCategory(archivedItem.category) || 'Other'
+      category: canonicalizeInventoryCategory(archivedItem.category) || 'Other',
+      supplierName: archivedItem.supplier_name
     });
 
     const existingInventory = await client.query(
-      `SELECT inventory_id, stock_level, min_stock_level, status, last_updated
+      `SELECT inventory_id, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated
        FROM branch_inventory
        WHERE product_id = $1 AND branch = $2`,
       [productId, archivedItem.branch]
@@ -2853,14 +3683,20 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
         `UPDATE branch_inventory
          SET stock_level = $1,
              min_stock_level = $2,
-             status = $3,
+             lead_time_days = $3,
+             safety_stock = $4,
+             average_daily_sales = $5,
+             status = $6,
              last_updated = ${PHILIPPINE_NOW_SQL}
-         WHERE inventory_id = $4 AND branch = $5
-         RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, status, last_updated`,
+         WHERE inventory_id = $7 AND branch = $8
+         RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
         [
           archivedItem.stock_level,
           archivedItem.min_stock_level,
-          computeInventoryStatus(Number(archivedItem.stock_level || 0), Number(archivedItem.min_stock_level || 0)),
+          archivedItem.lead_time_days,
+          archivedItem.safety_stock,
+          archivedItem.average_daily_sales,
+          computeInventoryStatus(Number(archivedItem.stock_level || 0), getEffectiveReorderThreshold(archivedItem)),
           activeItem.inventory_id,
           archivedItem.branch
         ]
@@ -2868,15 +3704,28 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
       restoredInventoryId = reconciled.rows[0].inventory_id;
     } else {
       const restored = await client.query(
-        `INSERT INTO branch_inventory (product_id, branch, stock_level, min_stock_level, status, last_updated)
-         VALUES ($1, $2, $3, $4, $5, ${PHILIPPINE_NOW_SQL})
-         RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, status, last_updated`,
+        `INSERT INTO branch_inventory (
+           product_id,
+           branch,
+           stock_level,
+           min_stock_level,
+           lead_time_days,
+           safety_stock,
+           average_daily_sales,
+           status,
+           last_updated
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ${PHILIPPINE_NOW_SQL})
+         RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
         [
           productId,
           archivedItem.branch,
           archivedItem.stock_level,
           archivedItem.min_stock_level,
-          computeInventoryStatus(Number(archivedItem.stock_level || 0), Number(archivedItem.min_stock_level || 0)),
+          archivedItem.lead_time_days,
+          archivedItem.safety_stock,
+          archivedItem.average_daily_sales,
+          computeInventoryStatus(Number(archivedItem.stock_level || 0), getEffectiveReorderThreshold(archivedItem)),
         ]
       );
       restoredInventoryId = restored.rows[0].inventory_id;
@@ -2905,8 +3754,12 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
          bi.product_id,
          p.name,
          p.category,
+         p.supplier_name,
          bi.stock_level,
          bi.min_stock_level,
+         bi.lead_time_days,
+         bi.safety_stock,
+         bi.average_daily_sales,
          bi.status,
          bi.branch,
          bi.last_updated
@@ -2920,7 +3773,21 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
       actorId: req.user.id,
       targetId: restoredInventoryId,
       targetName: archivedItem.name,
-      action: 'RESTORE_ITEM'
+      targetType: 'inventory_item',
+      action: 'RESTORE_ITEM',
+      reason: 'Archived item restored to active inventory.',
+      details: {
+        branch: archivedItem.branch,
+        category: archivedItem.category,
+        supplier: archivedItem.supplier_name || 'Unassigned',
+        restoredFromArchiveId: Number(id),
+        quantityRestored: Number(archivedItem.stock_level || 0),
+        reorderLevel: Number(archivedItem.min_stock_level || 0),
+        leadTimeDays: Number(archivedItem.lead_time_days || 0),
+        safetyStock: Number(archivedItem.safety_stock || 0),
+        averageDailySales: Number(archivedItem.average_daily_sales || 0),
+        recommendedReorderPoint: computeReorderPoint(archivedItem)
+      }
     });
 
     await client.query('COMMIT');
@@ -3103,6 +3970,9 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
            AND (
              bi.stock_level < 0
              OR bi.min_stock_level < 0
+             OR bi.lead_time_days < 0
+             OR bi.safety_stock < 0
+             OR bi.average_daily_sales < 0
              OR bi.status IS NULL
              OR TRIM(bi.status) = ''
            )`,
@@ -3163,7 +4033,16 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
     ]);
 
     const inventoryStatusResult = await pool.query(
-      `SELECT bi.inventory_id, p.name, bi.branch, bi.stock_level, bi.min_stock_level, bi.status
+      `SELECT
+         bi.inventory_id,
+         p.name,
+         bi.branch,
+         bi.stock_level,
+         bi.min_stock_level,
+         bi.lead_time_days,
+         bi.safety_stock,
+         bi.average_daily_sales,
+         bi.status
        FROM branch_inventory bi
        INNER JOIN products p ON p.product_id = bi.product_id
        WHERE bi.branch = $1`,
@@ -3171,7 +4050,7 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
     );
 
     const statusMismatches = inventoryStatusResult.rows.filter(row => (
-      row.status !== computeInventoryStatus(Number(row.stock_level || 0), Number(row.min_stock_level || 0))
+      row.status !== computeInventoryStatus(Number(row.stock_level || 0), getEffectiveReorderThreshold(row))
     ));
 
     const checks = [

@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
 import { apiUrl } from "../utils/api";
+import { formatArchiveReferenceId, formatItemCode } from "../utils/itemCodes";
 
 const DataContext = createContext(undefined);
 
@@ -28,7 +29,10 @@ const generateInventoryAlerts = inventory => {
         timestampRaw,
         read: false,
         actionable: true,
-        relatedModule: 'inventory'
+        relatedModule: 'reports',
+        actionLabel: 'Review Reorder',
+        reportType: 'supplier-reorder',
+        reportCategory: item.category
       });
     } else if (item.status === 'Low Stock') {
       alerts.push({
@@ -39,7 +43,10 @@ const generateInventoryAlerts = inventory => {
         timestampRaw,
         read: false,
         actionable: true,
-        relatedModule: 'inventory'
+        relatedModule: 'reports',
+        actionLabel: 'Review Reorder',
+        reportType: 'supplier-reorder',
+        reportCategory: item.category
       });
     }
   });
@@ -225,18 +232,31 @@ export function DataProvider({ children }) {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       // Map backend fields to frontend shape
-      const items = (res.data.products || []).map((p) => ({
-        id: p.inventory_id?.toString() ?? '',
-        productId: p.product_id?.toString() ?? '',
-        name: p.name,
-        category: p.category,
-        quantity: p.stock_level,
-        reorderLevel: p.min_stock_level,
-        status: p.status,
-        branch: p.branch,
-        // preserve full ISO timestamp so the UI can display accurate relative times
-        lastUpdated: p.last_updated ? new Date(p.last_updated).toISOString() : '',
-      }));
+      const items = (res.data.products || []).map((p) => {
+        const mapped = {
+          id: p.inventory_id?.toString() ?? '',
+          productId: p.product_id?.toString() ?? '',
+          name: p.name,
+          category: p.category,
+          supplierName: p.supplier_name || '',
+          quantity: p.stock_level,
+          reorderLevel: p.min_stock_level,
+          leadTimeDays: p.lead_time_days === null || p.lead_time_days === undefined ? null : Number(p.lead_time_days),
+          safetyStock: p.safety_stock === null || p.safety_stock === undefined ? null : Number(p.safety_stock),
+          averageDailySales: p.average_daily_sales === null || p.average_daily_sales === undefined ? null : Number(p.average_daily_sales),
+          recommendedReorderPoint: p.recommended_reorder_point === null || p.recommended_reorder_point === undefined ? null : Number(p.recommended_reorder_point),
+          activeLowStockThreshold: Number(p.active_low_stock_threshold ?? p.min_stock_level ?? 0),
+          suggestedOrderQuantity: Number(p.suggested_order_quantity ?? 0),
+          status: p.status,
+          branch: p.branch,
+          // preserve full ISO timestamp so the UI can display accurate relative times
+          lastUpdated: p.last_updated ? new Date(p.last_updated).toISOString() : '',
+        };
+        return {
+          ...mapped,
+          itemCode: formatItemCode(mapped)
+        };
+      });
       setInventory(items);
     } catch (err) {
       setInventoryError(err?.response?.data?.error || err.message || "Failed to load inventory");
@@ -256,20 +276,35 @@ export function DataProvider({ children }) {
       const res = await axios.get(apiUrl("/api/archive"), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      const items = (res.data.archivedProducts || []).map((p) => ({
-        id: p.archived_inventory_id?.toString() ?? '',
-        originalInventoryId: p.original_inventory_id?.toString() ?? '',
-        productId: p.product_id?.toString() ?? '',
-        name: p.name,
-        category: p.category,
-        quantity: p.stock_level,
-        reorderLevel: p.min_stock_level,
-        status: p.status,
-        branch: p.branch,
-        // preserve full ISO timestamps for accuracy in alerts and history
-        lastUpdated: p.last_updated ? new Date(p.last_updated).toISOString() : '',
-        archivedAt: p.archived_at ? new Date(p.archived_at).toISOString() : '',
-      }));
+      const items = (res.data.archivedProducts || []).map((p) => {
+        const mapped = {
+          id: p.archived_inventory_id?.toString() ?? '',
+          originalInventoryId: p.original_inventory_id?.toString() ?? '',
+          productId: p.product_id?.toString() ?? '',
+          name: p.name,
+          category: p.category,
+          supplierName: p.supplier_name || '',
+          quantity: p.stock_level,
+          reorderLevel: p.min_stock_level,
+          leadTimeDays: p.lead_time_days === null || p.lead_time_days === undefined ? null : Number(p.lead_time_days),
+          safetyStock: p.safety_stock === null || p.safety_stock === undefined ? null : Number(p.safety_stock),
+          averageDailySales: p.average_daily_sales === null || p.average_daily_sales === undefined ? null : Number(p.average_daily_sales),
+          recommendedReorderPoint: p.recommended_reorder_point === null || p.recommended_reorder_point === undefined ? null : Number(p.recommended_reorder_point),
+          activeLowStockThreshold: Number(p.active_low_stock_threshold ?? p.min_stock_level ?? 0),
+          suggestedOrderQuantity: Number(p.suggested_order_quantity ?? 0),
+          status: p.status,
+          branch: p.branch,
+          // preserve full ISO timestamps for accuracy in alerts and history
+          lastUpdated: p.last_updated ? new Date(p.last_updated).toISOString() : '',
+          archiveReason: p.archive_reason || '',
+          archivedAt: p.archived_at ? new Date(p.archived_at).toISOString() : '',
+        };
+        return {
+          ...mapped,
+          itemCode: formatItemCode(mapped),
+          archiveCode: formatArchiveReferenceId(mapped.id, mapped.archivedAt)
+        };
+      });
       setArchivedInventory(items);
     } catch (err) {
       setArchivedInventory([]);
@@ -297,6 +332,7 @@ export function DataProvider({ children }) {
         quantityChanged: Number(movement.quantity_changed || 0),
         previousQuantity: Number(movement.previous_quantity || 0),
         newQuantity: Number(movement.new_quantity || 0),
+        reason: movement.reason || '',
         note: movement.note || '',
         actorId: movement.actor_id?.toString() ?? '',
         actorName: movement.actor_name || '',
@@ -503,8 +539,12 @@ export function DataProvider({ children }) {
       {
         name: item.name,
         category: item.category,
+        supplier_name: item.supplierName,
         stock_level: item.quantity,
         min_stock_level: item.reorderLevel,
+        lead_time_days: item.leadTimeDays,
+        safety_stock: item.safetyStock,
+        average_daily_sales: item.averageDailySales,
         allow_similar_duplicate: Boolean(item.allowSimilarDuplicate),
       },
       { headers: token ? { Authorization: `Bearer ${token}` } : {} }
@@ -530,8 +570,12 @@ export function DataProvider({ children }) {
                 ...it,
                 name: updates.name ?? it.name,
                 category: updates.category ?? it.category,
+                supplierName: updates.supplierName ?? it.supplierName,
                 quantity: nextQuantity,
                 reorderLevel: updates.reorderLevel ?? it.reorderLevel,
+                leadTimeDays: updates.leadTimeDays ?? it.leadTimeDays,
+                safetyStock: updates.safetyStock ?? it.safetyStock,
+                averageDailySales: updates.averageDailySales ?? it.averageDailySales,
                 lastUpdated: quantityChanged ? new Date().toISOString() : it.lastUpdated,
               };
             })()
@@ -545,10 +589,15 @@ export function DataProvider({ children }) {
         {
           name: updates.name,
           category: updates.category,
+          supplier_name: updates.supplierName,
           stock_level: updates.quantity,
           min_stock_level: updates.reorderLevel,
+          lead_time_days: updates.leadTimeDays,
+          safety_stock: updates.safetyStock,
+          average_daily_sales: updates.averageDailySales,
           movement_action: updates.movementAction,
           movement_quantity: updates.movementQuantity,
+          movement_reason: updates.movementReason,
           movement_note: updates.movementNote,
           allow_similar_duplicate: Boolean(updates.allowSimilarDuplicate),
         },
@@ -569,13 +618,41 @@ export function DataProvider({ children }) {
     }
   };
 
+  const batchStockOut = async ({ items, movementReason, movementNote }) => {
+    const token = localStorage.getItem("token");
+    try {
+      const res = await axios.post(
+        apiUrl("/api/inventory/batch-stock-out"),
+        {
+          items: items.map(item => ({
+            inventory_id: item.inventoryId,
+            quantity: item.quantity,
+          })),
+          movement_reason: movementReason,
+          movement_note: movementNote,
+        },
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      await fetchInventory();
+      await fetchArchivedInventory();
+      await fetchStockMovements();
+      return res.data.products || [];
+    } catch (err) {
+      await fetchInventory();
+      await fetchArchivedInventory();
+      await fetchStockMovements();
+      throw err;
+    }
+  };
+
   // Archive (delete) inventory item
-  const archiveInventoryItem = async (id) => {
+  const archiveInventoryItem = async (id, archiveReason) => {
     const token = localStorage.getItem("token");
 
     try {
       await axios.delete(apiUrl(`/api/inventory/${id}`), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
+        data: { archive_reason: archiveReason },
       });
       await fetchInventory();
       await fetchArchivedInventory();
@@ -626,6 +703,7 @@ export function DataProvider({ children }) {
         fetchArchivedInventory,
         addInventoryItem,
         updateInventoryItem,
+        batchStockOut,
         archiveInventoryItem,
         restoreArchivedInventoryItem,
         alerts,

@@ -583,7 +583,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
                 <p className="login-register-row">
                   <span>Don't have an account?</span>
                   {' '}
-                  <Link to="/register" className="login-register-link text-blue-600 hover:text-blue-700 hover:underline">Register here</Link>
+                  <Link to="/register" className="login-register-link text-blue-600 hover:text-blue-700 hover:underline">Request account access</Link>
                 </p>
               </div>
             </form>

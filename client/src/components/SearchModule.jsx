@@ -21,13 +21,44 @@ export function SearchModule() {
   const categories = Array.from(new Set(inventory.map(product => product.category).filter(Boolean)));
 
   useEffect(() => {
+    const applyDashboardStatusFilter = status => {
+      if (!status) return;
+      setSearchQuery("");
+      setCategoryFilter("all");
+      setStatusFilter(status);
+      setSortBy("name");
+      setSortOrder("asc");
+    };
+
+    const pendingStatus = localStorage.getItem("dashboardSearchStatusFilter");
+    if (pendingStatus) {
+      applyDashboardStatusFilter(pendingStatus);
+      localStorage.removeItem("dashboardSearchStatusFilter");
+    }
+
+    const handleDashboardSearchFilter = event => {
+      applyDashboardStatusFilter(event.detail?.status);
+    };
+
+    window.addEventListener("dashboard-search-filter", handleDashboardSearchFilter);
+    return () => window.removeEventListener("dashboard-search-filter", handleDashboardSearchFilter);
+  }, []);
+
+  useEffect(() => {
     let results = [];
 
     results = linearSearchAll(inventory, product => {
       const productName = (product.name || "").toLowerCase();
-      const productId = (product.id || "").toLowerCase();
+      const productId = String(product.id || "").toLowerCase();
+      const productCode = (product.itemCode || "").toLowerCase();
+      const productDatabaseId = String(product.productId || "").toLowerCase();
       const query = searchQuery.toLowerCase();
-      const matchesSearch = searchQuery === "" || productName.includes(query) || productId.includes(query);
+      const matchesSearch =
+        searchQuery === "" ||
+        productName.includes(query) ||
+        productCode.includes(query) ||
+        productId.includes(query) ||
+        productDatabaseId.includes(query);
       const matchesCategory = categoryFilter === "all" || product.category === categoryFilter;
       const matchesStatus = statusFilter === "all" || product.status === statusFilter;
       return matchesSearch && matchesCategory && matchesStatus;
@@ -345,7 +376,7 @@ export function SearchModule() {
                 <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
                 <Input
                   className="h-12 pl-10"
-                  placeholder="Search active products by name or ID"
+                  placeholder="Search active products by name or item code"
                   value={searchQuery}
                   onChange={event => setSearchQuery(event.target.value)}
                 />
@@ -428,7 +459,7 @@ export function SearchModule() {
                       <CardHeader>
                         <div className="search-result-header">
                           <Badge variant="outline" className="font-mono text-xs">
-                            {product.id}
+                            {product.itemCode || product.id}
                           </Badge>
                           <Badge
                             variant={
@@ -444,13 +475,17 @@ export function SearchModule() {
                           </Badge>
                         </div>
                         <CardTitle className="search-result-name text-lg">{product.name}</CardTitle>
-                        <CardDescription>Product ID: {product.id}</CardDescription>
+                        <CardDescription>Item Code: {product.itemCode || product.id}</CardDescription>
                       </CardHeader>
                       <CardContent>
                         <div className="space-y-2">
                           <div className="search-result-detail">
                             <span className="text-slate-600">Category</span>
                             <span>{product.category}</span>
+                          </div>
+                          <div className="search-result-detail">
+                            <span className="text-slate-600">Supplier</span>
+                            <span>{product.supplierName || "Unassigned"}</span>
                           </div>
                           <div className="search-result-detail">
                             <span className="text-slate-600">Quantity</span>

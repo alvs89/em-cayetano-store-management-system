@@ -30,6 +30,42 @@ const OFFICIAL_INVENTORY_CATEGORIES = [
   "Other"
 ];
 
+const STOCK_OUT_REASON_OPTIONS = [
+  { value: "sales", label: "Sales", description: "Sold items released to customers." },
+  { value: "damaged", label: "Damaged", description: "Items removed because they can no longer be sold." },
+  { value: "expired", label: "Expired", description: "Items removed because they are past their usable date." },
+  { value: "lost_missing", label: "Lost/Missing", description: "Items missing after checking actual stock." },
+  { value: "manual_adjustment", label: "Manual Adjustment", description: "Stock corrected after a verified count." },
+  { value: "branch_transfer", label: "Branch Transfer", description: "Items moved to another branch." },
+  { value: "correction", label: "Correction", description: "Fixes an earlier stock movement entry." }
+];
+
+const getStockOutReasonLabel = value =>
+  STOCK_OUT_REASON_OPTIONS.find(option => option.value === value)?.label || "";
+
+const STOCK_IN_REASON_OPTIONS = [
+  { value: "delivery_received", label: "Delivery Received", description: "New stock received from a supplier or delivery." },
+  { value: "returned_item", label: "Returned Item", description: "Returned items added back after checking their condition." },
+  { value: "beginning_balance", label: "Beginning Balance", description: "Starting stock entered during setup or inventory reset." },
+  { value: "manual_adjustment", label: "Manual Adjustment", description: "Stock corrected after a verified count." },
+  { value: "correction", label: "Correction", description: "Fixes an earlier stock movement entry." }
+];
+
+const getStockInReasonLabel = value =>
+  STOCK_IN_REASON_OPTIONS.find(option => option.value === value)?.label || "";
+
+const ARCHIVE_REASON_OPTIONS = [
+  { value: "discontinued", label: "Discontinued" },
+  { value: "duplicate_record", label: "Duplicate Record" },
+  { value: "wrong_entry", label: "Wrong Entry" },
+  { value: "expired", label: "Expired" },
+  { value: "no_longer_sold", label: "No Longer Sold" },
+  { value: "other", label: "Other" }
+];
+
+const getArchiveReasonLabel = value =>
+  ARCHIVE_REASON_OPTIONS.find(option => option.value === value)?.label || "";
+
 const CATEGORY_ALIASES = {
   tool: "Tools",
   tools: "Tools",
@@ -201,6 +237,24 @@ const areLikelyDuplicateInventoryNames = (leftName, rightName) => {
   return fuzzyMatches > 0;
 };
 const isWholeNumberText = value => /^\d+$/.test(String(value ?? "").trim());
+const isDecimalNumberText = value => /^\d+(?:\.\d{1,2})?$/.test(String(value ?? "").trim());
+const hasPlanningValue = value => value !== "" && value !== null && value !== undefined;
+const hasCompleteReorderPlanning = item =>
+  hasPlanningValue(item?.leadTimeDays) &&
+  hasPlanningValue(item?.safetyStock) &&
+  hasPlanningValue(item?.averageDailySales);
+const getRecommendedReorderPoint = item => {
+  if (!hasCompleteReorderPlanning(item)) return null;
+  return Math.ceil(
+    Math.max(0, Number(item?.averageDailySales || 0)) *
+      Math.max(0, Number(item?.leadTimeDays || 0)) +
+      Math.max(0, Number(item?.safetyStock || 0))
+  );
+};
+const getActiveLowStockThreshold = item => {
+  const recommendedPoint = getRecommendedReorderPoint(item);
+  return recommendedPoint !== null ? recommendedPoint : Number(item?.reorderLevel || 0);
+};
 const normalizeCategory = value => {
   const normalized = normalizeDuplicateKeyPart(value);
   if (!normalized) return "";
@@ -224,6 +278,7 @@ export function InventoryModule({
     inventory,
     addInventoryItem,
     updateInventoryItem,
+    batchStockOut,
     archiveInventoryItem,
     restoreArchivedInventoryItem,
     archivedInventory,
@@ -233,10 +288,16 @@ export function InventoryModule({
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isStockInDialogOpen, setIsStockInDialogOpen] = useState(false);
   const [isStockOutDialogOpen, setIsStockOutDialogOpen] = useState(false);
+  const [isBatchStockOutDialogOpen, setIsBatchStockOutDialogOpen] = useState(false);
   const [isArchiveDialogOpen, setIsArchiveDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState(null);
   const [stockAmount, setStockAmount] = useState("");
+  const [stockInReason, setStockInReason] = useState("");
+  const [stockOutReason, setStockOutReason] = useState("");
+  const [batchStockOutReason, setBatchStockOutReason] = useState("");
+  const [batchStockOutRows, setBatchStockOutRows] = useState([{ inventoryId: "", quantity: "" }]);
+  const [archiveReason, setArchiveReason] = useState("");
   const [discardPrompt, setDiscardPrompt] = useState(null);
   const [archivedDuplicatePrompt, setArchivedDuplicatePrompt] = useState(null);
   const [similarDuplicatePrompt, setSimilarDuplicatePrompt] = useState(null);
@@ -244,7 +305,11 @@ export function InventoryModule({
   const [editItem, setEditItem] = useState({
     name: "",
     category: "",
-    reorderLevel: ""
+    supplierName: "",
+    reorderLevel: "",
+    leadTimeDays: "",
+    safetyStock: "",
+    averageDailySales: ""
   });
 
   // 🔄 Sorting state: track which column and direction to sort
@@ -252,6 +317,8 @@ export function InventoryModule({
   const [sortOrder, setSortOrder] = useState('asc');
   const [currentPage, setCurrentPage] = useState(1);
   const [highlightedInventoryRowId, setHighlightedInventoryRowId] = useState(null);
+  const [dashboardPickerAction, setDashboardPickerAction] = useState(null);
+  const [dashboardPickerItemId, setDashboardPickerItemId] = useState("");
   const categories = OFFICIAL_INVENTORY_CATEGORIES;
   const currentBranch = normalizeDuplicateKeyPart(user?.branch);
   const buildDuplicateKey = item => [
@@ -262,9 +329,130 @@ export function InventoryModule({
   const [newItem, setNewItem] = useState({
     name: "",
     category: "",
+    supplierName: "",
     quantity: "",
-    reorderLevel: "10" // Default reorder level
+    reorderLevel: "10", // Default manual threshold
+    leadTimeDays: "",
+    safetyStock: "",
+    averageDailySales: ""
   });
+
+  const getStockPreview = direction => {
+    const currentStock = Number(selectedItem?.quantity || 0);
+    const enteredQuantity = Math.max(0, Number(stockAmount || 0));
+    const signedQuantity = direction === "out" ? -enteredQuantity : enteredQuantity;
+    const newStockBalance = direction === "out"
+      ? currentStock - enteredQuantity
+      : currentStock + enteredQuantity;
+
+    return {
+      currentStock,
+      enteredQuantity,
+      signedQuantity,
+      newStockBalance
+    };
+  };
+
+  const formatStockUnits = value => `${value} ${value === 1 ? "unit" : "units"}`;
+
+  const renderStockPreview = direction => {
+    const preview = getStockPreview(direction);
+    const isStockOut = direction === "out";
+    const reorderPoint = selectedItem?.activeLowStockThreshold ?? getActiveLowStockThreshold(selectedItem);
+    const tone = isStockOut
+      ? {
+          text: "text-red-950",
+          icon: "text-red-600",
+          border: "#FECACA",
+          background: "#FEF2F2",
+          rowBorder: "#FECACA",
+          rowBackground: "#FFFFFF"
+        }
+      : {
+          text: "text-green-950",
+          icon: "text-green-600",
+          border: "#BBF7D0",
+          background: "#F0FDF4",
+          rowBorder: "#BBF7D0",
+          rowBackground: "#FFFFFF"
+        };
+    const rows = [
+      ["Current Stock", formatStockUnits(preview.currentStock)],
+      [isStockOut ? "Stock Out Quantity" : "Stock In Quantity", `${isStockOut ? "-" : "+"}${formatStockUnits(preview.enteredQuantity)}`],
+      ["New Stock Balance", formatStockUnits(preview.newStockBalance)],
+      ["Reorder Point", formatStockUnits(Number(reorderPoint))]
+    ];
+
+    return /*#__PURE__*/React.createElement("div", {
+      className: `inventory-stock-preview ${tone.text}`,
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "stretch",
+        gap: "10px",
+        border: `1px solid ${tone.border}`,
+        background: tone.background,
+        borderRadius: "12px",
+        padding: "14px"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "10px",
+        textAlign: "center"
+      }
+    }, isStockOut ? /*#__PURE__*/React.createElement(Info, {
+      className: `shrink-0 ${tone.icon}`,
+      style: {
+        width: "20px",
+        height: "20px"
+      }
+    }) : /*#__PURE__*/React.createElement(CheckCircle, {
+      className: `shrink-0 ${tone.icon}`,
+      style: {
+        width: "20px",
+        height: "20px"
+      }
+    }), /*#__PURE__*/React.createElement("p", {
+      className: "font-semibold",
+      style: {
+        fontSize: "16px",
+        lineHeight: "1.25"
+      }
+    }, "Stock Preview")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+        gap: "8px"
+      }
+    }, rows.map(([label, value]) => /*#__PURE__*/React.createElement("div", {
+      key: label,
+      style: {
+        border: `1px solid ${tone.rowBorder}`,
+        background: tone.rowBackground,
+        borderRadius: "10px",
+        padding: "9px 10px",
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("p", {
+      className: "text-slate-600",
+      style: {
+        fontSize: "12px",
+        lineHeight: "1.2",
+        marginBottom: "4px"
+      }
+    }, label), /*#__PURE__*/React.createElement("p", {
+      className: "font-semibold text-slate-950",
+      style: {
+        fontSize: "14px",
+        lineHeight: "1.25",
+        overflowWrap: "anywhere"
+      }
+    }, value)))));
+  };
+
   const highlightInventoryRow = React.useCallback(id => {
     if (!id) return;
     const normalizedId = String(id);
@@ -278,7 +466,12 @@ export function InventoryModule({
   // Linear Search: O(n) - iterates through each item sequentially
   // Used here because we're filtering with multiple criteria (search + category)
   const filteredInventory = linearSearchAll(inventory, item => {
-    const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) || item.id.toLowerCase().includes(searchQuery.toLowerCase());
+    const query = searchQuery.toLowerCase();
+    const matchesSearch =
+      item.name.toLowerCase().includes(query) ||
+      item.itemCode?.toLowerCase().includes(query) ||
+      String(item.id || "").toLowerCase().includes(query) ||
+      item.productId?.toLowerCase().includes(query);
     const matchesCategory = categoryFilter === "all" || normalizeCategory(item.category) === categoryFilter;
     return matchesSearch && matchesCategory;
   });
@@ -298,6 +491,8 @@ export function InventoryModule({
         return mergeSort(filteredInventory, (a, b) => a.name.localeCompare(b.name) * direction);
       case 'category':
         return mergeSort(filteredInventory, (a, b) => normalizeCategory(a.category).localeCompare(normalizeCategory(b.category)) * direction);
+      case 'supplier':
+        return mergeSort(filteredInventory, (a, b) => (a.supplierName || '').localeCompare(b.supplierName || '') * direction);
       case 'quantity':
         return mergeSort(filteredInventory, (a, b) => ((a.quantity ?? 0) - (b.quantity ?? 0)) * direction);
       case 'status':
@@ -395,30 +590,131 @@ export function InventoryModule({
 
   const resetStockForm = () => {
     setStockAmount("");
+    setStockInReason("");
+    setStockOutReason("");
+  };
+
+  const resetBatchStockOutForm = () => {
+    setBatchStockOutReason("");
+    setBatchStockOutRows([{ inventoryId: "", quantity: "" }]);
   };
 
   const resetAddItemForm = () => {
     setNewItem({
       name: "",
       category: "",
+      supplierName: "",
       quantity: "",
-      reorderLevel: "10"
+      reorderLevel: "10",
+      leadTimeDays: "",
+      safetyStock: "",
+      averageDailySales: ""
     });
     setArchivedDuplicatePrompt(null);
     setSimilarDuplicatePrompt(null);
   };
 
+  const applyDashboardInventoryAction = React.useCallback((action, itemId = "") => {
+    if (!action) return;
+    if (action === "add-item") {
+      if (user?.role !== "Admin") {
+        toast.error("Admin access is required to add a new inventory item.");
+        return;
+      }
+      setDashboardPickerAction(null);
+      setIsAddDialogOpen(true);
+      return;
+    }
+
+    if (action === "daily-sales-deduction") {
+      setDashboardPickerAction(null);
+      setIsBatchStockOutDialogOpen(true);
+      return;
+    }
+
+    if (action === "stock-in") {
+      setDashboardPickerItemId(itemId ? String(itemId) : "");
+      setDashboardPickerAction("stock-in");
+      return;
+    }
+
+    if (action === "stock-out") {
+      setDashboardPickerItemId(itemId ? String(itemId) : "");
+      setDashboardPickerAction("stock-out");
+    }
+  }, [user?.role]);
+
+  React.useEffect(() => {
+    const pendingAction = localStorage.getItem("dashboardInventoryAction");
+    const pendingItemId = localStorage.getItem("dashboardInventoryItemId") || "";
+    if (pendingAction) {
+      localStorage.removeItem("dashboardInventoryAction");
+      localStorage.removeItem("dashboardInventoryItemId");
+      window.setTimeout(() => applyDashboardInventoryAction(pendingAction, pendingItemId), 0);
+    }
+
+    const handleDashboardInventoryAction = event => {
+      applyDashboardInventoryAction(event.detail?.action, event.detail?.itemId || "");
+    };
+
+    window.addEventListener("dashboard-inventory-action", handleDashboardInventoryAction);
+    return () => window.removeEventListener("dashboard-inventory-action", handleDashboardInventoryAction);
+  }, [applyDashboardInventoryAction]);
+
+  const closeDashboardPicker = () => {
+    setDashboardPickerAction(null);
+    setDashboardPickerItemId("");
+  };
+
+  const continueDashboardStockAction = () => {
+    const item = inventory.find(inventoryItem => String(inventoryItem.id) === String(dashboardPickerItemId));
+    if (!item) {
+      toast.error("Please select an inventory item first.");
+      return;
+    }
+
+    setSelectedItem(item);
+    resetStockForm();
+    closeDashboardPicker();
+
+    if (dashboardPickerAction === "stock-in") {
+      setIsStockInDialogOpen(true);
+      return;
+    }
+
+    if (dashboardPickerAction === "stock-out") {
+      setIsStockOutDialogOpen(true);
+    }
+  };
+
   const hasAddItemChanges = () => {
-    return newItem.name.trim() !== "" || newItem.category.trim() !== "" || newItem.quantity !== "" || newItem.reorderLevel !== "10";
+    return newItem.name.trim() !== "" ||
+      newItem.category.trim() !== "" ||
+      newItem.supplierName.trim() !== "" ||
+      newItem.quantity !== "" ||
+      newItem.reorderLevel !== "10" ||
+      newItem.leadTimeDays !== "" ||
+      newItem.safetyStock !== "" ||
+      newItem.averageDailySales !== "";
   };
 
   const hasStockFormChanges = () => {
-    return stockAmount !== "";
+    return stockAmount !== "" || stockInReason !== "" || stockOutReason !== "";
+  };
+
+  const hasBatchStockOutChanges = () => {
+    return batchStockOutReason !== "" || batchStockOutRows.some(row => row.inventoryId || row.quantity);
   };
 
   const hasEditItemChanges = () => {
     if (!selectedItem) return false;
-    return editItem.name.trim() !== selectedItem.name || normalizeCategory(editItem.category) !== normalizeCategory(selectedItem.category) || String(editItem.reorderLevel) !== String(selectedItem.reorderLevel);
+    return editItem.name.trim() !== selectedItem.name ||
+      normalizeCategory(editItem.category) !== normalizeCategory(selectedItem.category) ||
+      editItem.supplierName.trim() !== (selectedItem.supplierName || "") ||
+      String(editItem.reorderLevel) !== String(selectedItem.reorderLevel) ||
+      String(editItem.leadTimeDays) !== String(selectedItem.leadTimeDays ?? 7) ||
+      String(editItem.safetyStock) !== String(selectedItem.safetyStock ?? 0) ||
+      String(editItem.averageDailySales) !== String(selectedItem.averageDailySales ?? 0);
   };
 
   const closeAddItemDialog = () => {
@@ -432,13 +728,22 @@ export function InventoryModule({
     resetStockForm();
   };
 
+  const closeBatchStockOutDialog = () => {
+    setIsBatchStockOutDialogOpen(false);
+    resetBatchStockOutForm();
+  };
+
   const closeEditDialog = () => {
     setIsEditDialogOpen(false);
     setSelectedItem(null);
     setEditItem({
       name: "",
       category: "",
-      reorderLevel: ""
+      supplierName: "",
+      reorderLevel: "",
+      leadTimeDays: "7",
+      safetyStock: "0",
+      averageDailySales: "0"
     });
   };
 
@@ -466,6 +771,14 @@ export function InventoryModule({
     closeStockOutDialog();
   };
 
+  const requestCloseBatchStockOutDialog = () => {
+    if (hasBatchStockOutChanges()) {
+      setDiscardPrompt("batchStockOut");
+      return;
+    }
+    closeBatchStockOutDialog();
+  };
+
   const requestCloseEditDialog = () => {
     if (hasEditItemChanges()) {
       setDiscardPrompt("editItem");
@@ -481,11 +794,15 @@ export function InventoryModule({
     },
     stockIn: {
       title: "Discard stock-in entry?",
-      description: "You have entered a stock-in quantity. Closing this form will clear the quantity and keep the inventory unchanged."
+      description: "You have entered stock-in details. Closing this form will clear the quantity and reason, and keep the inventory unchanged."
     },
     stockOut: {
       title: "Discard stock-out entry?",
-      description: "You have entered a stock-out quantity. Closing this form will clear the quantity and keep the inventory unchanged."
+      description: "You have entered stock-out details. Closing this form will clear the quantity and reason, and keep the inventory unchanged."
+    },
+    batchStockOut: {
+      title: "Discard batch stock-out entry?",
+      description: "You have entered batch stock-out details. Closing this form will clear all selected items and keep the inventory unchanged."
     },
     editItem: {
       title: "Discard item edits?",
@@ -508,6 +825,10 @@ export function InventoryModule({
       closeStockOutDialog();
       return;
     }
+    if (prompt === "batchStockOut") {
+      closeBatchStockOutDialog();
+      return;
+    }
     if (prompt === "editItem") {
       closeEditDialog();
     }
@@ -518,10 +839,16 @@ export function InventoryModule({
     setSelectedItem(null);
     resetStockForm();
   };
+
+  const closeArchiveDialog = () => {
+    setIsArchiveDialogOpen(false);
+    setSelectedItem(null);
+    setArchiveReason("");
+  };
   
   // Human-friendly sort labels depending on column type
   const sortLabel = (() => {
-    if (sortBy === 'id') return 'ID';
+    if (sortBy === 'id') return 'Item Code';
     if (sortBy === 'date') return 'Last Updated';
     return sortBy.charAt(0).toUpperCase() + sortBy.slice(1);
   })();
@@ -532,6 +859,123 @@ export function InventoryModule({
   })();
 
   const realtimeDisplayOrderLabel = filteredInventory.length === 0 ? "No items" : displayOrderLabel;
+
+  const validateReorderPlanningValues = values => {
+    if (hasPlanningValue(values.leadTimeDays) && !isWholeNumberText(values.leadTimeDays)) {
+      toast.error("Lead time must be a whole number of days.");
+      return null;
+    }
+    if (hasPlanningValue(values.safetyStock) && !isWholeNumberText(values.safetyStock)) {
+      toast.error("Safety stock must be a whole number.");
+      return null;
+    }
+    if (hasPlanningValue(values.averageDailySales) && !isDecimalNumberText(values.averageDailySales)) {
+      toast.error("Average daily sales must be a valid number.");
+      return null;
+    }
+
+    const leadTimeDays = hasPlanningValue(values.leadTimeDays) ? Number(values.leadTimeDays) : null;
+    const safetyStock = hasPlanningValue(values.safetyStock) ? Number(values.safetyStock) : null;
+    const averageDailySales = hasPlanningValue(values.averageDailySales) ? Number(values.averageDailySales) : null;
+
+    if (leadTimeDays !== null && (leadTimeDays < 0 || leadTimeDays > 365)) {
+      toast.error("Supplier lead time must be between 0 and 365 days.");
+      return null;
+    }
+    if (safetyStock !== null && safetyStock < 0) {
+      toast.error("Safety stock must be 0 or higher.");
+      return null;
+    }
+    if (averageDailySales !== null && averageDailySales < 0) {
+      toast.error("Average daily sales must be 0 or higher.");
+      return null;
+    }
+
+    return { leadTimeDays, safetyStock, averageDailySales };
+  };
+
+  const renderReorderPlanningFields = (values, setValues) => {
+    const recommendedPoint = getRecommendedReorderPoint(values);
+    const recommendedPointText = recommendedPoint === null
+      ? "Not available"
+      : `${recommendedPoint} ${recommendedPoint === 1 ? "unit" : "units"}`;
+    const hasCompletePlanning = hasCompleteReorderPlanning(values);
+    const rawRecommendedPoint = hasCompletePlanning
+      ? Number(values.averageDailySales) * Number(values.leadTimeDays) + Number(values.safetyStock)
+      : null;
+    const formulaText = hasCompletePlanning
+      ? `${Number(values.averageDailySales)} x ${Number(values.leadTimeDays)} + ${Number(values.safetyStock)} = ${Number(rawRecommendedPoint.toFixed(2))}`
+      : "Complete supplier lead time, safety stock, and average daily sales to calculate this automatically.";
+    const roundedFormulaText = hasCompletePlanning && rawRecommendedPoint !== recommendedPoint
+      ? `${formulaText}, rounded up to ${recommendedPoint}`
+      : formulaText;
+
+    return (
+      <div className="space-y-3 rounded-md border border-blue-100 bg-blue-50/60 p-4">
+        <div>
+          <Label className="text-sm font-semibold">Optional Reorder Planning</Label>
+          <p className="mt-1 text-sm text-slate-600">
+            Complete these values only when supplier delivery and sales movement are known.
+          </p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="space-y-2">
+            <Label htmlFor="lead-time-days">Supplier Lead Time in Days</Label>
+            <Input
+              id="lead-time-days"
+              type="number"
+              min="0"
+              max="365"
+              step="1"
+              inputMode="numeric"
+              value={values.leadTimeDays}
+              onChange={e => setValues({ leadTimeDays: e.target.value })}
+              placeholder="e.g., 7"
+            />
+            <p className="text-xs text-slate-500">Optional. Number of days before delivery arrives.</p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="safety-stock">Safety Stock Quantity</Label>
+            <Input
+              id="safety-stock"
+              type="number"
+              min="0"
+              step="1"
+              inputMode="numeric"
+              value={values.safetyStock}
+              onChange={e => setValues({ safetyStock: e.target.value })}
+              placeholder="e.g., 10"
+            />
+            <p className="text-xs text-slate-500">Optional. Extra units kept as reserve.</p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="average-daily-sales">Average Daily Sales</Label>
+            <Input
+              id="average-daily-sales"
+              type="number"
+              min="0"
+              step="0.01"
+              value={values.averageDailySales}
+              onChange={e => setValues({ averageDailySales: e.target.value })}
+              placeholder="e.g., 2.5"
+            />
+            <p className="text-xs text-slate-500">Optional. Estimated units sold per day.</p>
+          </div>
+        </div>
+        <div className="space-y-1 rounded-md border border-blue-200 bg-white px-3 py-2 text-sm text-slate-700">
+          <p>
+            <span className="font-semibold">System Recommended Reorder Point:</span> {recommendedPointText}
+          </p>
+          <p className="text-xs text-slate-500">
+            Formula: Average Daily Sales x Supplier Lead Time + Safety Stock.
+          </p>
+          <p className="text-xs text-slate-500">
+            {hasCompletePlanning ? `Calculation: ${roundedFormulaText} units.` : formulaText}
+          </p>
+        </div>
+      </div>
+    );
+  };
 
   const restoreArchivedDuplicate = async archivedItem => {
     if (!archivedItem || isRestoringArchivedDuplicate) return;
@@ -556,7 +1000,11 @@ export function InventoryModule({
     setEditItem({
       name: item.name || "",
       category: normalizeCategory(item.category) || item.category || "",
-      reorderLevel: String(item.reorderLevel ?? 10)
+      supplierName: item.supplierName || "",
+      reorderLevel: String(item.reorderLevel ?? 10),
+      leadTimeDays: item.leadTimeDays === null || item.leadTimeDays === undefined ? "" : String(item.leadTimeDays),
+      safetyStock: item.safetyStock === null || item.safetyStock === undefined ? "" : String(item.safetyStock),
+      averageDailySales: item.averageDailySales === null || item.averageDailySales === undefined ? "" : String(item.averageDailySales)
     });
     setIsEditDialogOpen(true);
   };
@@ -573,19 +1021,25 @@ export function InventoryModule({
       return;
     }
 
-    const quantity = parseInt(newItem.quantity);
+    if (!isWholeNumberText(newItem.quantity)) {
+      toast.error("Initial quantity must be a whole number.");
+      return;
+    }
+    const quantity = Number(newItem.quantity);
     if (!isWholeNumberText(newItem.reorderLevel)) {
-      toast.error("Reorder Level must be a whole number.");
+      toast.error("Manual Low-Stock Threshold must be a whole number.");
       return;
     }
 
     const reorderLevel = Number(newItem.reorderLevel);
+    const reorderPlanning = validateReorderPlanningValues(newItem);
+    if (!reorderPlanning) return;
     if (isNaN(quantity) || quantity < 0) {
       toast.error("Please enter a valid quantity.");
       return;
     }
-    if (isNaN(reorderLevel) || reorderLevel < 0 || reorderLevel > 20) {
-      toast.error("Reorder Level must be between 0 and 20.");
+    if (isNaN(reorderLevel) || reorderLevel < 0) {
+      toast.error("Manual Low-Stock Threshold must be 0 or higher.");
       return;
     }
     const newItemDuplicateKey = [
@@ -598,7 +1052,7 @@ export function InventoryModule({
     const existingItem = linearSearch(inventory, item => buildDuplicateKey(item) === newItemDuplicateKey);
     if (existingItem) {
       toast.error("Possible duplicate item found", {
-        description: `"${existingItem.name}" already exists in ${normalizeCategory(newItem.category)} (ID: ${existingItem.id}). Use Stock In if this is the same product.`
+        description: `"${existingItem.name}" already exists in ${normalizeCategory(newItem.category)} (Item Code: ${existingItem.itemCode || existingItem.id}). Use Stock In if this is the same product.`
       });
 
       return;
@@ -650,16 +1104,18 @@ export function InventoryModule({
       const addedItem = await addInventoryItem({
         name: cleanName,
         category: normalizeCategory(newItem.category),
+        supplierName: newItem.supplierName.trim().replace(/\s+/g, " "),
         quantity,
         reorderLevel,
+        ...reorderPlanning,
         allowSimilarDuplicate
       });
       highlightInventoryRow(addedItem?.id);
       setIsAddDialogOpen(false);
-      setNewItem({ name: "", category: "", quantity: "", reorderLevel: "10" });
+      resetAddItemForm();
       if (quantity === 0) {
         toast.error(`${cleanName} added but OUT OF STOCK!`, { description: 'Item needs immediate stocking' });
-      } else if (quantity <= reorderLevel) {
+      } else if (quantity <= getActiveLowStockThreshold({ reorderLevel, ...reorderPlanning })) {
         toast.warning(`${cleanName} added but LOW ON STOCK!`, { description: `Only ${formatUnitQuantity(quantity)} - Consider restocking soon` });
       } else {
         toast.success(`${cleanName} added successfully!`, { description: `Initial stock: ${formatUnitQuantity(quantity)}` });
@@ -690,19 +1146,25 @@ export function InventoryModule({
       toast.error("Invalid stock quantity.");
       return;
     }
+    if (!stockInReason) {
+      toast.error("Please select the reason for this Stock In transaction.");
+      return;
+    }
     try {
+      const reasonLabel = getStockInReasonLabel(stockInReason);
       const updatedItem = await updateInventoryItem(selectedItem.id, {
         ...selectedItem,
         quantity: selectedItem.quantity + amount,
         movementAction: 'stock_in',
         movementQuantity: amount,
-        movementNote: `Stock In recorded from inventory module.`
+        movementReason: stockInReason,
+        movementNote: `Stock In recorded from inventory module. Reason: ${reasonLabel}.`
       });
       highlightInventoryRow(updatedItem?.id || selectedItem.id);
       setIsStockInDialogOpen(false);
-      setStockAmount("");
+      resetStockForm();
       toast.success(`Added ${formatUnitQuantity(amount)} to ${selectedItem.name}`, {
-        description: `New stock level: ${formatUnitQuantity(selectedItem.quantity + amount)}`
+        description: `Reason: ${reasonLabel}. New stock level: ${formatUnitQuantity(selectedItem.quantity + amount)}`
       });
       setSelectedItem(null);
     } catch (err) {
@@ -725,28 +1187,126 @@ export function InventoryModule({
       toast.error("Insufficient stock.");
       return;
     }
+    if (!stockOutReason) {
+      toast.error("Please select the reason for this Stock Out transaction.");
+      return;
+    }
     try {
       const newQuantity = selectedItem.quantity - amount;
+      const reasonLabel = getStockOutReasonLabel(stockOutReason);
       const updatedItem = await updateInventoryItem(selectedItem.id, {
         ...selectedItem,
         quantity: newQuantity,
         movementAction: 'stock_out',
         movementQuantity: amount,
-        movementNote: `Stock Out recorded from inventory module.`
+        movementReason: stockOutReason,
+        movementNote: `Stock Out recorded from inventory module. Reason: ${reasonLabel}.`
       });
       highlightInventoryRow(updatedItem?.id || selectedItem.id);
       setIsStockOutDialogOpen(false);
-      setStockAmount("");
+      resetStockForm();
       if (newQuantity === 0) {
-        toast.error(`${selectedItem.name} is now OUT OF STOCK!`, { description: `Removed ${formatUnitQuantity(amount)} - Immediate restocking required` });
-      } else if (newQuantity <= selectedItem.reorderLevel) {
-        toast.warning(`${selectedItem.name} is now LOW ON STOCK!`, { description: `Removed ${formatUnitQuantity(amount)} - Only ${formatUnitQuantity(newQuantity)} remaining` });
+        toast.error(`${selectedItem.name} is now OUT OF STOCK!`, { description: `Removed ${formatUnitQuantity(amount)} for ${reasonLabel}. Immediate restocking required` });
+      } else if (newQuantity <= getActiveLowStockThreshold(selectedItem)) {
+        toast.warning(`${selectedItem.name} is now LOW ON STOCK!`, { description: `Removed ${formatUnitQuantity(amount)} for ${reasonLabel}. Only ${formatUnitQuantity(newQuantity)} remaining` });
       } else {
-        toast.success(`Removed ${formatUnitQuantity(amount)} from ${selectedItem.name}`, { description: `Remaining stock: ${formatUnitQuantity(newQuantity)}` });
+        toast.success(`Removed ${formatUnitQuantity(amount)} from ${selectedItem.name}`, { description: `Reason: ${reasonLabel}. Remaining stock: ${formatUnitQuantity(newQuantity)}` });
       }
       setSelectedItem(null);
     } catch (err) {
       toast.error("Failed to stock out", { description: err?.response?.data?.error || err.message });
+    }
+  };
+
+  const updateBatchStockOutRow = (index, field, value) => {
+    if (field === "inventoryId" && value) {
+      const duplicateRow = batchStockOutRows.find((row, rowIndex) =>
+        rowIndex !== index && String(row.inventoryId) === String(value)
+      );
+      if (duplicateRow) {
+        const duplicateItem = getBatchRowItem(value);
+        toast.error("Item already added to batch", {
+          description: duplicateItem
+            ? `${duplicateItem.name} is already included. Update its quantity in the existing row instead.`
+            : "Please update the quantity in the existing row instead."
+        });
+        return;
+      }
+    }
+
+    setBatchStockOutRows(rows => rows.map((row, rowIndex) =>
+      rowIndex === index ? { ...row, [field]: value } : row
+    ));
+  };
+
+  const addBatchStockOutRow = () => {
+    setBatchStockOutRows(rows => [...rows, { inventoryId: "", quantity: "" }]);
+  };
+
+  const removeBatchStockOutRow = index => {
+    setBatchStockOutRows(rows => rows.length === 1 ? [{ inventoryId: "", quantity: "" }] : rows.filter((_, rowIndex) => rowIndex !== index));
+  };
+
+  const getBatchRowItem = inventoryId => inventory.find(item => String(item.id) === String(inventoryId));
+
+  const handleBatchStockOut = async () => {
+    if (!batchStockOutReason) {
+      toast.error("Please select the stock-out reason for this deduction.");
+      return;
+    }
+
+    const preparedRows = batchStockOutRows
+      .map(row => ({
+        inventoryId: row.inventoryId,
+        quantity: parseInt(row.quantity, 10)
+      }))
+      .filter(row => row.inventoryId || row.quantity);
+
+    if (preparedRows.length === 0) {
+      toast.error("Add at least one item to process the deduction.");
+      return;
+    }
+
+    const selectedInventoryIds = preparedRows.map(row => String(row.inventoryId));
+    const duplicateInventoryId = selectedInventoryIds.find((inventoryId, index) =>
+      inventoryId && selectedInventoryIds.indexOf(inventoryId) !== index
+    );
+    if (duplicateInventoryId) {
+      const duplicateItem = getBatchRowItem(duplicateInventoryId);
+      toast.error("Duplicate item in batch", {
+        description: duplicateItem
+          ? `${duplicateItem.name} appears more than once. Keep one row and update its quantity.`
+          : "Each item should appear only once in a batch transaction."
+      });
+      return;
+    }
+
+    for (const row of preparedRows) {
+      const item = getBatchRowItem(row.inventoryId);
+      if (!item || Number.isNaN(row.quantity) || row.quantity <= 0) {
+        toast.error("Each batch line must have a valid item and quantity.");
+        return;
+      }
+      if (row.quantity > item.quantity) {
+        toast.error(`${item.name} has only ${formatUnitQuantity(item.quantity)} available.`);
+        return;
+      }
+    }
+
+    try {
+      const reasonLabel = getStockOutReasonLabel(batchStockOutReason);
+      const updatedItems = await batchStockOut({
+        items: preparedRows,
+        movementReason: batchStockOutReason,
+        movementNote: `Daily sales or stock-out deduction recorded from inventory module. Reason: ${reasonLabel}.`
+      });
+      highlightInventoryRow(updatedItems?.[0]?.id);
+      closeBatchStockOutDialog();
+      toast.success("Daily Sales Deduction completed successfully.", {
+        description: `${preparedRows.length} line${preparedRows.length === 1 ? "" : "s"} processed. Reason: ${reasonLabel}.`
+      });
+    } catch (err) {
+      toast.error("Failed to process deduction", { description: err?.response?.data?.error || err.message });
     }
   };
 
@@ -755,11 +1315,13 @@ export function InventoryModule({
     const cleanName = editItem.name.trim().replace(/\s+/g, " ");
     const canonicalCategory = normalizeCategory(editItem.category);
     if (!isWholeNumberText(editItem.reorderLevel)) {
-      toast.error("Reorder Level must be a whole number.");
+      toast.error("Manual Low-Stock Threshold must be a whole number.");
       return;
     }
 
     const reorderLevel = Number(editItem.reorderLevel);
+    const reorderPlanning = validateReorderPlanningValues(editItem);
+    if (!reorderPlanning) return;
 
     if (!cleanName || !canonicalCategory) {
       toast.error("Please provide a valid item name and category.");
@@ -770,8 +1332,8 @@ export function InventoryModule({
       toast.error("Please enter a more specific item name", { description: nameQualityError });
       return;
     }
-    if (isNaN(reorderLevel) || reorderLevel < 0 || reorderLevel > 20) {
-      toast.error("Reorder Level must be between 0 and 20.");
+    if (isNaN(reorderLevel) || reorderLevel < 0) {
+      toast.error("Manual Low-Stock Threshold must be 0 or higher.");
       return;
     }
 
@@ -851,8 +1413,10 @@ export function InventoryModule({
       const updatedItem = await updateInventoryItem(selectedItem.id, {
         name: cleanName,
         category: canonicalCategory,
+        supplierName: editItem.supplierName.trim().replace(/\s+/g, " "),
         quantity: selectedItem.quantity,
         reorderLevel,
+        ...reorderPlanning,
         allowSimilarDuplicate
       });
       highlightInventoryRow(updatedItem?.id || selectedItem.id);
@@ -868,14 +1432,18 @@ export function InventoryModule({
   // Archive Item
   const handleArchiveItem = async () => {
     if (!selectedItem) return;
+    if (!archiveReason) {
+      toast.error("Please select the reason for archiving this item.");
+      return;
+    }
     const itemToArchive = selectedItem;
-    setIsArchiveDialogOpen(false);
-    setSelectedItem(null);
+    const reasonLabel = getArchiveReasonLabel(archiveReason);
+    closeArchiveDialog();
     localStorage.setItem("archiveRowHighlightOriginalId", String(itemToArchive.id));
     try {
-      await archiveInventoryItem(itemToArchive.id);
+      await archiveInventoryItem(itemToArchive.id, archiveReason);
       toast.success(`${itemToArchive.name} archived successfully!`, {
-        description: 'Item moved to archive. View in Archive page.'
+        description: `Reason: ${reasonLabel}. Item moved to Archive.`
       });
     } catch (err) {
       localStorage.removeItem("archiveRowHighlightOriginalId");
@@ -963,6 +1531,10 @@ export function InventoryModule({
         </div>
 
         <div className="space-y-3">
+          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900">
+            Basic Item Information
+          </div>
+
           <div className="space-y-1.5">
             <Label
               htmlFor="edit-item-name"
@@ -1010,17 +1582,41 @@ export function InventoryModule({
 
           <div className="space-y-1.5">
             <Label
+              htmlFor="edit-supplier"
+              className="font-semibold text-slate-950"
+              style={{ display: "block", marginBottom: "8px", fontSize: "14px", lineHeight: "1.25" }}
+            >
+              Supplier
+            </Label>
+            <Input
+              id="edit-supplier"
+              value={editItem.supplierName}
+              onChange={e => setEditItem({ ...editItem, supplierName: e.target.value })}
+              placeholder="e.g., Supplier A or local hardware distributor"
+              className="border-slate-300 bg-white text-slate-950"
+              style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
+            />
+            <p className="text-slate-600" style={{ fontSize: "12px" }}>
+              Used for reorder planning and supplier-based reports.
+            </p>
+          </div>
+
+          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900">
+            Stock Level and Alert Threshold
+          </div>
+
+          <div className="space-y-1.5">
+            <Label
               htmlFor="edit-reorder-level"
               className="font-semibold text-slate-950"
               style={{ display: "block", marginBottom: "8px", fontSize: "14px", lineHeight: "1.25" }}
             >
-              Reorder Level (Max 20)
+              Manual Low-Stock Threshold
             </Label>
             <Input
               id="edit-reorder-level"
               type="number"
               min="0"
-              max="20"
               step="1"
               inputMode="numeric"
               value={editItem.reorderLevel}
@@ -1030,9 +1626,11 @@ export function InventoryModule({
               style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
             />
             <p className="text-slate-600" style={{ fontSize: "12px" }}>
-              Determines when the item is marked as Low Stock.
+              Used as the fallback low-stock alert level when automatic reorder planning is not available.
             </p>
           </div>
+
+          {renderReorderPlanningFields(editItem, updates => setEditItem(prev => ({ ...prev, ...updates })))}
         </div>
 
         <DialogFooter
@@ -1190,6 +1788,50 @@ export function InventoryModule({
       box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.22);
     }
 
+    .inventory-list-header {
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .inventory-list-title {
+      flex: 1 1 320px;
+      min-width: 0;
+    }
+
+    .inventory-batch-stock-out-button,
+    .inventory-add-button {
+      min-height: 46px;
+      border-radius: 12px;
+      padding-left: 18px;
+      padding-right: 18px;
+      white-space: nowrap;
+    }
+
+    .inventory-batch-stock-out-button {
+      flex: 0 0 auto;
+    }
+
+    .inventory-dialog-content {
+      max-height: calc(100dvh - 32px) !important;
+      overflow-y: auto !important;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+    }
+
+    .inventory-dialog-content::-webkit-scrollbar {
+      width: 10px;
+    }
+
+    .inventory-dialog-content::-webkit-scrollbar-thumb {
+      background: #CBD5E1;
+      border: 3px solid #FFFFFF;
+      border-radius: 999px;
+    }
+
+    .inventory-dialog-content::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
     @media (max-width: 760px) {
       .inventory-page {
         padding: 14px;
@@ -1230,6 +1872,7 @@ export function InventoryModule({
       }
 
       .inventory-list-title {
+        flex-basis: 100%;
         min-width: 0;
       }
 
@@ -1254,6 +1897,12 @@ export function InventoryModule({
         min-height: 44px;
         justify-content: center;
         border-radius: 12px;
+      }
+
+      .inventory-batch-stock-out-button,
+      .inventory-add-button {
+        flex: 1 1 180px;
+        justify-content: center;
       }
 
       .inventory-table-wrap {
@@ -1467,8 +2116,8 @@ export function InventoryModule({
       .inventory-alert-dialog-content {
         width: calc(100vw - 24px) !important;
         max-width: 420px !important;
-        max-height: none !important;
-        overflow: visible !important;
+        max-height: calc(100dvh - 24px) !important;
+        overflow-y: auto !important;
         padding: 16px !important;
         border-radius: 14px !important;
         gap: 10px !important;
@@ -1629,6 +2278,10 @@ export function InventoryModule({
         width: 100%;
       }
 
+      .inventory-batch-stock-out-button {
+        width: 100%;
+      }
+
       .inventory-mobile-actions button {
         flex-basis: calc(50% - 4px);
       }
@@ -1656,7 +2309,7 @@ export function InventoryModule({
     className: "absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400"
   }), /*#__PURE__*/React.createElement(Input, {
     className: "pl-10",
-    placeholder: "Search active inventory by item name or ID",
+    placeholder: "Search active inventory by item name or item code",
     value: searchQuery,
     onChange: e => setSearchQuery(e.target.value)
   })), /*#__PURE__*/React.createElement("div", {
@@ -1685,7 +2338,13 @@ export function InventoryModule({
     className: "inventory-list-title"
   }, /*#__PURE__*/React.createElement(CardTitle, null, "Inventory Items"), /*#__PURE__*/React.createElement(CardDescription, null, sortedInventory.length, " items found", sortBy && /*#__PURE__*/React.createElement("span", {
     className: "text-slate-500 ml-2"
-  }, "\u2022 Sorted by ", sortLabel, " (", realtimeDisplayOrderLabel, ")"))), user.role === "Admin" && /*#__PURE__*/React.createElement(Dialog, {
+  }, "\u2022 Sorted by ", sortLabel, " (", realtimeDisplayOrderLabel, ")"))), /*#__PURE__*/React.createElement(Button, {
+    type: "button",
+    className: "inventory-batch-stock-out-button bg-red-600 text-white hover:bg-red-700 font-semibold shadow-md transition-all duration-300",
+    onClick: () => setIsBatchStockOutDialogOpen(true)
+  }, /*#__PURE__*/React.createElement(PackageMinus, {
+    className: "w-4 h-4 mr-2"
+  }), "Daily Sales Deduction"), user.role === "Admin" && /*#__PURE__*/React.createElement(Dialog, {
     open: isAddDialogOpen,
     onOpenChange: open => {
       if (open) {
@@ -1780,6 +2439,8 @@ export function InventoryModule({
   }, "Provide the item details below to add it to your inventory.")), /*#__PURE__*/React.createElement("div", {
     className: "space-y-3"
   }, /*#__PURE__*/React.createElement("div", {
+    className: "rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900"
+  }, "Basic Item Information"), /*#__PURE__*/React.createElement("div", {
     className: "space-y-1.5"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "item-name",
@@ -1857,6 +2518,39 @@ export function InventoryModule({
   }, "Select the category that best describes the item. If none applies, choose \"Other.\"")), /*#__PURE__*/React.createElement("div", {
     className: "space-y-1.5"
   }, /*#__PURE__*/React.createElement(Label, {
+    htmlFor: "supplier-name",
+    className: "font-semibold text-slate-950",
+    style: {
+      display: "block",
+      marginBottom: "8px",
+      fontSize: "14px",
+      lineHeight: "1.25"
+    }
+  }, "Supplier"), /*#__PURE__*/React.createElement(Input, {
+    id: "supplier-name",
+    value: newItem.supplierName,
+    onChange: e => setNewItem({
+      ...newItem,
+      supplierName: e.target.value
+    }),
+    placeholder: "e.g., Supplier A or local hardware distributor",
+    className: "border-slate-300 bg-white text-slate-950",
+    style: {
+      height: "42px",
+      borderRadius: "10px",
+      fontSize: "14px",
+      padding: "0 14px"
+    }
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "text-slate-600",
+    style: {
+      fontSize: "12px"
+    }
+  }, "Optional, but useful for reorder planning and supplier-based reports.")), /*#__PURE__*/React.createElement("div", {
+    className: "rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900"
+  }, "Stock Level and Alert Threshold"), /*#__PURE__*/React.createElement("div", {
+    className: "space-y-1.5"
+  }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "quantity",
     className: "font-semibold text-slate-950",
     style: {
@@ -1865,9 +2559,12 @@ export function InventoryModule({
       fontSize: "14px",
       lineHeight: "1.25"
     }
-  }, "Initial Quantity"), /*#__PURE__*/React.createElement(Input, {
+  }, "Initial Stock Quantity"), /*#__PURE__*/React.createElement(Input, {
     id: "quantity",
     type: "number",
+    min: "0",
+    step: "1",
+    inputMode: "numeric",
     value: newItem.quantity,
     onChange: e => setNewItem({
       ...newItem,
@@ -1892,11 +2589,10 @@ export function InventoryModule({
       fontSize: "14px",
       lineHeight: "1.25"
     }
-  }, "Reorder Level (Max 20)"), /*#__PURE__*/React.createElement(Input, {
+  }, "Manual Low-Stock Threshold"), /*#__PURE__*/React.createElement(Input, {
     id: "reorder-level",
     type: "number",
     min: "0",
-    max: "20",
     step: "1",
     inputMode: "numeric",
     value: newItem.reorderLevel,
@@ -1917,7 +2613,10 @@ export function InventoryModule({
     style: {
       fontSize: "12px"
     }
-  }, "Determines when item becomes \"Low Stock\". Max 20 units."))), archivedDuplicatePrompt && /*#__PURE__*/React.createElement("div", {
+  }, "Used as the fallback low-stock alert level when automatic reorder planning is not available.")), renderReorderPlanningFields(newItem, updates => setNewItem(prev => ({
+    ...prev,
+    ...updates
+  })))), archivedDuplicatePrompt && /*#__PURE__*/React.createElement("div", {
     className: "flex flex-col text-amber-950",
     style: {
       gap: "12px",
@@ -2071,11 +2770,13 @@ export function InventoryModule({
     className: "table-fixed"
   }, /*#__PURE__*/React.createElement(TableHeader, null, /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[90px]"
-  }, renderSortButton('id', 'ID')), /*#__PURE__*/React.createElement(TableHead, {
+  }, renderSortButton('id', 'Item Code')), /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[240px]"
   }, renderSortButton('name', 'Item Name')), /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[180px]"
   }, renderSortButton('category', 'Category')), /*#__PURE__*/React.createElement(TableHead, {
+    className: "w-[190px]"
+  }, renderSortButton('supplier', 'Supplier')), /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[120px] text-right"
   }, renderSortButton('quantity', 'Quantity', 'right')), /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[150px]"
@@ -2084,7 +2785,7 @@ export function InventoryModule({
   }, renderSortButton('date', 'Last Updated', 'right')), /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[150px] pl-3 text-left"
   }, "Actions"))), /*#__PURE__*/React.createElement(TableBody, null, sortedInventory.length === 0 ? /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableCell, {
-    colSpan: 7,
+    colSpan: 8,
     className: "py-12 text-center"
   }, /*#__PURE__*/React.createElement(Box, {
     className: "mx-auto mb-4 h-14 w-14 text-slate-300"
@@ -2097,7 +2798,9 @@ export function InventoryModule({
     className: highlightedInventoryRowId === String(item.id) ? "inventory-row-highlight" : ""
   }, /*#__PURE__*/React.createElement(TableCell, {
     className: "font-mono text-sm align-middle"
-  }, item.id), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, {
+  }, item.itemCode || item.id), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, {
+    className: "text-sm text-slate-600"
+  }, item.supplierName || "Unassigned"), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-right"
   }, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
     className: item.status === "In Stock" ? "bg-green-100 text-green-700" : item.status === "Low Stock" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"
@@ -2153,7 +2856,7 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement("div", {
     className: "inventory-mobile-sortbar",
     "aria-label": "Sort inventory items"
-  }, [["id", "ID"], ["name", "Name"], ["category", "Category"], ["quantity", "Qty"], ["status", "Status"], ["date", "Updated"]].map(([column, label]) => /*#__PURE__*/React.createElement(Button, {
+  }, [["id", "Code"], ["name", "Name"], ["category", "Category"], ["supplier", "Supplier"], ["quantity", "Qty"], ["status", "Status"], ["date", "Updated"]].map(([column, label]) => /*#__PURE__*/React.createElement(Button, {
     key: column,
     type: "button",
     variant: "outline",
@@ -2183,7 +2886,7 @@ export function InventoryModule({
     className: "inventory-mobile-name"
   }, item.name), /*#__PURE__*/React.createElement("p", {
     className: "inventory-mobile-id"
-  }, "ID: ", item.id)), /*#__PURE__*/React.createElement(Badge, {
+  }, "Item Code: ", item.itemCode || item.id)), /*#__PURE__*/React.createElement(Badge, {
     className: `inventory-status-badge ${getStatusBadgeClass(item.status)}`
   }, item.status)), /*#__PURE__*/React.createElement("div", {
     className: "inventory-mobile-meta"
@@ -2194,6 +2897,12 @@ export function InventoryModule({
   }, "Category"), /*#__PURE__*/React.createElement("span", {
     className: "inventory-mobile-value"
   }, normalizeCategory(item.category) || "Uncategorized")), /*#__PURE__*/React.createElement("div", {
+    className: "inventory-mobile-field"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "inventory-mobile-label"
+  }, "Supplier"), /*#__PURE__*/React.createElement("span", {
+    className: "inventory-mobile-value"
+  }, item.supplierName || "Unassigned")), /*#__PURE__*/React.createElement("div", {
     className: "inventory-mobile-field"
   }, /*#__PURE__*/React.createElement("span", {
     className: "inventory-mobile-label"
@@ -2243,6 +2952,258 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement(Archive, {
     className: "mr-1 h-4 w-4"
   }), "Archive")))))), renderInventoryPagination(), renderEditDialog(), /*#__PURE__*/React.createElement(Dialog, {
+    open: isBatchStockOutDialogOpen,
+    onOpenChange: open => {
+      if (open) {
+        setIsBatchStockOutDialogOpen(true);
+      } else {
+        requestCloseBatchStockOutDialog();
+      }
+    }
+  }, /*#__PURE__*/React.createElement(DialogContent, {
+    className: "inventory-dialog-content border border-slate-200 bg-white shadow-2xl",
+    style: {
+      width: "min(720px, calc(100vw - 32px))",
+      maxWidth: "720px",
+      padding: "22px",
+      borderRadius: "14px",
+      gap: "16px"
+    }
+  }, /*#__PURE__*/React.createElement(DialogHeader, {
+    className: "inventory-dialog-header space-y-0 text-left",
+    style: {
+      display: "flex",
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: "16px",
+      paddingRight: "28px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "shrink-0",
+    style: {
+      width: "58px",
+      height: "58px",
+      borderRadius: "999px",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "linear-gradient(135deg, #FEF2F2 0%, #FEE2E2 100%)",
+      boxShadow: "inset 0 1px 8px rgba(220, 38, 38, 0.1)"
+    }
+  }, /*#__PURE__*/React.createElement(PackageMinus, {
+    className: "text-red-600",
+    style: {
+      width: "28px",
+      height: "28px"
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "pt-2"
+  }, /*#__PURE__*/React.createElement(DialogTitle, {
+    className: "font-bold tracking-tight text-slate-950",
+    style: {
+      fontSize: "26px",
+      lineHeight: "1.1"
+    }
+  }, "Daily Sales Deduction"), /*#__PURE__*/React.createElement(DialogDescription, {
+    className: "mt-3 leading-relaxed text-slate-600",
+    style: {
+      fontSize: "14px"
+    }
+  }, "Deduct multiple sold or verified stock-out items in one transaction while keeping movement history accurate."))), /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center text-red-950",
+    style: {
+      gap: "12px",
+      border: "1px solid #FECACA",
+      background: "#FEF2F2",
+      borderRadius: "10px",
+      padding: "10px 12px"
+    }
+  }, /*#__PURE__*/React.createElement(Info, {
+    className: "shrink-0 text-red-600",
+    style: {
+      width: "18px",
+      height: "18px"
+    }
+  }), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: "13px"
+    }
+  }, "Use Sales for sold items. Use other reasons only for verified damage, expiry, loss, transfer, adjustment, or correction.")), /*#__PURE__*/React.createElement("div", {
+    className: "space-y-2"
+  }, /*#__PURE__*/React.createElement(Label, {
+    htmlFor: "batch-stock-out-reason",
+    className: "font-semibold text-slate-950",
+    style: {
+      display: "block",
+      marginBottom: "8px",
+      fontSize: "14px",
+      lineHeight: "1.25"
+    }
+  }, "Stock-Out Reason"), /*#__PURE__*/React.createElement(Select, {
+    value: batchStockOutReason,
+    onValueChange: setBatchStockOutReason
+  }, /*#__PURE__*/React.createElement(SelectTrigger, {
+    id: "batch-stock-out-reason",
+    className: "border-slate-300 bg-white text-slate-950",
+    style: {
+      minHeight: "46px",
+      borderRadius: "10px",
+      fontSize: "14px",
+      padding: "0 14px"
+    }
+  }, /*#__PURE__*/React.createElement(SelectValue, {
+    placeholder: "Select why these stocks are being removed"
+  })), /*#__PURE__*/React.createElement(SelectContent, null, STOCK_OUT_REASON_OPTIONS.map(option => /*#__PURE__*/React.createElement(SelectItem, {
+    key: option.value,
+    value: option.value
+  }, option.label))))), /*#__PURE__*/React.createElement("div", {
+    className: "space-y-3"
+  }, batchStockOutRows.map((row, index) => {
+    const selectedBatchItem = getBatchRowItem(row.inventoryId);
+    const selectedIdsInOtherRows = new Set(batchStockOutRows.filter((_, rowIndex) => rowIndex !== index).map(item => String(item.inventoryId)).filter(Boolean));
+    return /*#__PURE__*/React.createElement("div", {
+      key: index,
+      className: "grid gap-2 md:grid-cols-[1fr_120px_auto]",
+      style: {
+        alignItems: "end"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "space-y-1"
+    }, /*#__PURE__*/React.createElement(Label, {
+      className: "text-xs font-semibold text-slate-700"
+    }, "Item"), /*#__PURE__*/React.createElement(Select, {
+      value: row.inventoryId,
+      onValueChange: value => updateBatchStockOutRow(index, "inventoryId", value)
+    }, /*#__PURE__*/React.createElement(SelectTrigger, {
+      className: "border-slate-300 bg-white text-slate-950",
+      style: {
+        minHeight: "42px",
+        borderRadius: "10px"
+      }
+    }, /*#__PURE__*/React.createElement(SelectValue, {
+      placeholder: "Select inventory item"
+    })), /*#__PURE__*/React.createElement(SelectContent, null, inventory.filter(item => item.quantity > 0).map(item => /*#__PURE__*/React.createElement(SelectItem, {
+      key: item.id,
+      value: String(item.id),
+      disabled: selectedIdsInOtherRows.has(String(item.id))
+    }, item.name, " - ", item.quantity, " available"))))), /*#__PURE__*/React.createElement("div", {
+      className: "space-y-1"
+    }, /*#__PURE__*/React.createElement(Label, {
+      className: "text-xs font-semibold text-slate-700"
+    }, "Quantity"), /*#__PURE__*/React.createElement(Input, {
+      type: "number",
+      min: "1",
+      max: selectedBatchItem?.quantity || undefined,
+      value: row.quantity,
+      onChange: e => updateBatchStockOutRow(index, "quantity", e.target.value),
+      placeholder: "0",
+      className: "border-slate-300 bg-white text-slate-950",
+      style: {
+        height: "42px",
+        borderRadius: "10px"
+      }
+    })), /*#__PURE__*/React.createElement(Button, {
+      type: "button",
+      variant: "outline",
+      className: "border-slate-200 text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:border-red-200 hover:bg-red-50 hover:text-red-700 hover:shadow-sm",
+      onClick: () => removeBatchStockOutRow(index),
+      style: {
+        height: "42px",
+        borderRadius: "10px"
+      }
+    }, "Remove"));
+  }), /*#__PURE__*/React.createElement(Button, {
+    type: "button",
+    variant: "outline",
+    className: "w-full border-slate-200 text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:border-green-200 hover:bg-green-50 hover:text-green-700 hover:shadow-sm",
+    onClick: addBatchStockOutRow
+  }, /*#__PURE__*/React.createElement(Plus, {
+    className: "mr-2 h-4 w-4"
+  }), "Add Another Item")), /*#__PURE__*/React.createElement(DialogFooter, {
+    className: "inventory-dialog-footer pt-2",
+    style: {
+      display: "flex",
+      flexDirection: "row",
+      justifyContent: "flex-end",
+      gap: "10px"
+    }
+  }, /*#__PURE__*/React.createElement(Button, {
+    variant: "outline",
+    className: "modal-button-cancel border-slate-200 bg-white text-slate-950 hover:bg-slate-50",
+    style: {
+      height: "38px",
+      minWidth: "88px",
+      borderRadius: "10px",
+      padding: "0 18px",
+      fontSize: "13px"
+    },
+    onClick: requestCloseBatchStockOutDialog
+  }, "Cancel"), /*#__PURE__*/React.createElement(Button, {
+    className: "modal-button-danger font-semibold shadow-lg",
+    onClick: handleBatchStockOut,
+    style: {
+      height: "38px",
+      minWidth: "150px",
+      borderRadius: "10px",
+      padding: "0 18px",
+      fontSize: "13px",
+      background: "#DC2626",
+      color: "#FFFFFF",
+      boxShadow: "0 14px 24px rgba(220, 38, 38, 0.18)"
+    }
+  }, "Confirm Deduction")))), /*#__PURE__*/React.createElement(Dialog, {
+    open: Boolean(dashboardPickerAction),
+    onOpenChange: open => {
+      if (!open) closeDashboardPicker();
+    }
+  }, /*#__PURE__*/React.createElement(DialogContent, {
+    className: "inventory-dialog-content border border-slate-200 bg-white shadow-2xl",
+    style: {
+      width: "min(520px, calc(100vw - 32px))",
+      maxWidth: "520px",
+      padding: "22px",
+      borderRadius: "14px",
+      gap: "16px"
+    }
+  }, /*#__PURE__*/React.createElement(DialogHeader, {
+    className: "space-y-1 text-left"
+  }, /*#__PURE__*/React.createElement(DialogTitle, {
+    className: "text-2xl font-bold tracking-tight text-slate-950"
+  }, dashboardPickerAction === "stock-in" ? "Record Stock In" : "Record Stock Out"), /*#__PURE__*/React.createElement(DialogDescription, {
+    className: "text-slate-600"
+  }, dashboardPickerAction === "stock-in" ? "Choose the item that received new stock. The Stock In form will open next." : "Choose the item to deduct. The Stock Out form will open next.")), /*#__PURE__*/React.createElement("div", {
+    className: "space-y-2"
+  }, /*#__PURE__*/React.createElement(Label, {
+    htmlFor: "dashboard-stock-action-item",
+    className: "font-semibold text-slate-950"
+  }, "Inventory Item"), /*#__PURE__*/React.createElement(Select, {
+    value: dashboardPickerItemId,
+    onValueChange: setDashboardPickerItemId
+  }, /*#__PURE__*/React.createElement(SelectTrigger, {
+    id: "dashboard-stock-action-item",
+    className: "border-slate-300 bg-white text-slate-950",
+    style: {
+      minHeight: "46px",
+      borderRadius: "10px"
+    }
+  }, /*#__PURE__*/React.createElement(SelectValue, {
+    placeholder: "Select inventory item"
+  })), /*#__PURE__*/React.createElement(SelectContent, null, inventory.map(item => /*#__PURE__*/React.createElement(SelectItem, {
+    key: item.id,
+    value: String(item.id),
+    disabled: dashboardPickerAction === "stock-out" && Number(item.quantity || 0) <= 0
+  }, item.itemCode || item.id, " - ", item.name, " (", item.quantity, " ", Number(item.quantity) === 1 ? "unit" : "units", ")"))))), dashboardPickerAction === "stock-out" && /*#__PURE__*/React.createElement("p", {
+    className: "text-xs leading-relaxed text-slate-500"
+  }, "Items with zero stock are disabled because there is no available quantity to deduct."), /*#__PURE__*/React.createElement(DialogFooter, {
+    className: "pt-2"
+  }, /*#__PURE__*/React.createElement(Button, {
+    variant: "outline",
+    className: "border-slate-200 bg-white text-slate-950 hover:bg-slate-50",
+    onClick: closeDashboardPicker
+  }, "Cancel"), /*#__PURE__*/React.createElement(Button, {
+    className: dashboardPickerAction === "stock-in" ? "bg-green-600 text-white hover:bg-green-700" : "bg-red-600 text-white hover:bg-red-700",
+    onClick: continueDashboardStockAction
+  }, dashboardPickerAction === "stock-in" ? "Continue to Stock In" : "Continue to Stock Out")))), /*#__PURE__*/React.createElement(Dialog, {
     open: isStockInDialogOpen,
     onOpenChange: open => {
       if (open) {
@@ -2353,30 +3314,40 @@ export function InventoryModule({
       padding: "0 16px"
     }
   })), /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center text-green-950",
+    className: "space-y-2"
+  }, /*#__PURE__*/React.createElement(Label, {
+    htmlFor: "stock-in-reason",
+    className: "font-semibold text-slate-950",
     style: {
-      gap: "12px",
-      border: "1px solid #BBF7D0",
-      background: "#F0FDF4",
+      display: "block",
+      marginBottom: "8px",
+      fontSize: "14px",
+      lineHeight: "1.25"
+    }
+  }, "Reason for Stock In"), /*#__PURE__*/React.createElement(Select, {
+    value: stockInReason,
+    onValueChange: setStockInReason
+  }, /*#__PURE__*/React.createElement(SelectTrigger, {
+    id: "stock-in-reason",
+    className: "border-slate-300 bg-white text-slate-950",
+    style: {
+      minHeight: "48px",
       borderRadius: "10px",
-      padding: "10px 12px"
+      fontSize: "14px",
+      padding: "0 14px"
     }
-  }, /*#__PURE__*/React.createElement(CheckCircle, {
-    className: "shrink-0 text-green-600",
+  }, /*#__PURE__*/React.createElement(SelectValue, {
+    placeholder: "Select why this stock is being added"
+  })), /*#__PURE__*/React.createElement(SelectContent, null, STOCK_IN_REASON_OPTIONS.map(option => /*#__PURE__*/React.createElement(SelectItem, {
+    key: option.value,
+    value: option.value
+  }, option.label)))), stockInReason && /*#__PURE__*/React.createElement("p", {
+    className: "text-slate-500",
     style: {
-      width: "18px",
-      height: "18px"
+      fontSize: "12px",
+      lineHeight: "1.35"
     }
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "flex flex-col gap-1",
-    style: {
-      fontSize: "13px"
-    }
-  }, /*#__PURE__*/React.createElement("p", null, /*#__PURE__*/React.createElement("span", {
-    className: "font-semibold"
-  }, "Current Stock: "), selectedItem?.quantity ?? 0, " ", (selectedItem?.quantity ?? 0) === 1 ? "unit" : "units"), /*#__PURE__*/React.createElement("p", null, /*#__PURE__*/React.createElement("span", {
-    className: "font-semibold"
-  }, "Reorder Level: "), selectedItem?.reorderLevel ?? 0, " ", (selectedItem?.reorderLevel ?? 0) === 1 ? "unit" : "units"))), /*#__PURE__*/React.createElement(DialogFooter, {
+  }, STOCK_IN_REASON_OPTIONS.find(option => option.value === stockInReason)?.description)), renderStockPreview("in"), /*#__PURE__*/React.createElement(DialogFooter, {
     className: "inventory-dialog-footer pt-2",
     style: {
       display: "flex",
@@ -2519,30 +3490,41 @@ export function InventoryModule({
       padding: "0 16px"
     }
   })), /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center text-red-950",
+    className: "space-y-2"
+  }, /*#__PURE__*/React.createElement(Label, {
+    htmlFor: "stock-out-reason",
+    className: "font-semibold text-slate-950",
     style: {
-      gap: "12px",
-      border: "1px solid #FECACA",
-      background: "#FEF2F2",
+      display: "block",
+      marginBottom: "8px",
+      fontSize: "14px",
+      lineHeight: "1.25"
+    }
+  }, "Reason for Stock Out"), /*#__PURE__*/React.createElement(Select, {
+    value: stockOutReason,
+    onValueChange: setStockOutReason
+  }, /*#__PURE__*/React.createElement(SelectTrigger, {
+    id: "stock-out-reason",
+    className: "border-slate-300 bg-white text-slate-950",
+    style: {
+      minHeight: "48px",
       borderRadius: "10px",
-      padding: "10px 12px"
+      fontSize: "14px",
+      padding: "0 14px"
     }
-  }, /*#__PURE__*/React.createElement(Info, {
-    className: "shrink-0 text-red-600",
+  }, /*#__PURE__*/React.createElement(SelectValue, {
+    placeholder: "Select why this stock is being removed"
+  })), /*#__PURE__*/React.createElement(SelectContent, null, STOCK_OUT_REASON_OPTIONS.map(option => /*#__PURE__*/React.createElement(SelectItem, {
+    key: option.value,
+    value: option.value
+  }, option.label)))), stockOutReason && /*#__PURE__*/React.createElement("p", {
+    className: "text-slate-500",
     style: {
-      width: "18px",
-      height: "18px"
+      fontSize: "12px",
+      lineHeight: "1.35"
     }
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "flex flex-col gap-1",
-    style: {
-      fontSize: "13px"
-    }
-  }, /*#__PURE__*/React.createElement("p", null, /*#__PURE__*/React.createElement("span", {
-    className: "font-semibold"
-  }, "Current Stock: "), selectedItem?.quantity ?? 0, " ", (selectedItem?.quantity ?? 0) === 1 ? "unit" : "units"), /*#__PURE__*/React.createElement("p", null, /*#__PURE__*/React.createElement("span", {
-    className: "font-semibold"
-  }, "Reorder Level: "), selectedItem?.reorderLevel ?? 0, " ", (selectedItem?.reorderLevel ?? 0) === 1 ? "unit" : "units"))), /*#__PURE__*/React.createElement(DialogFooter, {
+  }, STOCK_OUT_REASON_OPTIONS.find(option => option.value === stockOutReason)?.description)
+  ), renderStockPreview("out"), /*#__PURE__*/React.createElement(DialogFooter, {
     className: "inventory-dialog-footer pt-2",
     style: {
       display: "flex",
@@ -2577,9 +3559,10 @@ export function InventoryModule({
   }, "Confirm Stock Out")))), /*#__PURE__*/React.createElement(Dialog, {
     open: isArchiveDialogOpen,
     onOpenChange: open => {
-      setIsArchiveDialogOpen(open);
-      if (!open) {
-        setSelectedItem(null);
+      if (open) {
+        setIsArchiveDialogOpen(true);
+      } else {
+        closeArchiveDialog();
       }
     }
   }, /*#__PURE__*/React.createElement(DialogContent, {
@@ -2711,9 +3694,9 @@ export function InventoryModule({
     }
   }, /*#__PURE__*/React.createElement("span", {
     className: "font-semibold text-slate-600"
-  }, "ID:"), /*#__PURE__*/React.createElement("span", {
+  }, "Item Code:"), /*#__PURE__*/React.createElement("span", {
     className: "font-medium text-slate-950"
-  }, selectedItem?.id), /*#__PURE__*/React.createElement("span", {
+  }, selectedItem?.itemCode || selectedItem?.id), /*#__PURE__*/React.createElement("span", {
     className: "font-semibold text-slate-600"
   }, "Category:"), /*#__PURE__*/React.createElement("span", {
     className: "font-medium text-slate-950"
@@ -2740,7 +3723,54 @@ export function InventoryModule({
     className: "font-semibold text-slate-600"
   }, "Status:"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement(Badge, {
     className: `inventory-status-badge ${selectedItem?.status === "In Stock" ? "bg-green-100 text-green-700" : selectedItem?.status === "Low Stock" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"}`
-  }, selectedItem?.status))))))), /*#__PURE__*/React.createElement("div", {
+  }, selectedItem?.status))))))), (selectedItem?.quantity ?? 0) > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center text-orange-950",
+    style: {
+      gap: "12px",
+      border: "1px solid #FDBA74",
+      background: "#FFF7ED",
+      borderRadius: "10px",
+      padding: "10px 12px"
+    }
+  }, /*#__PURE__*/React.createElement(AlertTriangle, {
+    className: "shrink-0 text-orange-600",
+    style: {
+      width: "18px",
+      height: "18px"
+    }
+  }), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: "13px"
+    }
+  }, "This item still has available stock. Archiving it will remove it from active inventory, but the archived record can still be reviewed later.")), /*#__PURE__*/React.createElement("div", {
+    className: "space-y-2"
+  }, /*#__PURE__*/React.createElement(Label, {
+    htmlFor: "archive-reason",
+    className: "font-semibold text-slate-950",
+    style: {
+      display: "block",
+      marginBottom: "8px",
+      fontSize: "14px",
+      lineHeight: "1.25"
+    }
+  }, "Reason for Archiving"), /*#__PURE__*/React.createElement(Select, {
+    value: archiveReason,
+    onValueChange: setArchiveReason
+  }, /*#__PURE__*/React.createElement(SelectTrigger, {
+    id: "archive-reason",
+    className: "border-slate-300 bg-white text-slate-950",
+    style: {
+      minHeight: "44px",
+      borderRadius: "10px",
+      fontSize: "14px",
+      padding: "0 14px"
+    }
+  }, /*#__PURE__*/React.createElement(SelectValue, {
+    placeholder: "Select why this item is being archived"
+  })), /*#__PURE__*/React.createElement(SelectContent, null, ARCHIVE_REASON_OPTIONS.map(option => /*#__PURE__*/React.createElement(SelectItem, {
+    key: option.value,
+    value: option.value
+  }, option.label))))), /*#__PURE__*/React.createElement("div", {
     className: "flex items-center text-slate-800",
     style: {
       gap: "16px",
@@ -2777,13 +3807,11 @@ export function InventoryModule({
       padding: "0 18px",
       fontSize: "13px"
     },
-    onClick: () => {
-      setIsArchiveDialogOpen(false);
-      setSelectedItem(null);
-    }
+    onClick: closeArchiveDialog
   }, "Cancel"), /*#__PURE__*/React.createElement(Button, {
     className: "modal-button-dark font-semibold shadow-lg transition-transform duration-150 active:scale-95",
     onClick: handleArchiveItem,
+    disabled: !archiveReason,
     style: {
       height: "38px",
       minWidth: "132px",
@@ -2792,6 +3820,7 @@ export function InventoryModule({
       fontSize: "13px",
       background: "#111827",
       color: "#FFFFFF",
+      opacity: archiveReason ? 1 : 0.58,
       boxShadow: "0 14px 24px rgba(15, 23, 42, 0.18)"
     }
   }, /*#__PURE__*/React.createElement(Archive, {
@@ -2882,9 +3911,9 @@ export function InventoryModule({
     className: "text-slate-950"
   }, normalizeCategory(similarDuplicatePrompt?.proposedCategory || similarDuplicatePrompt?.item?.category || newItem.category))), similarDuplicatePrompt?.item?.id ? /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "font-semibold text-slate-800"
-  }, "ID:"), " ", /*#__PURE__*/React.createElement("span", {
+  }, "Item Code:"), " ", /*#__PURE__*/React.createElement("span", {
     className: "text-slate-950"
-  }, similarDuplicatePrompt.item.id)) : null))), /*#__PURE__*/React.createElement("div", {
+  }, similarDuplicatePrompt.item.itemCode || similarDuplicatePrompt.item.id)) : null))), /*#__PURE__*/React.createElement("div", {
     className: "inventory-duplicate-note",
     style: {
       display: "grid",

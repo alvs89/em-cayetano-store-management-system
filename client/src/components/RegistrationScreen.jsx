@@ -395,12 +395,12 @@ const RegistrationScreen = () => {
               <div className="text-center space-y-2">
                 <div className="flex items-center justify-center gap-2 text-[#FF0000]">
                   <UserPlus size={24} className="hidden lg:block" />
-                  <h2 className="register-title text-3xl text-gray-900">Create Account</h2>
+                  <h2 className="register-title text-3xl text-gray-900">Request Account Access</h2>
                 </div>
-                <p className="register-subtitle text-lg text-gray-600">Join the E.M. Cayetano Trading team.</p>
+                <p className="register-subtitle text-lg text-gray-600">For authorized E.M. Cayetano Trading employees.</p>
                 <span className="register-brand-rule" aria-hidden="true" />
                 <p className="register-helper-copy">
-                  Register to access the inventory system. Your account will be reviewed before activation.
+                  Submit your access request for review. An administrator must approve it before you can use the system.
                 </p>
               </div>
             </div>
@@ -529,7 +529,7 @@ const RegistrationScreen = () => {
               <div className="register-notice flex items-center gap-4 rounded-2xl border-2 border-yellow-400 bg-yellow-100 px-6 py-4 text-gray-800 shadow-sm">
                 <AlertCircle className="h-6 w-6 text-yellow-600 flex-shrink-0" />
                 <p className="text-sm font-medium leading-relaxed">
-                  Your account will be pending until approved by an administrator. You will receive an email once your account is activated.
+                  Your request will remain pending until an administrator confirms your employee access.
                 </p>
               </div>
 
@@ -538,7 +538,7 @@ const RegistrationScreen = () => {
                 disabled={loading}
                 className="register-button w-full py-6 rounded-xl bg-[#FFFF00] hover:bg-[#e6e600] text-black shadow-lg transition-all duration-300 disabled:opacity-70"
               >
-                {loading ? "Creating..." : "Sign Up"}
+                {loading ? "Submitting..." : "Submit Access Request"}
               </Button>
 
               <div className="register-back-link text-center text-sm text-gray-600">
@@ -557,12 +557,12 @@ const RegistrationScreen = () => {
 
         <div className="max-w-xl space-y-8 relative z-10">
           <div className="inline-block">
-            <h2 className="text-5xl mb-2 text-gray-900">Join Our Team</h2>
+            <h2 className="text-5xl mb-2 text-gray-900">Employee Access</h2>
             <div className="h-1 w-32 bg-gradient-to-r from-[#FFFF00] to-[#FF0000] rounded-full" />
           </div>
 
           <p className="text-xl text-gray-700 leading-relaxed">
-            Register for access to the E.M. Cayetano Trading Inventory System. Your account will be reviewed by our administrators before activation.
+            Request access to the E.M. Cayetano Trading Inventory System. Administrator approval is required before the account becomes active.
           </p>
 
           <div className="border-l-4 border-[#FF0000] pl-6 py-4 bg-white/40 rounded-r-lg">

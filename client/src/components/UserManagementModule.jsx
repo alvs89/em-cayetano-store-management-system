@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowUpDown, Edit, Mail, MapPin, Search, UserCheck, UserX, Users } from "lucide-react";
+import { ArrowUpDown, Copy, Edit, Mail, MapPin, Plus, Search, UserCheck, UserX, Users } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -37,9 +37,18 @@ export function UserManagementModule() {
   const [showRoleChangeDialog, setShowRoleChangeDialog] = useState(false);
   const [showDeactivateDialog, setShowDeactivateDialog] = useState(false);
   const [showReactivateDialog, setShowReactivateDialog] = useState(false);
+  const [isCreateUserDialogOpen, setIsCreateUserDialogOpen] = useState(false);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [newRole, setNewRole] = useState("");
   const [newBranch, setNewBranch] = useState("");
+  const [newAccount, setNewAccount] = useState({
+    fullName: "",
+    username: "",
+    email: "",
+    role: "Employee",
+    branch: sessionUser?.branch || "Manggahan"
+  });
+  const [createdAccountCredentials, setCreatedAccountCredentials] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [pendingSearchQuery, setPendingSearchQuery] = useState("");
   const [inactiveSearchQuery, setInactiveSearchQuery] = useState("");
@@ -80,6 +89,7 @@ export function UserManagementModule() {
     role: apiUser.role,
     branch: apiUser.branch,
     status: apiUser.status,
+    mustChangePassword: Boolean(apiUser.must_change_password ?? apiUser.mustChangePassword),
     createdDate: apiUser.created_at
       ? new Date(apiUser.created_at).toLocaleDateString()
       : apiUser.createdDate,
@@ -219,6 +229,12 @@ export function UserManagementModule() {
     );
   };
 
+  const renderPasswordSetupBadge = user => user?.mustChangePassword ? (
+    <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100">
+      Password Setup Required
+    </Badge>
+  ) : null;
+
   const renderUserActions = (scope, user, isMobile = false) => {
     const actionClass = isMobile ? "user-mobile-action" : "";
 
@@ -355,7 +371,10 @@ export function UserManagementModule() {
             </div>
 
             <div className="user-mobile-card-footer">
-              {renderUserStatusBadge(user)}
+              <div className="flex flex-wrap gap-2">
+                {renderUserStatusBadge(user)}
+                {renderPasswordSetupBadge(user)}
+              </div>
               {renderUserActions(scope, user, true)}
             </div>
           </article>
@@ -429,6 +448,72 @@ export function UserManagementModule() {
         </div>
       </div>
     );
+  };
+
+  const resetCreateUserForm = () => {
+    setNewAccount({
+      fullName: "",
+      username: "",
+      email: "",
+      role: "Employee",
+      branch: sessionUser?.branch || "Manggahan"
+    });
+    setCreatedAccountCredentials(null);
+  };
+
+  const handleCreateUserAccount = async event => {
+    event.preventDefault();
+    if (!newAccount.fullName.trim() || !newAccount.username.trim() || !newAccount.email.trim()) {
+      toast.error("Please complete the full name, username, and email.");
+      return;
+    }
+
+    setIsActionLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/users`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(newAccount)
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error("Failed to create account", { description: data.error || res.statusText });
+        return;
+      }
+
+      const createdUser = normalizeUser(data.user);
+      upsertUser(createdUser);
+      refreshSystemSummary();
+      setActiveTab("active");
+      setCreatedAccountCredentials({
+        fullName: createdUser.fullName,
+        username: createdUser.username,
+        temporaryPassword: data.temporaryPassword
+      });
+      toast.success("User account created", {
+        description: "Temporary credentials were generated and sent by email when email service is available."
+      });
+    } catch (err) {
+      console.error(err);
+      toast.error("Network error while creating account");
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const copyTemporaryCredentials = async () => {
+    if (!createdAccountCredentials) return;
+    const credentialText = `Username: ${createdAccountCredentials.username}\nTemporary Password: ${createdAccountCredentials.temporaryPassword}`;
+    try {
+      await navigator.clipboard.writeText(credentialText);
+      toast.success("Temporary credentials copied.");
+    } catch {
+      toast.error("Unable to copy credentials automatically.");
+    }
   };
 
   const handleApprove = async user => {
@@ -730,6 +815,28 @@ export function UserManagementModule() {
           overflow: hidden;
         }
 
+        .user-accounts-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 1rem;
+          padding-bottom: 0.75rem;
+        }
+
+        .user-accounts-title {
+          min-width: 0;
+        }
+
+        .user-create-account-button {
+          min-height: 3rem;
+          min-width: 11.5rem;
+          width: auto;
+          border-radius: 0.75rem;
+          padding-inline: 1.2rem;
+          box-shadow: 0 10px 20px rgba(255, 0, 0, 0.2);
+          white-space: nowrap;
+        }
+
         .user-tabs-list {
           width: fit-content;
           max-width: 100%;
@@ -767,6 +874,20 @@ export function UserManagementModule() {
 
         .user-edit-dialog {
           padding: 1.25rem;
+        }
+
+        .user-create-dialog {
+          width: min(100% - 2rem, 34rem);
+          max-width: min(100% - 2rem, 34rem) !important;
+        }
+
+        .user-create-dialog .create-full-name-field {
+          grid-column: 1 / -1;
+        }
+
+        .user-create-dialog input::placeholder {
+          color: #64748b;
+          opacity: 1;
         }
 
         .user-edit-dialog [data-slot="dialog-header"] {
@@ -966,6 +1087,49 @@ export function UserManagementModule() {
           .user-accounts-card [data-slot="card-description"] {
             font-size: 0.95rem;
             line-height: 1.35;
+          }
+
+          .user-accounts-header {
+            flex-direction: row;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 0.85rem;
+          }
+
+          .user-accounts-title {
+            flex: 1 1 auto;
+          }
+
+          .user-create-account-button {
+            width: fit-content;
+            flex: 0 0 auto;
+            min-width: 0;
+            max-width: 100%;
+            justify-content: center;
+            padding-inline: 0.95rem;
+            font-size: 0.9rem;
+          }
+
+          .user-create-account-button svg {
+            margin-right: 0;
+          }
+
+          .user-create-account-button span {
+            display: none;
+          }
+
+          @media (max-width: 420px) {
+            .user-accounts-header {
+              align-items: center;
+              gap: 0.65rem;
+            }
+
+            .user-create-account-button {
+              min-height: 2.75rem;
+              width: 2.75rem;
+              padding: 0;
+              border-radius: 0.75rem;
+            }
           }
 
           .user-tabs-list {
@@ -1279,9 +1443,22 @@ export function UserManagementModule() {
         </div>
 
         <Card className="user-accounts-card col-span-1 md:col-span-3 w-full">
-          <CardHeader>
-            <CardTitle>User Accounts</CardTitle>
-            <CardDescription>View and manage all user accounts</CardDescription>
+          <CardHeader className="user-accounts-header">
+            <div className="user-accounts-title">
+              <CardTitle>User Accounts</CardTitle>
+              <CardDescription>View and manage all user accounts</CardDescription>
+            </div>
+            <Button
+              type="button"
+              onClick={() => {
+                resetCreateUserForm();
+                setIsCreateUserDialogOpen(true);
+              }}
+              className="user-create-account-button bg-[#FF0000] text-white hover:bg-[#cc0000]"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              <span>Create User Account</span>
+            </Button>
           </CardHeader>
           <CardContent>
             <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
@@ -1348,7 +1525,10 @@ export function UserManagementModule() {
                             </TableCell>
                             <TableCell className="text-sm">{user.branch}</TableCell>
                             <TableCell>
-                              {renderUserStatusBadge(user)}
+                              <div className="flex flex-col items-start gap-1">
+                                {renderUserStatusBadge(user)}
+                                {renderPasswordSetupBadge(user)}
+                              </div>
                             </TableCell>
                             <TableCell>
                               {renderUserActions("active", user)}
@@ -1423,7 +1603,10 @@ export function UserManagementModule() {
                             </TableCell>
                             <TableCell className="text-sm">{user.branch}</TableCell>
                             <TableCell>
-                              {renderUserStatusBadge(user)}
+                              <div className="flex flex-col items-start gap-1">
+                                {renderUserStatusBadge(user)}
+                                {renderPasswordSetupBadge(user)}
+                              </div>
                             </TableCell>
                             <TableCell className="text-sm">{user.createdDate}</TableCell>
                             <TableCell>
@@ -1496,7 +1679,10 @@ export function UserManagementModule() {
                             </TableCell>
                             <TableCell className="text-sm">{user.branch}</TableCell>
                             <TableCell>
-                              {renderUserStatusBadge(user)}
+                              <div className="flex flex-col items-start gap-1">
+                                {renderUserStatusBadge(user)}
+                                {renderPasswordSetupBadge(user)}
+                              </div>
                             </TableCell>
                             <TableCell>
                               {renderUserActions("inactive", user)}
@@ -1514,6 +1700,127 @@ export function UserManagementModule() {
         </Card>
 
         {/* Dialogs and AlertDialogs */}
+        <Dialog open={isCreateUserDialogOpen} onOpenChange={(open) => {
+          setIsCreateUserDialogOpen(open);
+          if (!open) resetCreateUserForm();
+        }}>
+          <DialogContent className="user-edit-dialog user-create-dialog">
+            <DialogHeader>
+              <DialogTitle>Create User Account</DialogTitle>
+              <DialogDescription className="mt-2 max-w-[30rem] text-base leading-7 text-slate-700">
+                Create an account for approved store personnel. Use Admin only for trusted users who need access to system settings, user management, and protected records.
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleCreateUserAccount} className="space-y-4 py-2">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="create-full-name-field space-y-2 md:col-span-2">
+                  <Label htmlFor="create-full-name">Full Name</Label>
+                  <Input
+                    id="create-full-name"
+                    value={newAccount.fullName}
+                    onChange={event => setNewAccount(prev => ({ ...prev, fullName: event.target.value }))}
+                    placeholder="Full name of the account owner"
+                    disabled={isActionLoading || Boolean(createdAccountCredentials)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="create-username">Username</Label>
+                  <Input
+                    id="create-username"
+                    value={newAccount.username}
+                    onChange={event => setNewAccount(prev => ({ ...prev, username: event.target.value }))}
+                    placeholder="username"
+                    disabled={isActionLoading || Boolean(createdAccountCredentials)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="create-email">Email</Label>
+                  <Input
+                    id="create-email"
+                    type="email"
+                    value={newAccount.email}
+                    onChange={event => setNewAccount(prev => ({ ...prev, email: event.target.value }))}
+                    placeholder="user@email.com"
+                    disabled={isActionLoading || Boolean(createdAccountCredentials)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="create-role">System Role</Label>
+                  <Select
+                    value={newAccount.role}
+                    onValueChange={value => setNewAccount(prev => ({ ...prev, role: value }))}
+                    disabled={isActionLoading || Boolean(createdAccountCredentials)}
+                  >
+                    <SelectTrigger id="create-role">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Employee">Employee</SelectItem>
+                      <SelectItem value="Admin">Admin</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="create-branch">Assigned Branch</Label>
+                  <Select
+                    value={newAccount.branch}
+                    onValueChange={value => setNewAccount(prev => ({ ...prev, branch: value }))}
+                    disabled={isActionLoading || Boolean(createdAccountCredentials)}
+                  >
+                    <SelectTrigger id="create-branch">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Manggahan">Manggahan</SelectItem>
+                      <SelectItem value="San Rafael">San Rafael</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {createdAccountCredentials ? (
+                <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-900">
+                  <p className="font-semibold">Account created for {createdAccountCredentials.fullName}</p>
+                  <div className="mt-3 rounded-lg bg-white p-3 font-mono text-slate-900">
+                    <p>Username: {createdAccountCredentials.username}</p>
+                    <p>Temporary Password: {createdAccountCredentials.temporaryPassword}</p>
+                  </div>
+                  <p className="mt-3">
+                    Share these credentials only with the assigned account owner. They will be required to set a new password after first login.
+                  </p>
+                  <Button type="button" variant="outline" className="mt-3" onClick={copyTemporaryCredentials}>
+                    <Copy className="mr-2 h-4 w-4" />
+                    Copy Credentials
+                  </Button>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
+                  Temporary credentials will be generated after creation. Share them only with the assigned account owner.
+                </div>
+              )}
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setIsCreateUserDialogOpen(false);
+                    resetCreateUserForm();
+                  }}
+                  disabled={isActionLoading}
+                >
+                  {createdAccountCredentials ? "Close" : "Cancel"}
+                </Button>
+                {!createdAccountCredentials && (
+                  <Button type="submit" disabled={isActionLoading} className="bg-[#FF0000] text-white hover:bg-[#cc0000]">
+                    {isActionLoading ? "Creating..." : "Create Account"}
+                  </Button>
+                )}
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
         <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
           <DialogContent className="user-edit-dialog">
             <DialogHeader>
