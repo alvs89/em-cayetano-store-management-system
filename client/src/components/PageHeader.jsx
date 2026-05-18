@@ -71,10 +71,10 @@ export function HeaderTimeBadge({ userBranch }) {
           text-shadow: 0 1px 1px rgba(255, 255, 255, 0.55);
         }
 
-          .page-header-time-primary {
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
+        .page-header-time-primary {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         @media (max-width: 920px) {
@@ -113,7 +113,8 @@ export function PageHeader({
   children,
   userName,
   userBranch,
-  userRole
+  userRole,
+  showUserContext = false
 }) {
   const resolvedUserBranch = userBranch || getSessionBranch();
 
@@ -132,16 +133,18 @@ export function PageHeader({
               )}
               <div className="min-w-0" style={icon ? { marginLeft: 20 } : undefined}>
                 <h1 className="mb-2 text-4xl font-bold text-white">{title}</h1>
-                <p className="text-lg text-white/95">
-                  {subtitle}
-                  {userName && (
-                    <>
-                      {' '}
-                      <span className="font-semibold">{userName}</span>!
-                    </>
-                  )}
-                </p>
-                {resolvedUserBranch && userRole && (
+                {subtitle && (
+                  <p className="text-lg text-white/95">
+                    {subtitle}
+                    {showUserContext && userName && (
+                      <>
+                        {' '}
+                        <span className="font-semibold">{userName}</span>!
+                      </>
+                    )}
+                  </p>
+                )}
+                {showUserContext && resolvedUserBranch && userRole && (
                   <p className="mt-1 text-sm text-white/80">
                     {resolvedUserBranch} Branch - {userRole}
                   </p>

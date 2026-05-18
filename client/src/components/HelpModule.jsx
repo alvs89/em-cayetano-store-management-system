@@ -293,10 +293,9 @@ export function HelpModule({ user }) {
   }[fullView];
 
   return (
-    <div className="help-page min-h-screen bg-gray-50">
+    <div className="help-page min-h-screen bg-gray-50 p-4 md:p-8">
       <style>{`
         .help-page {
-          padding: 24px;
           color: #172033;
         }
 
@@ -821,10 +820,6 @@ export function HelpModule({ user }) {
         }
 
         @media (max-width: 760px) {
-          .help-page {
-            padding: 14px;
-          }
-
           .help-search-row,
           .help-grid,
           .help-main-grid,
@@ -901,10 +896,6 @@ export function HelpModule({ user }) {
         }
 
         @media (max-width: 420px) {
-          .help-page {
-            padding: 12px;
-          }
-
           .help-search-row {
             gap: 10px;
           }

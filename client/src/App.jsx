@@ -20,6 +20,7 @@ import {
   Lock,
   Eye,
   EyeOff,
+  ReceiptText,
 } from "lucide-react";
 import axios from "axios";
 import { LoginScreen } from "./components/LoginScreen";
@@ -31,6 +32,7 @@ import { Dashboard } from "./components/Dashboard.jsx";
 import { InventoryModule } from "./components/InventoryModule";
 import { ArchiveModule } from "./components/ArchiveModule";
 import { ReportsModule } from "./components/ReportsModule";
+import { SalesModule } from "./components/SalesModule";
 import { MaintenanceModule } from "./components/MaintenanceModule";
 import { UserManagementModule } from "./components/UserManagementModule";
 import { AuditTrailModule } from "./components/AuditTrailModule";
@@ -299,6 +301,7 @@ function AppContent() {
       "inventory",
       "archive",
       "reports",
+      "sales",
       "user-management",
       "search",
       "help",
@@ -728,6 +731,13 @@ function AppContent() {
             collapsed={isSidebarCollapsed}
           />
           <NavItem
+            icon={<ReceiptText className="w-5 h-5" />}
+            label="Sales"
+            active={currentScreen === "sales"}
+            onClick={() => navigateTo("sales")}
+            collapsed={isSidebarCollapsed}
+          />
+          <NavItem
             icon={<Bell className="w-5 h-5" />}
             label="Alerts"
             active={currentScreen === "alerts"}
@@ -814,6 +824,7 @@ function AppContent() {
         {renderScreenPane("inventory", <InventoryModule user={currentUser} onNavigate={navigateTo} />)}
         {renderScreenPane("archive", <ArchiveModule user={currentUser} />)}
         {renderScreenPane("reports", <ReportsModule user={currentUser} />)}
+        {renderScreenPane("sales", <SalesModule user={currentUser} />)}
         {currentUser.role === "Admin" && currentScreen === "maintenance" && (
           <MaintenanceModule onNavigate={navigateTo} user={currentUser} />
         )}
@@ -833,6 +844,7 @@ function getScreenTitle(screen) {
     inventory: "Inventory",
     archive: "Archive",
     reports: "Reports",
+    sales: "Sales",
     maintenance: "Maintenance",
     "user-management": "User Management",
     "audit-trail": "Audit Trail",
@@ -1012,6 +1024,7 @@ function MobileSidebarDrawer({
           <MobileNavItem icon={<Box className="h-5 w-5" />} label="Inventory" active={currentScreen === "inventory"} onClick={() => onNavigate("inventory")} />
           <MobileNavItem icon={<Archive className="h-5 w-5" />} label="Archive" active={currentScreen === "archive"} onClick={() => onNavigate("archive")} />
           <MobileNavItem icon={<FileText className="h-5 w-5" />} label="Reports" active={currentScreen === "reports"} onClick={() => onNavigate("reports")} />
+          <MobileNavItem icon={<ReceiptText className="h-5 w-5" />} label="Sales" active={currentScreen === "sales"} onClick={() => onNavigate("sales")} />
           <MobileNavItem icon={<Bell className="h-5 w-5" />} label="Alerts" active={currentScreen === "alerts"} onClick={() => onNavigate("alerts")} badge={unreadAlertCount} />
 
           <Separator className="my-4" />
@@ -1175,6 +1188,7 @@ export default function App() {
           <Route path="/inventory" element={<AppContent />} />
           <Route path="/archive" element={<AppContent />} />
           <Route path="/reports" element={<AppContent />} />
+          <Route path="/sales" element={<AppContent />} />
           <Route path="/maintenance" element={<AppContent />} />
           <Route path="/user-management" element={<AppContent />} />
           <Route path="/search" element={<AppContent />} />

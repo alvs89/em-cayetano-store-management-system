@@ -24,6 +24,7 @@ export function Dashboard({
     inventory,
     unreadAlertCount,
     stockMovements,
+    salesTransactions,
     users
   } = useData();
 
@@ -54,6 +55,10 @@ export function Dashboard({
     const movementDate = new Date(movement.createdAt);
     const today = new Date();
     return movementDate.toDateString() === today.toDateString();
+  }).length;
+  const salesToday = (salesTransactions || []).filter(sale => {
+    if (!sale.createdAt) return false;
+    return new Date(sale.createdAt).toDateString() === new Date().toDateString();
   }).length;
   const reorderAttentionCount = lowStockItems + outOfStock;
   const selectedCountItem = inventory.find(item => item.id === stockCountForm.itemId);
@@ -162,6 +167,9 @@ export function Dashboard({
       detail: { reportType, category: 'all' }
     }));
     onNavigate('reports');
+  };
+  const openSales = () => {
+    onNavigate('sales');
   };
   const openUserManagementTab = tab => {
     localStorage.setItem("user_management_target_tab", tab);
@@ -297,7 +305,7 @@ export function Dashboard({
   ) : null;
 
   return (
-    <div className="dashboard-page min-h-screen bg-gray-50 p-8">
+    <div className="dashboard-page min-h-screen bg-gray-50 p-4 md:p-8">
       <style>{`
         .dashboard-stat-grid,
         .dashboard-module-grid,
@@ -510,6 +518,7 @@ export function Dashboard({
         userName={user.fullName}
         userBranch={activeBranch || user.branch}
         userRole={user.role}
+        showUserContext
         onNavigate={onNavigate}
         showQuickActions
         alertCount={unreadAlertCount}
@@ -592,11 +601,11 @@ export function Dashboard({
           />
           <ModuleCard
             icon={<ReceiptText className="w-7 h-7" />}
-            title="Daily Sales Deduction"
-            description="Record multiple sold items in one transaction."
-            onClick={() => openInventoryAction('daily-sales-deduction')}
+            title="Record Sale"
+            description="Record customer purchases and deduct stock automatically."
+            onClick={openSales}
             gradient="from-orange-500 to-orange-600"
-            badge="Sales"
+            badge={salesToday > 0 ? `${salesToday} Today` : "Sales"}
           />
           <ModuleCard
             icon={<AlertTriangle className="w-7 h-7" />}

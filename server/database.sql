@@ -62,7 +62,64 @@ CREATE TABLE archived_inventory (
     archived_by INT REFERENCES users(user_id) ON DELETE SET NULL
 );
 
--- 5. INITIAL SEED DATA (System Admin)
+-- 5. STOCK MOVEMENTS TABLE
+-- Tracks every inventory quantity change for accountability and reports.
+CREATE TABLE stock_movements (
+    movement_id SERIAL PRIMARY KEY,
+    inventory_id INT,
+    product_id INT,
+    item_name VARCHAR(150) NOT NULL,
+    category VARCHAR(50) NOT NULL,
+    branch VARCHAR(50) NOT NULL,
+    action VARCHAR(20) CHECK (action IN ('stock_in', 'stock_out', 'initial_stock', 'adjustment')) NOT NULL,
+    quantity_changed INTEGER NOT NULL,
+    previous_quantity INTEGER NOT NULL,
+    new_quantity INTEGER NOT NULL,
+    reason VARCHAR(40),
+    note TEXT,
+    actor_id INT REFERENCES users(user_id) ON DELETE SET NULL,
+    actor_name TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 6. SALES TRANSACTIONS TABLE
+-- Stores official sales records without turning the system into a full POS.
+CREATE TABLE sales_transactions (
+    sales_transaction_id SERIAL PRIMARY KEY,
+    sales_number VARCHAR(40) UNIQUE NOT NULL,
+    branch VARCHAR(50) NOT NULL,
+    customer_type VARCHAR(40) DEFAULT 'walk_in' CHECK (customer_type IN ('walk_in', 'regular', 'contractor')),
+    total_quantity INTEGER NOT NULL DEFAULT 0,
+    total_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+    status VARCHAR(20) DEFAULT 'completed' CHECK (status IN ('completed', 'cancelled')),
+    sold_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+    sold_by_name TEXT,
+    remarks TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    cancelled_at TIMESTAMP,
+    cancelled_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+    cancel_reason TEXT
+);
+
+-- 7. SALES ITEMS TABLE
+-- Stores the sold item lines under each sales transaction.
+CREATE TABLE sales_items (
+    sales_item_id SERIAL PRIMARY KEY,
+    sales_transaction_id INT NOT NULL REFERENCES sales_transactions(sales_transaction_id) ON DELETE CASCADE,
+    inventory_id INT,
+    product_id INT,
+    item_name VARCHAR(150) NOT NULL,
+    category VARCHAR(50) NOT NULL,
+    branch VARCHAR(50) NOT NULL,
+    quantity_sold INTEGER NOT NULL,
+    unit_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+    subtotal NUMERIC(12,2) NOT NULL DEFAULT 0,
+    previous_quantity INTEGER NOT NULL,
+    new_quantity INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 8. INITIAL SEED DATA (System Admin)
 -- Creates the first admin account to allow initial login.
 -- Username: admin
 -- Password: set securely by running reset-admin.js with ADMIN_RESET_PASSWORD configured.

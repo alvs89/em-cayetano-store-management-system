@@ -31,7 +31,6 @@ const OFFICIAL_INVENTORY_CATEGORIES = [
 ];
 
 const STOCK_OUT_REASON_OPTIONS = [
-  { value: "sales", label: "Sales", description: "Sold items released to customers." },
   { value: "damaged", label: "Damaged", description: "Items removed because they can no longer be sold." },
   { value: "expired", label: "Expired", description: "Items removed because they are past their usable date." },
   { value: "lost_missing", label: "Lost/Missing", description: "Items missing after checking actual stock." },
@@ -1302,7 +1301,7 @@ export function InventoryModule({
       });
       highlightInventoryRow(updatedItems?.[0]?.id);
       closeBatchStockOutDialog();
-      toast.success("Daily Sales Deduction completed successfully.", {
+      toast.success("Batch non-sales stock out completed successfully.", {
         description: `${preparedRows.length} line${preparedRows.length === 1 ? "" : "s"} processed. Reason: ${reasonLabel}.`
       });
     } catch (err) {
@@ -2344,7 +2343,7 @@ export function InventoryModule({
     onClick: () => setIsBatchStockOutDialogOpen(true)
   }, /*#__PURE__*/React.createElement(PackageMinus, {
     className: "w-4 h-4 mr-2"
-  }), "Daily Sales Deduction"), user.role === "Admin" && /*#__PURE__*/React.createElement(Dialog, {
+  }), "Batch Non-Sales Out"), user.role === "Admin" && /*#__PURE__*/React.createElement(Dialog, {
     open: isAddDialogOpen,
     onOpenChange: open => {
       if (open) {
@@ -3004,12 +3003,12 @@ export function InventoryModule({
       fontSize: "26px",
       lineHeight: "1.1"
     }
-  }, "Daily Sales Deduction"), /*#__PURE__*/React.createElement(DialogDescription, {
+  }, "Batch Non-Sales Stock Out"), /*#__PURE__*/React.createElement(DialogDescription, {
     className: "mt-3 leading-relaxed text-slate-600",
     style: {
       fontSize: "14px"
     }
-  }, "Deduct multiple sold or verified stock-out items in one transaction while keeping movement history accurate."))), /*#__PURE__*/React.createElement("div", {
+  }, "Deduct multiple damaged, expired, missing, transferred, or corrected items in one transaction while keeping movement history accurate."))), /*#__PURE__*/React.createElement("div", {
     className: "flex items-center text-red-950",
     style: {
       gap: "12px",
@@ -3028,7 +3027,7 @@ export function InventoryModule({
     style: {
       fontSize: "13px"
     }
-  }, "Use Sales for sold items. Use other reasons only for verified damage, expiry, loss, transfer, adjustment, or correction.")), /*#__PURE__*/React.createElement("div", {
+  }, "Use this only for non-sales reductions such as verified damage, expiry, loss, transfer, adjustment, or correction. Customer purchases should be recorded in the Sales module.")), /*#__PURE__*/React.createElement("div", {
     className: "space-y-2"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "batch-stock-out-reason",

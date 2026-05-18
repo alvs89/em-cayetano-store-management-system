@@ -185,6 +185,7 @@ export function DataProvider({ children }) {
   const [inventory, setInventory] = useState([]);
   const [archivedInventory, setArchivedInventory] = useState([]);
   const [stockMovements, setStockMovements] = useState([]);
+  const [salesTransactions, setSalesTransactions] = useState([]);
   const [users, setUsers] = useState([]); // User logic remains as before
   const [loadingInventory, setLoadingInventory] = useState(true);
   const [inventoryError, setInventoryError] = useState(null);
@@ -345,6 +346,52 @@ export function DataProvider({ children }) {
     }
   }, []);
 
+  const fetchSalesTransactions = useCallback(async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        setSalesTransactions([]);
+        return;
+      }
+      const res = await axios.get(apiUrl("/api/sales"), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const sales = (res.data.sales || []).map((sale) => ({
+        id: sale.sales_transaction_id?.toString() ?? '',
+        salesNumber: sale.sales_number || '',
+        branch: sale.branch || '',
+        customerType: sale.customer_type || 'walk_in',
+        totalQuantity: Number(sale.total_quantity || 0),
+        totalAmount: Number(sale.total_amount || 0),
+        status: sale.status || 'completed',
+        soldBy: sale.sold_by?.toString() ?? '',
+        soldByName: sale.sold_by_name || '',
+        remarks: sale.remarks || '',
+        createdAt: sale.created_at ? new Date(sale.created_at).toISOString() : '',
+        cancelledAt: sale.cancelled_at ? new Date(sale.cancelled_at).toISOString() : '',
+        cancelReason: sale.cancel_reason || '',
+        items: (sale.items || []).map((item) => ({
+          id: item.sales_item_id?.toString() ?? '',
+          inventoryId: item.inventory_id?.toString() ?? '',
+          productId: item.product_id?.toString() ?? '',
+          itemName: item.item_name || '',
+          category: item.category || '',
+          branch: item.branch || '',
+          quantitySold: Number(item.quantity_sold || 0),
+          unitPrice: Number(item.unit_price || 0),
+          subtotal: Number(item.subtotal || 0),
+          previousQuantity: Number(item.previous_quantity || 0),
+          newQuantity: Number(item.new_quantity || 0),
+          createdAt: item.created_at ? new Date(item.created_at).toISOString() : '',
+        })),
+      }));
+      setSalesTransactions(sales);
+    } catch (err) {
+      console.error('Failed to load sales records:', err);
+      setSalesTransactions([]);
+    }
+  }, []);
+
   const refreshSystemSummary = useCallback(async () => {
     try {
       const token = localStorage.getItem("token");
@@ -365,8 +412,9 @@ export function DataProvider({ children }) {
     fetchInventory();
     fetchArchivedInventory();
     fetchStockMovements();
+    fetchSalesTransactions();
     refreshSystemSummary();
-  }, [fetchInventory, fetchArchivedInventory, fetchStockMovements, refreshSystemSummary]);
+  }, [fetchInventory, fetchArchivedInventory, fetchStockMovements, fetchSalesTransactions, refreshSystemSummary]);
 
   useEffect(() => {
     const handleAuthStateChanged = () => {
@@ -379,6 +427,7 @@ export function DataProvider({ children }) {
       fetchInventory();
       fetchArchivedInventory();
       fetchStockMovements();
+      fetchSalesTransactions();
       refreshSystemSummary();
     };
 
@@ -390,7 +439,7 @@ export function DataProvider({ children }) {
       window.removeEventListener('database-restored', handleAuthStateChanged);
       window.removeEventListener('maintenance-action-completed', handleAuthStateChanged);
     };
-  }, [fetchInventory, fetchArchivedInventory, fetchStockMovements, refreshSystemSummary]);
+  }, [fetchInventory, fetchArchivedInventory, fetchStockMovements, fetchSalesTransactions, refreshSystemSummary]);
 
   useEffect(() => {
     const id = setInterval(fetchInventory, 30000);
@@ -403,6 +452,12 @@ export function DataProvider({ children }) {
 
     return () => clearInterval(id);
   }, [fetchStockMovements]);
+
+  useEffect(() => {
+    const id = setInterval(fetchSalesTransactions, 30000);
+
+    return () => clearInterval(id);
+  }, [fetchSalesTransactions]);
 
   useEffect(() => {
     const intervalMs = activeUserRole === "Admin" ? 10000 : 30000;
@@ -645,6 +700,36 @@ export function DataProvider({ children }) {
     }
   };
 
+  const recordSale = async ({ customerType, items, remarks }) => {
+    const token = localStorage.getItem("token");
+    try {
+      const res = await axios.post(
+        apiUrl("/api/sales"),
+        {
+          customer_type: customerType,
+          remarks,
+          items: items.map(item => ({
+            inventory_id: item.inventoryId,
+            quantity: item.quantity,
+            unit_price: item.unitPrice ?? 0,
+          })),
+        },
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      await fetchInventory();
+      await fetchArchivedInventory();
+      await fetchStockMovements();
+      await fetchSalesTransactions();
+      return res.data.sale;
+    } catch (err) {
+      await fetchInventory();
+      await fetchArchivedInventory();
+      await fetchStockMovements();
+      await fetchSalesTransactions();
+      throw err;
+    }
+  };
+
   // Archive (delete) inventory item
   const archiveInventoryItem = async (id, archiveReason) => {
     const token = localStorage.getItem("token");
@@ -694,7 +779,9 @@ export function DataProvider({ children }) {
         archivedInventory,
         setArchivedInventory,
         stockMovements,
+        salesTransactions,
         fetchStockMovements,
+        fetchSalesTransactions,
         users,
         setUsers,
         loadingInventory,
@@ -704,6 +791,7 @@ export function DataProvider({ children }) {
         addInventoryItem,
         updateInventoryItem,
         batchStockOut,
+        recordSale,
         archiveInventoryItem,
         restoreArchivedInventoryItem,
         alerts,

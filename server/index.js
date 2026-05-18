@@ -282,6 +282,43 @@ async function ensureSchema() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS sales_transactions (
+      sales_transaction_id SERIAL PRIMARY KEY,
+      sales_number VARCHAR(40) UNIQUE NOT NULL,
+      branch VARCHAR(50) NOT NULL,
+      customer_type VARCHAR(40) DEFAULT 'walk_in' CHECK (customer_type IN ('walk_in', 'regular', 'contractor')),
+      total_quantity INTEGER NOT NULL DEFAULT 0,
+      total_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      status VARCHAR(20) DEFAULT 'completed' CHECK (status IN ('completed', 'cancelled')),
+      sold_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+      sold_by_name TEXT,
+      remarks TEXT,
+      created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
+      cancelled_at TIMESTAMP,
+      cancelled_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+      cancel_reason TEXT
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sales_items (
+      sales_item_id SERIAL PRIMARY KEY,
+      sales_transaction_id INT NOT NULL REFERENCES sales_transactions(sales_transaction_id) ON DELETE CASCADE,
+      inventory_id INT,
+      product_id INT,
+      item_name VARCHAR(150) NOT NULL,
+      category VARCHAR(50) NOT NULL,
+      branch VARCHAR(50) NOT NULL,
+      quantity_sold INTEGER NOT NULL,
+      unit_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+      subtotal NUMERIC(12,2) NOT NULL DEFAULT 0,
+      previous_quantity INTEGER NOT NULL,
+      new_quantity INTEGER NOT NULL,
+      created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
+    );
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS archived_inventory (
       archived_inventory_id SERIAL PRIMARY KEY,
       original_inventory_id INT,
@@ -397,6 +434,26 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE stock_movements
     ADD COLUMN IF NOT EXISTS reason VARCHAR(40);
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ALTER COLUMN created_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS total_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS cancel_reason TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_items
+    ALTER COLUMN created_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
   `);
 
   await pool.query(`
@@ -556,7 +613,9 @@ async function migrateTimestampStorageToPhilippineTime() {
     ['archived_inventory', ['last_updated', 'archived_at']],
     ['audit_logs', ['created_at']],
     ['backup_logs', ['created_at']],
-    ['system_logs', ['created_at']]
+    ['system_logs', ['created_at']],
+    ['sales_transactions', ['created_at', 'cancelled_at']],
+    ['sales_items', ['created_at']]
   ];
 
   const client = await pool.connect();
@@ -1140,6 +1199,44 @@ function mapStockMovementRow(row) {
   };
 }
 
+function mapSalesTransactionRow(row) {
+  return {
+    sales_transaction_id: row.sales_transaction_id,
+    sales_number: row.sales_number,
+    branch: row.branch,
+    customer_type: row.customer_type,
+    total_quantity: row.total_quantity,
+    total_amount: row.total_amount,
+    status: row.status,
+    sold_by: row.sold_by,
+    sold_by_name: row.sold_by_name,
+    remarks: row.remarks,
+    created_at: row.created_at,
+    cancelled_at: row.cancelled_at,
+    cancelled_by: row.cancelled_by,
+    cancel_reason: row.cancel_reason,
+    items: row.items || []
+  };
+}
+
+function mapSalesItemRow(row) {
+  return {
+    sales_item_id: row.sales_item_id,
+    sales_transaction_id: row.sales_transaction_id,
+    inventory_id: row.inventory_id,
+    product_id: row.product_id,
+    item_name: row.item_name,
+    category: row.category,
+    branch: row.branch,
+    quantity_sold: row.quantity_sold,
+    unit_price: row.unit_price,
+    subtotal: row.subtotal,
+    previous_quantity: row.previous_quantity,
+    new_quantity: row.new_quantity,
+    created_at: row.created_at
+  };
+}
+
 const STOCK_OUT_REASONS = new Map([
   ['sales', 'Sales'],
   ['damaged', 'Damaged'],
@@ -1239,6 +1336,74 @@ async function recordStockMovement(client, {
       actorId
     ]
   );
+}
+
+async function generateSalesNumber(client) {
+  const year = new Date().getFullYear();
+  await client.query('LOCK TABLE sales_transactions IN EXCLUSIVE MODE');
+  const result = await client.query(
+    `SELECT COALESCE(MAX(sales_transaction_id), 0) + 1 AS next_number
+     FROM sales_transactions`
+  );
+  const sequence = Number(result.rows[0]?.next_number || 1);
+  return `SALE-${year}-${String(sequence).padStart(5, '0')}`;
+}
+
+async function refreshAverageDailySalesForInventory(client, inventoryId) {
+  const result = await client.query(
+    `SELECT
+       COALESCE(SUM(si.quantity_sold), 0) AS total_sold,
+       MIN(st.created_at)::date AS first_sale_date
+     FROM sales_items si
+     INNER JOIN sales_transactions st
+       ON st.sales_transaction_id = si.sales_transaction_id
+     WHERE si.inventory_id = $1
+       AND st.status = 'completed'
+       AND st.created_at >= (${PHILIPPINE_NOW_SQL} - INTERVAL '30 days')`,
+    [inventoryId]
+  );
+
+  const totalSold = Number(result.rows[0]?.total_sold || 0);
+  const firstSaleDate = result.rows[0]?.first_sale_date;
+  if (!firstSaleDate || totalSold <= 0) return;
+
+  const firstDay = new Date(firstSaleDate);
+  const today = new Date();
+  const elapsedDays = Math.max(
+    1,
+    Math.ceil((today.setHours(0, 0, 0, 0) - firstDay.setHours(0, 0, 0, 0)) / (1000 * 60 * 60 * 24)) + 1
+  );
+  const averageDailySales = Number((totalSold / Math.min(elapsedDays, 30)).toFixed(2));
+
+  const inventoryResult = await client.query(
+    `SELECT stock_level, min_stock_level, lead_time_days, safety_stock
+     FROM branch_inventory
+     WHERE inventory_id = $1
+     FOR UPDATE`,
+    [inventoryId]
+  );
+
+  if (inventoryResult.rowCount === 0) return null;
+
+  const inventoryRow = inventoryResult.rows[0];
+  const nextStatus = computeInventoryStatus(
+    Number(inventoryRow.stock_level || 0),
+    getEffectiveReorderThreshold({
+      ...inventoryRow,
+      average_daily_sales: averageDailySales
+    })
+  );
+
+  await client.query(
+    `UPDATE branch_inventory
+     SET average_daily_sales = $1,
+         status = $2,
+         last_updated = ${PHILIPPINE_NOW_SQL}
+     WHERE inventory_id = $3`,
+    [averageDailySales, nextStatus, inventoryId]
+  );
+
+  return { averageDailySales, status: nextStatus };
 }
 
 const ALLOWED_CLIENT_AUDIT_ACTIONS = new Set([
@@ -1612,6 +1777,8 @@ function getPostgresToolError(err, commandName) {
 const RESTORE_APP_TABLES = [
   'schema_migrations',
   'system_logs',
+  'sales_items',
+  'sales_transactions',
   'stock_movements',
   'archived_inventory',
   'branch_inventory',
@@ -1758,7 +1925,7 @@ async function authenticate(req, res, next) {
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     const result = await pool.query(
-      'SELECT user_id, role, branch, token_version, status FROM users WHERE user_id = $1',
+      'SELECT user_id, full_name, username, role, branch, token_version, status FROM users WHERE user_id = $1',
       [decoded.id]
     );
 
@@ -1777,6 +1944,8 @@ async function authenticate(req, res, next) {
 
     req.user = {
       id: dbUser.user_id,
+      fullName: dbUser.full_name,
+      username: dbUser.username,
       role: decoded.role,
       branch: decoded.branch || dbUser.branch
     };
@@ -2692,6 +2861,306 @@ app.get('/api/stock-movements', authenticate, async (req, res) => {
   } catch (err) {
     console.error('Get stock movements error:', err);
     return res.status(500).json({ error: 'Failed to load stock movements' });
+  }
+});
+
+app.get('/api/sales', authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+         st.sales_transaction_id,
+         st.sales_number,
+         st.branch,
+         st.customer_type,
+         st.total_quantity,
+         st.total_amount,
+         st.status,
+         st.sold_by,
+         st.sold_by_name,
+         st.remarks,
+         st.created_at,
+         st.cancelled_at,
+         st.cancelled_by,
+         st.cancel_reason,
+         COALESCE(
+           json_agg(
+             json_build_object(
+               'sales_item_id', si.sales_item_id,
+               'inventory_id', si.inventory_id,
+               'product_id', si.product_id,
+               'item_name', si.item_name,
+               'category', si.category,
+               'branch', si.branch,
+               'quantity_sold', si.quantity_sold,
+               'unit_price', si.unit_price,
+               'subtotal', si.subtotal,
+               'previous_quantity', si.previous_quantity,
+               'new_quantity', si.new_quantity,
+               'created_at', si.created_at
+             )
+             ORDER BY si.sales_item_id ASC
+           ) FILTER (WHERE si.sales_item_id IS NOT NULL),
+           '[]'::json
+         ) AS items
+       FROM sales_transactions st
+       LEFT JOIN sales_items si
+         ON si.sales_transaction_id = st.sales_transaction_id
+       WHERE st.branch = $1
+       GROUP BY st.sales_transaction_id
+       ORDER BY st.created_at DESC, st.sales_transaction_id DESC`,
+      [req.user.branch]
+    );
+
+    return res.json({ sales: result.rows.map(mapSalesTransactionRow) });
+  } catch (err) {
+    console.error('Get sales error:', err);
+    return res.status(500).json({ error: 'Failed to load sales records' });
+  }
+});
+
+app.post('/api/sales', authenticate, async (req, res) => {
+  const { customer_type = 'walk_in', items = [], remarks = '' } = req.body;
+  const normalizedCustomerType = String(customer_type || 'walk_in').trim().toLowerCase();
+  const allowedCustomerTypes = new Set(['walk_in', 'regular', 'contractor']);
+
+  if (!allowedCustomerTypes.has(normalizedCustomerType)) {
+    return res.status(400).json({ error: 'Please select a valid customer type.' });
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Add at least one sold item before recording the sale.' });
+  }
+
+  const aggregatedItems = new Map();
+  try {
+    for (const item of items) {
+      const inventoryId = Number(item?.inventory_id);
+      const quantity = parseNonNegativeInteger(item?.quantity, 'Quantity sold');
+      const unitPrice = parseNonNegativeDecimal(item?.unit_price ?? 0, 'Unit price', { max: 100000000 });
+
+      if (!Number.isInteger(inventoryId) || inventoryId <= 0 || quantity <= 0) {
+        return res.status(400).json({ error: 'Each sold item must include a valid product and quantity.' });
+      }
+
+      const existing = aggregatedItems.get(inventoryId) || { quantity: 0, unitPrice };
+      aggregatedItems.set(inventoryId, {
+        quantity: existing.quantity + quantity,
+        unitPrice: unitPrice || existing.unitPrice || 0
+      });
+    }
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ error: err.message || 'Invalid sale details.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const salesNumber = await generateSalesNumber(client);
+    const soldByName = req.user.fullName || req.user.username || 'System User';
+    const cleanRemarks = String(remarks || '').trim().slice(0, 500) || null;
+    let totalQuantity = 0;
+    let totalAmount = 0;
+    const saleLines = [];
+    const updatedItems = [];
+
+    for (const [inventoryId, line] of aggregatedItems.entries()) {
+      const currentResult = await client.query(
+        `SELECT
+           bi.inventory_id,
+           bi.product_id,
+           p.name,
+           p.category,
+           p.supplier_name,
+           bi.branch,
+           bi.stock_level,
+           bi.min_stock_level,
+           bi.lead_time_days,
+           bi.safety_stock,
+           bi.average_daily_sales,
+           bi.status,
+           bi.last_updated
+         FROM branch_inventory bi
+         INNER JOIN products p ON p.product_id = bi.product_id
+         WHERE bi.inventory_id = $1 AND bi.branch = $2
+         FOR UPDATE`,
+        [inventoryId, req.user.branch]
+      );
+
+      if (currentResult.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: `One selected item was not found in your branch inventory.` });
+      }
+
+      const currentItem = currentResult.rows[0];
+      const previousQuantity = Number(currentItem.stock_level || 0);
+      const quantitySold = Number(line.quantity || 0);
+
+      if (quantitySold > previousQuantity) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: `${currentItem.name} has only ${previousQuantity} unit${previousQuantity === 1 ? '' : 's'} available.`
+        });
+      }
+
+      const unitPrice = Number(line.unitPrice || 0);
+      const subtotal = Number((quantitySold * unitPrice).toFixed(2));
+      const newQuantity = previousQuantity - quantitySold;
+      const nextStatus = computeInventoryStatus(newQuantity, getEffectiveReorderThreshold(currentItem));
+
+      totalQuantity += quantitySold;
+      totalAmount += subtotal;
+
+      const updatedResult = await client.query(
+        `UPDATE branch_inventory
+         SET stock_level = $1,
+             status = $2,
+             last_updated = ${PHILIPPINE_NOW_SQL}
+         WHERE inventory_id = $3 AND branch = $4
+         RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
+        [newQuantity, nextStatus, inventoryId, req.user.branch]
+      );
+
+      saleLines.push({
+        inventoryId,
+        productId: currentItem.product_id,
+        itemName: currentItem.name,
+        category: currentItem.category,
+        branch: currentItem.branch,
+        quantitySold,
+        unitPrice,
+        subtotal,
+        previousQuantity,
+        newQuantity
+      });
+
+      updatedItems.push({
+        ...updatedResult.rows[0],
+        name: currentItem.name,
+        category: currentItem.category,
+        supplier_name: currentItem.supplier_name,
+        lead_time_days: currentItem.lead_time_days,
+        safety_stock: currentItem.safety_stock,
+        average_daily_sales: currentItem.average_daily_sales
+      });
+    }
+
+    const transactionResult = await client.query(
+      `INSERT INTO sales_transactions (
+         sales_number,
+         branch,
+         customer_type,
+         total_quantity,
+         total_amount,
+         status,
+         sold_by,
+         sold_by_name,
+         remarks
+       )
+       VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8)
+       RETURNING *`,
+      [
+        salesNumber,
+        req.user.branch,
+        normalizedCustomerType,
+        totalQuantity,
+        Number(totalAmount.toFixed(2)),
+        req.user.id,
+        soldByName,
+        cleanRemarks
+      ]
+    );
+
+    const salesTransaction = transactionResult.rows[0];
+    const insertedItems = [];
+
+    for (const line of saleLines) {
+      const itemResult = await client.query(
+        `INSERT INTO sales_items (
+           sales_transaction_id,
+           inventory_id,
+           product_id,
+           item_name,
+           category,
+           branch,
+           quantity_sold,
+           unit_price,
+           subtotal,
+           previous_quantity,
+           new_quantity
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         RETURNING *`,
+        [
+          salesTransaction.sales_transaction_id,
+          line.inventoryId,
+          line.productId,
+          line.itemName,
+          line.category,
+          line.branch,
+          line.quantitySold,
+          line.unitPrice,
+          line.subtotal,
+          line.previousQuantity,
+          line.newQuantity
+        ]
+      );
+
+      insertedItems.push(itemResult.rows[0]);
+
+      await recordStockMovement(client, {
+        inventoryId: line.inventoryId,
+        productId: line.productId,
+        itemName: line.itemName,
+        category: line.category,
+        branch: line.branch,
+        action: 'stock_out',
+        quantityChanged: line.quantitySold,
+        previousQuantity: line.previousQuantity,
+        newQuantity: line.newQuantity,
+        reason: 'sales',
+        note: `Sale recorded through Sales module (${salesNumber}).`,
+        actorId: req.user.id
+      });
+
+      await refreshAverageDailySalesForInventory(client, line.inventoryId);
+    }
+
+    await recordAuditLog(client, {
+      actorId: req.user.id,
+      targetId: salesTransaction.sales_transaction_id,
+      targetName: salesNumber,
+      targetType: 'sales_transaction',
+      action: 'CREATE_SALES_TRANSACTION',
+      reason: 'Sales Recording',
+      details: {
+        branch: req.user.branch,
+        customerType: normalizedCustomerType,
+        totalQuantity,
+        totalAmount: Number(totalAmount.toFixed(2)),
+        itemCount: insertedItems.length,
+        remarks: cleanRemarks
+      }
+    });
+
+    await client.query('COMMIT');
+
+    return res.status(201).json({
+      sale: mapSalesTransactionRow({
+        ...salesTransaction,
+        items: insertedItems.map(mapSalesItemRow)
+      }),
+      products: updatedItems.map(mapInventoryRow)
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+    console.error('Record sale error:', err);
+    return res.status(500).json({ error: 'Failed to record sale. No inventory was deducted.' });
+  } finally {
+    client.release();
   }
 });
 
@@ -3909,6 +4378,8 @@ app.post('/api/maintenance/optimize', authenticate, requireAdmin, async (req, re
     'products',
     'branch_inventory',
     'stock_movements',
+    'sales_transactions',
+    'sales_items',
     'archived_inventory',
     'audit_logs',
     'backup_logs',
@@ -3952,7 +4423,9 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
       missingProducts,
       orphanMovements,
       activeArchivedConflicts,
-      invalidUsers
+      invalidUsers,
+      invalidSalesTransactions,
+      invalidSalesItems
     ] = await Promise.all([
       pool.query(
         `SELECT branch, product_id, COUNT(*)::int AS count
@@ -4029,6 +4502,36 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
              OR (role = 'Employee' AND (branch IS NULL OR TRIM(branch) = ''))
            )`,
         [scopeBranch]
+      ),
+      pool.query(
+        `SELECT sales_transaction_id, transaction_number, branch, status, total_quantity, total_amount
+         FROM sales_transactions
+         WHERE branch = $1
+           AND (
+             total_quantity < 0
+             OR total_amount < 0
+             OR status NOT IN ('completed', 'cancelled')
+             OR transaction_number IS NULL
+             OR TRIM(transaction_number) = ''
+           )`,
+        [scopeBranch]
+      ),
+      pool.query(
+        `SELECT si.sales_item_id, st.transaction_number, si.item_name, si.quantity_sold, si.unit_price, si.subtotal
+         FROM sales_items si
+         INNER JOIN sales_transactions st
+           ON st.sales_transaction_id = si.sales_transaction_id
+         WHERE st.branch = $1
+           AND (
+             si.quantity_sold <= 0
+             OR si.unit_price < 0
+             OR si.subtotal < 0
+             OR si.previous_quantity < 0
+             OR si.new_quantity < 0
+             OR si.item_name IS NULL
+             OR TRIM(si.item_name) = ''
+           )`,
+        [scopeBranch]
       )
     ]);
 
@@ -4083,6 +4586,16 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
         key: 'invalid_users',
         label: 'Users with invalid role, status, or branch',
         count: invalidUsers.rowCount
+      },
+      {
+        key: 'invalid_sales_transactions',
+        label: 'Sales records with invalid totals, status, or transaction number',
+        count: invalidSalesTransactions.rowCount
+      },
+      {
+        key: 'invalid_sales_items',
+        label: 'Sales line items with invalid quantity, amount, or item details',
+        count: invalidSalesItems.rowCount
       },
       {
         key: 'status_mismatches',

@@ -80,12 +80,22 @@ const normalizeDetails = details => {
   return details;
 };
 
-const formatDetailValue = value => {
+const formatCustomerType = value => {
+  const customerTypes = {
+    walk_in: 'Walk-in Customer',
+    regular: 'Regular Customer',
+    contractor: 'Contractor'
+  };
+  return customerTypes[String(value || '').toLowerCase()] || formatFieldLabel(value) || 'None';
+};
+
+const formatDetailValue = (value, key = '') => {
   if (value === null || value === undefined || value === '') return 'None';
+  if (String(key || '').toLowerCase() === 'customertype') return formatCustomerType(value);
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'object') {
     return Object.entries(value)
-      .map(([key, nestedValue]) => `${formatFieldLabel(key)}: ${formatDetailValue(nestedValue)}`)
+      .map(([nestedKey, nestedValue]) => `${formatFieldLabel(nestedKey)}: ${formatDetailValue(nestedValue, nestedKey)}`)
       .join(', ');
   }
   return String(value);
@@ -174,7 +184,7 @@ export function AuditTrailModule({ user }) {
         formatActionLabel(log.action),
         log.targetId,
         log.actorId,
-        ...getDetailEntries(log.details).flatMap(([key, value]) => [key, formatDetailValue(value)])
+        ...getDetailEntries(log.details).flatMap(([key, value]) => [key, formatDetailValue(value, key)])
       ].join(' ').toLowerCase();
       return matchesGroup && matchesDate && (!query || haystack.includes(query));
     });
@@ -516,7 +526,7 @@ export function AuditTrailModule({ user }) {
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           {details.slice(0, 4).map(([key, value]) => (
                             <span key={key} className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs text-slate-700">
-                              <strong>{formatFieldLabel(key)}:</strong> {formatDetailValue(value)}
+                              <strong>{formatFieldLabel(key)}:</strong> {formatDetailValue(value, key)}
                             </span>
                           ))}
                         </div>

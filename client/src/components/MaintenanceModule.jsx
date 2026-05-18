@@ -67,7 +67,7 @@ const maintenanceActionCopy = {
     toneClass: 'bg-red-600 hover:bg-red-700',
     endpoint: '/api/maintenance/clear-logs',
     description:
-      'This removes only eligible non-critical system-wide logs after the configured retention period. Inventory records, user accounts, reports, archived records, backups, and security audit trails are kept safe.',
+      'This removes only eligible non-critical system-wide logs after the configured retention period. Inventory records, sales records, user accounts, reports, archived records, backups, and security audit trails are kept safe.',
   },
   optimize: {
     title: 'Optimize application database tables?',
@@ -76,7 +76,7 @@ const maintenanceActionCopy = {
     toneClass: 'bg-blue-600 hover:bg-blue-700',
     endpoint: '/api/maintenance/optimize',
     description:
-      'This runs safe maintenance on application database tables by refreshing table statistics. It does not delete inventory, user, report, archive, or backup records.',
+      'This runs safe maintenance on application database tables by refreshing table statistics. It does not delete inventory, sales, user, report, archive, or backup records.',
   },
   integrity: {
     title: 'Check current branch data integrity?',
@@ -340,10 +340,9 @@ export function MaintenanceModule({ onNavigate, user }) {
   const displayedTime = compactDateTime(summary.serverTime || new Date().toISOString());
 
   return (
-    <div className="maintenance-page min-h-screen bg-gray-50">
+    <div className="maintenance-page min-h-screen bg-gray-50 p-4 md:p-8">
       <style>{`
         .maintenance-page {
-          padding: 24px;
           overflow-x: hidden;
         }
 
@@ -675,10 +674,6 @@ export function MaintenanceModule({ onNavigate, user }) {
         }
 
         @media (max-width: 760px) {
-          .maintenance-page {
-            padding: 16px;
-          }
-
           .maintenance-page > .mb-8 {
             margin-bottom: 18px;
           }
@@ -964,10 +959,6 @@ export function MaintenanceModule({ onNavigate, user }) {
         }
 
         @media (max-width: 420px) {
-          .maintenance-page {
-            padding: 12px;
-          }
-
           .maintenance-action-grid,
           .maintenance-optimization-grid {
             grid-template-columns: 1fr;
@@ -1040,7 +1031,7 @@ export function MaintenanceModule({ onNavigate, user }) {
               icon={<Database className="h-6 w-6" />}
               tone="red"
               title="Database Backup & Restore"
-              description="Create or restore full-system database backups covering all branches."
+              description="Create or restore full-system database backups covering all branches and sales records."
             />
 
             <div className="maintenance-action-grid mt-7">
@@ -1050,7 +1041,7 @@ export function MaintenanceModule({ onNavigate, user }) {
                 </IconTile>
                 <h3 className="text-base font-bold text-slate-950">Create Backup</h3>
                 <p className="maintenance-action-copy">
-                  Create a full-system backup of the current database, including all branch records.
+                  Create a full-system backup of the current database, including all branch and sales records.
                 </p>
                 <div>
                   <div className="maintenance-meta-row">
@@ -1106,7 +1097,7 @@ export function MaintenanceModule({ onNavigate, user }) {
               <Info className="mt-0.5 h-5 w-5 text-blue-600" />
               <div className="grid gap-1">
                 <p>Please create a backup before restoring to prevent data loss.</p>
-                <p>Backup and restore actions apply to the full database, including San Rafael and Manggahan records.</p>
+                <p>Backup and restore actions apply to the full database, including San Rafael, Manggahan, inventory, and sales records.</p>
               </div>
             </div>
           </CardContent>
@@ -1306,7 +1297,7 @@ export function MaintenanceModule({ onNavigate, user }) {
               <div className="min-w-0">
                 <AlertDialogTitle>Create database backup?</AlertDialogTitle>
                 <AlertDialogDescription className="mt-2 text-sm leading-6 text-slate-600">
-                  The system will generate and download a full-system backup of the current database records, including all branch inventory, users, reports, archive records, and logs. Keep this file secure because it may contain inventory and account information.
+                  The system will generate and download a full-system backup of the current database records, including all branch inventory, sales records, users, reports, archive records, and logs. Keep this file secure because it may contain inventory, sales, and account information.
                 </AlertDialogDescription>
               </div>
             </div>
@@ -1341,7 +1332,7 @@ export function MaintenanceModule({ onNavigate, user }) {
               <div className="min-w-0">
                 <AlertDialogTitle>Restore database backup?</AlertDialogTitle>
                 <AlertDialogDescription className="mt-2 text-sm leading-6 text-slate-600">
-                Restoring <span className="maintenance-restore-file-name">{selectedRestoreFile?.name}</span> may overwrite the full system database, including all branch records. Create a fresh backup first if you have not already done so.
+                Restoring <span className="maintenance-restore-file-name">{selectedRestoreFile?.name}</span> may overwrite the full system database, including all branch inventory and sales records. Create a fresh backup first if you have not already done so.
                 </AlertDialogDescription>
                 <div className="mt-4">
                   <label htmlFor="restore-confirmation" className="maintenance-restore-label">
