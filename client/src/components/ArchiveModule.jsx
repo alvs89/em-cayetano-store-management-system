@@ -43,6 +43,8 @@ export function ArchiveModule({
   // Local UI state for filtering, selection, and confirmation flow.
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [supplierFilter, setSupplierFilter] = useState("all");
+  const [archiveReasonFilter, setArchiveReasonFilter] = useState("all");
   const [selectedItem, setSelectedItem] = useState(null);
   const [showUnarchiveDialog, setShowUnarchiveDialog] = useState(false);
   const [sortBy, setSortBy] = useState("date");
@@ -50,7 +52,20 @@ export function ArchiveModule({
   const [currentPage, setCurrentPage] = useState(1);
   const [highlightedArchiveRowId, setHighlightedArchiveRowId] = useState(null);
   // Build category list on the fly so dropdown reflects current archive contents.
-  const categories = Array.from(new Set(archivedInventory.map(item => item.category)));
+  const categories = Array.from(new Set(archivedInventory.map(item => item.category).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const suppliers = Array.from(new Set(archivedInventory.map(item => item.supplierName?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const archiveReasons = Object.entries(ARCHIVE_REASON_LABELS);
+  const hasActiveArchiveFilters =
+    searchQuery.trim() !== "" ||
+    categoryFilter !== "all" ||
+    supplierFilter !== "all" ||
+    archiveReasonFilter !== "all";
+  const clearArchiveFilters = () => {
+    setSearchQuery("");
+    setCategoryFilter("all");
+    setSupplierFilter("all");
+    setArchiveReasonFilter("all");
+  };
   const highlightArchiveRow = React.useCallback(id => {
     if (!id) return;
     const normalizedId = String(id);
@@ -60,10 +75,12 @@ export function ArchiveModule({
     }, 2400);
   }, []);
 
-  // Apply search and category filters so users can quickly narrow archived items.
+  // Apply search and archive-specific filters so users can quickly narrow archived items.
   const filteredArchive = archivedInventory.filter(item => {
-    const query = searchQuery.toLowerCase();
+    const query = searchQuery.trim().toLowerCase();
+    const supplierName = item.supplierName?.trim() || "";
     const matchesSearch =
+      !query ||
       item.name.toLowerCase().includes(query) ||
       item.archiveCode?.toLowerCase().includes(query) ||
       item.itemCode?.toLowerCase().includes(query) ||
@@ -72,7 +89,10 @@ export function ArchiveModule({
       item.supplierName?.toLowerCase().includes(query) ||
       getArchiveReasonLabel(item.archiveReason).toLowerCase().includes(query);
     const matchesCategory = categoryFilter === "all" || item.category === categoryFilter;
-    return matchesSearch && matchesCategory;
+    const matchesSupplier = supplierFilter === "all" ||
+      (supplierFilter === "unassigned" ? !supplierName : supplierName === supplierFilter);
+    const matchesArchiveReason = archiveReasonFilter === "all" || item.archiveReason === archiveReasonFilter;
+    return matchesSearch && matchesCategory && matchesSupplier && matchesArchiveReason;
   });
 
   const getArchiveId = item => item.archiveCode || item.id || "";
@@ -107,7 +127,7 @@ export function ArchiveModule({
 
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, categoryFilter, sortBy, sortOrder]);
+  }, [searchQuery, categoryFilter, supplierFilter, archiveReasonFilter, sortBy, sortOrder]);
 
   React.useEffect(() => {
     setCurrentPage(page => Math.min(Math.max(page, 1), totalPages));
@@ -291,6 +311,75 @@ export function ArchiveModule({
       min-width: 104px;
     }
 
+    .archive-search-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 1fr) repeat(3, minmax(160px, 190px)) 132px;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .archive-search-field {
+      min-width: 0;
+    }
+
+    .archive-filter-actions {
+      display: contents;
+    }
+
+    .archive-filter-control {
+      min-width: 0;
+    }
+
+    .archive-search-field input,
+    .archive-filter-trigger {
+      min-height: 42px;
+      border-radius: 12px;
+      background: #f8fafc;
+      border-color: #e2e8f0;
+      color: #0f172a;
+    }
+
+    .archive-filter-trigger {
+      width: 100%;
+      justify-content: flex-start;
+      gap: 10px;
+    }
+
+    .archive-filter-trigger [data-slot="select-value"] {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .archive-filter-trigger > svg:first-child {
+      margin-right: 0;
+    }
+
+    .archive-filter-trigger > svg:last-child {
+      margin-left: auto;
+    }
+
+    .archive-clear-filters-button {
+      min-height: 42px;
+      width: 100%;
+      border-radius: 12px;
+      border-color: #cbd5e1;
+      background: #ffffff;
+      color: #334155;
+      font-weight: 600;
+      padding-left: 16px;
+      padding-right: 16px;
+      white-space: nowrap;
+    }
+
+    .archive-clear-filters-button:not(:disabled):hover {
+      background: #f8fafc;
+      border-color: #94a3b8;
+      color: #0f172a;
+    }
+
     @media (max-width: 760px) {
       .archive-page {
         padding: 14px;
@@ -306,7 +395,12 @@ export function ArchiveModule({
       }
 
       .archive-search-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
+      }
+
+      .archive-search-field {
+        grid-column: 1 / -1;
       }
 
       .archive-search-field input,
@@ -314,6 +408,11 @@ export function ArchiveModule({
         min-height: 46px;
         border-radius: 12px;
         font-size: 14px;
+      }
+
+      .archive-filter-control,
+      .archive-clear-filters-button {
+        width: 100%;
       }
 
       .archive-list-card [data-archive-header] {
@@ -717,6 +816,10 @@ export function ArchiveModule({
         flex-direction: column;
       }
 
+      .archive-search-grid {
+        grid-template-columns: 1fr;
+      }
+
       .archive-mobile-actions button {
         flex-basis: 100%;
       }
@@ -737,9 +840,9 @@ export function ArchiveModule({
     className: "pt-6",
     "data-archive-search-content": true
   }, /*#__PURE__*/React.createElement("div", {
-    className: "archive-search-grid flex flex-col md:flex-row gap-4"
+    className: "archive-search-grid"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "archive-search-field flex-1 relative"
+    className: "archive-search-field relative"
   }, /*#__PURE__*/React.createElement(Search, {
     className: "absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400"
   }), /*#__PURE__*/React.createElement(Input, {
@@ -749,7 +852,9 @@ export function ArchiveModule({
     value: searchQuery,
     onChange: e => setSearchQuery(e.target.value)
   })), /*#__PURE__*/React.createElement("div", {
-    className: "w-full md:w-48"
+    className: "archive-filter-actions"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "archive-filter-control"
   }, /*#__PURE__*/React.createElement(Select, {
     value: categoryFilter,
     onValueChange: value => setCategoryFilter(value)
@@ -765,7 +870,47 @@ export function ArchiveModule({
   }, "All Categories"), categories.map(cat => /*#__PURE__*/React.createElement(SelectItem, {
     key: cat,
     value: cat
-  }, cat)))))))), /*#__PURE__*/React.createElement(Card, {
+  }, cat))))), /*#__PURE__*/React.createElement("div", {
+    className: "archive-filter-control"
+  }, /*#__PURE__*/React.createElement(Select, {
+    value: supplierFilter,
+    onValueChange: value => setSupplierFilter(value)
+  }, /*#__PURE__*/React.createElement(SelectTrigger, {
+    className: "archive-filter-trigger"
+  }, /*#__PURE__*/React.createElement(Filter, {
+    className: "w-4 h-4 mr-2"
+  }), /*#__PURE__*/React.createElement(SelectValue, {
+    placeholder: "All Suppliers"
+  })), /*#__PURE__*/React.createElement(SelectContent, null, /*#__PURE__*/React.createElement(SelectItem, {
+    value: "all"
+  }, "All Suppliers"), suppliers.map(supplier => /*#__PURE__*/React.createElement(SelectItem, {
+    key: supplier,
+    value: supplier
+  }, supplier)), /*#__PURE__*/React.createElement(SelectItem, {
+    value: "unassigned"
+  }, "No supplier assigned")))), /*#__PURE__*/React.createElement("div", {
+    className: "archive-filter-control"
+  }, /*#__PURE__*/React.createElement(Select, {
+    value: archiveReasonFilter,
+    onValueChange: value => setArchiveReasonFilter(value)
+  }, /*#__PURE__*/React.createElement(SelectTrigger, {
+    className: "archive-filter-trigger"
+  }, /*#__PURE__*/React.createElement(Filter, {
+    className: "w-4 h-4 mr-2"
+  }), /*#__PURE__*/React.createElement(SelectValue, {
+    placeholder: "All Reasons"
+  })), /*#__PURE__*/React.createElement(SelectContent, null, /*#__PURE__*/React.createElement(SelectItem, {
+    value: "all"
+  }, "All Reasons"), archiveReasons.map(([reason, label]) => /*#__PURE__*/React.createElement(SelectItem, {
+    key: reason,
+    value: reason
+  }, label))))), /*#__PURE__*/React.createElement(Button, {
+    type: "button",
+    variant: "outline",
+    className: "archive-clear-filters-button",
+    disabled: !hasActiveArchiveFilters,
+    onClick: clearArchiveFilters
+  }, "Clear Filters"))))), /*#__PURE__*/React.createElement(Card, {
     className: "archive-list-card"
   }, /*#__PURE__*/React.createElement(CardHeader, {
     "data-archive-header": true

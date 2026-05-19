@@ -333,6 +333,8 @@ export function InventoryModule({
   } = useData();
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [supplierFilter, setSupplierFilter] = useState("all");
+  const [stockStatusFilter, setStockStatusFilter] = useState("all");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isStockInDialogOpen, setIsStockInDialogOpen] = useState(false);
   const [isStockOutDialogOpen, setIsStockOutDialogOpen] = useState(false);
@@ -371,6 +373,26 @@ export function InventoryModule({
   const [dashboardPickerAction, setDashboardPickerAction] = useState(null);
   const [dashboardPickerItemId, setDashboardPickerItemId] = useState("");
   const categories = OFFICIAL_INVENTORY_CATEGORIES;
+  const hasActiveInventoryFilters =
+    searchQuery.trim() !== "" ||
+    categoryFilter !== "all" ||
+    supplierFilter !== "all" ||
+    stockStatusFilter !== "all";
+  const clearInventoryFilters = () => {
+    setSearchQuery("");
+    setCategoryFilter("all");
+    setSupplierFilter("all");
+    setStockStatusFilter("all");
+  };
+  const supplierFilterOptions = React.useMemo(() => {
+    const supplierNames = new Set();
+    inventory.forEach(item => {
+      const supplierName = item.supplierName?.trim();
+      if (supplierName) supplierNames.add(supplierName);
+    });
+
+    return mergeSort([...supplierNames], (a, b) => a.localeCompare(b));
+  }, [inventory]);
   const currentBranch = normalizeDuplicateKeyPart(user?.branch);
   const buildDuplicateKey = item => [
     normalizeInventoryIdentityName(item.name),
@@ -518,14 +540,19 @@ export function InventoryModule({
   // Linear Search: O(n) - iterates through each item sequentially
   // Used here because we're filtering with multiple criteria (search + category)
   const filteredInventory = linearSearchAll(inventory, item => {
-    const query = searchQuery.toLowerCase();
+    const query = searchQuery.trim().toLowerCase();
+    const supplierName = item.supplierName?.trim() || "";
     const matchesSearch =
+      !query ||
       item.name.toLowerCase().includes(query) ||
       item.itemCode?.toLowerCase().includes(query) ||
       String(item.id || "").toLowerCase().includes(query) ||
       item.productId?.toLowerCase().includes(query);
     const matchesCategory = categoryFilter === "all" || normalizeCategory(item.category) === categoryFilter;
-    return matchesSearch && matchesCategory;
+    const matchesSupplier = supplierFilter === "all" ||
+      (supplierFilter === "unassigned" ? !supplierName : supplierName === supplierFilter);
+    const matchesStatus = stockStatusFilter === "all" || item.status === stockStatusFilter;
+    return matchesSearch && matchesCategory && matchesSupplier && matchesStatus;
   });
 
   const getInventoryId = item => item.id || "";
@@ -563,7 +590,7 @@ export function InventoryModule({
 
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, categoryFilter, sortBy, sortOrder]);
+  }, [searchQuery, categoryFilter, supplierFilter, stockStatusFilter, sortBy, sortOrder]);
 
   React.useEffect(() => {
     setCurrentPage(page => Math.min(Math.max(page, 1), totalPages));
@@ -1997,6 +2024,79 @@ export function InventoryModule({
       min-width: 0;
     }
 
+    .inventory-search-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 1fr) repeat(3, minmax(160px, 190px)) 132px;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .inventory-search-field {
+      min-width: 0;
+    }
+
+    .inventory-filter-actions {
+      display: contents;
+    }
+
+    .inventory-filter-control {
+      min-width: 0;
+    }
+
+    .inventory-search-field input,
+    .inventory-filter-trigger {
+      min-height: 42px;
+      border-radius: 12px;
+      background: #f8fafc;
+      border-color: #e2e8f0;
+      color: #0f172a;
+    }
+
+    .inventory-filter-trigger {
+      width: 100%;
+      justify-content: flex-start;
+      gap: 10px;
+    }
+
+    .inventory-filter-trigger [data-placeholder] {
+      color: #64748b;
+    }
+
+    .inventory-filter-trigger [data-slot="select-value"] {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .inventory-filter-trigger > svg:last-child {
+      margin-left: auto;
+    }
+
+    .inventory-filter-trigger > svg:first-child {
+      margin-right: 0;
+    }
+
+    .inventory-clear-filters-button {
+      min-height: 42px;
+      width: 100%;
+      border-radius: 12px;
+      border-color: #cbd5e1;
+      background: #ffffff;
+      color: #334155;
+      font-weight: 600;
+      padding-left: 16px;
+      padding-right: 16px;
+      white-space: nowrap;
+    }
+
+    .inventory-clear-filters-button:not(:disabled):hover {
+      background: #f8fafc;
+      border-color: #94a3b8;
+      color: #0f172a;
+    }
+
     .inventory-batch-stock-out-button,
     .inventory-add-button {
       min-height: 46px;
@@ -2264,14 +2364,32 @@ export function InventoryModule({
       }
 
       .inventory-search-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
+      }
+
+      .inventory-search-field {
+        grid-column: 1 / -1;
+      }
+
+      .inventory-filter-actions {
+        display: contents;
+      }
+
+      .inventory-filter-control,
+      .inventory-clear-filters-button {
+        width: 100%;
       }
 
       .inventory-search-field input,
       .inventory-filter-trigger {
-        min-height: 46px;
+        min-height: 44px;
         border-radius: 12px;
         font-size: 14px;
+      }
+
+      .inventory-clear-filters-button {
+        min-height: 44px;
       }
 
       .inventory-list-card [data-inventory-header] {
@@ -2717,6 +2835,14 @@ export function InventoryModule({
         flex-direction: column;
       }
 
+      .inventory-search-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .inventory-filter-actions {
+        grid-template-columns: 1fr;
+      }
+
       .inventory-add-button {
         width: 100%;
       }
@@ -2745,9 +2871,9 @@ export function InventoryModule({
     className: "pt-6",
     "data-inventory-search-content": true
   }, /*#__PURE__*/React.createElement("div", {
-    className: "inventory-search-grid flex flex-col md:flex-row gap-4"
+    className: "inventory-search-grid"
   }, /*#__PURE__*/React.createElement("div", {
-    className: "inventory-search-field flex-1 relative"
+    className: "inventory-search-field relative"
   }, /*#__PURE__*/React.createElement(Search, {
     className: "absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400"
   }), /*#__PURE__*/React.createElement(Input, {
@@ -2756,7 +2882,9 @@ export function InventoryModule({
     value: searchQuery,
     onChange: e => setSearchQuery(e.target.value)
   })), /*#__PURE__*/React.createElement("div", {
-    className: "w-full md:w-48"
+    className: "inventory-filter-actions"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "inventory-filter-control"
   }, /*#__PURE__*/React.createElement(Select, {
     value: categoryFilter,
     onValueChange: value => setCategoryFilter(value)
@@ -2771,7 +2899,47 @@ export function InventoryModule({
   }, "All Categories"), categories.map(cat => /*#__PURE__*/React.createElement(SelectItem, {
     key: cat,
     value: cat
-  }, cat)))))))), /*#__PURE__*/React.createElement(Card, {
+  }, cat))))), /*#__PURE__*/React.createElement("div", {
+    className: "inventory-filter-control"
+  }, /*#__PURE__*/React.createElement(Select, {
+    value: supplierFilter,
+    onValueChange: value => setSupplierFilter(value)
+  }, /*#__PURE__*/React.createElement(SelectTrigger, {
+    className: "inventory-filter-trigger"
+  }, /*#__PURE__*/React.createElement(Filter, {
+    className: "w-4 h-4 mr-2"
+  }), /*#__PURE__*/React.createElement(SelectValue, {
+    placeholder: "All Suppliers"
+  })), /*#__PURE__*/React.createElement(SelectContent, null, /*#__PURE__*/React.createElement(SelectItem, {
+    value: "all"
+  }, "All Suppliers"), supplierFilterOptions.map(supplier => /*#__PURE__*/React.createElement(SelectItem, {
+    key: supplier,
+    value: supplier
+  }, supplier)), /*#__PURE__*/React.createElement(SelectItem, {
+    value: "unassigned"
+  }, "No supplier assigned")))), /*#__PURE__*/React.createElement("div", {
+    className: "inventory-filter-control"
+  }, /*#__PURE__*/React.createElement(Select, {
+    value: stockStatusFilter,
+    onValueChange: value => setStockStatusFilter(value)
+  }, /*#__PURE__*/React.createElement(SelectTrigger, {
+    className: "inventory-filter-trigger"
+  }, /*#__PURE__*/React.createElement(Filter, {
+    className: "w-4 h-4 mr-2"
+  }), /*#__PURE__*/React.createElement(SelectValue, {
+    placeholder: "All Statuses"
+  })), /*#__PURE__*/React.createElement(SelectContent, null, /*#__PURE__*/React.createElement(SelectItem, {
+    value: "all"
+  }, "All Statuses"), Object.keys(STATUS_PRIORITY).map(status => /*#__PURE__*/React.createElement(SelectItem, {
+    key: status,
+    value: status
+  }, status)))))), /*#__PURE__*/React.createElement(Button, {
+    type: "button",
+    variant: "outline",
+    className: "inventory-clear-filters-button",
+    disabled: !hasActiveInventoryFilters,
+    onClick: clearInventoryFilters
+  }, "Clear Filters")))), /*#__PURE__*/React.createElement(Card, {
     className: "inventory-list-card"
   }, /*#__PURE__*/React.createElement(CardHeader, {
     "data-inventory-header": true

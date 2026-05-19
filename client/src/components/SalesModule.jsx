@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Textarea } from './ui/textarea';
 import { Badge } from './ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
+import { binarySearch, mergeSort } from '../utils/algorithms';
 
 const emptySaleLine = () => ({
   inventoryId: '',
@@ -86,17 +87,33 @@ export function SalesModule({ user }) {
   const [selectedHistorySaleId, setSelectedHistorySaleId] = useState('');
 
   const activeInventory = useMemo(
-    () => inventory
-      .filter(item => Number(item.quantity || 0) > 0)
-      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, {
+    () => mergeSort(
+      inventory.filter(item => Number(item.quantity || 0) > 0),
+      (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, {
         numeric: true,
         sensitivity: 'base'
-      })),
+      })
+    ),
     [inventory]
   );
 
+  const inventorySortedById = useMemo(
+    () => mergeSort([...inventory], (a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true })),
+    [inventory]
+  );
+
+  const getInventoryById = inventoryId => {
+    if (!inventoryId) return null;
+    const foundIndex = binarySearch(
+      inventorySortedById,
+      String(inventoryId),
+      (item, target) => String(item.id).localeCompare(String(target), undefined, { numeric: true })
+    );
+    return foundIndex >= 0 ? inventorySortedById[foundIndex] : null;
+  };
+
   const selectedLineDetails = saleLines.map(line => {
-    const item = inventory.find(product => String(product.id) === String(line.inventoryId));
+    const item = getInventoryById(line.inventoryId);
     const quantity = line.quantity === '' ? 0 : Number(line.quantity);
     const unitPrice = line.unitPrice === '' ? 0 : Number(line.unitPrice);
     return {
@@ -1003,7 +1020,7 @@ export function SalesModule({ user }) {
 
                 <div className="space-y-3">
                   {saleLines.map((line, index) => {
-                    const selectedItem = inventory.find(item => String(item.id) === String(line.inventoryId));
+                    const selectedItem = getInventoryById(line.inventoryId);
                     const usedByOtherLine = new Set(
                       saleLines
                         .map((entry, entryIndex) => entryIndex !== index ? entry.inventoryId : '')
