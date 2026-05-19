@@ -480,6 +480,18 @@ export function SalesModule({ user }) {
           padding-top: 1rem;
         }
 
+        .sales-remarks-field {
+          display: grid;
+          gap: 0.55rem;
+        }
+
+        .sales-remarks-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.75rem;
+        }
+
         .sales-stock-preview-item {
           display: flex;
           align-items: center;
@@ -1143,7 +1155,8 @@ export function SalesModule({ user }) {
               </div>
 
               <div className="sales-form-section">
-                <div className="flex items-center justify-between gap-3">
+                <div className="sales-remarks-field">
+                <div className="sales-remarks-header">
                   <Label htmlFor="sale-remarks">Remarks, optional</Label>
                   <span className="text-xs font-medium text-slate-500">
                     {remarks.length} / {SALES_REMARKS_MAX_LENGTH}
@@ -1160,6 +1173,7 @@ export function SalesModule({ user }) {
                 <p className="text-xs leading-5 text-slate-500">
                   Use this for short notes only, such as receipt checking, delivery request, or bulk purchase details.
                 </p>
+                </div>
               </div>
 
               <div className="sales-form-section bg-slate-50/60">
