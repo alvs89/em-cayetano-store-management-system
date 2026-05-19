@@ -304,7 +304,105 @@ export function SalesModule({ user }) {
           padding-bottom: 1.25rem;
         }
 
+        .sales-record-card {
+          border-color: #e2e8f0;
+          box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+        }
+
+        .sales-record-header {
+          padding: 1.4rem 1.4rem 1.05rem;
+        }
+
+        .sales-record-content {
+          display: grid;
+          gap: 1rem;
+          padding: 0 1.4rem 1.4rem;
+        }
+
+        .sales-form-section {
+          border: 1px solid #e2e8f0;
+          border-radius: 1rem;
+          background: #ffffff;
+          padding: 1rem;
+        }
+
+        .sales-section-heading {
+          display: flex;
+          align-items: flex-start;
+          gap: 0.75rem;
+          margin-bottom: 1rem;
+        }
+
+        .sales-section-icon {
+          display: inline-flex;
+          width: 2.15rem;
+          height: 2.15rem;
+          flex-shrink: 0;
+          align-items: center;
+          justify-content: center;
+          border-radius: 0.7rem;
+          background: #f8fafc;
+          color: #475569;
+        }
+
+        .sales-section-icon-accent {
+          background: #eff6ff;
+          color: #2563eb;
+        }
+
+        .sales-section-title {
+          font-size: 1rem;
+          line-height: 1.35;
+          font-weight: 750;
+          color: #0f172a;
+        }
+
+        .sales-section-description {
+          margin-top: 0.15rem;
+          font-size: 0.8125rem;
+          line-height: 1.45;
+          color: #64748b;
+        }
+
+        .sales-customer-section {
+          padding: 0.95rem;
+        }
+
+        .sales-customer-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 1rem;
+        }
+
+        .sales-readonly-user {
+          display: flex;
+          min-height: 3.5rem;
+          align-items: center;
+          gap: 0.65rem;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.65rem;
+          background: #f8fafc;
+          padding: 0 0.85rem;
+          color: #334155;
+          font-size: 0.875rem;
+          font-weight: 600;
+        }
+
+        .sales-customer-control {
+          min-height: 3.5rem;
+        }
+
+        .sales-readonly-user svg {
+          width: 1rem;
+          height: 1rem;
+          color: #64748b;
+        }
+
         .sales-line-card {
+          border-radius: 0.9rem;
+          border: 1px solid #e2e8f0;
+          background: #ffffff;
+          padding: 1rem;
           transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
         }
 
@@ -350,13 +448,36 @@ export function SalesModule({ user }) {
           gap: 1rem;
         }
 
+        .sales-line-title-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 1rem;
+          margin-bottom: 1rem;
+        }
+
         .sales-stock-preview {
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
-          overflow: hidden;
-          border: 1px solid #dcfce7;
+          gap: 0.75rem;
+          border: 1px solid #e2e8f0;
           border-radius: 0.85rem;
-          background: #f0fdf4;
+          background: #ffffff;
+          padding: 0.75rem;
+        }
+
+        .sales-summary-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 0.8rem;
+        }
+
+        .sales-form-actions {
+          display: flex;
+          justify-content: flex-end;
+          gap: 0.75rem;
+          border-top: 1px solid #e2e8f0;
+          padding-top: 1rem;
         }
 
         .sales-stock-preview-item {
@@ -364,11 +485,72 @@ export function SalesModule({ user }) {
           align-items: center;
           gap: 0.75rem;
           min-width: 0;
-          padding: 0.85rem 1rem;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.75rem;
+          background: #f8fafc;
+          padding: 0.8rem 0.9rem;
+        }
+
+        .sales-stock-preview-item svg {
+          width: 1.05rem;
+          height: 1.05rem;
+        }
+
+        .sales-stock-preview-icon {
+          display: flex;
+          width: 2rem;
+          height: 2rem;
+          flex-shrink: 0;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid #e2e8f0;
+          border-radius: 9999px;
+          background: #ffffff;
+          color: #111827;
+        }
+
+        .sales-stock-preview-label {
+          display: block;
+          color: #64748b;
+          font-size: 0.75rem;
+          line-height: 1.1rem;
+          font-weight: 600;
+        }
+
+        .sales-stock-preview-value {
+          display: block;
+          margin-top: 0.15rem;
+          color: #0f172a;
+          font-size: clamp(0.8125rem, 1vw, 0.875rem);
+          line-height: 1.25rem;
+          font-weight: 750;
+          max-width: 100%;
+          overflow-wrap: anywhere;
+          word-break: break-word;
         }
 
         .sales-stock-preview-item + .sales-stock-preview-item {
-          border-left: 1px solid #d9f99d;
+          border-left: 1px solid #e2e8f0;
+        }
+
+        .sales-stock-preview-item-ok {
+          border-color: #e2e8f0;
+          background: #f8fafc;
+        }
+
+        .sales-stock-preview-item-warning {
+          border-color: #e2e8f0;
+          background: #f8fafc;
+        }
+
+        .sales-stock-preview-item-danger {
+          border-color: #fecaca;
+          background: #fef2f2;
+        }
+
+        .sales-stock-preview-item-muted {
+          border-color: #e2e8f0;
+          background: #ffffff;
         }
 
         .sales-history-dialog {
@@ -513,53 +695,52 @@ export function SalesModule({ user }) {
         }
 
         .sales-confirm-clear-dialog {
-          width: min(500px, calc(100vw - 2rem));
-          border-radius: 1.125rem;
+          width: min(420px, calc(100vw - 2rem));
+          border-radius: 1rem;
           overflow: hidden;
         }
 
         .sales-confirm-clear-content {
-          padding: 2rem;
+          padding: 1.35rem;
         }
 
         .sales-confirm-clear-header {
           display: flex;
           align-items: center;
-          gap: 1rem;
+          gap: 0.85rem;
         }
 
         .sales-confirm-clear-icon {
           display: flex;
-          width: 3.25rem;
-          height: 3.25rem;
+          width: 2.75rem;
+          height: 2.75rem;
           flex-shrink: 0;
           align-items: center;
           justify-content: center;
-          border-radius: 9999px;
+          border-radius: 0.85rem;
           background: #fef2f2;
           color: #ef0000;
         }
 
         .sales-confirm-clear-message {
-          margin-top: 1.75rem;
-          max-width: 24rem;
+          margin-top: 1rem;
           color: #334155;
-          font-size: 0.9375rem;
-          line-height: 1.6rem;
+          font-size: 0.875rem;
+          line-height: 1.45rem;
         }
 
         .sales-confirm-clear-info {
           display: flex;
           align-items: center;
-          gap: 0.65rem;
+          gap: 0.55rem;
           border: 1px solid #bfdbfe;
           border-radius: 0.5rem;
           background: #eff6ff;
           color: #0f172a;
-          margin-top: 1.25rem;
-          padding: 0.85rem 1rem;
-          font-size: 0.8125rem;
-          line-height: 1.35rem;
+          margin-top: 1rem;
+          padding: 0.65rem 0.75rem;
+          font-size: 0.8rem;
+          line-height: 1.25rem;
         }
 
         .sales-confirm-clear-button {
@@ -569,8 +750,8 @@ export function SalesModule({ user }) {
         .sales-confirm-clear-actions {
           display: flex;
           justify-content: flex-end;
-          gap: 0.75rem;
-          margin-top: 1.75rem;
+          gap: 0.65rem;
+          margin-top: 1.25rem;
         }
 
         .sales-confirm-clear-cancel:hover,
@@ -635,13 +816,18 @@ export function SalesModule({ user }) {
             grid-template-columns: 1fr;
           }
 
+          .sales-customer-grid,
+          .sales-summary-grid {
+            grid-template-columns: 1fr;
+          }
+
           .sales-stock-preview {
             grid-template-columns: 1fr;
           }
 
           .sales-stock-preview-item + .sales-stock-preview-item {
             border-left: 0;
-            border-top: 1px solid #d9f99d;
+            border-top: 0;
           }
 
           .sales-recent-header {
@@ -652,6 +838,26 @@ export function SalesModule({ user }) {
 
           .sales-recent-header .sales-view-all-button {
             width: fit-content;
+          }
+
+          .sales-record-header {
+            padding: 1rem 1rem 0.85rem;
+          }
+
+          .sales-record-content {
+            padding: 0 1rem 1rem;
+          }
+
+          .sales-form-section {
+            padding: 0.85rem;
+          }
+
+          .sales-form-actions {
+            flex-direction: column-reverse;
+          }
+
+          .sales-form-actions .sales-action-button {
+            width: 100%;
           }
 
           .sales-history-dialog {
@@ -684,11 +890,11 @@ export function SalesModule({ user }) {
           }
 
           .sales-confirm-clear-dialog {
-            width: min(420px, calc(100vw - 2.5rem));
+            width: min(390px, calc(100vw - 1.5rem));
           }
 
           .sales-confirm-clear-content {
-            padding: 1.5rem;
+            padding: 1.1rem;
           }
 
           .sales-confirm-clear-header {
@@ -697,19 +903,19 @@ export function SalesModule({ user }) {
           }
 
           .sales-confirm-clear-icon {
-            width: 2.875rem;
-            height: 2.875rem;
+            width: 2.5rem;
+            height: 2.5rem;
           }
 
           .sales-confirm-clear-message {
-            margin-top: 1.35rem;
+            margin-top: 0.9rem;
             max-width: none;
           }
 
           .sales-confirm-clear-actions {
             flex-direction: column-reverse;
             gap: 0.75rem;
-            margin-top: 1.5rem;
+            margin-top: 1.1rem;
           }
 
           .sales-confirm-clear-actions button {
@@ -734,8 +940,8 @@ export function SalesModule({ user }) {
         </div>
 
         <div className="sales-grid">
-          <Card className="overflow-hidden border-slate-200 bg-white shadow-sm">
-            <CardHeader className="pb-4">
+          <Card className="sales-record-card overflow-hidden bg-white">
+            <CardHeader className="sales-record-header">
               <CardTitle className="flex items-center gap-2 text-xl">
                 <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-50 text-red-600">
                   <ShoppingCart className="h-5 w-5" />
@@ -746,50 +952,68 @@ export function SalesModule({ user }) {
                 Select the sold items, enter the quantity and selling price, then save to deduct inventory.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="customer-type">Customer Type</Label>
-                  <Select value={customerType} onValueChange={setCustomerType}>
-                    <SelectTrigger id="customer-type">
-                      <SelectValue placeholder="Select customer type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="walk_in">Walk-in Customer</SelectItem>
-                      <SelectItem value="regular">Regular Customer</SelectItem>
-                      <SelectItem value="contractor">Contractor / Project Buyer</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Sold By</Label>
-                  <div className="flex h-11 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-700">
-                    {user?.fullName || user?.username || 'Current user'}
+            <CardContent className="sales-record-content">
+              <div className="sales-form-section sales-customer-section">
+                <div className="sales-customer-grid">
+                  <div className="space-y-2">
+                    <Label htmlFor="customer-type">Customer Type</Label>
+                    <Select value={customerType} onValueChange={setCustomerType}>
+                      <SelectTrigger id="customer-type" className="sales-customer-control">
+                        <SelectValue placeholder="Select customer type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="walk_in">Walk-in Customer</SelectItem>
+                        <SelectItem value="regular">Regular Customer</SelectItem>
+                        <SelectItem value="contractor">Contractor / Project Buyer</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Sold By</Label>
+                    <div className="sales-readonly-user">
+                      <User />
+                      {user?.fullName || user?.username || 'Current user'}
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="sales-form-section">
+                <div className="sales-section-heading">
+                  <span className="sales-section-icon sales-section-icon-accent">
+                    <PackageCheck className="h-5 w-5" />
+                  </span>
                   <div>
-                    <h3 className="text-base font-semibold text-slate-900">Sold Items</h3>
-                    <p className="text-sm text-slate-500">Add each product sold in this transaction.</p>
+                    <h3 className="sales-section-title">Sold Items</h3>
+                    <p className="sales-section-description">Add each product sold in this transaction.</p>
                   </div>
                 </div>
 
-                {saleLines.map((line, index) => {
-                  const selectedItem = inventory.find(item => String(item.id) === String(line.inventoryId));
-                  const usedByOtherLine = new Set(
-                    saleLines
-                      .map((entry, entryIndex) => entryIndex !== index ? entry.inventoryId : '')
-                      .filter(Boolean)
-                  );
+                <div className="space-y-3">
+                  {saleLines.map((line, index) => {
+                    const selectedItem = inventory.find(item => String(item.id) === String(line.inventoryId));
+                    const usedByOtherLine = new Set(
+                      saleLines
+                        .map((entry, entryIndex) => entryIndex !== index ? entry.inventoryId : '')
+                        .filter(Boolean)
+                    );
 
                   return (
-                    <div key={`sale-line-${index}`} className="sales-line-card rounded-xl border border-slate-200 bg-white p-4">
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <p className="font-semibold text-slate-900">Item {index + 1}</p>
-                      </div>
+                    <div key={`sale-line-${index}`} className="sales-line-card">
+                        <div className="sales-line-title-row">
+                          <p className="font-semibold text-slate-900">Item {index + 1}</p>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="sales-action-button border-red-200 text-red-600 hover:border-red-500 hover:bg-red-50 hover:text-red-700"
+                            onClick={() => removeLine(index)}
+                            disabled={isSaving}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Remove
+                          </Button>
+                        </div>
 
                       <div className="sales-line-fields">
                         <div className="space-y-2">
@@ -859,49 +1083,49 @@ export function SalesModule({ user }) {
                       </div>
 
                       <div className="sales-stock-preview mt-4 text-sm">
-                        <div className="sales-stock-preview-item">
-                          <PackageCheck className="h-5 w-5 shrink-0 text-green-600" />
+                        <div className={`sales-stock-preview-item ${selectedItem ? 'sales-stock-preview-item-ok' : 'sales-stock-preview-item-muted'}`}>
+                          <span className="sales-stock-preview-icon">
+                            <PackageCheck className="h-5 w-5" />
+                          </span>
                           <div className="min-w-0">
-                            <span className="block text-slate-500">Current Stock</span>
-                            <strong className="text-slate-900">{selectedItem ? `${selectedItem.quantity} unit${Number(selectedItem.quantity) === 1 ? '' : 's'}` : 'Select item'}</strong>
+                            <span className="sales-stock-preview-label">Current Stock</span>
+                            <strong className="sales-stock-preview-value">{selectedItem ? `${selectedItem.quantity} unit${Number(selectedItem.quantity) === 1 ? '' : 's'}` : 'Select item'}</strong>
                           </div>
                         </div>
-                        <div className="sales-stock-preview-item bg-amber-50/70">
-                          <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500" />
+                        <div className={`sales-stock-preview-item ${selectedItem ? 'sales-stock-preview-item-warning' : 'sales-stock-preview-item-muted'}`}>
+                          <span className="sales-stock-preview-icon">
+                            <AlertTriangle className="h-5 w-5" />
+                          </span>
                           <div className="min-w-0">
-                            <span className="block text-slate-500">Low-Stock Threshold</span>
-                            <strong className="text-slate-900">{selectedItem ? `${selectedItem.activeLowStockThreshold} unit${Number(selectedItem.activeLowStockThreshold) === 1 ? '' : 's'}` : 'Select item'}</strong>
+                            <span className="sales-stock-preview-label">Low-Stock Threshold</span>
+                            <strong className="sales-stock-preview-value">{selectedItem ? `${selectedItem.activeLowStockThreshold} unit${Number(selectedItem.activeLowStockThreshold) === 1 ? '' : 's'}` : 'Select item'}</strong>
                           </div>
                         </div>
-                        <div className="sales-stock-preview-item">
-                          <TrendingUp className="h-5 w-5 shrink-0 text-green-600" />
+                        <div className={`sales-stock-preview-item ${
+                          selectedItem && Number(line.quantity || 0) > Number(selectedItem.quantity || 0)
+                            ? 'sales-stock-preview-item-danger'
+                            : selectedItem && line.quantity !== ''
+                              ? 'sales-stock-preview-item-ok'
+                              : 'sales-stock-preview-item-muted'
+                        }`}>
+                          <span className="sales-stock-preview-icon">
+                            <TrendingUp className="h-5 w-5" />
+                          </span>
                           <div className="min-w-0">
-                            <span className="block text-slate-500">After Sale</span>
-                            <strong className={selectedItem && Number(line.quantity || 0) > Number(selectedItem.quantity || 0) ? 'text-red-700' : 'text-green-700'}>
+                            <span className="sales-stock-preview-label">After Sale</span>
+                            <strong className={`sales-stock-preview-value ${selectedItem && Number(line.quantity || 0) > Number(selectedItem.quantity || 0) ? 'text-red-700' : ''}`}>
                               {selectedItem && line.quantity !== ''
-                                ? `${Number(selectedItem.quantity || 0) - Number(line.quantity || 0)} unit${Math.abs(Number(selectedItem.quantity || 0) - Number(line.quantity || 0)) === 1 ? '' : 's'}`
+                                ? Number(line.quantity || 0) > Number(selectedItem.quantity || 0)
+                                  ? 'Exceeds Current Stock'
+                                  : `${Number(selectedItem.quantity || 0) - Number(line.quantity || 0)} unit${Math.abs(Number(selectedItem.quantity || 0) - Number(line.quantity || 0)) === 1 ? '' : 's'}`
                                 : 'Enter quantity'}
                             </strong>
                           </div>
                         </div>
                       </div>
-
-                      <div className="mt-4 flex justify-end">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="sales-action-button border-red-200 text-red-600 hover:border-red-500 hover:bg-red-50 hover:text-red-700"
-                          onClick={() => removeLine(index)}
-                          disabled={isSaving}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Remove
-                        </Button>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
 
                 <div className="flex justify-end border-t border-slate-100 pt-4">
                   <Button
@@ -915,9 +1139,10 @@ export function SalesModule({ user }) {
                     Add Another Item
                   </Button>
                 </div>
+                </div>
               </div>
 
-              <div className="space-y-2">
+              <div className="sales-form-section">
                 <div className="flex items-center justify-between gap-3">
                   <Label htmlFor="sale-remarks">Remarks, optional</Label>
                   <span className="text-xs font-medium text-slate-500">
@@ -937,15 +1162,16 @@ export function SalesModule({ user }) {
                 </p>
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="grid gap-3 sm:grid-cols-3">
+              <div className="sales-form-section bg-slate-50/60">
+                <h3 className="mb-3 text-base font-semibold text-slate-900">Transaction Summary</h3>
+                <div className="sales-summary-grid">
                   <SummaryBlock icon={<User className="h-5 w-5" />} label="Customer Type" value={customerTypeLabels[customerType]} tone="blue" />
                   <SummaryBlock icon={<PackageCheck className="h-5 w-5" />} label="Total Quantity" value={`${totalQuantity} unit${totalQuantity === 1 ? '' : 's'}`} tone="green" />
                   <SummaryBlock icon={<Coins className="h-5 w-5" />} label="Recorded Amount" value={formatCurrency(totalAmount)} tone="amber" />
                 </div>
               </div>
 
-              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <div className="sales-form-actions">
                 <Button
                   type="button"
                   variant="outline"
@@ -1107,10 +1333,10 @@ function ClearSalesFormDialog({ open, onOpenChange, onConfirm }) {
           <DialogHeader className="text-left">
             <div className="sales-confirm-clear-header">
               <span className="sales-confirm-clear-icon">
-                <Trash2 className="h-5 w-5" />
+                <Trash2 className="h-4 w-4" />
               </span>
               <div className="min-w-0">
-                <DialogTitle className="text-xl font-bold leading-tight text-slate-950">
+                <DialogTitle className="text-lg font-bold leading-tight text-slate-950">
                   Clear sales form?
                 </DialogTitle>
               </div>
@@ -1131,14 +1357,14 @@ function ClearSalesFormDialog({ open, onOpenChange, onConfirm }) {
             <Button
               type="button"
               variant="outline"
-              className="sales-confirm-clear-button sales-confirm-clear-cancel h-11 min-w-[132px] bg-white"
+              className="sales-confirm-clear-button sales-confirm-clear-cancel h-10 min-w-[116px] bg-white"
               onClick={() => onOpenChange(false)}
             >
               Keep Editing
             </Button>
             <Button
               type="button"
-              className="sales-confirm-clear-button sales-confirm-clear-submit h-11 min-w-[132px] bg-[#FF0000] text-white"
+              className="sales-confirm-clear-button sales-confirm-clear-submit h-10 min-w-[116px] bg-[#FF0000] text-white"
               onClick={onConfirm}
             >
               Clear Form
@@ -1378,14 +1604,14 @@ function SalesHistoryDetailContent({ sale }) {
 
 function SummaryBlock({ icon, label, value, tone = 'slate' }) {
   const toneClasses = {
-    blue: 'bg-blue-50 text-blue-600',
-    green: 'bg-green-50 text-green-600',
-    amber: 'bg-amber-50 text-amber-600',
-    slate: 'bg-slate-50 text-slate-600'
+    blue: 'border border-slate-200 bg-white text-slate-900',
+    green: 'border border-slate-200 bg-white text-slate-900',
+    amber: 'border border-slate-200 bg-white text-slate-900',
+    slate: 'border border-slate-200 bg-white text-slate-900'
   };
 
   return (
-    <div className="flex items-center gap-3 rounded-lg bg-white px-3 py-3">
+    <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-3 shadow-sm">
       <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${toneClasses[tone] || toneClasses.slate}`}>
         {icon}
       </span>
