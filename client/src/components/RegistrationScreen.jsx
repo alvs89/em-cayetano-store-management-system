@@ -12,6 +12,11 @@ import { apiUrl } from '../utils/api';
 import { PASSWORD_HELP_TEXT, validatePasswordPolicy } from '../utils/passwordPolicy';
 
 const emcLogoSrc = "/emc-logo.png";
+const sanitizePersonNameInput = value => String(value ?? "").replace(/[^A-Za-zÀ-ÖØ-öø-ÿÑñ .'-]/g, "");
+const sanitizeUsernameInput = value => String(value ?? "").replace(/[^A-Za-z0-9._-]/g, "");
+const isValidPersonName = value => /^[A-Za-zÀ-ÖØ-öø-ÿÑñ]+(?:[ .'-][A-Za-zÀ-ÖØ-öø-ÿÑñ]+)*$/.test(String(value ?? "").trim());
+const isValidUsername = value => /^[A-Za-z0-9._-]{3,30}$/.test(String(value ?? "").trim());
+const isValidEmailAddress = value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value ?? "").trim());
 
 const RegistrationScreen = () => {
   const [formData, setFormData] = useState({
@@ -31,6 +36,29 @@ const RegistrationScreen = () => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
+  const handleNameChange = value => {
+    const cleaned = sanitizePersonNameInput(value);
+    if (cleaned !== value) {
+      toast.warning("Full name accepts letters only.", {
+        id: "registration-full-name-letters-only",
+        duration: 2400
+      });
+    }
+    handleChange('fullName')(cleaned);
+  };
+
+  const handleUsernameChange = value => {
+    const cleaned = sanitizeUsernameInput(value);
+    if (cleaned !== value) {
+      toast.warning("Username accepts letters and numbers.", {
+        description: "Dots, underscores, and hyphens are also allowed.",
+        id: "registration-username-valid-characters",
+        duration: 2400
+      });
+    }
+    handleChange('username')(cleaned);
+  };
+
   const handlePasswordFieldChange = (field) => (value) => {
     if (value.length > 64) {
       toast.error("Password must not exceed 64 characters.", {
@@ -46,6 +74,26 @@ const RegistrationScreen = () => {
 
   const handleRegister = async (e) => {
     e.preventDefault();
+    if (!isValidPersonName(formData.fullName)) {
+      toast.error("Full name should contain letters only.", {
+        description: "Spaces, hyphens, apostrophes, and periods are allowed."
+      });
+      return;
+    }
+    if (!isValidUsername(formData.username)) {
+      toast.error("Username should be 3 to 30 characters.", {
+        description: "Use letters, numbers, dots, underscores, or hyphens only."
+      });
+      return;
+    }
+    if (!isValidEmailAddress(formData.email)) {
+      toast.error("Please enter a valid email address.", {
+        classNames: {
+          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+        },
+      });
+      return;
+    }
     if (formData.password !== formData.confirmPassword) {
       toast.error("Passwords do not match.", {
         classNames: {
@@ -413,7 +461,7 @@ const RegistrationScreen = () => {
                   <Input
                     id="fullName"
                     value={formData.fullName}
-                    onChange={(e) => handleChange('fullName')(e.target.value)}
+                    onChange={(e) => handleNameChange(e.target.value)}
                     placeholder="Juan Dela Cruz"
                     className="register-field-control rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm"
                     required
@@ -428,7 +476,7 @@ const RegistrationScreen = () => {
                   <Input
                     id="username"
                     value={formData.username}
-                    onChange={(e) => handleChange('username')(e.target.value)}
+                    onChange={(e) => handleUsernameChange(e.target.value)}
                     placeholder="Username"
                     className="register-field-control rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm"
                     required

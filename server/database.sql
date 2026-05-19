@@ -23,6 +23,8 @@ CREATE TABLE products (
     product_id SERIAL PRIMARY KEY,
     name VARCHAR(150) NOT NULL,
     category VARCHAR(50) NOT NULL,
+    supplier_name VARCHAR(120),
+    default_selling_price NUMERIC(12,2),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -50,6 +52,8 @@ CREATE TABLE archived_inventory (
     product_id INT,
     name VARCHAR(150) NOT NULL,
     category VARCHAR(50) NOT NULL,
+    supplier_name VARCHAR(120),
+    default_selling_price NUMERIC(12,2),
     branch VARCHAR(50) NOT NULL,
     stock_level INTEGER DEFAULT 0,
     min_stock_level INTEGER DEFAULT 5,

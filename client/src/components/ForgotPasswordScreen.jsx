@@ -11,6 +11,7 @@ import { apiUrl } from '../utils/api';
 
 const emcLogoSrc = "/emc-logo.png";
 const RESEND_WAIT_DESCRIPTION = 'Please wait for the resend code timer to finish before requesting another code.';
+const isValidEmailAddress = value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
 
 const ForgotPasswordScreen = () => {
   const [email, setEmail] = useState('');
@@ -19,14 +20,24 @@ const ForgotPasswordScreen = () => {
 
   const handleSendCode = async (e) => {
     e.preventDefault();
+    const cleanEmail = email.trim().toLowerCase();
+    if (!isValidEmailAddress(cleanEmail)) {
+      toast.error('Please enter a valid email address.', {
+        classNames: {
+          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+        },
+      });
+      return;
+    }
+
     setLoading(true);
     try {
-      const response = await axios.post(apiUrl('/api/auth/forgot-password'), { email });
+      const response = await axios.post(apiUrl('/api/auth/forgot-password'), { email: cleanEmail });
       const serverTime = response.data.serverTime || Date.now();
       const expiresAt = response.data.expiresAt || new Date(Date.now() + 120000).toISOString();
       navigate('/set-password', {
         state: {
-          email,
+          email: cleanEmail,
           otpIssuedAt: serverTime,
           otpExpiresAt: expiresAt,
           retryAfterSeconds: response.data.retryAfterSeconds || 60,

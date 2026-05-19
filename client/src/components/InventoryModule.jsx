@@ -30,6 +30,22 @@ const OFFICIAL_INVENTORY_CATEGORIES = [
   "Other"
 ];
 
+const SUPPLIER_CUSTOM_VALUE = "__custom_supplier__";
+const HARDWARE_SUPPLIER_OPTIONS = [
+  "Rizal Industrial",
+  "Metro Hardware Supply",
+  "Cebu Atlantic Hardware",
+  "Wilcon Depot",
+  "Handyman",
+  "Ace Hardware",
+  "Davies Paints",
+  "Boysen Paints",
+  "Holcim Philippines",
+  "Republic Cement",
+  "Phelps Dodge Wires",
+  "Neltex Development"
+];
+
 const STOCK_OUT_REASON_OPTIONS = [
   { value: "damaged", label: "Damaged", description: "Items removed because they can no longer be sold." },
   { value: "expired", label: "Expired", description: "Items removed because they are past their usable date." },
@@ -237,6 +253,39 @@ const areLikelyDuplicateInventoryNames = (leftName, rightName) => {
 };
 const isWholeNumberText = value => /^\d+$/.test(String(value ?? "").trim());
 const isDecimalNumberText = value => /^\d+(?:\.\d{1,2})?$/.test(String(value ?? "").trim());
+const notifyNumbersOnly = (fieldName, toastId) => {
+  toast.warning(`${fieldName} accepts numbers only.`, {
+    id: toastId,
+    duration: 2400
+  });
+};
+const sanitizeWholeNumberInput = (value, fieldName, toastId) => {
+  const rawValue = String(value ?? "");
+  const cleaned = rawValue.replace(/\D/g, "");
+  if (rawValue !== cleaned) notifyNumbersOnly(fieldName, toastId);
+  return cleaned;
+};
+const sanitizeDecimalInput = (value, fieldName, toastId, decimalPlaces = 2) => {
+  const rawValue = String(value ?? "");
+  if (/[^0-9.]/.test(rawValue) || (rawValue.match(/\./g) || []).length > 1) {
+    notifyNumbersOnly(fieldName, toastId);
+  }
+  const cleaned = rawValue.replace(/[^\d.]/g, "");
+  const [whole = "", ...decimalParts] = cleaned.split(".");
+  const decimals = decimalParts.join("").slice(0, decimalPlaces);
+  return decimalParts.length > 0 ? `${whole}.${decimals}` : whole;
+};
+const sanitizeInventoryTextInput = (value, fieldName, toastId) => {
+  const rawValue = String(value ?? "");
+  const cleaned = rawValue.replace(/[^A-Za-z0-9À-ÖØ-öø-ÿÑñ #./,'"()&+_-]/g, "");
+  if (rawValue !== cleaned) {
+    toast.warning(`${fieldName} accepts letters, numbers, and common item characters only.`, {
+      id: toastId,
+      duration: 2600
+    });
+  }
+  return cleaned;
+};
 const hasPlanningValue = value => value !== "" && value !== null && value !== undefined;
 const hasCompleteReorderPlanning = item =>
   hasPlanningValue(item?.leadTimeDays) &&
@@ -301,10 +350,13 @@ export function InventoryModule({
   const [archivedDuplicatePrompt, setArchivedDuplicatePrompt] = useState(null);
   const [similarDuplicatePrompt, setSimilarDuplicatePrompt] = useState(null);
   const [isRestoringArchivedDuplicate, setIsRestoringArchivedDuplicate] = useState(false);
+  const [newItemSupplierMode, setNewItemSupplierMode] = useState("listed");
+  const [editItemSupplierMode, setEditItemSupplierMode] = useState("listed");
   const [editItem, setEditItem] = useState({
     name: "",
     category: "",
     supplierName: "",
+    defaultSellingPrice: "",
     reorderLevel: "",
     leadTimeDays: "",
     safetyStock: "",
@@ -329,6 +381,7 @@ export function InventoryModule({
     name: "",
     category: "",
     supplierName: "",
+    defaultSellingPrice: "",
     quantity: "",
     reorderLevel: "10", // Default manual threshold
     leadTimeDays: "",
@@ -603,12 +656,14 @@ export function InventoryModule({
       name: "",
       category: "",
       supplierName: "",
+      defaultSellingPrice: "",
       quantity: "",
       reorderLevel: "10",
       leadTimeDays: "",
       safetyStock: "",
       averageDailySales: ""
     });
+    setNewItemSupplierMode("listed");
     setArchivedDuplicatePrompt(null);
     setSimilarDuplicatePrompt(null);
   };
@@ -690,6 +745,7 @@ export function InventoryModule({
     return newItem.name.trim() !== "" ||
       newItem.category.trim() !== "" ||
       newItem.supplierName.trim() !== "" ||
+      newItem.defaultSellingPrice.trim() !== "" ||
       newItem.quantity !== "" ||
       newItem.reorderLevel !== "10" ||
       newItem.leadTimeDays !== "" ||
@@ -710,6 +766,7 @@ export function InventoryModule({
     return editItem.name.trim() !== selectedItem.name ||
       normalizeCategory(editItem.category) !== normalizeCategory(selectedItem.category) ||
       editItem.supplierName.trim() !== (selectedItem.supplierName || "") ||
+      String(editItem.defaultSellingPrice || "") !== String(selectedItem.defaultSellingPrice ?? "") ||
       String(editItem.reorderLevel) !== String(selectedItem.reorderLevel) ||
       String(editItem.leadTimeDays) !== String(selectedItem.leadTimeDays ?? 7) ||
       String(editItem.safetyStock) !== String(selectedItem.safetyStock ?? 0) ||
@@ -739,11 +796,13 @@ export function InventoryModule({
       name: "",
       category: "",
       supplierName: "",
+      defaultSellingPrice: "",
       reorderLevel: "",
       leadTimeDays: "7",
       safetyStock: "0",
       averageDailySales: "0"
     });
+    setEditItemSupplierMode("listed");
   };
 
   const requestCloseAddItemDialog = () => {
@@ -893,6 +952,85 @@ export function InventoryModule({
     return { leadTimeDays, safetyStock, averageDailySales };
   };
 
+  const renderAddSectionHeader = title => (
+    <div className="inventory-add-section-title">
+      <span className="inventory-add-section-title-text">{title}</span>
+    </div>
+  );
+
+  const renderSupplierField = ({
+    id,
+    value,
+    mode,
+    setMode,
+    onSupplierChange,
+    toastId,
+    helperText
+  }) => {
+    const trimmedValue = String(value || "").trim();
+    const isListedSupplier = HARDWARE_SUPPLIER_OPTIONS.includes(trimmedValue);
+    const isCustomSupplier = mode === "custom" || (trimmedValue !== "" && !isListedSupplier);
+    const supplierSelectValue = isCustomSupplier
+      ? SUPPLIER_CUSTOM_VALUE
+      : isListedSupplier
+        ? trimmedValue
+        : "";
+
+    return (
+      <div className="inventory-add-field space-y-1.5">
+        <Label
+          htmlFor={id}
+          className="font-semibold text-slate-950"
+          style={{ display: "block", marginBottom: "8px", fontSize: "14px", lineHeight: "1.25" }}
+        >
+          Supplier
+        </Label>
+        <div className="inventory-supplier-field-group">
+          <Select
+            value={supplierSelectValue}
+            onValueChange={selectedValue => {
+              if (selectedValue === SUPPLIER_CUSTOM_VALUE) {
+                setMode("custom");
+                if (isListedSupplier) onSupplierChange("");
+                return;
+              }
+
+              setMode("listed");
+              onSupplierChange(selectedValue);
+            }}
+          >
+            <SelectTrigger
+              id={id}
+              className="border-slate-300 bg-white text-slate-950"
+              style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
+            >
+              <SelectValue placeholder="Select a supplier" />
+            </SelectTrigger>
+          <SelectContent>
+            {HARDWARE_SUPPLIER_OPTIONS.map(supplier => (
+              <SelectItem key={supplier} value={supplier}>{supplier}</SelectItem>
+            ))}
+            <SelectItem value={SUPPLIER_CUSTOM_VALUE}>Other supplier / not listed</SelectItem>
+          </SelectContent>
+          </Select>
+          {isCustomSupplier && (
+            <Input
+              id={`${id}-custom`}
+              value={value}
+              onChange={e => onSupplierChange(sanitizeInventoryTextInput(e.target.value, "Supplier", toastId))}
+            placeholder="Enter supplier name"
+              className="border-slate-300 bg-white text-slate-950"
+              style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
+            />
+          )}
+        </div>
+        <p className="text-slate-600" style={{ fontSize: "12px" }}>
+          {helperText}
+        </p>
+      </div>
+    );
+  };
+
   const renderReorderPlanningFields = (values, setValues) => {
     const recommendedPoint = getRecommendedReorderPoint(values);
     const recommendedPointText = recommendedPoint === null
@@ -910,67 +1048,77 @@ export function InventoryModule({
       : formulaText;
 
     return (
-      <div className="space-y-3 rounded-md border border-blue-100 bg-blue-50/60 p-4">
-        <div>
-          <Label className="text-sm font-semibold">Optional Reorder Planning</Label>
-          <p className="mt-1 text-sm text-slate-600">
+      <div className="inventory-reorder-planning-card rounded-md border border-blue-100 bg-blue-50/60">
+        <div className="inventory-reorder-planning-header">
+          <Label className="inventory-reorder-planning-title">Optional Reorder Planning</Label>
+          <p className="inventory-reorder-planning-description text-slate-600">
             Complete these values only when supplier delivery and sales movement are known.
           </p>
         </div>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="space-y-2">
-            <Label htmlFor="lead-time-days">Supplier Lead Time in Days</Label>
+        <div className="inventory-reorder-planning-grid">
+          <div className="inventory-reorder-planning-field">
+            <Label htmlFor="lead-time-days" className="inventory-reorder-planning-label">Supplier Lead Time in Days</Label>
             <Input
               id="lead-time-days"
-              type="number"
+              type="text"
               min="0"
               max="365"
               step="1"
               inputMode="numeric"
               value={values.leadTimeDays}
-              onChange={e => setValues({ leadTimeDays: e.target.value })}
+              onChange={e => setValues({
+                leadTimeDays: sanitizeWholeNumberInput(e.target.value, "Supplier Lead Time", "inventory-lead-time-numbers-only")
+              })}
               placeholder="e.g., 7"
             />
-            <p className="text-xs text-slate-500">Optional. Number of days before delivery arrives.</p>
+            <p className="inventory-reorder-planning-helper text-slate-500">Optional. Number of days before delivery arrives.</p>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="safety-stock">Safety Stock Quantity</Label>
+          <div className="inventory-reorder-planning-field">
+            <Label htmlFor="safety-stock" className="inventory-reorder-planning-label">Safety Stock Quantity</Label>
             <Input
               id="safety-stock"
-              type="number"
+              type="text"
               min="0"
               step="1"
               inputMode="numeric"
               value={values.safetyStock}
-              onChange={e => setValues({ safetyStock: e.target.value })}
+              onChange={e => setValues({
+                safetyStock: sanitizeWholeNumberInput(e.target.value, "Safety Stock Quantity", "inventory-safety-stock-numbers-only")
+              })}
               placeholder="e.g., 10"
             />
-            <p className="text-xs text-slate-500">Optional. Extra units kept as reserve.</p>
+            <p className="inventory-reorder-planning-helper text-slate-500">Optional. Extra units kept as reserve.</p>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="average-daily-sales">Average Daily Sales</Label>
+          <div className="inventory-reorder-planning-field">
+            <Label htmlFor="average-daily-sales" className="inventory-reorder-planning-label">Average Daily Sales</Label>
             <Input
               id="average-daily-sales"
-              type="number"
+              type="text"
               min="0"
               step="0.01"
               value={values.averageDailySales}
-              onChange={e => setValues({ averageDailySales: e.target.value })}
+              onChange={e => setValues({
+                averageDailySales: sanitizeDecimalInput(e.target.value, "Average Daily Sales", "inventory-average-sales-numbers-only")
+              })}
               placeholder="e.g., 2.5"
             />
-            <p className="text-xs text-slate-500">Optional. Estimated units sold per day.</p>
+            <p className="inventory-reorder-planning-helper text-slate-500">Optional. Estimated units sold per day.</p>
           </div>
         </div>
-        <div className="space-y-1 rounded-md border border-blue-200 bg-white px-3 py-2 text-sm text-slate-700">
-          <p>
-            <span className="font-semibold">System Recommended Reorder Point:</span> {recommendedPointText}
-          </p>
-          <p className="text-xs text-slate-500">
-            Formula: Average Daily Sales x Supplier Lead Time + Safety Stock.
-          </p>
-          <p className="text-xs text-slate-500">
-            {hasCompletePlanning ? `Calculation: ${roundedFormulaText} units.` : formulaText}
-          </p>
+        <div className="inventory-reorder-result-card">
+          <Info className="inventory-reorder-result-icon" />
+          <div className="inventory-reorder-result-copy">
+            <p className="inventory-reorder-result-recommendation">
+              <span className="font-semibold">System Recommended Reorder Point:</span>{' '}
+              <span className={recommendedPoint === null ? 'text-slate-500' : 'text-slate-950'}>{recommendedPointText}</span>
+            </p>
+            <p className="text-slate-500">
+              Formula: Average Daily Sales x Supplier Lead Time + Safety Stock.
+            </p>
+            <p className="text-slate-500">
+              {hasCompletePlanning ? `Calculation: ${roundedFormulaText} units.` : formulaText}
+            </p>
+          </div>
         </div>
       </div>
     );
@@ -995,16 +1143,19 @@ export function InventoryModule({
   };
 
   const openEditDialog = item => {
+    const supplierName = item.supplierName || "";
     setSelectedItem(item);
     setEditItem({
       name: item.name || "",
       category: normalizeCategory(item.category) || item.category || "",
-      supplierName: item.supplierName || "",
+      supplierName,
+      defaultSellingPrice: item.defaultSellingPrice === null || item.defaultSellingPrice === undefined || item.defaultSellingPrice === "" ? "" : String(item.defaultSellingPrice),
       reorderLevel: String(item.reorderLevel ?? 10),
       leadTimeDays: item.leadTimeDays === null || item.leadTimeDays === undefined ? "" : String(item.leadTimeDays),
       safetyStock: item.safetyStock === null || item.safetyStock === undefined ? "" : String(item.safetyStock),
       averageDailySales: item.averageDailySales === null || item.averageDailySales === undefined ? "" : String(item.averageDailySales)
     });
+    setEditItemSupplierMode(supplierName && !HARDWARE_SUPPLIER_OPTIONS.includes(supplierName.trim()) ? "custom" : "listed");
     setIsEditDialogOpen(true);
   };
 
@@ -1033,6 +1184,16 @@ export function InventoryModule({
     const reorderLevel = Number(newItem.reorderLevel);
     const reorderPlanning = validateReorderPlanningValues(newItem);
     if (!reorderPlanning) return;
+    const defaultSellingPriceText = String(newItem.defaultSellingPrice || "").trim();
+    if (defaultSellingPriceText && !isDecimalNumberText(defaultSellingPriceText)) {
+      toast.error("Default Selling Price must be a valid amount with up to 2 decimal places.");
+      return;
+    }
+    const defaultSellingPrice = defaultSellingPriceText ? Number(defaultSellingPriceText) : "";
+    if (defaultSellingPrice !== "" && defaultSellingPrice <= 0) {
+      toast.error("Default Selling Price must be greater than zero.");
+      return;
+    }
     if (isNaN(quantity) || quantity < 0) {
       toast.error("Please enter a valid quantity.");
       return;
@@ -1104,6 +1265,7 @@ export function InventoryModule({
         name: cleanName,
         category: normalizeCategory(newItem.category),
         supplierName: newItem.supplierName.trim().replace(/\s+/g, " "),
+        defaultSellingPrice,
         quantity,
         reorderLevel,
         ...reorderPlanning,
@@ -1140,9 +1302,13 @@ export function InventoryModule({
       toast.error("Please enter a valid amount first.");
       return;
     }
-    const amount = parseInt(stockAmount);
-    if (isNaN(amount) || amount <= 0) {
-      toast.error("Invalid stock quantity.");
+    if (!isWholeNumberText(stockAmount)) {
+      toast.error("Stock In quantity must be a whole number.");
+      return;
+    }
+    const amount = Number(stockAmount);
+    if (amount <= 0) {
+      toast.error("Stock In quantity must be greater than zero.");
       return;
     }
     if (!stockInReason) {
@@ -1177,9 +1343,13 @@ export function InventoryModule({
       toast.error("Please enter a valid amount first.");
       return;
     }
-    const amount = parseInt(stockAmount);
-    if (isNaN(amount) || amount <= 0) {
-      toast.error("Invalid stock quantity.");
+    if (!isWholeNumberText(stockAmount)) {
+      toast.error("Stock Out quantity must be a whole number.");
+      return;
+    }
+    const amount = Number(stockAmount);
+    if (amount <= 0) {
+      toast.error("Stock Out quantity must be greater than zero.");
       return;
     }
     if (amount > selectedItem.quantity) {
@@ -1257,7 +1427,7 @@ export function InventoryModule({
     const preparedRows = batchStockOutRows
       .map(row => ({
         inventoryId: row.inventoryId,
-        quantity: parseInt(row.quantity, 10)
+        quantity: isWholeNumberText(row.quantity) ? Number(row.quantity) : NaN
       }))
       .filter(row => row.inventoryId || row.quantity);
 
@@ -1321,6 +1491,16 @@ export function InventoryModule({
     const reorderLevel = Number(editItem.reorderLevel);
     const reorderPlanning = validateReorderPlanningValues(editItem);
     if (!reorderPlanning) return;
+    const defaultSellingPriceText = String(editItem.defaultSellingPrice || "").trim();
+    if (defaultSellingPriceText && !isDecimalNumberText(defaultSellingPriceText)) {
+      toast.error("Default Selling Price must be a valid amount with up to 2 decimal places.");
+      return;
+    }
+    const defaultSellingPrice = defaultSellingPriceText ? Number(defaultSellingPriceText) : "";
+    if (defaultSellingPrice !== "" && defaultSellingPrice <= 0) {
+      toast.error("Default Selling Price must be greater than zero.");
+      return;
+    }
 
     if (!cleanName || !canonicalCategory) {
       toast.error("Please provide a valid item name and category.");
@@ -1413,6 +1593,7 @@ export function InventoryModule({
         name: cleanName,
         category: canonicalCategory,
         supplierName: editItem.supplierName.trim().replace(/\s+/g, " "),
+        defaultSellingPrice,
         quantity: selectedItem.quantity,
         reorderLevel,
         ...reorderPlanning,
@@ -1462,14 +1643,14 @@ export function InventoryModule({
       }}
     >
       <DialogContent
-        className="inventory-dialog-content border border-slate-200 bg-white shadow-2xl"
+        className="inventory-dialog-content inventory-add-dialog-content inventory-edit-dialog-content border border-slate-200 bg-white shadow-2xl"
         onOpenAutoFocus={event => event.preventDefault()}
         style={{
-          width: "min(560px, calc(100vw - 32px))",
-          maxWidth: "560px",
-          padding: "22px",
+          width: "min(860px, calc(100vw - 32px))",
+          maxWidth: "860px",
+          padding: "24px",
           borderRadius: "14px",
-          gap: "16px"
+          gap: "14px"
         }}
       >
         <DialogHeader
@@ -1529,12 +1710,10 @@ export function InventoryModule({
           </p>
         </div>
 
-        <div className="space-y-3">
-          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900">
-            Basic Item Information
-          </div>
+        <div className="inventory-add-form-grid">
+          {renderAddSectionHeader("Basic Item Information")}
 
-          <div className="space-y-1.5">
+          <div className="inventory-add-field inventory-add-field-full space-y-1.5">
             <Label
               htmlFor="edit-item-name"
               className="font-semibold text-slate-950"
@@ -1545,14 +1724,17 @@ export function InventoryModule({
             <Input
               id="edit-item-name"
               value={editItem.name}
-              onChange={e => setEditItem({ ...editItem, name: e.target.value })}
+              onChange={e => setEditItem({
+                ...editItem,
+                name: sanitizeInventoryTextInput(e.target.value, "Item Name", "edit-item-name-valid-characters")
+              })}
               placeholder="e.g., Steel Hammer"
               className="border-slate-300 bg-white text-slate-950"
               style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
             />
           </div>
 
-          <div className="space-y-1.5">
+          <div className="inventory-add-field space-y-1.5">
             <Label
               htmlFor="edit-category"
               className="font-semibold text-slate-950"
@@ -1579,32 +1761,47 @@ export function InventoryModule({
             </Select>
           </div>
 
-          <div className="space-y-1.5">
+          {renderSupplierField({
+            id: "edit-supplier",
+            value: editItem.supplierName,
+            mode: editItemSupplierMode,
+            setMode: setEditItemSupplierMode,
+            onSupplierChange: supplierName => setEditItem(prev => ({ ...prev, supplierName })),
+            toastId: "edit-supplier-valid-characters",
+            helperText: "Optional. Select a supplier if known, or choose Other supplier / not listed to type a new one."
+          })}
+
+          <div className="inventory-add-field space-y-1.5">
             <Label
-              htmlFor="edit-supplier"
+              htmlFor="edit-default-selling-price"
               className="font-semibold text-slate-950"
               style={{ display: "block", marginBottom: "8px", fontSize: "14px", lineHeight: "1.25" }}
             >
-              Supplier
+              Default Selling Price
             </Label>
             <Input
-              id="edit-supplier"
-              value={editItem.supplierName}
-              onChange={e => setEditItem({ ...editItem, supplierName: e.target.value })}
-              placeholder="e.g., Supplier A or local hardware distributor"
+              id="edit-default-selling-price"
+              type="text"
+              min="0.01"
+              step="0.01"
+              inputMode="decimal"
+              value={editItem.defaultSellingPrice}
+              onChange={e => setEditItem({
+                ...editItem,
+                defaultSellingPrice: sanitizeDecimalInput(e.target.value, "Default Selling Price", "edit-default-price-numbers-only")
+              })}
+              placeholder="e.g., 250.00"
               className="border-slate-300 bg-white text-slate-950"
               style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
             />
             <p className="text-slate-600" style={{ fontSize: "12px" }}>
-              Used for reorder planning and supplier-based reports.
+              Optional. This price will automatically appear as the Unit Price when the item is selected in Sales Recording.
             </p>
           </div>
 
-          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900">
-            Stock Level and Alert Threshold
-          </div>
+          {renderAddSectionHeader("Stock Level and Alert Threshold")}
 
-          <div className="space-y-1.5">
+          <div className="inventory-add-field inventory-add-field-full space-y-1.5">
             <Label
               htmlFor="edit-reorder-level"
               className="font-semibold text-slate-950"
@@ -1614,12 +1811,15 @@ export function InventoryModule({
             </Label>
             <Input
               id="edit-reorder-level"
-              type="number"
+              type="text"
               min="0"
               step="1"
               inputMode="numeric"
               value={editItem.reorderLevel}
-              onChange={e => setEditItem({ ...editItem, reorderLevel: e.target.value })}
+              onChange={e => setEditItem({
+                ...editItem,
+                reorderLevel: sanitizeWholeNumberInput(e.target.value, "Manual Low-Stock Threshold", "edit-reorder-threshold-numbers-only")
+              })}
               placeholder="10"
               className="border-slate-300 bg-white text-slate-950"
               style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
@@ -1829,6 +2029,219 @@ export function InventoryModule({
 
     .inventory-dialog-content::-webkit-scrollbar-track {
       background: transparent;
+    }
+
+    .inventory-add-dialog-content {
+      scrollbar-gutter: stable both-edges;
+    }
+
+    .inventory-add-dialog-content .inventory-dialog-header {
+      align-items: center !important;
+      margin-bottom: 2px;
+    }
+
+    .inventory-add-dialog-content .inventory-dialog-header > div:first-child {
+      width: 54px !important;
+      height: 54px !important;
+    }
+
+    .inventory-add-dialog-content .inventory-dialog-header h2 {
+      font-size: 25px !important;
+    }
+
+    .inventory-add-dialog-content .inventory-dialog-header p {
+      margin-top: 7px !important;
+      line-height: 1.45 !important;
+    }
+
+    .inventory-add-dialog-content .flex.items-center.text-blue-950 {
+      min-height: 40px;
+      border-radius: 10px !important;
+      padding: 9px 12px !important;
+    }
+
+    .inventory-add-form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 13px 16px;
+      align-items: start;
+    }
+
+    .inventory-add-section-title,
+    .inventory-add-field-full,
+    .inventory-add-form-grid .inventory-reorder-planning-card {
+      grid-column: 1 / -1;
+    }
+
+    .inventory-add-section-title {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      min-width: 0;
+      margin-top: 10px;
+      border: 0 !important;
+      border-radius: 10px !important;
+      background: linear-gradient(90deg, #f1f5f9 0%, #f8fbff 100%) !important;
+      padding: 10px 13px !important;
+      color: #0f172a !important;
+      box-shadow: inset 0 0 0 1px #e2e8f0;
+    }
+
+    .inventory-add-section-title:first-child {
+      margin-top: 0;
+    }
+
+    .inventory-add-section-title::before {
+      content: "";
+      width: 3px;
+      height: 20px;
+      flex: 0 0 3px;
+      border-radius: 999px;
+      background: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+
+    .inventory-add-section-title-text {
+      min-width: 0;
+      flex: 0 1 auto;
+      color: #0f172a;
+      font-size: 14px;
+      font-weight: 750;
+      line-height: 1.3;
+      overflow-wrap: anywhere;
+    }
+
+    .inventory-add-field label,
+    .inventory-add-dialog-content label {
+      color: #0f172a;
+    }
+
+    .inventory-add-field input,
+    .inventory-add-field [role="combobox"],
+    .inventory-add-dialog-content input,
+    .inventory-add-dialog-content [role="combobox"] {
+      min-height: 42px;
+      border-radius: 10px;
+      border-color: #cbd5e1;
+      background: #ffffff;
+    }
+
+    .inventory-supplier-field-group {
+      display: grid;
+      gap: 8px;
+    }
+
+    .inventory-add-field p,
+    .inventory-add-dialog-content .inventory-reorder-planning-card p {
+      line-height: 1.35;
+    }
+
+    .inventory-reorder-planning-card {
+      border-color: #bfdbfe !important;
+      background: #f8fbff !important;
+      border-radius: 12px !important;
+      padding: 12px !important;
+      display: grid;
+      gap: 10px;
+    }
+
+    .inventory-reorder-planning-header {
+      display: grid;
+      gap: 2px;
+    }
+
+    .inventory-reorder-planning-title {
+      font-size: 14px !important;
+      line-height: 1.25 !important;
+      font-weight: 700 !important;
+      color: #0f172a !important;
+    }
+
+    .inventory-reorder-planning-description {
+      font-size: 13px !important;
+      line-height: 1.45 !important;
+    }
+
+    .inventory-reorder-planning-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      align-items: start;
+    }
+
+    .inventory-reorder-planning-field {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      min-width: 0;
+      height: 100%;
+    }
+
+    .inventory-reorder-planning-label {
+      font-size: 13px !important;
+      line-height: 1.25 !important;
+      font-weight: 700 !important;
+      color: #0f172a !important;
+      min-height: 18px;
+      display: flex;
+      align-items: flex-end;
+    }
+
+    .inventory-reorder-planning-field input {
+      min-height: 42px !important;
+      height: 42px !important;
+      border-radius: 10px !important;
+      font-size: 14px !important;
+      padding: 0 12px !important;
+    }
+
+    .inventory-reorder-planning-helper {
+      font-size: 12px !important;
+      line-height: 1.35 !important;
+      min-height: 32px;
+      margin: 0 !important;
+    }
+
+    .inventory-reorder-result-card {
+      border-color: #bfdbfe !important;
+      background: #eff6ff !important;
+      border-radius: 10px !important;
+      padding: 10px 12px !important;
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      border: 1px solid #bfdbfe;
+      color: #334155;
+    }
+
+    .inventory-reorder-result-icon {
+      width: 18px;
+      height: 18px;
+      margin-top: 1px;
+      color: #2563eb;
+    }
+
+    .inventory-reorder-result-copy {
+      display: grid;
+      gap: 2px;
+      font-size: 13px;
+      line-height: 1.35;
+      min-width: 0;
+    }
+
+    .inventory-reorder-result-copy p {
+      margin: 0;
+    }
+
+    .inventory-reorder-result-recommendation {
+      font-size: 16px;
+      line-height: 1.45;
+    }
+
+    .inventory-add-dialog-content .inventory-dialog-footer {
+      margin-top: 0;
+      padding-top: 2px !important;
     }
 
     @media (max-width: 760px) {
@@ -2216,6 +2629,37 @@ export function InventoryModule({
         height: 44px !important;
       }
 
+      .inventory-add-dialog-content {
+        width: calc(100vw - 24px) !important;
+        max-width: 460px !important;
+        padding: 16px !important;
+      }
+
+      .inventory-add-form-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+
+      .inventory-add-section-title,
+      .inventory-add-field-full,
+      .inventory-add-field,
+      .inventory-add-form-grid .inventory-reorder-planning-card {
+        grid-column: 1 / -1;
+      }
+
+      .inventory-add-form-grid .inventory-reorder-planning-card {
+        padding: 12px !important;
+      }
+
+      .inventory-reorder-planning-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+
+      .inventory-reorder-result-card {
+        grid-template-columns: 20px minmax(0, 1fr);
+      }
+
       .inventory-archive-item-card > div {
         grid-template-columns: 46px minmax(0, 1fr) !important;
         gap: 12px !important;
@@ -2359,13 +2803,13 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement(Plus, {
     className: "w-4 h-4 mr-2"
   }), "Add Item")), /*#__PURE__*/React.createElement(DialogContent, {
-    className: "inventory-dialog-content border border-slate-200 bg-white shadow-2xl",
+    className: "inventory-dialog-content inventory-add-dialog-content border border-slate-200 bg-white shadow-2xl",
     style: {
-      width: "min(560px, calc(100vw - 32px))",
-      maxWidth: "560px",
-      padding: "22px",
+      width: "min(860px, calc(100vw - 32px))",
+      maxWidth: "860px",
+      padding: "24px",
       borderRadius: "14px",
-      gap: "16px"
+      gap: "14px"
     }
   }, /*#__PURE__*/React.createElement(DialogHeader, {
     className: "inventory-dialog-header space-y-0 text-left",
@@ -2436,11 +2880,9 @@ export function InventoryModule({
       fontSize: "13px"
     }
   }, "Provide the item details below to add it to your inventory.")), /*#__PURE__*/React.createElement("div", {
-    className: "space-y-3"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900"
-  }, "Basic Item Information"), /*#__PURE__*/React.createElement("div", {
-    className: "space-y-1.5"
+    className: "inventory-add-form-grid"
+  }, renderAddSectionHeader("Basic Item Information"), /*#__PURE__*/React.createElement("div", {
+    className: "inventory-add-field inventory-add-field-full space-y-1.5"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "item-name",
     className: "font-semibold text-slate-950",
@@ -2458,7 +2900,7 @@ export function InventoryModule({
       setSimilarDuplicatePrompt(null);
       setNewItem({
         ...newItem,
-        name: e.target.value
+        name: sanitizeInventoryTextInput(e.target.value, "Item Name", "add-item-name-valid-characters")
       });
     },
     placeholder: "e.g., Claw Hammer 16 oz",
@@ -2475,7 +2917,7 @@ export function InventoryModule({
       fontSize: "12px"
     }
   }, "Enter a specific item name with its size or specification. Example: Claw Hammer 16 oz.")), /*#__PURE__*/React.createElement("div", {
-    className: "space-y-1.5"
+    className: "inventory-add-field space-y-1.5"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "category",
     className: "font-semibold text-slate-950",
@@ -2514,10 +2956,21 @@ export function InventoryModule({
     style: {
       fontSize: "12px"
     }
-  }, "Select the category that best describes the item. If none applies, choose \"Other.\"")), /*#__PURE__*/React.createElement("div", {
-    className: "space-y-1.5"
+  }, "Select the category that best describes the item. If none applies, choose \"Other.\"")), renderSupplierField({
+    id: "supplier-name",
+    value: newItem.supplierName,
+    mode: newItemSupplierMode,
+    setMode: setNewItemSupplierMode,
+    onSupplierChange: supplierName => setNewItem(prev => ({
+      ...prev,
+      supplierName
+    })),
+    toastId: "add-supplier-valid-characters",
+    helperText: "Optional. Select a supplier if known, or choose Other supplier / not listed to type a new one."
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "inventory-add-field space-y-1.5"
   }, /*#__PURE__*/React.createElement(Label, {
-    htmlFor: "supplier-name",
+    htmlFor: "default-selling-price",
     className: "font-semibold text-slate-950",
     style: {
       display: "block",
@@ -2525,14 +2978,18 @@ export function InventoryModule({
       fontSize: "14px",
       lineHeight: "1.25"
     }
-  }, "Supplier"), /*#__PURE__*/React.createElement(Input, {
-    id: "supplier-name",
-    value: newItem.supplierName,
+  }, "Default Selling Price"), /*#__PURE__*/React.createElement(Input, {
+    id: "default-selling-price",
+    type: "text",
+    min: "0.01",
+    step: "0.01",
+    inputMode: "decimal",
+    value: newItem.defaultSellingPrice,
     onChange: e => setNewItem({
       ...newItem,
-      supplierName: e.target.value
+      defaultSellingPrice: sanitizeDecimalInput(e.target.value, "Default Selling Price", "add-default-price-numbers-only")
     }),
-    placeholder: "e.g., Supplier A or local hardware distributor",
+    placeholder: "e.g., 250.00",
     className: "border-slate-300 bg-white text-slate-950",
     style: {
       height: "42px",
@@ -2545,10 +3002,8 @@ export function InventoryModule({
     style: {
       fontSize: "12px"
     }
-  }, "Optional, but useful for reorder planning and supplier-based reports.")), /*#__PURE__*/React.createElement("div", {
-    className: "rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900"
-  }, "Stock Level and Alert Threshold"), /*#__PURE__*/React.createElement("div", {
-    className: "space-y-1.5"
+  }, "Optional. This price will automatically appear as the Unit Price when the item is selected in Sales Recording.")), renderAddSectionHeader("Stock Level and Alert Threshold"), /*#__PURE__*/React.createElement("div", {
+    className: "inventory-add-field space-y-1.5"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "quantity",
     className: "font-semibold text-slate-950",
@@ -2560,14 +3015,14 @@ export function InventoryModule({
     }
   }, "Initial Stock Quantity"), /*#__PURE__*/React.createElement(Input, {
     id: "quantity",
-    type: "number",
+    type: "text",
     min: "0",
     step: "1",
     inputMode: "numeric",
     value: newItem.quantity,
     onChange: e => setNewItem({
       ...newItem,
-      quantity: e.target.value
+      quantity: sanitizeWholeNumberInput(e.target.value, "Initial Stock Quantity", "add-initial-quantity-numbers-only")
     }),
     placeholder: "0",
     className: "border-slate-300 bg-white text-slate-950",
@@ -2578,7 +3033,7 @@ export function InventoryModule({
       padding: "0 14px"
     }
   })), /*#__PURE__*/React.createElement("div", {
-    className: "space-y-1.5"
+    className: "inventory-add-field space-y-1.5"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "reorder-level",
     className: "font-semibold text-slate-950",
@@ -2590,14 +3045,14 @@ export function InventoryModule({
     }
   }, "Manual Low-Stock Threshold"), /*#__PURE__*/React.createElement(Input, {
     id: "reorder-level",
-    type: "number",
+    type: "text",
     min: "0",
     step: "1",
     inputMode: "numeric",
     value: newItem.reorderLevel,
     onChange: e => setNewItem({
       ...newItem,
-      reorderLevel: e.target.value
+      reorderLevel: sanitizeWholeNumberInput(e.target.value, "Manual Low-Stock Threshold", "add-reorder-threshold-numbers-only")
     }),
     placeholder: "10",
     className: "border-slate-300 bg-white text-slate-950",
@@ -3094,7 +3549,11 @@ export function InventoryModule({
       min: "1",
       max: selectedBatchItem?.quantity || undefined,
       value: row.quantity,
-      onChange: e => updateBatchStockOutRow(index, "quantity", e.target.value),
+      onChange: e => updateBatchStockOutRow(
+        index,
+        "quantity",
+        sanitizeWholeNumberInput(e.target.value, "Batch Stock Out Quantity", "batch-stock-out-quantity-numbers-only")
+      ),
       placeholder: "0",
       className: "border-slate-300 bg-white text-slate-950",
       style: {
@@ -3303,7 +3762,7 @@ export function InventoryModule({
     id: "stock-in-amount",
     type: "number",
     value: stockAmount,
-    onChange: e => setStockAmount(e.target.value),
+    onChange: e => setStockAmount(sanitizeWholeNumberInput(e.target.value, "Stock In Quantity", "stock-in-quantity-numbers-only")),
     placeholder: "0",
     className: "border-slate-300 bg-white text-slate-950",
     style: {
@@ -3479,7 +3938,7 @@ export function InventoryModule({
     id: "stock-out-amount",
     type: "number",
     value: stockAmount,
-    onChange: e => setStockAmount(e.target.value),
+    onChange: e => setStockAmount(sanitizeWholeNumberInput(e.target.value, "Stock Out Quantity", "stock-out-quantity-numbers-only")),
     placeholder: "0",
     className: "border-slate-300 bg-white text-slate-950",
     style: {

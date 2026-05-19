@@ -241,6 +241,7 @@ async function ensureSchema() {
       name VARCHAR(150) NOT NULL,
       category VARCHAR(50) NOT NULL,
       supplier_name VARCHAR(120),
+      default_selling_price NUMERIC(12,2),
       created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
     );
   `);
@@ -333,6 +334,7 @@ async function ensureSchema() {
       average_daily_sales NUMERIC(10,2),
       status VARCHAR(20) DEFAULT 'In Stock',
       supplier_name VARCHAR(120),
+      default_selling_price NUMERIC(12,2),
       last_updated TIMESTAMP,
       archived_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
       archive_reason VARCHAR(40),
@@ -397,6 +399,11 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE products
     ADD COLUMN IF NOT EXISTS supplier_name VARCHAR(120);
+  `);
+
+  await pool.query(`
+    ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS default_selling_price NUMERIC(12,2);
   `);
 
   await pool.query(`
@@ -469,6 +476,11 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE archived_inventory
     ADD COLUMN IF NOT EXISTS supplier_name VARCHAR(120);
+  `);
+
+  await pool.query(`
+    ALTER TABLE archived_inventory
+    ADD COLUMN IF NOT EXISTS default_selling_price NUMERIC(12,2);
   `);
 
   await pool.query(`
@@ -969,6 +981,10 @@ function cleanSupplierName(value) {
   return cleanName ? cleanName.slice(0, 120) : null;
 }
 
+function hasValidInventoryTextCharacters(value) {
+  return /^[A-Za-z0-9\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u00FF\u00D1\u00F1 #./,'"()&+_-]+$/.test(String(value || ''));
+}
+
 function getMeaningfulInventoryNameTokens(value) {
   return getInventoryIdentityTokens(value).filter(token => /[a-z0-9]/.test(token));
 }
@@ -977,6 +993,9 @@ function validateInventoryNameQuality(value) {
   const cleanName = cleanInventoryName(value);
   if (!cleanName) return 'Valid product name and category are required';
   if (cleanName.length > 150) return 'Item name must be 150 characters or less';
+  if (!hasValidInventoryTextCharacters(cleanName)) {
+    return 'Item name accepts letters, numbers, and common item characters only';
+  }
   if (!/[a-z0-9]/i.test(cleanName)) return 'Item name must include letters or numbers';
 
   const tokens = getMeaningfulInventoryNameTokens(cleanName);
@@ -987,13 +1006,35 @@ function validateInventoryNameQuality(value) {
   return null;
 }
 
+function validateSupplierNameQuality(value) {
+  if (!value) return null;
+  if (value.length > 120) return 'Supplier name must be 120 characters or less';
+  if (!hasValidInventoryTextCharacters(value)) {
+    return 'Supplier name accepts letters, numbers, and common business characters only';
+  }
+  return null;
+}
+
 function canonicalizeInventoryCategory(value) {
   const normalized = normalizeInventoryText(value);
   return CATEGORY_ALIASES[normalized] || null;
 }
 
 function parseNonNegativeInteger(value, fieldName, { max = null } = {}) {
-  const normalizedValue = value === '' || value === null || value === undefined ? 0 : Number(value);
+  if (value === '' || value === null || value === undefined) {
+    const error = new Error(`${fieldName} is required`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const rawValue = String(value).trim();
+  if (!/^\d+$/.test(rawValue)) {
+    const error = new Error(`${fieldName} must be a non-negative whole number`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const normalizedValue = Number(rawValue);
 
   if (!Number.isInteger(normalizedValue) || normalizedValue < 0) {
     const error = new Error(`${fieldName} must be a non-negative whole number`);
@@ -1011,7 +1052,20 @@ function parseNonNegativeInteger(value, fieldName, { max = null } = {}) {
 }
 
 function parseNonNegativeDecimal(value, fieldName, { max = null } = {}) {
-  const normalizedValue = value === '' || value === null || value === undefined ? 0 : Number(value);
+  if (value === '' || value === null || value === undefined) {
+    const error = new Error(`${fieldName} is required`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const rawValue = String(value).trim();
+  if (!/^\d+(?:\.\d{1,2})?$/.test(rawValue)) {
+    const error = new Error(`${fieldName} must be a non-negative number with up to 2 decimal places`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const normalizedValue = Number(rawValue);
 
   if (!Number.isFinite(normalizedValue) || normalizedValue < 0) {
     const error = new Error(`${fieldName} must be a non-negative number`);
@@ -1038,6 +1092,16 @@ function parseOptionalNonNegativeDecimal(value, fieldName, { max = null } = {}) 
   return parseNonNegativeDecimal(value, fieldName, { max });
 }
 
+function parseOptionalPositiveDecimal(value, fieldName, { max = null } = {}) {
+  const parsed = parseOptionalNonNegativeDecimal(value, fieldName, { max });
+  if (parsed !== null && parsed <= 0) {
+    const error = new Error(`${fieldName} must be greater than zero.`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return parsed;
+}
+
 async function findProductByIdentity(client, { name, category }) {
   const canonicalCategory = canonicalizeInventoryCategory(category);
   const cleanName = cleanInventoryName(name);
@@ -1045,7 +1109,7 @@ async function findProductByIdentity(client, { name, category }) {
   const normalizedIdentityName = normalizeInventoryIdentityName(cleanName);
 
   const existing = await client.query(
-    `SELECT product_id, name, category, supplier_name
+    `SELECT product_id, name, category, supplier_name, default_selling_price
      FROM products
      WHERE LOWER(category) = LOWER($1)`,
     [canonicalCategory]
@@ -1054,7 +1118,7 @@ async function findProductByIdentity(client, { name, category }) {
   return existing.rows.find(row => normalizeInventoryIdentityName(row.name) === normalizedIdentityName) || null;
 }
 
-async function findOrCreateProduct(client, { name, category, supplierName = null }) {
+async function findOrCreateProduct(client, { name, category, supplierName = null, defaultSellingPrice = null }) {
   const canonicalCategory = canonicalizeInventoryCategory(category);
   const cleanName = cleanInventoryName(name);
   const cleanSupplier = cleanSupplierName(supplierName);
@@ -1067,22 +1131,36 @@ async function findOrCreateProduct(client, { name, category, supplierName = null
   const existing = await findProductByIdentity(client, { name: cleanName, category: canonicalCategory });
 
   if (existing) {
-    if (cleanSupplier && cleanSupplier !== existing.supplier_name) {
+    const existingDefaultPrice = existing.default_selling_price === null || existing.default_selling_price === undefined
+      ? null
+      : Number(existing.default_selling_price);
+    const nextDefaultPrice = defaultSellingPrice === null || defaultSellingPrice === undefined
+      ? existingDefaultPrice
+      : Number(defaultSellingPrice);
+    const shouldUpdateSupplier = cleanSupplier && cleanSupplier !== existing.supplier_name;
+    const shouldUpdateDefaultPrice = nextDefaultPrice !== existingDefaultPrice;
+
+    if (shouldUpdateSupplier || shouldUpdateDefaultPrice) {
       await client.query(
         `UPDATE products
-         SET supplier_name = $1
-         WHERE product_id = $2`,
-        [cleanSupplier, existing.product_id]
+         SET supplier_name = $1,
+             default_selling_price = $2
+         WHERE product_id = $3`,
+        [
+          shouldUpdateSupplier ? cleanSupplier : existing.supplier_name,
+          nextDefaultPrice,
+          existing.product_id
+        ]
       );
     }
     return existing.product_id;
   }
 
   const inserted = await client.query(
-    `INSERT INTO products (name, category, supplier_name)
-     VALUES ($1, $2, $3)
+    `INSERT INTO products (name, category, supplier_name, default_selling_price)
+     VALUES ($1, $2, $3, $4)
      RETURNING product_id`,
-    [cleanName, canonicalCategory, cleanSupplier]
+    [cleanName, canonicalCategory, cleanSupplier, defaultSellingPrice]
   );
 
   return inserted.rows[0].product_id;
@@ -1141,6 +1219,7 @@ function mapInventoryRow(row) {
     name: row.name,
     category: row.category,
     supplier_name: row.supplier_name,
+    default_selling_price: row.default_selling_price,
     stock_level: row.stock_level,
     min_stock_level: row.min_stock_level,
     lead_time_days: row.lead_time_days,
@@ -1163,6 +1242,7 @@ function mapArchivedInventoryRow(row) {
     name: row.name,
     category: row.category,
     supplier_name: row.supplier_name,
+    default_selling_price: row.default_selling_price,
     stock_level: row.stock_level,
     min_stock_level: row.min_stock_level,
     lead_time_days: row.lead_time_days,
@@ -1484,6 +1564,42 @@ async function recordSystemLog(db, {
 
 function normalizeBranch(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function cleanPersonName(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
+function cleanUsername(value) {
+  return String(value || '').trim();
+}
+
+function validatePersonName(value) {
+  const cleanName = cleanPersonName(value);
+  if (!cleanName) return 'Full name is required.';
+  if (cleanName.length > 120) return 'Full name must be 120 characters or less.';
+  if (!/^[A-Za-zÀ-ÖØ-öø-ÿÑñ]+(?:[ .'-][A-Za-zÀ-ÖØ-öø-ÿÑñ]+)*$/.test(cleanName)) {
+    return 'Full name should contain letters only. Spaces, hyphens, apostrophes, and periods are allowed.';
+  }
+  return null;
+}
+
+function validateUsername(value) {
+  const cleanValue = cleanUsername(value);
+  if (!cleanValue) return 'Username is required.';
+  if (!/^[A-Za-z0-9._-]{3,30}$/.test(cleanValue)) {
+    return 'Username should be 3 to 30 characters and use letters, numbers, dots, underscores, or hyphens only.';
+  }
+  return null;
+}
+
+function validateEmailAddress(value) {
+  const cleanValue = String(value || '').trim().toLowerCase();
+  if (!cleanValue) return 'Email is required.';
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanValue) || cleanValue.length > 254) {
+    return 'Please enter a valid email address.';
+  }
+  return null;
 }
 
 function normalizePasswordComparison(value) {
@@ -1982,11 +2098,29 @@ app.get('/', (req, res) => {
 });
 
 app.post('/api/auth/register', async (req, res) => {
-  const { fullName, username, email, password, branch } = req.body;
+  const { password, branch } = req.body;
+  const fullName = cleanPersonName(req.body.fullName);
+  const username = cleanUsername(req.body.username);
+  const email = String(req.body.email || '').trim().toLowerCase();
   const normalizedBranch = normalizeBranch(branch);
 
   if (!fullName || !username || !email || !password) {
     return res.status(400).json({ error: 'Missing required registration fields' });
+  }
+
+  const nameError = validatePersonName(fullName);
+  if (nameError) {
+    return res.status(400).json({ error: nameError });
+  }
+
+  const usernameError = validateUsername(username);
+  if (usernameError) {
+    return res.status(400).json({ error: usernameError });
+  }
+
+  const emailError = validateEmailAddress(email);
+  if (emailError) {
+    return res.status(400).json({ error: emailError });
   }
 
   if (!ALLOWED_BRANCHES.includes(normalizedBranch)) {
@@ -2088,7 +2222,11 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 app.post('/api/auth/send-otp', async (req, res) => {
-  const { username } = req.body;
+  const username = cleanUsername(req.body.username);
+  const usernameError = validateUsername(username);
+  if (usernameError) {
+    return res.status(400).json({ error: usernameError });
+  }
 
   try {
     const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
@@ -2133,9 +2271,16 @@ app.post('/api/auth/send-otp', async (req, res) => {
 });
 
 app.post('/api/auth/verify-otp', async (req, res) => {
-  const username = req.body.username;
+  const username = cleanUsername(req.body.username);
   const code = String(req.body.code || '').replace(/\s+/g, '');
   const selectedBranch = normalizeBranch(req.body.branch);
+  const usernameError = validateUsername(username);
+  if (usernameError) {
+    return res.status(400).json({ error: usernameError });
+  }
+  if (!/^\d{6}$/.test(code)) {
+    return res.status(400).json({ error: 'Please enter the full 6-digit code' });
+  }
 
   try {
     const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
@@ -2180,7 +2325,11 @@ app.post('/api/auth/verify-otp', async (req, res) => {
 });
 
 app.post('/api/auth/forgot-password', async (req, res) => {
-  const { email } = req.body;
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const emailError = validateEmailAddress(email);
+  if (emailError) {
+    return res.status(400).json({ error: emailError });
+  }
 
   try {
     const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
@@ -2225,9 +2374,18 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 });
 
 app.post('/api/auth/reset-password', async (req, res) => {
-  const email = req.body.email;
+  const email = String(req.body.email || '').trim().toLowerCase();
   const otp = String(req.body.otp || '').replace(/\s+/g, '');
   const newPassword = req.body.newPassword;
+
+  const emailError = validateEmailAddress(email);
+  if (emailError) {
+    return res.status(400).json({ error: emailError });
+  }
+
+  if (!/^\d{6}$/.test(otp)) {
+    return res.status(400).json({ error: 'Please enter the full 6-digit code' });
+  }
 
   try {
     const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
@@ -2358,8 +2516,8 @@ app.get('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
-  const fullName = String(req.body.fullName || req.body.full_name || '').trim();
-  const username = String(req.body.username || '').trim();
+  const fullName = cleanPersonName(req.body.fullName || req.body.full_name);
+  const username = cleanUsername(req.body.username);
   const email = String(req.body.email || '').trim().toLowerCase();
   const role = ALLOWED_ROLES.includes(req.body.role) ? req.body.role : 'Employee';
   const branch = normalizeBranch(req.body.branch || req.user.branch);
@@ -2367,6 +2525,21 @@ app.post('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
 
   if (!fullName || !username || !email) {
     return res.status(400).json({ error: 'Full name, username, and email are required.' });
+  }
+
+  const nameError = validatePersonName(fullName);
+  if (nameError) {
+    return res.status(400).json({ error: nameError });
+  }
+
+  const usernameError = validateUsername(username);
+  if (usernameError) {
+    return res.status(400).json({ error: usernameError });
+  }
+
+  const emailError = validateEmailAddress(email);
+  if (emailError) {
+    return res.status(400).json({ error: emailError });
   }
 
   if (!ALLOWED_BRANCHES.includes(branch)) {
@@ -2772,6 +2945,7 @@ app.get('/api/inventory', authenticate, async (req, res) => {
          p.name,
          p.category,
          p.supplier_name,
+         p.default_selling_price,
          bi.stock_level,
          bi.min_stock_level,
          bi.lead_time_days,
@@ -2809,6 +2983,7 @@ app.get('/api/archive', authenticate, async (req, res) => {
          name,
          category,
          supplier_name,
+         default_selling_price,
          branch,
          stock_level,
          min_stock_level,
@@ -2936,16 +3111,24 @@ app.post('/api/sales', authenticate, async (req, res) => {
     for (const item of items) {
       const inventoryId = Number(item?.inventory_id);
       const quantity = parseNonNegativeInteger(item?.quantity, 'Quantity sold');
-      const unitPrice = parseNonNegativeDecimal(item?.unit_price ?? 0, 'Unit price', { max: 100000000 });
+      const unitPrice = parseNonNegativeDecimal(item?.unit_price, 'Unit price', { max: 100000000 });
 
       if (!Number.isInteger(inventoryId) || inventoryId <= 0 || quantity <= 0) {
         return res.status(400).json({ error: 'Each sold item must include a valid product and quantity.' });
       }
 
+      if (unitPrice <= 0) {
+        return res.status(400).json({ error: 'Unit price is required and must be greater than zero for every sold item.' });
+      }
+
+      if (aggregatedItems.has(inventoryId)) {
+        return res.status(400).json({ error: 'Each sold item should appear only once in a sales transaction.' });
+      }
+
       const existing = aggregatedItems.get(inventoryId) || { quantity: 0, unitPrice };
       aggregatedItems.set(inventoryId, {
         quantity: existing.quantity + quantity,
-        unitPrice: unitPrice || existing.unitPrice || 0
+        unitPrice
       });
     }
   } catch (err) {
@@ -2972,6 +3155,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
            p.name,
            p.category,
            p.supplier_name,
+           p.default_selling_price,
            bi.branch,
            bi.stock_level,
            bi.min_stock_level,
@@ -3039,6 +3223,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
         name: currentItem.name,
         category: currentItem.category,
         supplier_name: currentItem.supplier_name,
+        default_selling_price: currentItem.default_selling_price,
         lead_time_days: currentItem.lead_time_days,
         safety_stock: currentItem.safety_stock,
         average_daily_sales: currentItem.average_daily_sales
@@ -3169,6 +3354,7 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
     name,
     category,
     supplier_name,
+    default_selling_price,
     stock_level,
     min_stock_level,
     lead_time_days,
@@ -3190,8 +3376,15 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: nameQualityError || 'Valid product name and category are required' });
     }
 
+    const supplierQualityError = validateSupplierNameQuality(cleanSupplier);
+    if (supplierQualityError) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: supplierQualityError });
+    }
+
     const stockLevel = parseNonNegativeInteger(stock_level, 'Stock level');
     const minStockLevel = parseNonNegativeInteger(min_stock_level, 'Manual low-stock threshold');
+    const defaultSellingPrice = parseOptionalPositiveDecimal(default_selling_price, 'Default selling price', { max: 100000000 });
     const leadTimeDays = parseOptionalNonNegativeInteger(lead_time_days, 'Supplier lead time', { max: 365 });
     const safetyStock = parseOptionalNonNegativeInteger(safety_stock, 'Safety stock', { max: 100000 });
     const averageDailySales = parseOptionalNonNegativeDecimal(average_daily_sales, 'Average daily sales', { max: 100000 });
@@ -3260,7 +3453,12 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
       });
     }
 
-    const productId = await findOrCreateProduct(client, { name: cleanName, category: canonicalCategory, supplierName: cleanSupplier });
+    const productId = await findOrCreateProduct(client, {
+      name: cleanName,
+      category: canonicalCategory,
+      supplierName: cleanSupplier,
+      defaultSellingPrice
+    });
     const status = computeInventoryStatus(stockLevel, getEffectiveReorderThreshold({
       min_stock_level: minStockLevel,
       lead_time_days: leadTimeDays,
@@ -3303,6 +3501,7 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
          p.name,
          p.category,
          p.supplier_name,
+         p.default_selling_price,
          bi.stock_level,
          bi.min_stock_level,
          bi.lead_time_days,
@@ -3328,6 +3527,7 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
         branch: createdItem.branch,
         category: createdItem.category,
         supplier: createdItem.supplier_name || 'Unassigned',
+        defaultSellingPrice,
         initialQuantity: stockLevel,
         reorderLevel: minStockLevel,
         leadTimeDays,
@@ -3428,6 +3628,7 @@ app.post('/api/inventory/batch-stock-out', authenticate, async (req, res) => {
            p.name,
            p.category,
            p.supplier_name,
+           p.default_selling_price,
            bi.branch,
            bi.stock_level,
            bi.min_stock_level,
@@ -3508,6 +3709,7 @@ app.post('/api/inventory/batch-stock-out', authenticate, async (req, res) => {
         name: currentItem.name,
         category: currentItem.category,
         supplier_name: currentItem.supplier_name,
+        default_selling_price: currentItem.default_selling_price,
         lead_time_days: currentItem.lead_time_days,
         safety_stock: currentItem.safety_stock,
         average_daily_sales: currentItem.average_daily_sales
@@ -3534,6 +3736,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     name,
     category,
     supplier_name,
+    default_selling_price,
     stock_level,
     min_stock_level,
     lead_time_days,
@@ -3557,6 +3760,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
          p.name,
          p.category,
          p.supplier_name,
+         p.default_selling_price,
          bi.branch,
          bi.stock_level,
          bi.min_stock_level,
@@ -3589,6 +3793,9 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     const nextAverageDailySales = average_daily_sales === undefined
       ? inventoryRow.average_daily_sales
       : parseOptionalNonNegativeDecimal(average_daily_sales, 'Average daily sales', { max: 100000 });
+    const nextDefaultSellingPrice = default_selling_price === undefined
+      ? (inventoryRow.default_selling_price === null || inventoryRow.default_selling_price === undefined ? null : Number(inventoryRow.default_selling_price))
+      : parseOptionalPositiveDecimal(default_selling_price, 'Default selling price', { max: 100000000 });
     const status = computeInventoryStatus(nextQuantity, getEffectiveReorderThreshold({
       min_stock_level: nextMinStockLevel,
       lead_time_days: nextLeadTimeDays,
@@ -3606,12 +3813,20 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       return res.status(400).json({ error: nameQualityError || 'Valid product name and category are required' });
     }
 
+    const supplierQualityError = validateSupplierNameQuality(cleanSupplier);
+    if (supplierQualityError) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: supplierQualityError });
+    }
+
     const identityChanged =
       normalizeInventoryText(inventoryRow.name) !== normalizeInventoryText(cleanName) ||
       canonicalizeInventoryCategory(inventoryRow.category) !== canonicalCategory;
-    const supplierChanged = cleanSupplier !== cleanSupplierName(inventoryRow.supplier_name);
-    const reorderLevelChanged = Number(inventoryRow.min_stock_level || 0) !== nextMinStockLevel;
     const normalizeNullableNumber = value => (value === null || value === undefined ? null : Number(value));
+    const supplierChanged = cleanSupplier !== cleanSupplierName(inventoryRow.supplier_name);
+    const defaultSellingPriceChanged =
+      normalizeNullableNumber(inventoryRow.default_selling_price) !== normalizeNullableNumber(nextDefaultSellingPrice);
+    const reorderLevelChanged = Number(inventoryRow.min_stock_level || 0) !== nextMinStockLevel;
     const reorderPlanningChanged =
       normalizeNullableNumber(inventoryRow.lead_time_days) !== normalizeNullableNumber(nextLeadTimeDays) ||
       normalizeNullableNumber(inventoryRow.safety_stock) !== normalizeNullableNumber(nextSafetyStock) ||
@@ -3635,6 +3850,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       parsedMovementQuantity === inferredQuantityChanged &&
       !identityChanged &&
       !supplierChanged &&
+      !defaultSellingPriceChanged &&
       !reorderLevelChanged &&
       !reorderPlanningChanged;
 
@@ -3748,15 +3964,21 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
 
     let targetProductId = productId;
     if (identityChanged) {
-      targetProductId = await findOrCreateProduct(client, { name: cleanName, category: canonicalCategory, supplierName: cleanSupplier });
+      targetProductId = await findOrCreateProduct(client, {
+        name: cleanName,
+        category: canonicalCategory,
+        supplierName: cleanSupplier,
+        defaultSellingPrice: nextDefaultSellingPrice
+      });
     } else {
       await client.query(
         `UPDATE products
          SET name = $1,
              category = $2,
-             supplier_name = $3
-         WHERE product_id = $4`,
-        [cleanName, canonicalCategory, cleanSupplier, productId]
+             supplier_name = $3,
+             default_selling_price = $4
+         WHERE product_id = $5`,
+        [cleanName, canonicalCategory, cleanSupplier, nextDefaultSellingPrice, productId]
       );
     }
 
@@ -3805,6 +4027,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
          p.name,
          p.category,
          p.supplier_name,
+         p.default_selling_price,
          bi.stock_level,
          bi.min_stock_level,
          bi.lead_time_days,
@@ -3873,6 +4096,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       if (inventoryRow.name !== cleanName) changedFields.push('name');
       if (inventoryRow.category !== canonicalCategory) changedFields.push('category');
       if (supplierChanged) changedFields.push('supplier');
+      if (defaultSellingPriceChanged) changedFields.push('default selling price');
       if (previousQuantity !== nextQuantity) changedFields.push('quantity');
       if (Number(inventoryRow.min_stock_level || 0) !== nextMinStockLevel) changedFields.push('reorder level');
       if (reorderPlanningChanged) changedFields.push('reorder planning');
@@ -3891,6 +4115,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
               name: inventoryRow.name,
               category: inventoryRow.category,
               supplier: inventoryRow.supplier_name || 'Unassigned',
+              defaultSellingPrice: normalizeNullableNumber(inventoryRow.default_selling_price),
               reorderLevel: Number(inventoryRow.min_stock_level || 0),
               leadTimeDays: Number(inventoryRow.lead_time_days || 0),
               safetyStock: Number(inventoryRow.safety_stock || 0),
@@ -3901,6 +4126,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
               name: updatedItem.name,
               category: updatedItem.category,
               supplier: updatedItem.supplier_name || 'Unassigned',
+              defaultSellingPrice: normalizeNullableNumber(updatedItem.default_selling_price),
               reorderLevel: nextMinStockLevel,
               leadTimeDays: nextLeadTimeDays,
               safetyStock: nextSafetyStock,
@@ -3959,6 +4185,7 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
          p.name,
          p.category,
          p.supplier_name,
+         p.default_selling_price,
          bi.branch,
          bi.stock_level,
          bi.min_stock_level,
@@ -3986,6 +4213,7 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
          name,
          category,
          supplier_name,
+         default_selling_price,
          branch,
          stock_level,
          min_stock_level,
@@ -3997,13 +4225,14 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
          archive_reason,
          archived_by
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
       [
         archivedItem.inventory_id,
         archivedItem.product_id,
         archivedItem.name,
         archivedItem.category,
         archivedItem.supplier_name,
+        archivedItem.default_selling_price,
         archivedItem.branch,
         archivedItem.stock_level,
         archivedItem.min_stock_level,
@@ -4088,6 +4317,7 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
          name,
          category,
          supplier_name,
+         default_selling_price,
          branch,
          stock_level,
          min_stock_level,
@@ -4109,7 +4339,10 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
     const productId = await findOrCreateProduct(client, {
       name: archivedItem.name,
       category: canonicalizeInventoryCategory(archivedItem.category) || 'Other',
-      supplierName: archivedItem.supplier_name
+      supplierName: archivedItem.supplier_name,
+      defaultSellingPrice: archivedItem.default_selling_price === null || archivedItem.default_selling_price === undefined
+        ? null
+        : Number(archivedItem.default_selling_price)
     });
 
     const existingInventory = await client.query(
@@ -4224,6 +4457,7 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
          p.name,
          p.category,
          p.supplier_name,
+         p.default_selling_price,
          bi.stock_level,
          bi.min_stock_level,
          bi.lead_time_days,

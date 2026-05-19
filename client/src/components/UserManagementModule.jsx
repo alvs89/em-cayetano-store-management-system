@@ -16,6 +16,12 @@ import { useData } from "./DataContext";
 import { PageHeader } from "./PageHeader";
 import { mergeSort } from "../utils/algorithms";
 
+const sanitizePersonNameInput = value => String(value ?? "").replace(/[^A-Za-zÀ-ÖØ-öø-ÿÑñ .'-]/g, "");
+const sanitizeUsernameInput = value => String(value ?? "").replace(/[^A-Za-z0-9._-]/g, "");
+const isValidPersonName = value => /^[A-Za-zÀ-ÖØ-öø-ÿÑñ]+(?:[ .'-][A-Za-zÀ-ÖØ-öø-ÿÑñ]+)*$/.test(String(value ?? "").trim());
+const isValidUsername = value => /^[A-Za-z0-9._-]{3,30}$/.test(String(value ?? "").trim());
+const isValidEmailAddress = value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value ?? "").trim());
+
 export function UserManagementModule() {
   const { users, setUsers, refreshSystemSummary } = useData();
   const API_BASE = API_BASE_URL;
@@ -465,6 +471,22 @@ export function UserManagementModule() {
     event.preventDefault();
     if (!newAccount.fullName.trim() || !newAccount.username.trim() || !newAccount.email.trim()) {
       toast.error("Please complete the full name, username, and email.");
+      return;
+    }
+    if (!isValidPersonName(newAccount.fullName)) {
+      toast.error("Full name should contain letters only.", {
+        description: "Spaces, hyphens, apostrophes, and periods are allowed."
+      });
+      return;
+    }
+    if (!isValidUsername(newAccount.username)) {
+      toast.error("Username should be 3 to 30 characters.", {
+        description: "Use letters, numbers, dots, underscores, or hyphens only."
+      });
+      return;
+    }
+    if (!isValidEmailAddress(newAccount.email)) {
+      toast.error("Please enter a valid email address.");
       return;
     }
 
@@ -1718,7 +1740,16 @@ export function UserManagementModule() {
                   <Input
                     id="create-full-name"
                     value={newAccount.fullName}
-                    onChange={event => setNewAccount(prev => ({ ...prev, fullName: event.target.value }))}
+                    onChange={event => {
+                      const cleaned = sanitizePersonNameInput(event.target.value);
+                      if (cleaned !== event.target.value) {
+                        toast.warning("Full name accepts letters only.", {
+                          id: "create-user-full-name-letters-only",
+                          duration: 2400
+                        });
+                      }
+                      setNewAccount(prev => ({ ...prev, fullName: cleaned }));
+                    }}
                     placeholder="Full name of the account owner"
                     disabled={isActionLoading || Boolean(createdAccountCredentials)}
                   />
@@ -1728,7 +1759,17 @@ export function UserManagementModule() {
                   <Input
                     id="create-username"
                     value={newAccount.username}
-                    onChange={event => setNewAccount(prev => ({ ...prev, username: event.target.value }))}
+                    onChange={event => {
+                      const cleaned = sanitizeUsernameInput(event.target.value);
+                      if (cleaned !== event.target.value) {
+                        toast.warning("Username accepts letters and numbers.", {
+                          description: "Dots, underscores, and hyphens are also allowed.",
+                          id: "create-user-username-valid-characters",
+                          duration: 2400
+                        });
+                      }
+                      setNewAccount(prev => ({ ...prev, username: cleaned }));
+                    }}
                     placeholder="username"
                     disabled={isActionLoading || Boolean(createdAccountCredentials)}
                   />

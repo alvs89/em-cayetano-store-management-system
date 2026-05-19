@@ -23,7 +23,7 @@ const SALES_REMARKS_MAX_LENGTH = 500;
 const customerTypeLabels = {
   walk_in: 'Walk-in Customer',
   regular: 'Regular Customer',
-  contractor: 'Contractor'
+  contractor: 'Contractor / Project Buyer'
 };
 
 const formatCurrency = value =>
@@ -81,6 +81,7 @@ export function SalesModule({ user }) {
   const [saleLines, setSaleLines] = useState([emptySaleLine()]);
   const [isSaving, setIsSaving] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [historySearch, setHistorySearch] = useState('');
   const [selectedHistorySaleId, setSelectedHistorySaleId] = useState('');
 
@@ -118,6 +119,15 @@ export function SalesModule({ user }) {
   );
 
   const recentSales = sortedSales.slice(0, 5);
+  const hasSalesFormInput = useMemo(() => (
+    customerType !== 'walk_in' ||
+    remarks.trim() !== '' ||
+    saleLines.some(line => (
+      String(line.inventoryId || '').trim() !== '' ||
+      String(line.quantity || '').trim() !== '' ||
+      String(line.unitPrice || '').trim() !== ''
+    ))
+  ), [customerType, remarks, saleLines]);
 
   const filteredSalesHistory = useMemo(() => {
     const query = historySearch.trim().toLowerCase();
@@ -156,6 +166,21 @@ export function SalesModule({ user }) {
     )));
   };
 
+  const updateLineInventoryItem = (index, inventoryId) => {
+    const selectedItem = activeInventory.find(item => String(item.id) === String(inventoryId));
+    const defaultPrice = Number(selectedItem?.defaultSellingPrice || 0);
+
+    setSaleLines(prev => prev.map((line, lineIndex) => (
+      lineIndex === index
+        ? {
+            ...line,
+            inventoryId,
+            unitPrice: defaultPrice > 0 ? defaultPrice.toFixed(2) : ''
+          }
+        : line
+    )));
+  };
+
   const addLine = () => {
     setSaleLines(prev => [...prev, emptySaleLine()]);
   };
@@ -174,6 +199,21 @@ export function SalesModule({ user }) {
     setCustomerType('walk_in');
     setRemarks('');
     setSaleLines([emptySaleLine()]);
+  };
+
+  const handleClearFormRequest = () => {
+    if (isSaving) return;
+    if (!hasSalesFormInput) {
+      resetForm();
+      return;
+    }
+    setIsClearConfirmOpen(true);
+  };
+
+  const confirmClearForm = () => {
+    resetForm();
+    setIsClearConfirmOpen(false);
+    toast.success('Sales form cleared.');
   };
 
   const validateSale = () => {
@@ -204,8 +244,8 @@ export function SalesModule({ user }) {
         return false;
       }
 
-      if (!Number.isFinite(line.unitPrice) || line.unitPrice < 0) {
-        toast.error(`${line.item.name}: unit price must be zero or higher.`);
+      if (String(line.unitPrice || '').trim() === '' || !Number.isFinite(line.unitPrice) || line.unitPrice <= 0) {
+        toast.error(`${line.item.name}: unit price is required and must be greater than zero.`);
         return false;
       }
     }
@@ -290,6 +330,18 @@ export function SalesModule({ user }) {
           border-color: #60a5fa;
           color: #1e40af;
           box-shadow: 0 8px 18px rgba(37, 99, 235, 0.12);
+        }
+
+        .sales-recent-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 1rem;
+        }
+
+        .sales-recent-heading {
+          min-width: 0;
+          flex: 1 1 auto;
         }
 
         .sales-line-fields {
@@ -426,6 +478,10 @@ export function SalesModule({ user }) {
           box-shadow: 0 8px 18px rgba(37, 99, 235, 0.12);
         }
 
+        .sales-history-arrow-down {
+          display: none;
+        }
+
         .sales-history-item-row {
           transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
         }
@@ -456,6 +512,80 @@ export function SalesModule({ user }) {
           align-items: start;
         }
 
+        .sales-confirm-clear-dialog {
+          width: min(500px, calc(100vw - 2rem));
+          border-radius: 1.125rem;
+          overflow: hidden;
+        }
+
+        .sales-confirm-clear-content {
+          padding: 2rem;
+        }
+
+        .sales-confirm-clear-header {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+        }
+
+        .sales-confirm-clear-icon {
+          display: flex;
+          width: 3.25rem;
+          height: 3.25rem;
+          flex-shrink: 0;
+          align-items: center;
+          justify-content: center;
+          border-radius: 9999px;
+          background: #fef2f2;
+          color: #ef0000;
+        }
+
+        .sales-confirm-clear-message {
+          margin-top: 1.75rem;
+          max-width: 24rem;
+          color: #334155;
+          font-size: 0.9375rem;
+          line-height: 1.6rem;
+        }
+
+        .sales-confirm-clear-info {
+          display: flex;
+          align-items: center;
+          gap: 0.65rem;
+          border: 1px solid #bfdbfe;
+          border-radius: 0.5rem;
+          background: #eff6ff;
+          color: #0f172a;
+          margin-top: 1.25rem;
+          padding: 0.85rem 1rem;
+          font-size: 0.8125rem;
+          line-height: 1.35rem;
+        }
+
+        .sales-confirm-clear-button {
+          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .sales-confirm-clear-actions {
+          display: flex;
+          justify-content: flex-end;
+          gap: 0.75rem;
+          margin-top: 1.75rem;
+        }
+
+        .sales-confirm-clear-cancel:hover,
+        .sales-confirm-clear-cancel:focus-visible {
+          background: #f8fafc;
+          border-color: #cbd5e1;
+          color: #0f172a;
+        }
+
+        .sales-confirm-clear-submit:hover,
+        .sales-confirm-clear-submit:focus-visible {
+          background: #dc2626;
+          box-shadow: 0 8px 18px rgba(220, 38, 38, 0.16);
+        }
+
         @media (max-width: 1100px) {
           .sales-grid {
             grid-template-columns: 1fr;
@@ -478,6 +608,14 @@ export function SalesModule({ user }) {
           }
 
           .sales-history-mobile-detail {
+            display: block;
+          }
+
+          .sales-history-record-button-selected .sales-history-arrow-right {
+            display: none;
+          }
+
+          .sales-history-record-button-selected .sales-history-arrow-down {
             display: block;
           }
 
@@ -504,6 +642,16 @@ export function SalesModule({ user }) {
           .sales-stock-preview-item + .sales-stock-preview-item {
             border-left: 0;
             border-top: 1px solid #d9f99d;
+          }
+
+          .sales-recent-header {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 0.85rem;
+          }
+
+          .sales-recent-header .sales-view-all-button {
+            width: fit-content;
           }
 
           .sales-history-dialog {
@@ -534,6 +682,39 @@ export function SalesModule({ user }) {
           .sales-history-mobile-detail .grid {
             grid-template-columns: 1fr;
           }
+
+          .sales-confirm-clear-dialog {
+            width: min(420px, calc(100vw - 2.5rem));
+          }
+
+          .sales-confirm-clear-content {
+            padding: 1.5rem;
+          }
+
+          .sales-confirm-clear-header {
+            align-items: center;
+            gap: 0.85rem;
+          }
+
+          .sales-confirm-clear-icon {
+            width: 2.875rem;
+            height: 2.875rem;
+          }
+
+          .sales-confirm-clear-message {
+            margin-top: 1.35rem;
+            max-width: none;
+          }
+
+          .sales-confirm-clear-actions {
+            flex-direction: column-reverse;
+            gap: 0.75rem;
+            margin-top: 1.5rem;
+          }
+
+          .sales-confirm-clear-actions button {
+            width: 100%;
+          }
         }
       `}</style>
 
@@ -562,7 +743,7 @@ export function SalesModule({ user }) {
                 Record Sale
               </CardTitle>
               <CardDescription>
-                Select sold items once. Inventory will be deducted after the sale is saved.
+                Select the sold items, enter the quantity and selling price, then save to deduct inventory.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -576,7 +757,7 @@ export function SalesModule({ user }) {
                     <SelectContent>
                       <SelectItem value="walk_in">Walk-in Customer</SelectItem>
                       <SelectItem value="regular">Regular Customer</SelectItem>
-                      <SelectItem value="contractor">Contractor</SelectItem>
+                      <SelectItem value="contractor">Contractor / Project Buyer</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -594,16 +775,6 @@ export function SalesModule({ user }) {
                     <h3 className="text-base font-semibold text-slate-900">Sold Items</h3>
                     <p className="text-sm text-slate-500">Add each product sold in this transaction.</p>
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="sales-action-button border-green-200 text-green-700 hover:border-green-500 hover:bg-green-50 hover:text-green-800"
-                    onClick={addLine}
-                    disabled={isSaving}
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add Item
-                  </Button>
                 </div>
 
                 {saleLines.map((line, index) => {
@@ -622,10 +793,10 @@ export function SalesModule({ user }) {
 
                       <div className="sales-line-fields">
                         <div className="space-y-2">
-                          <Label>Inventory Item</Label>
+                          <Label>Inventory Item <span className="text-red-600">*</span></Label>
                           <Select
                             value={line.inventoryId}
-                            onValueChange={value => updateLine(index, 'inventoryId', value)}
+                            onValueChange={value => updateLineInventoryItem(index, value)}
                             disabled={isSaving}
                           >
                             <SelectTrigger>
@@ -643,9 +814,12 @@ export function SalesModule({ user }) {
                               ))}
                             </SelectContent>
                           </Select>
+                          <p className="text-xs leading-5 text-slate-500">
+                            Choose the product sold to the customer. Each item can be selected once per sale.
+                          </p>
                         </div>
                         <div className="space-y-2">
-                          <Label>Quantity Sold</Label>
+                          <Label>Quantity Sold <span className="text-red-600">*</span></Label>
                           <Input
                             type="text"
                             min="1"
@@ -660,9 +834,12 @@ export function SalesModule({ user }) {
                               sanitizeWholeNumberInput(event.target.value, 'Quantity sold', 'sales-quantity-numbers-only')
                             )}
                           />
+                          <p className="text-xs leading-5 text-slate-500">
+                            Enter whole units only. The quantity cannot exceed current stock.
+                          </p>
                         </div>
                         <div className="space-y-2">
-                          <Label>Unit Price, optional</Label>
+                          <Label>Unit Price <span className="text-red-600">*</span></Label>
                           <Input
                             type="text"
                             min="0"
@@ -673,6 +850,11 @@ export function SalesModule({ user }) {
                             disabled={isSaving}
                             onChange={event => updateLine(index, 'unitPrice', sanitizePriceInput(event.target.value))}
                           />
+                          <p className="text-xs leading-5 text-slate-500">
+                            {selectedItem?.defaultSellingPrice
+                              ? 'Auto-filled from the item default price. Update only if the actual selling price is different.'
+                              : 'Enter the actual selling price used for this sale.'}
+                          </p>
                         </div>
                       </div>
 
@@ -720,6 +902,19 @@ export function SalesModule({ user }) {
                     </div>
                   );
                 })}
+
+                <div className="flex justify-end border-t border-slate-100 pt-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="sales-action-button border-green-200 text-green-700 hover:border-green-500 hover:bg-green-50 hover:text-green-800"
+                    onClick={addLine}
+                    disabled={isSaving}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add Another Item
+                  </Button>
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -755,7 +950,7 @@ export function SalesModule({ user }) {
                   type="button"
                   variant="outline"
                   className="sales-action-button hover:bg-slate-100"
-                  onClick={resetForm}
+                  onClick={handleClearFormRequest}
                   disabled={isSaving}
                 >
                   Clear Form
@@ -766,7 +961,7 @@ export function SalesModule({ user }) {
                   onClick={handleRecordSale}
                   disabled={isSaving}
                 >
-                  {isSaving ? 'Saving Sale...' : 'Record Sale'}
+                  {isSaving ? 'Saving Sale...' : 'Save Sale and Deduct Stock'}
                 </Button>
               </div>
             </CardContent>
@@ -800,8 +995,8 @@ export function SalesModule({ user }) {
 
             <Card className="gap-0 overflow-hidden border-slate-200 bg-white shadow-sm">
               <CardHeader className="pb-2">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
+                <div className="sales-recent-header">
+                  <div className="sales-recent-heading">
                     <CardTitle className="flex items-center gap-2 text-lg">
                       <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
                         <History className="h-5 w-5" />
@@ -894,7 +1089,64 @@ export function SalesModule({ user }) {
         selectedSale={selectedHistorySale}
         onSelectSale={saleId => setSelectedHistorySaleId(currentSaleId => currentSaleId === saleId ? '' : saleId)}
       />
+
+      <ClearSalesFormDialog
+        open={isClearConfirmOpen}
+        onOpenChange={setIsClearConfirmOpen}
+        onConfirm={confirmClearForm}
+      />
     </div>
+  );
+}
+
+function ClearSalesFormDialog({ open, onOpenChange, onConfirm }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sales-confirm-clear-dialog border border-slate-200 bg-white p-0 shadow-2xl">
+        <div className="sales-confirm-clear-content">
+          <DialogHeader className="text-left">
+            <div className="sales-confirm-clear-header">
+              <span className="sales-confirm-clear-icon">
+                <Trash2 className="h-5 w-5" />
+              </span>
+              <div className="min-w-0">
+                <DialogTitle className="text-xl font-bold leading-tight text-slate-950">
+                  Clear sales form?
+                </DialogTitle>
+              </div>
+            </div>
+          </DialogHeader>
+          <DialogDescription className="sales-confirm-clear-message">
+            The details you entered will be removed.
+            <br />
+            This will not affect saved sales records or inventory.
+          </DialogDescription>
+          <div className="sales-confirm-clear-info">
+            <Info className="h-4 w-4 shrink-0 text-blue-600" />
+            <span>
+              Continue only if you want to start a new sales entry.
+            </span>
+          </div>
+          <div className="sales-confirm-clear-actions">
+            <Button
+              type="button"
+              variant="outline"
+              className="sales-confirm-clear-button sales-confirm-clear-cancel h-11 min-w-[132px] bg-white"
+              onClick={() => onOpenChange(false)}
+            >
+              Keep Editing
+            </Button>
+            <Button
+              type="button"
+              className="sales-confirm-clear-button sales-confirm-clear-submit h-11 min-w-[132px] bg-[#FF0000] text-white"
+              onClick={onConfirm}
+            >
+              Clear Form
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1011,7 +1263,8 @@ function SalesHistoryDialog({
                               ? 'border-blue-500 bg-blue-600 text-white'
                               : 'border-slate-200 bg-white text-slate-500 group-hover:border-blue-200 group-hover:bg-white group-hover:text-blue-700'
                           }`}>
-                            {isSelected ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
+                            <ChevronRight className="sales-history-arrow-right h-5 w-5" />
+                            <ChevronDown className="sales-history-arrow-down h-5 w-5" />
                           </span>
                         </div>
                       </div>
