@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Plus, Minus, Archive, Search, Filter, ArrowUpDown, AlertTriangle, Info, PackagePlus, PackageMinus, CheckCircle, Box, Pencil } from "lucide-react";
 import { linearSearch, linearSearchAll, mergeSort } from "../utils/algorithms";
 import { formatDateTime } from "../utils/format";
+import { getStockStatusBadgeClass } from "../utils/statusStyles";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -1657,7 +1658,7 @@ export function InventoryModule({
       toast.error("Failed to archive item", { description: err?.response?.data?.error || err.message });
     }
   };
-  const getStatusBadgeClass = status => status === "In Stock" ? "bg-green-100 text-green-700" : status === "Low Stock" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700";
+  const getStatusBadgeClass = getStockStatusBadgeClass;
   const renderEditDialog = () => (
     <Dialog
       open={isEditDialogOpen}
@@ -3425,7 +3426,7 @@ export function InventoryModule({
   }, item.supplierName || "Unassigned"), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-right"
   }, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
-    className: item.status === "In Stock" ? "bg-green-100 text-green-700" : item.status === "Low Stock" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"
+    className: getStatusBadgeClass(item.status)
   }, item.status)), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-sm text-slate-600 text-right"
   }, formatDateTime(item.lastUpdated)), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement("div", {
@@ -4348,7 +4349,7 @@ export function InventoryModule({
   }, selectedItem?.quantity ?? 0), /*#__PURE__*/React.createElement("span", {
     className: "font-semibold text-slate-600"
   }, "Status:"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement(Badge, {
-    className: `inventory-status-badge ${selectedItem?.status === "In Stock" ? "bg-green-100 text-green-700" : selectedItem?.status === "Low Stock" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"}`
+    className: `inventory-status-badge ${getStatusBadgeClass(selectedItem?.status)}`
   }, selectedItem?.status))))))), (selectedItem?.quantity ?? 0) > 0 && /*#__PURE__*/React.createElement("div", {
     className: "flex items-center text-orange-950",
     style: {

@@ -705,20 +705,20 @@ function AlertCard({ alert, onMarkAsRead, onUnmarkAsRead, onDismiss, onGoToRelat
     if (alert.title === 'Out of Stock') {
       return {
         label: 'Out of Stock',
-        ring: 'ring-red-300',
-        icon: 'text-red-700',
-        badgeStyle: { backgroundColor: '#dc2626', color: '#ffffff', borderColor: '#b91c1c' },
-        containerStyle: { backgroundColor: '#fee2e2', borderColor: '#fecaca' },
+        ring: 'ring-rose-200',
+        icon: 'text-rose-700',
+        badgeStyle: { backgroundColor: '#ffe4e6', color: '#be123c', borderColor: '#fecdd3' },
+        containerStyle: { backgroundColor: '#fff1f2', borderColor: '#fecdd3' },
       };
     }
 
     if (alert.title === 'Low Stock Alert') {
       return {
         label: 'Low Stock',
-        ring: 'ring-orange-300',
-        icon: 'text-orange-800',
-        badgeStyle: { backgroundColor: '#ea580c', color: '#ffffff', borderColor: '#c2410c' },
-        containerStyle: { backgroundColor: '#ffedd5', borderColor: '#fdba74' },
+        ring: 'ring-yellow-200',
+        icon: 'text-yellow-800',
+        badgeStyle: { backgroundColor: '#fef3c7', color: '#92400e', borderColor: '#fcd34d' },
+        containerStyle: { backgroundColor: '#fffbeb', borderColor: '#fde68a' },
       };
     }
 
@@ -796,7 +796,7 @@ function AlertCard({ alert, onMarkAsRead, onUnmarkAsRead, onDismiss, onGoToRelat
               <h4 className="alert-card-title text-sm">{alert.title}</h4>
               <Badge style={tone.badgeStyle}>{tone.label}</Badge>
               {showNewBadge && (
-                <Badge style={{ backgroundColor: '#111827', color: '#ffffff', borderColor: '#111827' }}>
+                <Badge style={{ backgroundColor: '#ede9fe', color: '#5b21b6', borderColor: '#c4b5fd' }}>
                   New
                 </Badge>
               )}

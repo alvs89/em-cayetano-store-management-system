@@ -327,13 +327,14 @@ export function SalesModule({ user }) {
         }
 
         .sales-record-header {
-          padding: 1.4rem 1.4rem 1.05rem;
+          padding: 1.4rem 1.4rem 0.1rem;
         }
 
         .sales-record-content {
           display: grid;
           gap: 1rem;
           padding: 0 1.4rem 1.4rem;
+          margin-top: -0.35rem;
         }
 
         .sales-form-section {

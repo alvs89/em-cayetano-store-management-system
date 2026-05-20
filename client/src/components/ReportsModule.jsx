@@ -1,12 +1,14 @@
 import React from 'react';
 import { useState, useEffect, useRef } from 'react';
-import { Download, Calendar, TrendingUp, Package, AlertTriangle, RefreshCw, FileText } from 'lucide-react';
+import { Download, Calendar, TrendingUp, Package, AlertTriangle, RefreshCw, FileText, Info } from 'lucide-react';
 import { sortByNameAsc, sortByQuantityAsc, linearSearchAll } from '../utils/algorithms';
+import { getStockStatusBadgeClass } from '../utils/statusStyles';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { toast } from 'sonner';
 import { useData } from './DataContext';
 import jsPDF from 'jspdf';
@@ -585,7 +587,7 @@ export function ReportsModule({
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
       doc.text(`Category Filter: ${selectedCategory === 'all' ? 'All Categories' : selectedCategory}`, 20, startY + 8);
-      doc.text(`${isSalesMovementReport ? 'Sales Deductions' : 'Total Movements'}: ${movements.length}`, 20, startY + 14);
+      doc.text(`${isSalesMovementReport ? 'Sales Stock Deductions' : 'Total Movements'}: ${movements.length}`, 20, startY + 14);
       if (isSalesMovementReport) {
         doc.text(`Quantity Sold: ${salesMovementUnits}`, 20, startY + 20);
       } else {
@@ -694,11 +696,359 @@ export function ReportsModule({
       : categoryFiltered;
     return [...filtered].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   };
+
+  const getUniqueMovementItemCount = ({ salesOnly = false } = {}) =>
+    new Set(
+      getFilteredMovements({ salesOnly })
+        .map(movement => movement.inventoryId || movement.productId || movement.itemName)
+        .filter(Boolean)
+    ).size;
+
+  const renderReportsEmptyState = ({ icon: Icon = FileText, title, message }) => (
+    <div className="reports-empty-state">
+      <div className="reports-empty-icon">
+        <Icon className="h-7 w-7" />
+      </div>
+      <h3>{title}</h3>
+      <p>{message}</p>
+    </div>
+  );
+
+  const renderReportHeaderTooltip = (label, message) => (
+    <span className="reports-help-label">
+      <span>{label}</span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="reports-help-trigger"
+            aria-label={`${label}: ${message}`}
+          >
+            <Info className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent
+          side="top"
+          align="center"
+          sideOffset={8}
+          hideArrow
+          className="reports-help-content"
+        >
+          {message}
+        </TooltipContent>
+      </Tooltip>
+    </span>
+  );
+
+  const getStatusCountBadgeClass = status =>
+    status === 'Out of Stock'
+      ? 'reports-count-badge reports-count-badge-out'
+      : status === 'Low Stock'
+        ? 'reports-count-badge reports-count-badge-low'
+        : 'reports-count-badge reports-count-badge-clear';
+
+  const renderInventoryMobileCard = (item, { showCategory = true, showSupplier = true } = {}) => (
+    <article key={item.id} className="reports-record-card">
+      <div className="reports-record-top">
+        <div className="min-w-0">
+          <p className="reports-record-code">{getDisplayItemCode(item)}</p>
+          <h4 className="reports-record-name">{item.name}</h4>
+          <p className="reports-record-meta">
+            {[showCategory ? item.category : null, showSupplier ? item.supplierName || 'Unassigned supplier' : null]
+              .filter(Boolean)
+              .join(' - ')}
+          </p>
+        </div>
+        <Badge className={`shrink-0 ${getStockStatusBadgeClass(item.status)}`}>
+          {item.status}
+        </Badge>
+      </div>
+      <div className="reports-record-grid">
+        <div className="reports-record-stat">
+          <span>Quantity</span>
+          <strong>{item.quantity}</strong>
+        </div>
+        <div className="reports-record-stat">
+          <span>Last Updated</span>
+          <strong>{formatDateTime(item.lastUpdated)}</strong>
+        </div>
+      </div>
+    </article>
+  );
+
+  const renderSupplierReorderMobileCard = item => (
+    <article key={item.id} className="reports-record-card">
+      <div className="reports-record-top">
+        <div className="min-w-0">
+          <p className="reports-record-code">{getDisplayItemCode(item)}</p>
+          <h4 className="reports-record-name">{item.name}</h4>
+          <p className="reports-record-meta">{item.category}</p>
+        </div>
+        <Badge className={`shrink-0 ${getStockStatusBadgeClass(item.status)}`}>
+          {item.status}
+        </Badge>
+      </div>
+      <div className="reports-record-grid reports-record-grid-four">
+        <div className="reports-record-stat">
+          <span>Current Stock</span>
+          <strong>{item.quantity}</strong>
+        </div>
+        <div className="reports-record-stat">
+          <span>Reorder Point</span>
+          <strong>{item.reorderPoint}</strong>
+        </div>
+        <div className="reports-record-stat">
+          <span>Sales Demand</span>
+          <strong>{item.recentSalesDemand}</strong>
+        </div>
+        <div className="reports-record-stat">
+          <span>Suggested Order</span>
+          <strong>{item.suggestedQuantity}</strong>
+        </div>
+      </div>
+    </article>
+  );
+
   return (
     <div className="reports-page min-h-screen bg-gray-50 p-4 md:p-8">
       <style>{`
         .reports-mobile-category-list { display: none; }
         .reports-movement-mobile-list { display: none; }
+        .reports-mobile-record-list { display: none; }
+        .reports-desktop-table { display: block; }
+
+        .reports-help-label {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.375rem;
+          max-width: 100%;
+          white-space: nowrap;
+        }
+
+        .reports-help-trigger {
+          appearance: none;
+          display: inline-flex;
+          height: 1.125rem;
+          width: 1.125rem;
+          min-height: 1.125rem;
+          min-width: 1.125rem;
+          flex: 0 0 auto;
+          align-items: center;
+          justify-content: center;
+          border: 0;
+          border-radius: 999px;
+          background: transparent;
+          color: #64748b;
+          cursor: help;
+          line-height: 1;
+          padding: 0;
+          transition: border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+        }
+
+        .reports-help-trigger:hover,
+        .reports-help-trigger:focus-visible {
+          border-color: transparent;
+          background: transparent;
+          color: #64748b;
+          outline: none;
+          box-shadow: none;
+        }
+
+        .reports-help-trigger:focus,
+        .reports-help-trigger:active,
+        .reports-help-trigger[data-state='delayed-open'],
+        .reports-help-trigger[data-state='instant-open'] {
+          border-color: transparent;
+          background: transparent;
+          color: #64748b;
+          outline: none;
+          box-shadow: none;
+        }
+
+        .reports-help-content {
+          z-index: 100;
+          width: auto;
+          max-width: min(17rem, calc(100vw - 2rem));
+          border: 1px solid #cbd5e1;
+          border-radius: 0.625rem;
+          padding: 0.6rem 0.75rem;
+          background: #ffffff;
+          color: #334155;
+          font-size: 0.75rem;
+          line-height: 1.4;
+          font-weight: 500;
+          text-align: left;
+          box-shadow: 0 10px 22px rgba(15, 23, 42, 0.12);
+          white-space: normal;
+        }
+
+        .reports-help-content svg {
+          display: none;
+        }
+
+        @media (hover: none), (pointer: coarse) {
+          .reports-help-trigger,
+          .reports-help-trigger:hover,
+          .reports-help-trigger:focus,
+          .reports-help-trigger:focus-visible {
+            -webkit-tap-highlight-color: transparent;
+            border-color: transparent;
+            background: transparent;
+            color: #64748b;
+            box-shadow: none;
+            outline: none;
+          }
+
+          .reports-help-trigger[data-state='delayed-open'],
+          .reports-help-trigger[data-state='instant-open'] {
+            border-color: transparent;
+            background: transparent;
+            color: #64748b;
+            box-shadow: none;
+            outline: none;
+          }
+        }
+
+        .reports-empty-state {
+          display: flex;
+          min-height: 220px;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          border: 1px dashed #cbd5e1;
+          border-radius: 16px;
+          background: #f8fafc;
+          padding: 34px 22px;
+          text-align: center;
+          color: #64748b;
+        }
+
+        .reports-empty-icon {
+          display: flex;
+          height: 54px;
+          width: 54px;
+          align-items: center;
+          justify-content: center;
+          border-radius: 16px;
+          background: #ffffff;
+          color: #475569;
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+        }
+
+        .reports-empty-state h3 {
+          margin-top: 14px;
+          color: #0f172a;
+          font-size: 18px;
+          font-weight: 750;
+          line-height: 1.3;
+        }
+
+        .reports-empty-state p {
+          margin-top: 6px;
+          max-width: 560px;
+          font-size: 14px;
+          line-height: 1.55;
+        }
+
+        .reports-record-card {
+          min-width: 0;
+          border: 1px solid #e2e8f0;
+          border-radius: 14px;
+          background: #ffffff;
+          padding: 12px;
+          box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05);
+        }
+
+        .reports-record-top {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 10px;
+          margin-bottom: 10px;
+        }
+
+        .reports-record-code {
+          margin-bottom: 3px;
+          color: #64748b;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+          font-size: 12px;
+          line-height: 1.2;
+          overflow-wrap: anywhere;
+        }
+
+        .reports-record-name {
+          color: #0f172a;
+          font-size: 15px;
+          font-weight: 800;
+          line-height: 1.25;
+          overflow-wrap: anywhere;
+        }
+
+        .reports-record-meta {
+          margin-top: 4px;
+          color: #64748b;
+          font-size: 12px;
+          line-height: 1.35;
+          overflow-wrap: anywhere;
+        }
+
+        .reports-record-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 8px;
+        }
+
+        .reports-record-stat {
+          min-width: 0;
+          border-radius: 12px;
+          background: #f8fafc;
+          padding: 9px;
+        }
+
+        .reports-record-stat span {
+          display: block;
+          margin-bottom: 4px;
+          color: #64748b;
+          font-size: 10px;
+          font-weight: 800;
+          line-height: 1.2;
+          text-transform: uppercase;
+        }
+
+        .reports-record-stat strong {
+          display: block;
+          color: #0f172a;
+          font-size: 14px;
+          line-height: 1.25;
+          overflow-wrap: anywhere;
+        }
+
+        .reports-count-badge {
+          border-radius: 999px;
+          font-weight: 600;
+          box-shadow: none;
+        }
+
+        .reports-count-badge-out,
+        .reports-count-badge-out:hover {
+          border-color: #be123c;
+          background: #be123c;
+          color: #ffffff;
+        }
+
+        .reports-count-badge-low,
+        .reports-count-badge-low:hover {
+          border-color: #eab308;
+          background: #facc15;
+          color: #422006;
+        }
+
+        .reports-count-badge-clear,
+        .reports-count-badge-clear:hover {
+          border-color: #e2e8f0;
+          background: #f1f5f9;
+          color: #334155;
+        }
 
         @media (max-width: 767px) {
           .reports-page { padding: 14px; }
@@ -811,6 +1161,10 @@ export function ReportsModule({
           .reports-category-title { margin-bottom: 10px; font-size: 18px; }
           .reports-category-table { display: none; }
           .reports-mobile-category-list { display: grid; gap: 10px; }
+          .reports-empty-state { min-height: 190px; padding: 26px 16px; }
+          .reports-empty-icon { height: 48px; width: 48px; border-radius: 14px; }
+          .reports-empty-state h3 { font-size: 16px; }
+          .reports-empty-state p { font-size: 13px; }
           .reports-mobile-category-card { min-width: 0; border: 1px solid #e2e8f0; border-radius: 14px; background: #ffffff; padding: 12px; box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05); }
           .reports-mobile-category-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
           .reports-mobile-category-name { min-width: 0; overflow-wrap: anywhere; font-size: 15px; line-height: 1.25; font-weight: 800; color: #0f172a; }
@@ -818,7 +1172,12 @@ export function ReportsModule({
           .reports-mobile-category-stat { min-width: 0; border-radius: 12px; background: #f8fafc; padding: 10px; }
           .reports-mobile-category-stat span { display: block; margin-bottom: 4px; font-size: 11px; font-weight: 800; color: #64748b; text-transform: uppercase; }
           .reports-mobile-category-stat strong { display: block; font-size: 17px; line-height: 1.1; color: #0f172a; }
-          .reports-data-card [data-card-content] { overflow-x: auto; }
+          .reports-data-card { gap: 0; }
+          .reports-data-card [data-slot='card-header'] { padding-bottom: 8px; }
+          .reports-data-card [data-slot='card-content'] { padding-top: 0; }
+          .reports-desktop-table { display: none; }
+          .reports-mobile-record-list { display: grid; gap: 10px; }
+          .reports-data-card [data-card-content] { overflow-x: visible; }
           .reports-movement-desktop-table { display: none; }
           .reports-movement-mobile-list { display: grid; gap: 10px; }
           .reports-movement-card { min-width: 0; border: 1px solid #e2e8f0; border-radius: 14px; background: #ffffff; padding: 12px; box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05); }
@@ -976,10 +1335,10 @@ export function ReportsModule({
 
       <div className={`reports-metric-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
         {(reportType === 'movements' || reportType === 'sales-movements' ? [
-          { label: reportType === 'sales-movements' ? 'Sales Deductions' : 'Movements', value: getFilteredMovements({ salesOnly: reportType === 'sales-movements' }).length, icon: <RefreshCw className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
+          { label: reportType === 'sales-movements' ? 'Sales Stock Deductions' : 'Movements', value: getFilteredMovements({ salesOnly: reportType === 'sales-movements' }).length, icon: <RefreshCw className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
           { label: reportType === 'sales-movements' ? 'Quantity Sold' : 'Stock In Units', value: reportType === 'sales-movements' ? salesMovementUnits : stockInUnits, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
-          { label: reportType === 'sales-movements' ? 'Sales Reason' : 'Stock Out Units', value: reportType === 'sales-movements' ? 'Sales' : stockOutUnits, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: reportType === 'sales-movements' || stockOutUnits > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
-          { label: 'Categories', value: new Set(getFilteredMovements({ salesOnly: reportType === 'sales-movements' }).map(movement => movement.category)).size, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
+          { label: reportType === 'sales-movements' ? 'Unique Items Sold' : 'Stock Out Units', value: reportType === 'sales-movements' ? getUniqueMovementItemCount({ salesOnly: true }) : stockOutUnits, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: reportType === 'sales-movements' || stockOutUnits > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
+          { label: reportType === 'sales-movements' ? 'Categories Sold' : 'Categories', value: new Set(getFilteredMovements({ salesOnly: reportType === 'sales-movements' }).map(movement => movement.category)).size, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
         ] : reportType === 'supplier-reorder' ? [
           { label: 'Supplier Groups', value: getSupplierReorderGroups().length, icon: <Package className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
           { label: 'Reorder Items', value: getSupplierReorderGroups().reduce((sum, group) => sum + group.itemCount, 0), icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: 'border-l-red-500' },
@@ -989,7 +1348,7 @@ export function ReportsModule({
           { label: 'Total Items', value: totalItems, icon: <Package className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
           { label: 'Total Units', value: totalQuantity, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
           { label: 'Categories', value: categories.length, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
-          { label: 'Needs Attention', value: attentionItems, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: attentionItems > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
+          { label: 'Stock Needs Attention', value: attentionItems, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: attentionItems > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
         ]).map(metric => (
           <Card key={metric.label} className={`reports-metric-card border-l-4 ${metric.color}`}>
             <CardContent className="pt-6" data-reports-metric-content>
@@ -1030,62 +1389,78 @@ export function ReportsModule({
 
               <div className="reports-category-breakdown">
                 <h3 className="reports-category-title font-semibold mb-3">Category Breakdown</h3>
-                <div className="reports-category-table">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Category</TableHead>
-                        <TableHead>Items</TableHead>
-                        <TableHead>Total Units</TableHead>
-                        <TableHead>Low Stock</TableHead>
-                        <TableHead>Out of Stock</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
+                {getCategorySummary().length === 0 ? (
+                  renderReportsEmptyState({
+                    icon: Package,
+                    title: 'No category breakdown available',
+                    message: `No inventory items are available for the selected ${reportPeriod} period. Try another date range or add inventory records first.`
+                  })
+                ) : (
+                  <>
+                    <div className="reports-category-table">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Category</TableHead>
+                            <TableHead>Items</TableHead>
+                            <TableHead>Total Units</TableHead>
+                            <TableHead>Low Stock</TableHead>
+                            <TableHead>Out of Stock</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {getCategorySummary().map(cat => (
+                            <TableRow key={cat.category}>
+                              <TableCell className="font-medium">{cat.category}</TableCell>
+                              <TableCell>{cat.itemCount}</TableCell>
+                              <TableCell>{cat.totalQty}</TableCell>
+                              <TableCell>
+                                {cat.lowStock > 0 ? <Badge className={getStatusCountBadgeClass('Low Stock')}>{cat.lowStock}</Badge> : <Badge variant="outline">0</Badge>}
+                              </TableCell>
+                              <TableCell>
+                                {cat.outOfStock > 0 ? <Badge className={getStatusCountBadgeClass('Out of Stock')}>{cat.outOfStock}</Badge> : <Badge variant="outline">0</Badge>}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <div className="reports-mobile-category-list">
                       {getCategorySummary().map(cat => (
-                        <TableRow key={cat.category}>
-                          <TableCell className="font-medium">{cat.category}</TableCell>
-                          <TableCell>{cat.itemCount}</TableCell>
-                          <TableCell>{cat.totalQty}</TableCell>
-                          <TableCell>
-                            {cat.lowStock > 0 ? <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100">{cat.lowStock}</Badge> : <Badge variant="outline">0</Badge>}
-                          </TableCell>
-                          <TableCell>
-                            {cat.outOfStock > 0 ? <Badge variant="destructive">{cat.outOfStock}</Badge> : <Badge variant="outline">0</Badge>}
-                          </TableCell>
-                        </TableRow>
+                        <article key={cat.category} className="reports-mobile-category-card">
+                          <div className="reports-mobile-category-top">
+                            <h4 className="reports-mobile-category-name">{cat.category}</h4>
+                            {cat.outOfStock > 0 ? (
+                              <Badge className={getStatusCountBadgeClass('Out of Stock')}>{cat.outOfStock} Out of Stock</Badge>
+                            ) : cat.lowStock > 0 ? (
+                              <Badge className={getStatusCountBadgeClass('Low Stock')}>{cat.lowStock} Low Stock</Badge>
+                            ) : (
+                              <Badge className={getStatusCountBadgeClass('Clear')}>Clear</Badge>
+                            )}
+                          </div>
+                          <div className="reports-mobile-category-stats">
+                            <div className="reports-mobile-category-stat">
+                              <span>Items</span>
+                              <strong>{cat.itemCount}</strong>
+                            </div>
+                            <div className="reports-mobile-category-stat">
+                              <span>Total Units</span>
+                              <strong>{cat.totalQty}</strong>
+                            </div>
+                            <div className="reports-mobile-category-stat">
+                              <span>Low Stock</span>
+                              <strong className="text-yellow-800">{cat.lowStock}</strong>
+                            </div>
+                            <div className="reports-mobile-category-stat">
+                              <span>Out of Stock</span>
+                              <strong className="text-red-800">{cat.outOfStock}</strong>
+                            </div>
+                          </div>
+                        </article>
                       ))}
-                    </TableBody>
-                  </Table>
-                </div>
-                <div className="reports-mobile-category-list">
-                  {getCategorySummary().map(cat => (
-                    <article key={cat.category} className="reports-mobile-category-card">
-                      <div className="reports-mobile-category-top">
-                        <h4 className="reports-mobile-category-name">{cat.category}</h4>
-                        {cat.outOfStock > 0 ? <Badge variant="destructive">{cat.outOfStock} Out</Badge> : cat.lowStock > 0 ? <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100">{cat.lowStock} Low</Badge> : <Badge variant="outline">Clear</Badge>}
-                      </div>
-                      <div className="reports-mobile-category-stats">
-                        <div className="reports-mobile-category-stat">
-                          <span>Items</span>
-                          <strong>{cat.itemCount}</strong>
-                        </div>
-                        <div className="reports-mobile-category-stat">
-                          <span>Total Units</span>
-                          <strong>{cat.totalQty}</strong>
-                        </div>
-                        <div className="reports-mobile-category-stat">
-                          <span>Low Stock</span>
-                          <strong className="text-yellow-800">{cat.lowStock}</strong>
-                        </div>
-                        <div className="reports-mobile-category-stat">
-                          <span>Out of Stock</span>
-                          <strong className="text-red-800">{cat.outOfStock}</strong>
-                        </div>
-                      </div>
-                    </article>
-                  ))}
-                </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </CardContent>
@@ -1099,36 +1474,51 @@ export function ReportsModule({
             <CardDescription>{selectedCategory === 'all' ? 'All items' : `${selectedCategory} category`} - {getFilteredInventory().length} items</CardDescription>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Item Code</TableHead>
-                  <TableHead>Item Name</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Supplier</TableHead>
-                  <TableHead>Quantity</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Last Updated</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {getFilteredInventory().map(item => (
-                  <TableRow key={item.id}>
-                    <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
-                    <TableCell>{item.name}</TableCell>
-                    <TableCell>{item.category}</TableCell>
-                    <TableCell>{item.supplierName || 'Unassigned'}</TableCell>
-                    <TableCell>{item.quantity}</TableCell>
-                    <TableCell>
-                      <Badge className={item.status === 'In Stock' ? 'bg-green-100 text-green-700' : item.status === 'Low Stock' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}>
-                        {item.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{formatDateTime(item.lastUpdated)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            {getFilteredInventory().length === 0 ? (
+              renderReportsEmptyState({
+                icon: Package,
+                title: 'No inventory items found',
+                message: `No active inventory records match the selected ${reportPeriod} period${selectedCategory === 'all' ? '' : ` and ${selectedCategory} category`}. Try changing the date range, report period, or category filter.`
+              })
+            ) : (
+              <>
+                <div className="reports-desktop-table">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Supplier</TableHead>
+                        <TableHead>Quantity</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Last Updated</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {getFilteredInventory().map(item => (
+                        <TableRow key={item.id}>
+                          <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
+                          <TableCell>{item.name}</TableCell>
+                          <TableCell>{item.category}</TableCell>
+                          <TableCell>{item.supplierName || 'Unassigned'}</TableCell>
+                          <TableCell>{item.quantity}</TableCell>
+                          <TableCell>
+                            <Badge className={getStockStatusBadgeClass(item.status)}>
+                              {item.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{formatDateTime(item.lastUpdated)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="reports-mobile-record-list">
+                  {getFilteredInventory().map(item => renderInventoryMobileCard(item))}
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
       )}
@@ -1141,41 +1531,49 @@ export function ReportsModule({
           </CardHeader>
           <CardContent>
             {getLowStockItems().length === 0 ? (
-              <div className="text-center py-8 text-slate-500">
-                <AlertTriangle className="w-12 h-12 mx-auto mb-3 text-green-500" />
-                <p>No low stock or out-of-stock items found for this report period.</p>
-              </div>
+              renderReportsEmptyState({
+                icon: AlertTriangle,
+                title: 'No low-stock items found',
+                message: `No low-stock or out-of-stock items match the selected ${reportPeriod} period${selectedCategory === 'all' ? '' : ` and ${selectedCategory} category`}. Try another date range or category if you expected restocking items.`
+              })
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Item Code</TableHead>
-                    <TableHead>Item Name</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Supplier</TableHead>
-                    <TableHead>Quantity</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Last Updated</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {getLowStockItems().map(item => (
-                    <TableRow key={item.id}>
-                      <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
-                      <TableCell>{item.name}</TableCell>
-                      <TableCell>{item.category}</TableCell>
-                      <TableCell>{item.supplierName || 'Unassigned'}</TableCell>
-                      <TableCell className="font-bold">{item.quantity}</TableCell>
-                      <TableCell>
-                        <Badge className={item.status === 'Low Stock' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}>
-                          {item.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>{formatDateTime(item.lastUpdated)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <>
+                <div className="reports-desktop-table">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Supplier</TableHead>
+                        <TableHead>Quantity</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Last Updated</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {getLowStockItems().map(item => (
+                        <TableRow key={item.id}>
+                          <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
+                          <TableCell>{item.name}</TableCell>
+                          <TableCell>{item.category}</TableCell>
+                          <TableCell>{item.supplierName || 'Unassigned'}</TableCell>
+                          <TableCell className="font-bold">{item.quantity}</TableCell>
+                          <TableCell>
+                            <Badge className={getStockStatusBadgeClass(item.status)}>
+                              {item.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{formatDateTime(item.lastUpdated)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="reports-mobile-record-list">
+                  {getLowStockItems().map(item => renderInventoryMobileCard(item))}
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -1185,9 +1583,12 @@ export function ReportsModule({
         <div className={`space-y-4 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
           {getSupplierReorderGroups().length === 0 ? (
             <Card className="reports-data-card">
-              <CardContent className="py-10 text-center text-slate-500">
-                <AlertTriangle className="mx-auto mb-3 h-12 w-12 text-green-500" />
-                <p>No low-stock or out-of-stock items require supplier-based reordering for this report period.</p>
+              <CardContent>
+                {renderReportsEmptyState({
+                  icon: Package,
+                  title: 'No supplier reorder items found',
+                  message: `No low-stock or out-of-stock items require supplier-based reordering for the selected ${reportPeriod} period${selectedCategory === 'all' ? '' : ` and ${selectedCategory} category`}. Try another date range or review current inventory levels.`
+                })}
               </CardContent>
             </Card>
           ) : (
@@ -1202,44 +1603,59 @@ export function ReportsModule({
                       </CardDescription>
                     </div>
                     <div className="flex shrink-0 flex-wrap justify-end gap-2">
-                      {group.outOfStock > 0 && <Badge variant="destructive">{group.outOfStock} Out</Badge>}
-                      {group.lowStock > 0 && <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100">{group.lowStock} Low</Badge>}
+                      {group.outOfStock > 0 && <Badge className={getStatusCountBadgeClass('Out of Stock')}>{group.outOfStock} Out of Stock</Badge>}
+                      {group.lowStock > 0 && <Badge className={getStatusCountBadgeClass('Low Stock')}>{group.lowStock} Low Stock</Badge>}
                     </div>
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Item Code</TableHead>
-                        <TableHead>Item Name</TableHead>
-                        <TableHead>Category</TableHead>
-                        <TableHead>Current Stock</TableHead>
-                        <TableHead>Reorder Point</TableHead>
-                        <TableHead>Sales Demand</TableHead>
-                        <TableHead>Suggested Order</TableHead>
-                        <TableHead>Status</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {group.items.map(item => (
-                        <TableRow key={item.id}>
-                          <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
-                          <TableCell>{item.name}</TableCell>
-                          <TableCell>{item.category}</TableCell>
-                          <TableCell className="font-semibold">{item.quantity}</TableCell>
-                          <TableCell>{item.reorderPoint}</TableCell>
-                          <TableCell>{item.recentSalesDemand}</TableCell>
-                          <TableCell className="font-semibold text-slate-950">{item.suggestedQuantity}</TableCell>
-                          <TableCell>
-                            <Badge className={item.status === 'Low Stock' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}>
-                              {item.status}
-                            </Badge>
-                          </TableCell>
+                  <div className="reports-desktop-table">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Item Code</TableHead>
+                          <TableHead>Item Name</TableHead>
+                          <TableHead>Category</TableHead>
+                          <TableHead>Current Stock</TableHead>
+                          <TableHead>Reorder Point</TableHead>
+                          <TableHead>
+                            {renderReportHeaderTooltip(
+                              'Sales Demand',
+                              'Units sold during the selected report period. This helps estimate how much stock may be needed soon.'
+                            )}
+                          </TableHead>
+                          <TableHead>
+                            {renderReportHeaderTooltip(
+                              'Suggested Order',
+                              'Recommended quantity to order. It covers the stock shortage and recent sales demand.'
+                            )}
+                          </TableHead>
+                          <TableHead>Status</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {group.items.map(item => (
+                          <TableRow key={item.id}>
+                            <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
+                            <TableCell>{item.name}</TableCell>
+                            <TableCell>{item.category}</TableCell>
+                            <TableCell className="font-semibold">{item.quantity}</TableCell>
+                            <TableCell>{item.reorderPoint}</TableCell>
+                            <TableCell>{item.recentSalesDemand}</TableCell>
+                            <TableCell className="font-semibold text-slate-950">{item.suggestedQuantity}</TableCell>
+                            <TableCell>
+                              <Badge className={getStockStatusBadgeClass(item.status)}>
+                                {item.status}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <div className="reports-mobile-record-list">
+                    {group.items.map(item => renderSupplierReorderMobileCard(item))}
+                  </div>
                 </CardContent>
               </Card>
             ))
@@ -1249,13 +1665,23 @@ export function ReportsModule({
 
       {reportType === 'category' && (
         <div className={`space-y-4 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
-          {categories.map(category => {
+          {categories.length === 0 ? (
+            <Card className="reports-data-card">
+              <CardContent>
+                {renderReportsEmptyState({
+                  icon: Package,
+                  title: 'No category data found',
+                  message: `No inventory items are available for category analysis in the selected ${reportPeriod} period. Try another date range or add inventory records first.`
+                })}
+              </CardContent>
+            </Card>
+          ) : categories.map(category => {
             const categoryItems = reportInventory.filter(item => item.category === category);
             const categoryQty = categoryItems.reduce((sum, item) => sum + item.quantity, 0);
             const categoryLowStock = categoryItems.filter(item => item.status === 'Low Stock').length;
             const categoryOutOfStock = categoryItems.filter(item => item.status === 'Out of Stock').length;
             return (
-              <Card key={category} className="reports-data-card">
+              <Card key={category} className="reports-data-card reports-category-analysis-card">
                 <CardHeader>
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
@@ -1263,40 +1689,45 @@ export function ReportsModule({
                       <CardDescription>{categoryItems.length} items • {categoryQty} total units</CardDescription>
                     </div>
                     <div className="flex shrink-0 flex-wrap justify-end gap-2">
-                      {categoryLowStock > 0 && <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100">{categoryLowStock} Low Stock</Badge>}
-                      {categoryOutOfStock > 0 && <Badge variant="destructive">{categoryOutOfStock} Out of Stock</Badge>}
+                      {categoryLowStock > 0 && <Badge className={getStatusCountBadgeClass('Low Stock')}>{categoryLowStock} Low Stock</Badge>}
+                      {categoryOutOfStock > 0 && <Badge className={getStatusCountBadgeClass('Out of Stock')}>{categoryOutOfStock} Out of Stock</Badge>}
                     </div>
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Item Code</TableHead>
-                        <TableHead>Item Name</TableHead>
-                        <TableHead>Supplier</TableHead>
-                        <TableHead>Quantity</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Last Updated</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {categoryItems.map(item => (
-                        <TableRow key={item.id}>
-                          <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
-                          <TableCell>{item.name}</TableCell>
-                          <TableCell>{item.supplierName || 'Unassigned'}</TableCell>
-                          <TableCell>{item.quantity}</TableCell>
-                          <TableCell>
-                            <Badge className={item.status === 'In Stock' ? 'bg-green-100 text-green-700' : item.status === 'Low Stock' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}>
-                              {item.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>{formatDateTime(item.lastUpdated)}</TableCell>
+                  <div className="reports-desktop-table">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Item Code</TableHead>
+                          <TableHead>Item Name</TableHead>
+                          <TableHead>Supplier</TableHead>
+                          <TableHead>Quantity</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Last Updated</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {categoryItems.map(item => (
+                          <TableRow key={item.id}>
+                            <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
+                            <TableCell>{item.name}</TableCell>
+                            <TableCell>{item.supplierName || 'Unassigned'}</TableCell>
+                            <TableCell>{item.quantity}</TableCell>
+                            <TableCell>
+                              <Badge className={getStockStatusBadgeClass(item.status)}>
+                                {item.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>{formatDateTime(item.lastUpdated)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <div className="reports-mobile-record-list">
+                    {categoryItems.map(item => renderInventoryMobileCard(item, { showCategory: false }))}
+                  </div>
                 </CardContent>
               </Card>
             );
@@ -1314,10 +1745,13 @@ export function ReportsModule({
           </CardHeader>
           <CardContent>
             {getFilteredMovements({ salesOnly: reportType === 'sales-movements' }).length === 0 ? (
-              <div className="text-center py-8 text-slate-500">
-                <RefreshCw className="w-12 h-12 mx-auto mb-3 text-slate-400" />
-                <p>{reportType === 'sales-movements' ? 'No sales-based stock deductions found for this report period.' : 'No stock movements found for this report period.'}</p>
-              </div>
+              renderReportsEmptyState({
+                icon: RefreshCw,
+                title: reportType === 'sales-movements' ? 'No sales deductions found' : 'No stock movements found',
+                message: reportType === 'sales-movements'
+                  ? `No sales-based inventory deductions match the selected ${reportPeriod} period${selectedCategory === 'all' ? '' : ` and ${selectedCategory} category`}. Try another date range or record a sale first.`
+                  : `No stock in, stock out, or sales movement records match the selected ${reportPeriod} period${selectedCategory === 'all' ? '' : ` and ${selectedCategory} category`}. Try another date range or category filter.`
+              })
             ) : (
               <>
                 <div className="reports-movement-desktop-table">
@@ -1925,7 +2359,7 @@ export function ReportsModule({
   }, /*#__PURE__*/React.createElement(TableCell, {
     className: "font-mono text-sm"
   }, getDisplayItemCode(item)), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, null, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
-    className: item.status === 'In Stock' ? 'bg-green-100 text-green-700' : item.status === 'Low Stock' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+    className: getStockStatusBadgeClass(item.status)
   }, item.status)), /*#__PURE__*/React.createElement(TableCell, null, formatDateTime(item.lastUpdated))))))), reportType === 'low-stock' && /*#__PURE__*/React.createElement(Card, {
     className: `transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`
   }, /*#__PURE__*/React.createElement(CardHeader, null, /*#__PURE__*/React.createElement(CardTitle, null, "Low Stock Alert"), /*#__PURE__*/React.createElement(CardDescription, null, "Items requiring immediate attention - ", getLowStockItems().length, " items")), /*#__PURE__*/React.createElement(CardContent, null, getLowStockItems().length === 0 ? /*#__PURE__*/React.createElement("div", {
@@ -1939,7 +2373,7 @@ export function ReportsModule({
   }, getDisplayItemCode(item)), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, {
     className: "font-bold"
   }, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
-    className: item.status === 'Low Stock' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+    className: getStockStatusBadgeClass(item.status)
   }, item.status)), /*#__PURE__*/React.createElement(TableCell, null, formatDateTime(item.lastUpdated))))))), reportType === 'category' && /*#__PURE__*/React.createElement("div", {
     className: `space-y-4 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`
   }, categories.map(category => {
@@ -1957,7 +2391,7 @@ export function ReportsModule({
     }, /*#__PURE__*/React.createElement(TableCell, {
       className: "font-mono text-sm"
     }, getDisplayItemCode(item)), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
-      className: item.status === 'In Stock' ? 'bg-green-100 text-green-700' : item.status === 'Low Stock' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+      className: getStockStatusBadgeClass(item.status)
     }, item.status)), /*#__PURE__*/React.createElement(TableCell, null, formatDateTime(item.lastUpdated))))))));
   }))));
 }

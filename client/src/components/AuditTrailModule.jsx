@@ -1,5 +1,5 @@
 import React from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { ArrowRight, CalendarDays, Clock, Database, Eye, RefreshCw, Search, ShieldCheck } from 'lucide-react';
 import { apiUrl } from '../utils/api';
@@ -134,6 +134,9 @@ export function AuditTrailModule({ user }) {
   const [actionFilter, setActionFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState('all');
   const [showAllRecords, setShowAllRecords] = useState(false);
+  const [floatingButtonPosition, setFloatingButtonPosition] = useState(null);
+  const auditRecordsPanelRef = useRef(null);
+  const viewAllFooterRef = useRef(null);
 
   const fetchAuditLogs = async () => {
     setLoading(true);
@@ -196,7 +199,57 @@ export function AuditTrailModule({ user }) {
 
   useEffect(() => {
     setShowAllRecords(false);
+    setFloatingButtonPosition(null);
   }, [searchQuery, actionFilter, dateFilter]);
+
+  useEffect(() => {
+    if (!showAllRecords || !floatingButtonPosition) return undefined;
+
+    let frameId = null;
+    const updateFloatingButtonPosition = () => {
+      if (frameId) cancelAnimationFrame(frameId);
+      frameId = requestAnimationFrame(() => {
+        const panelBounds = auditRecordsPanelRef.current?.getBoundingClientRect();
+        if (!panelBounds) return;
+        setFloatingButtonPosition(prev => prev ? {
+          ...prev,
+          left: panelBounds.left + panelBounds.width / 2
+        } : prev);
+      });
+    };
+
+    updateFloatingButtonPosition();
+
+    const resizeObserver = typeof ResizeObserver !== 'undefined' && auditRecordsPanelRef.current
+      ? new ResizeObserver(updateFloatingButtonPosition)
+      : null;
+
+    resizeObserver?.observe(auditRecordsPanelRef.current);
+    window.addEventListener('resize', updateFloatingButtonPosition);
+
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', updateFloatingButtonPosition);
+    };
+  }, [showAllRecords]);
+
+  const handleShowAllRecords = () => {
+    const footerBounds = viewAllFooterRef.current?.getBoundingClientRect();
+    const panelBounds = auditRecordsPanelRef.current?.getBoundingClientRect();
+    if (footerBounds) {
+      setFloatingButtonPosition({
+        left: panelBounds ? panelBounds.left + panelBounds.width / 2 : footerBounds.left + footerBounds.width / 2,
+        top: footerBounds.top + footerBounds.height / 2 + 10
+      });
+    }
+    setShowAllRecords(true);
+  };
+
+  const handleShowFewerRecords = () => {
+    setShowAllRecords(false);
+    setFloatingButtonPosition(null);
+  };
 
   return (
     <div className="audit-trail-page min-h-screen bg-gray-50 p-4 md:p-8">
@@ -303,6 +356,20 @@ export function AuditTrailModule({ user }) {
           background: #BFDBFE !important;
         }
 
+        .audit-floating-collapse {
+          position: fixed;
+          z-index: 45;
+          display: flex;
+          justify-content: center;
+          transform: translate(-50%, -50%);
+          pointer-events: none;
+          transition: left 240ms ease, top 240ms ease, bottom 240ms ease;
+        }
+
+        .audit-floating-collapse .audit-view-all-button {
+          pointer-events: auto;
+        }
+
         @media (max-width: 1100px) {
           .audit-filter-grid {
             grid-template-columns: minmax(0, 1fr) minmax(220px, 0.7fr);
@@ -361,8 +428,27 @@ export function AuditTrailModule({ user }) {
           }
 
           .audit-record-row {
+            position: relative;
             gap: 12px;
             padding: 16px;
+            padding-top: 52px;
+          }
+
+          .audit-floating-collapse {
+            transform: translate(-50%, -50%);
+          }
+
+          .audit-floating-collapse .audit-view-all-button {
+            width: auto;
+            height: 40px;
+            min-width: 0;
+          }
+
+          .audit-action-badge-cell {
+            position: absolute;
+            right: 16px;
+            top: 16px;
+            text-align: right;
           }
         }
       `}</style>
@@ -507,7 +593,7 @@ export function AuditTrailModule({ user }) {
               <p>No audit records match the current filters.</p>
             </div>
           ) : (
-            <div className="overflow-hidden rounded-xl border border-slate-200">
+            <div ref={auditRecordsPanelRef} className="overflow-hidden rounded-xl border border-slate-200">
               {visibleLogs.map((log, index) => {
                 const group = getActionGroup(log.action);
                 const details = getDetailEntries(log.details);
@@ -548,7 +634,7 @@ export function AuditTrailModule({ user }) {
                       <p className="mt-1 text-sm font-semibold text-slate-800">{log.actorId || 'System'}</p>
                     </div>
 
-                    <div className="lg:text-right">
+                    <div className="audit-action-badge-cell lg:text-right">
                       <Badge className={`inline-flex min-h-7 items-center justify-center rounded-lg px-3 py-1 text-center ${getActionBadgeClass(group)}`}>
                         {ACTION_GROUPS[group]}
                       </Badge>
@@ -556,16 +642,16 @@ export function AuditTrailModule({ user }) {
                   </article>
                 );
               })}
-              {hasMoreRecords && (
-                <div className="border-t border-slate-200 bg-white px-4 py-4 text-center">
+              {hasMoreRecords && !showAllRecords && (
+                <div ref={viewAllFooterRef} className="border-t border-slate-200 bg-white px-4 py-4 text-center">
                   <Button
                     type="button"
                     variant="outline"
                     className="audit-view-all-button h-10 rounded-xl px-5"
-                    onClick={() => setShowAllRecords(prev => !prev)}
+                    onClick={handleShowAllRecords}
                   >
-                    {showAllRecords ? 'Show fewer records' : `View all records (${filteredLogs.length})`}
-                    <ArrowRight className={`ml-2 h-4 w-4 ${showAllRecords ? '-rotate-90' : ''}`} />
+                    {`View all records (${filteredLogs.length})`}
+                    <ArrowRight className="ml-2 h-4 w-4" />
                   </Button>
                 </div>
               )}
@@ -573,6 +659,28 @@ export function AuditTrailModule({ user }) {
           )}
         </CardContent>
       </Card>
+
+      {hasMoreRecords && showAllRecords && (
+        <div
+          className="audit-floating-collapse"
+          aria-live="polite"
+          style={{
+            left: floatingButtonPosition ? `${floatingButtonPosition.left}px` : '50%',
+            top: floatingButtonPosition ? `${floatingButtonPosition.top}px` : 'auto',
+            bottom: floatingButtonPosition ? 'auto' : '28px'
+          }}
+        >
+          <Button
+            type="button"
+            variant="outline"
+            className="audit-view-all-button h-10 rounded-xl px-5"
+            onClick={handleShowFewerRecords}
+          >
+            Show fewer records
+            <ArrowRight className="ml-2 h-4 w-4 -rotate-90" />
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

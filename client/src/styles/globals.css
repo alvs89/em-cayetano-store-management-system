@@ -265,6 +265,42 @@ body {
   isolation: isolate;
 }
 
+.stock-status-badge {
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 999px;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.stock-status-badge-in,
+.stock-status-badge-in:hover {
+  border-color: #bbf7d0;
+  background-color: #dcfce7;
+  color: #166534;
+}
+
+.stock-status-badge-low,
+.stock-status-badge-low:hover {
+  border-color: #fde68a;
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.stock-status-badge-out,
+.stock-status-badge-out:hover {
+  border-color: #fecdd3;
+  background-color: #ffe4e6;
+  color: #be123c;
+}
+
+.stock-status-badge-neutral,
+.stock-status-badge-neutral:hover {
+  border-color: #e2e8f0;
+  background-color: #f1f5f9;
+  color: #334155;
+}
+
 .auth-gradient-page::before {
   content: "";
   position: fixed;

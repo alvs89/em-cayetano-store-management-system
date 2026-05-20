@@ -9,6 +9,7 @@ import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { useData } from './DataContext';
 import { PageHeader } from './PageHeader';
+import { getStockStatusBadgeClass } from '../utils/statusStyles';
 export function Dashboard({
   onNavigate,
   user,
@@ -93,7 +94,7 @@ export function Dashboard({
           tone: pendingUserCount > 0 ? 'orange' : 'slate'
         },
         {
-          label: 'Reorder attention',
+          label: 'Stock needs reorder',
           value: reorderAttentionCount,
           action: () => openTargetReport('supplier-reorder'),
           tone: reorderAttentionCount > 0 ? 'red' : 'slate'
@@ -249,7 +250,7 @@ export function Dashboard({
                   {item.quantity} {item.quantity === 1 ? "unit" : "units"} left - {item.category}
                 </p>
               </div>
-              <Badge className={item.status === 'Out of Stock' ? "inline-flex h-7 min-w-[104px] shrink-0 items-center justify-center self-center rounded-full px-3 py-0 text-center leading-[1] bg-red-600 text-white hover:bg-red-600" : "inline-flex h-7 min-w-[92px] shrink-0 items-center justify-center self-center rounded-full px-3 py-0 text-center leading-[1] bg-orange-100 text-orange-700 hover:bg-orange-100"}>
+              <Badge className={`inline-flex h-7 min-w-[104px] shrink-0 items-center justify-center self-center px-3 py-0 text-center leading-[1] ${getStockStatusBadgeClass(item.status)}`}>
                 {item.status}
               </Badge>
             </div>
@@ -279,7 +280,7 @@ export function Dashboard({
           <Users className="w-5 h-5 text-slate-700" />
           Admin Attention
         </CardTitle>
-        <CardDescription>System tasks that may need review</CardDescription>
+        <CardDescription>Admin tasks and stock items that may need review</CardDescription>
       </CardHeader>
       <CardContent className="bg-white pt-2 pb-4" data-card-content>
         <div className="space-y-2">

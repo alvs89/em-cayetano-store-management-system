@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Filter, Package, Search } from "lucide-react";
 import { linearSearchAll, sortByNameAsc, sortByNameDesc } from "../utils/algorithms";
 import { formatDateTime } from "../utils/format";
+import { getStockStatusBadgeClass } from "../utils/statusStyles";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
@@ -72,12 +73,6 @@ export function SearchModule() {
   }, [searchQuery, categoryFilter, statusFilter, inventory, sortBy, sortOrder]);
 
   const hasActiveFilters = searchQuery !== "" || categoryFilter !== "all" || statusFilter !== "all";
-
-  const getStatusBadgeClass = status => {
-    if (status === "In Stock") return "bg-green-100 text-green-700 hover:bg-green-100";
-    if (status === "Low Stock") return "bg-orange-100 text-orange-700 hover:bg-orange-100";
-    return "";
-  };
 
   return (
     <div className="search-products-page min-h-screen bg-gray-50 p-4 md:p-8">
@@ -469,7 +464,7 @@ export function SearchModule() {
                                   ? "secondary"
                                   : "destructive"
                             }
-                            className={getStatusBadgeClass(product.status)}
+                            className={getStockStatusBadgeClass(product.status)}
                           >
                             {product.status}
                           </Badge>

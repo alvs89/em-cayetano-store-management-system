@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { useData } from "./DataContext";
 import { PageHeader } from "./PageHeader";
 import { formatDateTime } from "../utils/format";
+import { getStockStatusBadgeClass } from "../utils/statusStyles";
 
 const STATUS_PRIORITY = {
   "Out of Stock": 1,
@@ -947,7 +948,7 @@ export function ArchiveModule({
   }, item.supplierName || "Unassigned"), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-right"
   }, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
-    className: item.status === "In Stock" ? "bg-green-100 text-green-700" : item.status === "Low Stock" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"
+    className: getStockStatusBadgeClass(item.status)
   }, item.status)), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-right text-sm text-slate-600"
   }, formatDateTime(item.archivedAt || item.lastUpdated)), user.role === "Admin" && /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Button, {
@@ -1029,7 +1030,7 @@ export function ArchiveModule({
   }, getArchiveReasonLabel(item.archiveReason)))), /*#__PURE__*/React.createElement("div", {
     className: "archive-mobile-actions"
   }, /*#__PURE__*/React.createElement(Badge, {
-    className: `archive-status-badge ${item.status === "In Stock" ? "bg-green-100 text-green-700" : item.status === "Low Stock" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"}`
+    className: `archive-status-badge ${getStockStatusBadgeClass(item.status)}`
   }, item.status), user.role === "Admin" && /*#__PURE__*/React.createElement(Button, {
     variant: "outline",
     className: "border-green-400 bg-green-50 text-green-800 hover:bg-green-100 hover:border-green-500 hover:text-green-950",
@@ -1211,7 +1212,7 @@ export function ArchiveModule({
   }, selectedItem?.quantity ?? 0), /*#__PURE__*/React.createElement("span", {
     className: "font-semibold text-slate-600"
   }, "Status:"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement(Badge, {
-    className: `archive-status-badge ${selectedItem?.status === "In Stock" ? "bg-green-100 text-green-700" : selectedItem?.status === "Low Stock" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"}`
+    className: `archive-status-badge ${getStockStatusBadgeClass(selectedItem?.status)}`
   }, selectedItem?.status)), /*#__PURE__*/React.createElement("span", {
     className: "font-semibold text-slate-600"
   }, "Reason:"), /*#__PURE__*/React.createElement("span", {
