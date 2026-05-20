@@ -110,6 +110,8 @@ export function ArchiveModule({
         return a.category.localeCompare(b.category) * direction;
       case "supplier":
         return (a.supplierName || "").localeCompare(b.supplierName || "") * direction;
+      case "reason":
+        return getArchiveReasonLabel(a.archiveReason).localeCompare(getArchiveReasonLabel(b.archiveReason)) * direction;
       case "quantity":
         return ((a.quantity ?? 0) - (b.quantity ?? 0)) * direction;
       case "status":
@@ -214,6 +216,7 @@ export function ArchiveModule({
     if (sortBy === "id") return "Archive ID";
     if (sortBy === "date") return "Archived Date";
     if (sortBy === "supplier") return "Supplier";
+    if (sortBy === "reason") return "Reason";
     return sortBy.charAt(0).toUpperCase() + sortBy.slice(1);
   })();
   const orderLabel = (() => {
@@ -925,12 +928,12 @@ export function ArchiveModule({
     className: "p-0"
   }, /*#__PURE__*/React.createElement("div", {
     className: "archive-table-wrap px-6 pb-6"
-  }, /*#__PURE__*/React.createElement(Table, null, /*#__PURE__*/React.createElement(TableHeader, null, /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("id", "Archive ID")), /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("name", "Item Name")), /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("category", "Category")), /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("supplier", "Supplier")), /*#__PURE__*/React.createElement(TableHead, {
+  }, /*#__PURE__*/React.createElement(Table, null, /*#__PURE__*/React.createElement(TableHeader, null, /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("id", "Archive ID")), /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("name", "Item Name")), /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("category", "Category")), /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("supplier", "Supplier")), /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("reason", "Reason")), /*#__PURE__*/React.createElement(TableHead, {
     className: "text-right"
   }, renderSortButton("quantity", "Quantity", "right")), /*#__PURE__*/React.createElement(TableHead, null, renderSortButton("status", "Status")), /*#__PURE__*/React.createElement(TableHead, {
     className: "text-right"
   }, renderSortButton("date", "Archived Date", "right")), user.role === "Admin" && /*#__PURE__*/React.createElement(TableHead, null, "Actions"))), /*#__PURE__*/React.createElement(TableBody, null, sortedArchive.length === 0 ? /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableCell, {
-    colSpan: user.role === "Admin" ? 8 : 7,
+    colSpan: user.role === "Admin" ? 9 : 8,
     className: "py-12 text-center"
   }, /*#__PURE__*/React.createElement(Archive, {
     className: "mx-auto mb-4 h-14 w-14 text-slate-300"
@@ -943,9 +946,7 @@ export function ArchiveModule({
     className: highlightedArchiveRowId === String(item.id) ? "archive-row-highlight" : ""
   }, /*#__PURE__*/React.createElement(TableCell, {
     className: "font-mono text-sm"
-  }, getArchiveId(item)), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, {
-    className: "text-sm text-slate-600"
-  }, item.supplierName || "Unassigned"), /*#__PURE__*/React.createElement(TableCell, {
+  }, getArchiveId(item)), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, null, item.supplierName || "Unassigned"), /*#__PURE__*/React.createElement(TableCell, null, getArchiveReasonLabel(item.archiveReason)), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-right"
   }, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
     className: getStockStatusBadgeClass(item.status)
@@ -967,7 +968,7 @@ export function ArchiveModule({
   }, /*#__PURE__*/React.createElement("div", {
     className: "archive-mobile-sortbar",
     "aria-label": "Sort archived items"
-  }, [["id", "Archive ID"], ["name", "Name"], ["category", "Category"], ["supplier", "Supplier"], ["quantity", "Qty"], ["status", "Status"], ["date", "Archived"]].map(([column, label]) => /*#__PURE__*/React.createElement(Button, {
+  }, [["id", "Archive ID"], ["name", "Name"], ["category", "Category"], ["supplier", "Supplier"], ["reason", "Reason"], ["quantity", "Qty"], ["status", "Status"], ["date", "Archived"]].map(([column, label]) => /*#__PURE__*/React.createElement(Button, {
     key: column,
     type: "button",
     variant: "outline",
