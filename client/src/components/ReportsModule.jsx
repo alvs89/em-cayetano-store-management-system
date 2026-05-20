@@ -9,6 +9,7 @@ import { Badge } from './ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from './ui/alert-dialog';
 import { toast } from 'sonner';
 import { useData } from './DataContext';
 import jsPDF from 'jspdf';
@@ -28,6 +29,10 @@ export function ReportsModule({
   const [reportPeriod, setReportPeriod] = useState('daily');
   const [selectedReportDate, setSelectedReportDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [finalOrderQuantities, setFinalOrderQuantities] = useState({});
+  const [draftFinalOrderQuantities, setDraftFinalOrderQuantities] = useState({});
+  const [isAdjustingFinalOrders, setIsAdjustingFinalOrders] = useState(false);
+  const [showResetFinalOrdersDialog, setShowResetFinalOrdersDialog] = useState(false);
   const reportDateInputRef = useRef(null);
 
   // Handle period change with refresh animation
@@ -218,6 +223,9 @@ export function ReportsModule({
 
   const getDisplayItemCode = item => item?.itemCode || item?.id || 'N/A';
 
+  const formatItemCount = value => `${Number(value || 0)} ${Number(value || 0) === 1 ? 'item' : 'items'}`;
+  const formatUnitCount = value => `${Number(value || 0)} ${Number(value || 0) === 1 ? 'unit' : 'units'}`;
+
   const getSalesDemandForItem = item => reportMovements
     .filter(movement =>
       movement.action === 'stock_out' &&
@@ -268,6 +276,107 @@ export function ReportsModule({
       if (b.outOfStock !== a.outOfStock) return b.outOfStock - a.outOfStock;
       return a.supplier.localeCompare(b.supplier);
     });
+  };
+
+  const getFinalOrderQuantity = item => {
+    const savedValue = finalOrderQuantities[item.id];
+    if (savedValue === undefined || savedValue === null || savedValue === '') {
+      return Number(item.suggestedQuantity || 0);
+    }
+    const parsedValue = Number(savedValue);
+    return Number.isFinite(parsedValue) ? parsedValue : Number(item.suggestedQuantity || 0);
+  };
+
+  const getSupplierFinalOrderTotal = group =>
+    group.items.reduce((sum, item) => sum + getFinalOrderQuantity(item), 0);
+
+  const hasFinalOrderAdjustments = Object.values(finalOrderQuantities).some(value => String(value || '').trim() !== '');
+  const showFinalOrderColumn = isAdjustingFinalOrders || hasFinalOrderAdjustments;
+
+  const startFinalOrderAdjustments = () => {
+    setDraftFinalOrderQuantities(finalOrderQuantities);
+    setIsAdjustingFinalOrders(true);
+    toast.info('Enter final order quantities only for items you want to change.');
+  };
+
+  const handleFinalOrderQuantityChange = (item, value) => {
+    const rawValue = String(value || '');
+    if (/[^0-9]/.test(rawValue)) {
+      toast.warning('Final order quantity must contain numbers only.', {
+        id: 'final-order-numbers-only'
+      });
+    }
+    if (rawValue.replace(/\D/g, '').length > 6) {
+      toast.warning('Final order quantity cannot exceed 999999 units.', {
+        id: 'final-order-maximum'
+      });
+    }
+    const cleanValue = rawValue.replace(/\D/g, '').slice(0, 6);
+    setDraftFinalOrderQuantities(prev => {
+      const next = { ...prev };
+      if (cleanValue === '') {
+        delete next[item.id];
+      } else {
+        next[item.id] = cleanValue;
+      }
+      return next;
+    });
+  };
+
+  const applyFinalOrderAdjustments = () => {
+    const supplierGroups = getSupplierReorderGroups();
+    const itemsById = new Map(supplierGroups.flatMap(group => group.items.map(item => [String(item.id), item])));
+    const nextFinalOrderQuantities = {};
+    let unchangedCount = 0;
+    let skippedCount = 0;
+
+    Object.entries(draftFinalOrderQuantities).forEach(([itemId, rawValue]) => {
+      const item = itemsById.get(String(itemId));
+      if (!item) return;
+
+      const cleanValue = String(rawValue || '').replace(/\D/g, '').slice(0, 6);
+      if (cleanValue === '') return;
+
+      const finalQuantity = Number(cleanValue);
+      const suggestedQuantity = Number(item.suggestedQuantity || 0);
+      if (!Number.isInteger(finalQuantity) || finalQuantity < 0) return;
+
+      if (finalQuantity === suggestedQuantity) {
+        unchangedCount += 1;
+        return;
+      }
+
+      if (finalQuantity === 0) skippedCount += 1;
+      nextFinalOrderQuantities[item.id] = String(finalQuantity);
+    });
+
+    setFinalOrderQuantities(nextFinalOrderQuantities);
+    setDraftFinalOrderQuantities({});
+    setIsAdjustingFinalOrders(false);
+
+    const adjustmentCount = Object.keys(nextFinalOrderQuantities).length;
+    if (adjustmentCount === 0) {
+      toast.info(unchangedCount > 0
+        ? 'No final order changes were saved because the entered quantities matched the suggestions.'
+        : 'No final order changes were saved. The report will use system suggestions.');
+      return;
+    }
+
+    toast.success(`${adjustmentCount} final order ${adjustmentCount === 1 ? 'change was' : 'changes were'} applied${skippedCount > 0 ? `, including ${skippedCount} skipped reorder ${skippedCount === 1 ? 'item' : 'items'}` : ''}.`);
+  };
+
+  const cancelFinalOrderAdjustments = () => {
+    setDraftFinalOrderQuantities({});
+    setIsAdjustingFinalOrders(false);
+    toast.info('Final order editing cancelled. No changes were applied.');
+  };
+
+  const resetFinalOrderQuantities = () => {
+    setFinalOrderQuantities({});
+    setDraftFinalOrderQuantities({});
+    setIsAdjustingFinalOrders(false);
+    setShowResetFinalOrdersDialog(false);
+    toast.success('Reorder suggestions restored. Manual final order changes were cleared.');
   };
 
   // Get category summary
@@ -547,10 +656,24 @@ export function ReportsModule({
           doc.text(`SUPPLIER: ${group.supplier}`, 20, currentY);
           doc.setFontSize(9);
           doc.setFont('helvetica', 'normal');
-          doc.text(`Items: ${group.itemCount} | Out of Stock: ${group.outOfStock} | Low Stock: ${group.lowStock} | Suggested Units: ${group.suggestedUnits}`, 20, currentY + 6);
+          doc.text(
+            `Items: ${group.itemCount} | Out of Stock: ${group.outOfStock} | Low Stock: ${group.lowStock} | Suggested Units: ${formatUnitCount(group.suggestedUnits)}${hasFinalOrderAdjustments ? ` | Final Order Units: ${formatUnitCount(getSupplierFinalOrderTotal(group))}` : ''}`,
+            20,
+            currentY + 6
+          );
           autoTable(doc, {
             startY: currentY + 12,
-            head: [['Item Code', 'Item', 'Category', 'Current', 'Reorder Point', 'Sales Demand', 'Suggested Order', 'Status']],
+            head: [[
+              'Item Code',
+              'Item',
+              'Category',
+              'Current',
+              'Reorder Point',
+              'Sales Demand',
+              'Suggested Order',
+              ...(hasFinalOrderAdjustments ? ['Final Order'] : []),
+              'Status'
+            ]],
             body: group.items.map(item => [
               getDisplayItemCode(item),
               item.name,
@@ -559,6 +682,7 @@ export function ReportsModule({
               String(item.reorderPoint),
               String(item.recentSalesDemand),
               String(item.suggestedQuantity),
+              ...(hasFinalOrderAdjustments ? [String(getFinalOrderQuantity(item))] : []),
               item.status
             ]),
             theme: 'striped',
@@ -805,6 +929,23 @@ export function ReportsModule({
           <span>Suggested Order</span>
           <strong>{item.suggestedQuantity}</strong>
         </div>
+        {showFinalOrderColumn && (
+          <div className="reports-record-stat reports-final-order-stat">
+            <span>Final Order</span>
+            <input
+              className="reports-final-order-input"
+              value={isAdjustingFinalOrders
+                ? (draftFinalOrderQuantities[item.id] ?? '')
+                : (finalOrderQuantities[item.id] ?? String(item.suggestedQuantity))}
+              placeholder="0"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              aria-label={`Final order quantity for ${item.name}`}
+              readOnly={!isAdjustingFinalOrders}
+              onChange={event => handleFinalOrderQuantityChange(item, event.target.value)}
+            />
+          </div>
+        )}
       </div>
     </article>
   );
@@ -1023,6 +1164,138 @@ export function ReportsModule({
           overflow-wrap: anywhere;
         }
 
+        .reports-final-order-input {
+          width: 6.5rem;
+          max-width: 100%;
+          min-height: 2.25rem;
+          border: 1px solid #cbd5e1;
+          border-radius: 0.625rem;
+          background: #ffffff;
+          padding: 0.45rem 0.65rem;
+          color: #0f172a;
+          font-size: 0.875rem;
+          font-weight: 700;
+          line-height: 1.2;
+          outline: none;
+          transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+        }
+
+        .reports-final-order-input:focus {
+          border-color: #2563eb;
+          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+        }
+
+        .reports-final-order-note {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 1rem;
+          border: 1px solid #dbe3ef;
+          border-radius: 0.875rem;
+          background: #f8fafc;
+          padding: 0.85rem 1rem;
+          color: #475569;
+          font-size: 0.875rem;
+          line-height: 1.45;
+        }
+
+        .reports-final-order-note strong {
+          color: #0f172a;
+          font-weight: 750;
+          white-space: nowrap;
+        }
+
+        .reports-final-order-note-text {
+          display: flex;
+          gap: 0.35rem;
+          min-height: 2.5rem;
+          flex: 1 1 auto;
+          align-items: center;
+          min-width: 0;
+        }
+
+        .reports-final-order-actions {
+          display: flex;
+          flex: 0 0 auto;
+          justify-content: flex-end;
+          margin-left: auto;
+        }
+
+        .reports-reset-confirm-dialog {
+          width: min(100% - 2rem, 30rem);
+          max-width: min(100% - 2rem, 30rem) !important;
+          gap: 0.85rem;
+          border: 2px solid #FFFF00;
+          border-radius: 1rem;
+          box-shadow: 0 18px 38px rgba(15, 23, 42, 0.18), 0 0 0 4px rgba(255, 255, 0, 0.16);
+        }
+
+        .reports-reset-confirm-dialog [data-slot="alert-dialog-header"] {
+          gap: 0.5rem;
+          padding: 1.25rem 1.25rem 0;
+        }
+
+        .reports-reset-confirm-dialog [data-slot="alert-dialog-title"] {
+          color: #0f172a;
+          font-size: 1.15rem;
+          line-height: 1.2;
+        }
+
+        .reports-reset-confirm-dialog [data-slot="alert-dialog-description"] {
+          color: #475569;
+          font-size: 0.9rem;
+          line-height: 1.45;
+        }
+
+        .reports-reset-confirm-dialog [data-slot="alert-dialog-footer"] {
+          display: flex;
+          flex-direction: row;
+          gap: 0.6rem;
+          justify-content: flex-end;
+          padding: 0 1.25rem 1.25rem;
+        }
+
+        .reports-reset-confirm-dialog [data-slot="alert-dialog-footer"] > button {
+          min-height: 2.5rem;
+          min-width: 7.25rem;
+        }
+
+        .reports-reset-confirm-dialog [data-slot="alert-dialog-footer"] > button:hover,
+        .reports-reset-confirm-dialog [data-slot="alert-dialog-footer"] > button:focus-visible {
+          transform: none !important;
+        }
+
+        .reports-reset-confirm-submit {
+          border: 1px solid #0f172a !important;
+          background: #0f172a !important;
+          color: #ffffff !important;
+        }
+
+        .reports-reset-confirm-submit:hover,
+        .reports-reset-confirm-submit:focus-visible {
+          border-color: #334155 !important;
+          background: #334155 !important;
+          color: #ffffff !important;
+        }
+
+        .reports-reset-confirm-icon {
+          display: flex;
+          height: 2.75rem;
+          width: 2.75rem;
+          flex: 0 0 auto;
+          align-items: center;
+          justify-content: center;
+          border-radius: 0.9rem;
+          background: #f1f5f9;
+          color: #334155;
+        }
+
+        .reports-final-order-button-row {
+          display: flex;
+          gap: 0.5rem;
+          justify-content: flex-end;
+        }
+
         .reports-count-badge {
           border-radius: 999px;
           font-weight: 600;
@@ -1172,6 +1445,37 @@ export function ReportsModule({
           .reports-mobile-category-stat { min-width: 0; border-radius: 12px; background: #f8fafc; padding: 10px; }
           .reports-mobile-category-stat span { display: block; margin-bottom: 4px; font-size: 11px; font-weight: 800; color: #64748b; text-transform: uppercase; }
           .reports-mobile-category-stat strong { display: block; font-size: 17px; line-height: 1.1; color: #0f172a; }
+          .reports-final-order-input { width: 100%; min-height: 38px; }
+          .reports-final-order-note {
+            align-items: stretch;
+            padding: 12px;
+            font-size: 13px;
+          }
+          .reports-final-order-note-text {
+            min-height: 0;
+            align-items: flex-start;
+            gap: 8px;
+          }
+          .reports-final-order-actions {
+            width: 100%;
+            margin-left: 0;
+          }
+          .reports-final-order-actions button {
+            width: 100%;
+            min-height: 42px;
+          }
+          .reports-final-order-button-row {
+            width: 100%;
+            flex-direction: row;
+            gap: 8px;
+          }
+          .reports-final-order-button-row button {
+            flex: 1 1 0;
+            min-width: 0;
+            padding-left: 10px;
+            padding-right: 10px;
+            white-space: nowrap;
+          }
           .reports-data-card { gap: 0; }
           .reports-data-card [data-slot='card-header'] { padding-bottom: 8px; }
           .reports-data-card [data-slot='card-content'] { padding-top: 0; }
@@ -1212,6 +1516,9 @@ export function ReportsModule({
           .reports-summary-mini-grid p:first-child { font-size: 11px; }
           .reports-summary-mini-grid p:last-child { font-size: 21px; }
           .reports-summary-mini-grid > div:last-child { grid-column: auto; }
+          .reports-final-order-button-row button {
+            font-size: 13px;
+          }
         }
       `}</style>
 
@@ -1592,14 +1899,40 @@ export function ReportsModule({
               </CardContent>
             </Card>
           ) : (
-            getSupplierReorderGroups().map(group => (
+            <>
+              <div className="reports-final-order-note flex-col md:flex-row">
+                <span className="reports-final-order-note-text">
+                  <strong>Reorder review:</strong> Suggested Order is calculated by the system. Use Final Order only when the manager needs to adjust quantities before export.
+                </span>
+                <div className="reports-final-order-actions">
+                  {!showFinalOrderColumn ? (
+                    <Button type="button" variant="outline" onClick={startFinalOrderAdjustments}>
+                      Adjust Final Orders
+                    </Button>
+                  ) : isAdjustingFinalOrders ? (
+                    <div className="reports-final-order-button-row">
+                      <Button type="button" variant="outline" onClick={cancelFinalOrderAdjustments}>
+                        Cancel
+                      </Button>
+                      <Button type="button" onClick={applyFinalOrderAdjustments}>
+                        Apply Final Orders
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button type="button" variant="outline" onClick={() => setShowResetFinalOrdersDialog(true)}>
+                      Reset to Suggestions
+                    </Button>
+                  )}
+                </div>
+              </div>
+              {getSupplierReorderGroups().map(group => (
               <Card key={group.supplier} className="reports-data-card">
                 <CardHeader>
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <CardTitle>{group.supplier}</CardTitle>
                       <CardDescription>
-                        {group.itemCount} {group.itemCount === 1 ? 'item' : 'items'} needing reorder attention • Suggested total order: {group.suggestedUnits} units
+                        {formatItemCount(group.itemCount)} needing reorder attention • Suggested total order: {formatUnitCount(group.suggestedUnits)}{hasFinalOrderAdjustments ? ` • Final order: ${formatUnitCount(getSupplierFinalOrderTotal(group))}` : ''}
                       </CardDescription>
                     </div>
                     <div className="flex shrink-0 flex-wrap justify-end gap-2">
@@ -1630,6 +1963,7 @@ export function ReportsModule({
                               'Recommended quantity to order. It covers the stock shortage and recent sales demand.'
                             )}
                           </TableHead>
+                          {showFinalOrderColumn && <TableHead>Final Order</TableHead>}
                           <TableHead>Status</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -1643,6 +1977,22 @@ export function ReportsModule({
                             <TableCell>{item.reorderPoint}</TableCell>
                             <TableCell>{item.recentSalesDemand}</TableCell>
                             <TableCell className="font-semibold text-slate-950">{item.suggestedQuantity}</TableCell>
+                            {showFinalOrderColumn && (
+                              <TableCell>
+                                <input
+                                  className="reports-final-order-input"
+                                  value={isAdjustingFinalOrders
+                                    ? (draftFinalOrderQuantities[item.id] ?? '')
+                                    : (finalOrderQuantities[item.id] ?? String(item.suggestedQuantity))}
+                                  placeholder="0"
+                                  inputMode="numeric"
+                                  pattern="[0-9]*"
+                                  aria-label={`Final order quantity for ${item.name}`}
+                                  readOnly={!isAdjustingFinalOrders}
+                                  onChange={event => handleFinalOrderQuantityChange(item, event.target.value)}
+                                />
+                              </TableCell>
+                            )}
                             <TableCell>
                               <Badge className={getStockStatusBadgeClass(item.status)}>
                                 {item.status}
@@ -1658,7 +2008,8 @@ export function ReportsModule({
                   </div>
                 </CardContent>
               </Card>
-            ))
+              ))}
+            </>
           )}
         </div>
       )}
@@ -1686,7 +2037,7 @@ export function ReportsModule({
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <CardTitle>{category}</CardTitle>
-                      <CardDescription>{categoryItems.length} items • {categoryQty} total units</CardDescription>
+                      <CardDescription>{formatItemCount(categoryItems.length)} • {formatUnitCount(categoryQty)} total</CardDescription>
                     </div>
                     <div className="flex shrink-0 flex-wrap justify-end gap-2">
                       {categoryLowStock > 0 && <Badge className={getStatusCountBadgeClass('Low Stock')}>{categoryLowStock} Low Stock</Badge>}
@@ -1856,6 +2207,29 @@ export function ReportsModule({
           </CardContent>
         </Card>
       )}
+      <AlertDialog open={showResetFinalOrdersDialog} onOpenChange={setShowResetFinalOrdersDialog}>
+        <AlertDialogContent className="reports-reset-confirm-dialog bg-white p-0 shadow-lg">
+          <AlertDialogHeader showBrand={false}>
+            <div className="flex items-start gap-4">
+              <div className="reports-reset-confirm-icon">
+                <RefreshCw className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <AlertDialogTitle>Reset reorder suggestions?</AlertDialogTitle>
+                <AlertDialogDescription className="mt-2">
+                  This will clear all manual Final Order changes and return the Supplier Reorder report to the system suggested quantities. Inventory records and saved sales data will not change.
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="mt-6">
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <Button type="button" onClick={resetFinalOrderQuantities} className="reports-reset-confirm-submit">
+              Reset Suggestions
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
   return /*#__PURE__*/React.createElement("div", {
