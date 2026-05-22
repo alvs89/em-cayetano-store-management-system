@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState, useEffect, useRef } from 'react';
-import { Download, Calendar, TrendingUp, Package, AlertTriangle, RefreshCw, FileText, Info } from 'lucide-react';
+import { Download, Calendar, TrendingUp, Package, AlertTriangle, RefreshCw, FileText, Info, Wallet, Tag } from 'lucide-react';
 import { sortByNameAsc, sortByQuantityAsc, linearSearchAll } from '../utils/algorithms';
 import { getStockStatusBadgeClass } from '../utils/statusStyles';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -22,6 +22,7 @@ export function ReportsModule({
   const {
     inventory,
     stockMovements,
+    salesTransactions,
     auditAction
   } = useData();
   const [reportType, setReportType] = useState('summary');
@@ -110,6 +111,13 @@ export function ReportsModule({
     return movementDate >= start && movementDate <= end;
   };
 
+  const isSaleInReportPeriod = sale => {
+    const saleDate = new Date(sale.createdAt);
+    if (Number.isNaN(saleDate.getTime())) return false;
+    const { start, end } = getReportPeriodBounds();
+    return saleDate >= start && saleDate <= end;
+  };
+
   const openReportDatePicker = () => {
     const input = reportDateInputRef.current;
     if (!input) return;
@@ -158,6 +166,7 @@ export function ReportsModule({
   // Linear Search: O(n) - efficient for filtering with conditions
   const reportInventory = inventory.filter(isItemInReportPeriod);
   const reportMovements = (stockMovements || []).filter(isMovementInReportPeriod);
+  const reportSalesTransactions = (salesTransactions || []).filter(isSaleInReportPeriod);
 
   const normalizeMovementName = value => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
@@ -196,10 +205,6 @@ export function ReportsModule({
   const stockOutUnits = reportMovements
     .filter(movement => movement.action === 'stock_out')
     .reduce((sum, movement) => sum + movement.quantityChanged, 0);
-  const salesMovementUnits = reportMovements
-    .filter(movement => movement.action === 'stock_out' && movement.reason === 'sales')
-    .reduce((sum, movement) => sum + movement.quantityChanged, 0);
-
   // Get unique categories from the selected report period
   const categories = Array.from(new Set(reportInventory.map(item => item.category)));
 
@@ -225,17 +230,98 @@ export function ReportsModule({
 
   const formatItemCount = value => `${Number(value || 0)} ${Number(value || 0) === 1 ? 'item' : 'items'}`;
   const formatUnitCount = value => `${Number(value || 0)} ${Number(value || 0) === 1 ? 'unit' : 'units'}`;
+  const formatCurrency = value =>
+    new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: 'PHP',
+      minimumFractionDigits: 2
+    }).format(Number(value || 0));
 
-  const getSalesDemandForItem = item => reportMovements
-    .filter(movement =>
-      movement.action === 'stock_out' &&
-      movement.reason === 'sales' &&
-      (
-        String(movement.inventoryId || '') === String(item.id || '') ||
-        String(movement.productId || '') === String(item.productId || '')
-      )
+  const getSaleSubtotalForCategory = sale => {
+    if (selectedCategory === 'all') {
+      return Number(sale.subtotalAmount ?? sale.totalAmount ?? 0);
+    }
+    return (sale.items || [])
+      .filter(item => item.category === selectedCategory)
+      .reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+  };
+
+  const getFilteredSalesTransactions = () =>
+    reportSalesTransactions.filter(sale => {
+      if (sale.status === 'cancelled') return false;
+      if (selectedCategory === 'all') return true;
+      return (sale.items || []).some(item => item.category === selectedCategory);
+    });
+
+  const getSalesMovementRows = () =>
+    getFilteredSalesTransactions().flatMap(sale =>
+      (sale.items || [])
+        .filter(item => selectedCategory === 'all' || item.category === selectedCategory)
+        .map(item => ({
+          id: `${sale.id}-${item.id}`,
+          salesNumber: sale.salesNumber,
+          createdAt: sale.createdAt,
+          inventoryId: item.inventoryId,
+          productId: item.productId,
+          itemName: item.itemName,
+          category: item.category,
+          branch: item.branch || sale.branch,
+          action: 'stock_out',
+          reason: 'sales',
+          quantityChanged: Number(item.quantitySold || 0),
+          previousQuantity: Number(item.previousQuantity || 0),
+          newQuantity: Number(item.newQuantity || 0),
+          actorName: sale.soldByName || 'System',
+          paymentMethod: sale.paymentMethod,
+          saleStatus: sale.status
+        }))
+    ).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+  const getSalesMovementUnits = () =>
+    getSalesMovementRows().reduce((sum, movement) => sum + Number(movement.quantityChanged || 0), 0);
+
+  const getSalesFinancialSummary = () => {
+    const sales = getFilteredSalesTransactions();
+
+    return sales.reduce((summary, sale) => {
+      const saleSubtotal = Number(sale.subtotalAmount ?? sale.totalAmount ?? 0);
+      const includedSubtotal = getSaleSubtotalForCategory(sale);
+      if (includedSubtotal <= 0) return summary;
+
+      const discountAmount = Number(sale.discountAmount || 0);
+      const discountShare = selectedCategory === 'all' || saleSubtotal <= 0
+        ? discountAmount
+        : Number(((includedSubtotal / saleSubtotal) * discountAmount).toFixed(2));
+      const amountDue = Math.max(includedSubtotal - discountShare, 0);
+
+      summary.transactionCount += 1;
+      summary.subtotal += includedSubtotal;
+      summary.discount += discountShare;
+      summary.amountDue += amountDue;
+      if (sale.paymentMethod === 'cash') {
+        summary.cashTransactions += 1;
+      } else if (sale.paymentMethod) {
+        summary.nonCashTransactions += 1;
+      }
+      return summary;
+    }, {
+      transactionCount: 0,
+      subtotal: 0,
+      discount: 0,
+      amountDue: 0,
+      cashTransactions: 0,
+      nonCashTransactions: 0
+    });
+  };
+
+  const getSalesDemandForItem = item => reportSalesTransactions
+    .filter(sale => sale.status !== 'cancelled')
+    .flatMap(sale => sale.items || [])
+    .filter(saleItem =>
+      String(saleItem.inventoryId || '') === String(item.id || '') ||
+      String(saleItem.productId || '') === String(item.productId || '')
     )
-    .reduce((sum, movement) => sum + Number(movement.quantityChanged || 0), 0);
+    .reduce((sum, saleItem) => sum + Number(saleItem.quantitySold || 0), 0);
 
   const getSupplierReorderGroups = () => {
     const reorderItems = getLowStockItems();
@@ -704,7 +790,8 @@ export function ReportsModule({
       }
     } else if (reportType === 'movements' || reportType === 'sales-movements') {
       const isSalesMovementReport = reportType === 'sales-movements';
-      const movements = getFilteredMovements({ salesOnly: isSalesMovementReport });
+      const movements = isSalesMovementReport ? getSalesMovementRows() : getFilteredMovements({ salesOnly: false });
+      const salesSummary = getSalesFinancialSummary();
       doc.setFontSize(12);
       doc.setFont('helvetica', 'bold');
       doc.text(isSalesMovementReport ? 'SALES-BASED STOCK MOVEMENT REPORT' : 'STOCK MOVEMENT HISTORY', 20, startY);
@@ -713,7 +800,9 @@ export function ReportsModule({
       doc.text(`Category Filter: ${selectedCategory === 'all' ? 'All Categories' : selectedCategory}`, 20, startY + 8);
       doc.text(`${isSalesMovementReport ? 'Sales Stock Deductions' : 'Total Movements'}: ${movements.length}`, 20, startY + 14);
       if (isSalesMovementReport) {
-        doc.text(`Quantity Sold: ${salesMovementUnits}`, 20, startY + 20);
+        doc.text(`Quantity Sold: ${getSalesMovementUnits()}`, 20, startY + 20);
+        doc.text(`Sales Transactions: ${salesSummary.transactionCount}`, 20, startY + 26);
+        doc.text(`Subtotal: ${formatCurrency(salesSummary.subtotal)} | Discount: ${formatCurrency(salesSummary.discount)} | Amount Due: ${formatCurrency(salesSummary.amountDue)}`, 20, startY + 32);
       } else {
         doc.text(`Stock In Units: ${stockInUnits}`, 20, startY + 20);
         doc.text(`Stock Out Units: ${stockOutUnits}`, 20, startY + 26);
@@ -725,11 +814,11 @@ export function ReportsModule({
             ? 'No sales-based stock deductions found for this report period.'
             : 'No stock movements found for this report period.',
           20,
-          startY + 38
+          isSalesMovementReport ? startY + 44 : startY + 38
         );
       } else {
         const movementData = movements.map(movement => [
-          movement.id,
+          isSalesMovementReport ? movement.salesNumber || movement.id : movement.id,
           formatDateTime(movement.createdAt),
           formatMovementItemNameForExport(movement),
           movement.category,
@@ -740,8 +829,8 @@ export function ReportsModule({
           movement.actorName || 'System'
         ]);
         autoTable(doc, {
-          startY: startY + 34,
-          head: [['Movement ID', 'Date', 'Item', 'Category', 'Action', 'Reason', isSalesMovementReport ? 'Qty Sold' : 'Qty', 'Before -> After', 'Handled By']],
+          startY: isSalesMovementReport ? startY + 42 : startY + 34,
+          head: [[isSalesMovementReport ? 'Sale No.' : 'Movement ID', 'Date', 'Item', 'Category', 'Action', 'Reason', isSalesMovementReport ? 'Qty Sold' : 'Qty', 'Before -> After', 'Handled By']],
           body: movementData,
           theme: 'striped',
           headStyles: {
@@ -957,6 +1046,63 @@ export function ReportsModule({
         .reports-movement-mobile-list { display: none; }
         .reports-mobile-record-list { display: none; }
         .reports-desktop-table { display: block; }
+
+        .reports-pos-summary {
+          display: grid;
+          grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+          gap: 1rem;
+          margin-bottom: 1rem;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.9rem;
+          background: #f8fafc;
+          padding: 1rem;
+        }
+
+        .reports-pos-summary-copy h3 {
+          font-size: 1rem;
+          line-height: 1.35;
+          font-weight: 750;
+          color: #0f172a;
+        }
+
+        .reports-pos-summary-copy p {
+          margin-top: 0.35rem;
+          font-size: 0.875rem;
+          line-height: 1.5;
+          color: #64748b;
+        }
+
+        .reports-pos-summary-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 0.65rem;
+        }
+
+        .reports-pos-summary-item {
+          min-width: 0;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.75rem;
+          background: #ffffff;
+          padding: 0.8rem;
+        }
+
+        .reports-pos-summary-item span {
+          display: block;
+          font-size: 0.72rem;
+          line-height: 1.2;
+          font-weight: 800;
+          color: #64748b;
+          text-transform: uppercase;
+        }
+
+        .reports-pos-summary-item strong {
+          display: block;
+          margin-top: 0.3rem;
+          color: #0f172a;
+          font-size: 0.95rem;
+          line-height: 1.25;
+          overflow-wrap: anywhere;
+        }
 
         .reports-help-label {
           display: inline-flex;
@@ -1482,6 +1628,25 @@ export function ReportsModule({
           .reports-desktop-table { display: none; }
           .reports-mobile-record-list { display: grid; gap: 10px; }
           .reports-data-card [data-card-content] { overflow-x: visible; }
+          .reports-pos-summary {
+            grid-template-columns: 1fr;
+            gap: 10px;
+            margin-bottom: 12px;
+            padding: 12px;
+            border-radius: 14px;
+          }
+          .reports-pos-summary-copy h3 { font-size: 15px; }
+          .reports-pos-summary-copy p { font-size: 12px; line-height: 1.45; }
+          .reports-pos-summary-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+          }
+          .reports-pos-summary-item {
+            padding: 10px;
+            border-radius: 12px;
+          }
+          .reports-pos-summary-item span { font-size: 10px; }
+          .reports-pos-summary-item strong { font-size: 14px; }
           .reports-movement-desktop-table { display: none; }
           .reports-movement-mobile-list { display: grid; gap: 10px; }
           .reports-movement-card { min-width: 0; border: 1px solid #e2e8f0; border-radius: 14px; background: #ffffff; padding: 12px; box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05); }
@@ -1642,10 +1807,10 @@ export function ReportsModule({
 
       <div className={`reports-metric-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
         {(reportType === 'movements' || reportType === 'sales-movements' ? [
-          { label: reportType === 'sales-movements' ? 'Sales Stock Deductions' : 'Movements', value: getFilteredMovements({ salesOnly: reportType === 'sales-movements' }).length, icon: <RefreshCw className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
-          { label: reportType === 'sales-movements' ? 'Quantity Sold' : 'Stock In Units', value: reportType === 'sales-movements' ? salesMovementUnits : stockInUnits, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
-          { label: reportType === 'sales-movements' ? 'Unique Items Sold' : 'Stock Out Units', value: reportType === 'sales-movements' ? getUniqueMovementItemCount({ salesOnly: true }) : stockOutUnits, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: reportType === 'sales-movements' || stockOutUnits > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
-          { label: reportType === 'sales-movements' ? 'Categories Sold' : 'Categories', value: new Set(getFilteredMovements({ salesOnly: reportType === 'sales-movements' }).map(movement => movement.category)).size, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
+          { label: reportType === 'sales-movements' ? 'Sales Transactions' : 'Movements', value: reportType === 'sales-movements' ? getSalesFinancialSummary().transactionCount : getFilteredMovements({ salesOnly: false }).length, icon: <RefreshCw className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
+          { label: reportType === 'sales-movements' ? 'Quantity Sold' : 'Stock In Units', value: reportType === 'sales-movements' ? getSalesMovementUnits() : stockInUnits, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
+          { label: reportType === 'sales-movements' ? 'Amount Due' : 'Stock Out Units', value: reportType === 'sales-movements' ? formatCurrency(getSalesFinancialSummary().amountDue) : stockOutUnits, icon: reportType === 'sales-movements' ? <Wallet className="w-8 h-8 text-amber-500" /> : <AlertTriangle className="w-8 h-8 text-red-500" />, color: reportType === 'sales-movements' ? 'border-l-amber-500' : stockOutUnits > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
+          { label: reportType === 'sales-movements' ? 'Discounts' : 'Categories', value: reportType === 'sales-movements' ? formatCurrency(getSalesFinancialSummary().discount) : new Set(getFilteredMovements({ salesOnly: false }).map(movement => movement.category)).size, icon: reportType === 'sales-movements' ? <Tag className="w-8 h-8 text-violet-500" /> : <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
         ] : reportType === 'supplier-reorder' ? [
           { label: 'Supplier Groups', value: getSupplierReorderGroups().length, icon: <Package className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
           { label: 'Reorder Items', value: getSupplierReorderGroups().reduce((sum, group) => sum + group.itemCount, 0), icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: 'border-l-red-500' },
@@ -2091,11 +2256,11 @@ export function ReportsModule({
           <CardHeader>
             <CardTitle>{reportType === 'sales-movements' ? 'Sales-Based Stock Movement Report' : 'Stock Movement History'}</CardTitle>
             <CardDescription>
-              {selectedCategory === 'all' ? 'All categories' : `${selectedCategory} category`} - {getFilteredMovements({ salesOnly: reportType === 'sales-movements' }).length} {reportType === 'sales-movements' ? 'sales deductions' : 'movements'}
+              {selectedCategory === 'all' ? 'All categories' : `${selectedCategory} category`} - {reportType === 'sales-movements' ? getSalesMovementRows().length : getFilteredMovements({ salesOnly: false }).length} {reportType === 'sales-movements' ? 'completed sales deductions' : 'movements'}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {getFilteredMovements({ salesOnly: reportType === 'sales-movements' }).length === 0 ? (
+            {(reportType === 'sales-movements' ? getSalesMovementRows().length : getFilteredMovements({ salesOnly: false }).length) === 0 ? (
               renderReportsEmptyState({
                 icon: RefreshCw,
                 title: reportType === 'sales-movements' ? 'No sales deductions found' : 'No stock movements found',
@@ -2105,6 +2270,36 @@ export function ReportsModule({
               })
             ) : (
               <>
+                {reportType === 'sales-movements' && (
+                  <div className="reports-pos-summary">
+                    <div className="reports-pos-summary-copy">
+                      <h3>Sales Payment Summary</h3>
+                      <p>
+                        {selectedCategory === 'all'
+                          ? 'Totals from completed sales in the selected report period.'
+                          : 'Category totals use matching sold item lines. Transaction discounts are shared proportionally for clearer reporting.'}
+                      </p>
+                    </div>
+                    <div className="reports-pos-summary-grid">
+                      <div className="reports-pos-summary-item">
+                        <span>Subtotal</span>
+                        <strong>{formatCurrency(getSalesFinancialSummary().subtotal)}</strong>
+                      </div>
+                      <div className="reports-pos-summary-item">
+                        <span>Discount</span>
+                        <strong>{formatCurrency(getSalesFinancialSummary().discount)}</strong>
+                      </div>
+                      <div className="reports-pos-summary-item">
+                        <span>Amount Due</span>
+                        <strong>{formatCurrency(getSalesFinancialSummary().amountDue)}</strong>
+                      </div>
+                      <div className="reports-pos-summary-item">
+                        <span>Payment Mix</span>
+                        <strong>{getSalesFinancialSummary().cashTransactions} cash, {getSalesFinancialSummary().nonCashTransactions} non-cash</strong>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div className="reports-movement-desktop-table">
                   <Table>
                     <TableHeader>
@@ -2121,7 +2316,7 @@ export function ReportsModule({
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                  {getFilteredMovements({ salesOnly: reportType === 'sales-movements' }).map(movement => {
+                  {(reportType === 'sales-movements' ? getSalesMovementRows() : getFilteredMovements({ salesOnly: false })).map(movement => {
                     const itemNameDetails = getMovementItemNameDetails(movement);
                     return (
                         <TableRow key={movement.id}>
@@ -2152,7 +2347,7 @@ export function ReportsModule({
                   </Table>
                 </div>
                 <div className="reports-movement-mobile-list">
-                  {getFilteredMovements({ salesOnly: reportType === 'sales-movements' }).map(movement => {
+                  {(reportType === 'sales-movements' ? getSalesMovementRows() : getFilteredMovements({ salesOnly: false })).map(movement => {
                     const itemNameDetails = getMovementItemNameDetails(movement);
                     return (
                     <article key={movement.id} className="reports-movement-card">
@@ -2194,8 +2389,8 @@ export function ReportsModule({
                           <strong>{movement.branch}</strong>
                         </div>
                         <div className="reports-movement-stat">
-                          <span>Movement ID</span>
-                          <strong>{movement.id}</strong>
+                          <span>{reportType === 'sales-movements' ? 'Sale No.' : 'Movement ID'}</span>
+                          <strong>{reportType === 'sales-movements' ? movement.salesNumber || movement.id : movement.id}</strong>
                         </div>
                       </div>
                     </article>

@@ -19,6 +19,7 @@ import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { PageHeader } from './PageHeader';
+import { isAdminRole } from '../utils/roles';
 
 const topicOptions = [
   { value: 'all', label: 'All Topics' },
@@ -246,7 +247,7 @@ export function HelpModule({ user }) {
   const [openTrouble, setOpenTrouble] = useState(null);
   const [fullView, setFullView] = useState(null);
   const normalizedQuery = query.trim().toLowerCase();
-  const isAdmin = user?.role === 'Admin' || user?.role === 'Owner';
+  const isAdmin = isAdminRole(user?.role);
 
   const visibleGuides = useMemo(() => {
     return guides

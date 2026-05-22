@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowUpDown, Copy, Edit, Mail, MapPin, Plus, Search, UserCheck, UserX, Users } from "lucide-react";
+import { ArrowUpDown, Copy, Edit, KeyRound, MapPin, Plus, Search, UserCheck, UserX, Users } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { useData } from "./DataContext";
 import { PageHeader } from "./PageHeader";
 import { mergeSort } from "../utils/algorithms";
+import { ROLE_OPTIONS, getRoleLabel, isAdminRole, normalizeRole } from "../utils/roles";
 
 const sanitizePersonNameInput = value => String(value ?? "").replace(/[^A-Za-zÀ-ÖØ-öø-ÿÑñ .'-]/g, "");
 const sanitizeUsernameInput = value => String(value ?? "").replace(/[^A-Za-z0-9._-]/g, "");
@@ -51,29 +52,36 @@ export function UserManagementModule() {
     fullName: "",
     username: "",
     email: "",
-    role: "Employee",
+    role: "Inventory Staff",
     branch: sessionUser?.branch || "Manggahan"
   });
   const [createdAccountCredentials, setCreatedAccountCredentials] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [pendingSearchQuery, setPendingSearchQuery] = useState("");
   const [inactiveSearchQuery, setInactiveSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState(() => {
     const targetTab = localStorage.getItem("user_management_target_tab");
-    if (targetTab === "pending" || targetTab === "inactive" || targetTab === "active") {
+    if (targetTab === "inactive" || targetTab === "active") {
       localStorage.removeItem("user_management_target_tab");
       return targetTab;
+    }
+    if (targetTab === "pending") {
+      localStorage.removeItem("user_management_target_tab");
+      return "inactive";
     }
     return "active";
   });
   const [activeSort, setActiveSort] = useState({ key: "fullName", direction: "asc" });
-  const [pendingSort, setPendingSort] = useState({ key: "fullName", direction: "asc" });
   const [inactiveSort, setInactiveSort] = useState({ key: "fullName", direction: "asc" });
 
   useEffect(() => {
-    const validTabs = new Set(["active", "pending", "inactive"]);
+    const validTabs = new Set(["active", "inactive"]);
     const handleTargetTab = event => {
       const targetTab = event?.detail?.tab || localStorage.getItem("user_management_target_tab");
+      if (targetTab === "pending") {
+        localStorage.removeItem("user_management_target_tab");
+        setActiveTab("inactive");
+        return;
+      }
       if (!validTabs.has(targetTab)) return;
       localStorage.removeItem("user_management_target_tab");
       setActiveTab(targetTab);
@@ -93,6 +101,7 @@ export function UserManagementModule() {
     username: apiUser.username,
     email: apiUser.email,
     role: apiUser.role,
+    roleLabel: getRoleLabel(apiUser.role),
     branch: apiUser.branch,
     status: apiUser.status,
     mustChangePassword: Boolean(apiUser.must_change_password ?? apiUser.mustChangePassword),
@@ -127,8 +136,7 @@ export function UserManagementModule() {
   }, [API_BASE, authToken, setUsers]);
 
   const activeUsers = users.filter(u => u.status === "Active");
-  const pendingUsers = users.filter(u => u.status === "Pending");
-  const inactiveUsers = users.filter(u => u.status === "Inactive");
+  const inactiveUsers = users.filter(u => u.status !== "Active");
 
   const makeComparator = sortCfg => (a, b) => {
     const key = sortCfg.key;
@@ -145,7 +153,6 @@ export function UserManagementModule() {
   };
 
   const activeComparator = useMemo(() => makeComparator(activeSort), [activeSort]);
-  const pendingComparator = useMemo(() => makeComparator(pendingSort), [pendingSort]);
   const inactiveComparator = useMemo(() => makeComparator(inactiveSort), [inactiveSort]);
 
   // Ensure user updates immediately reflect across tabs without requiring a reload.
@@ -159,6 +166,7 @@ export function UserManagementModule() {
         ...existing,
         ...updatedUser,
         role: updatedUser.role ?? existing.role,
+        roleLabel: getRoleLabel(updatedUser.role ?? existing.role),
         branch: updatedUser.branch ?? existing.branch,
         email: updatedUser.email ?? existing.email,
         username: updatedUser.username ?? existing.username,
@@ -180,13 +188,11 @@ export function UserManagementModule() {
     };
 
     if (scope === "active") setActiveSort(nextState);
-    if (scope === "pending") setPendingSort(nextState);
     if (scope === "inactive") setInactiveSort(nextState);
   };
 
   const getSortState = scope => {
     if (scope === "active") return activeSort;
-    if (scope === "pending") return pendingSort;
     return inactiveSort;
   };
 
@@ -221,7 +227,7 @@ export function UserManagementModule() {
   };
 
   const renderUserStatusBadge = user => {
-    const status = user.status || (activeTab === "pending" ? "Pending" : activeTab === "inactive" ? "Inactive" : "Active");
+    const status = user.status || (activeTab === "inactive" ? "Inactive" : "Active");
     const statusClasses = {
       Active: "bg-green-100 text-green-700 hover:bg-green-100",
       Pending: "bg-yellow-100 text-yellow-800 hover:bg-yellow-100",
@@ -237,44 +243,12 @@ export function UserManagementModule() {
 
   const renderPasswordSetupBadge = user => user?.mustChangePassword ? (
     <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100">
-      Password Setup Required
+      First Login Setup Required
     </Badge>
   ) : null;
 
   const renderUserActions = (scope, user, isMobile = false) => {
     const actionClass = isMobile ? "user-mobile-action" : "";
-
-    if (scope === "pending") {
-      return (
-        <div className={isMobile ? "user-mobile-actions" : "flex gap-2"}>
-          <Button
-            size="sm"
-            disabled={isActionLoading}
-            className={actionClass}
-            onClick={() => {
-              setSelectedUser(user);
-              setShowApproveDialog(true);
-            }}
-          >
-            <UserCheck className="w-4 h-4 mr-1" />
-            Approve
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={isActionLoading}
-            className={actionClass}
-            onClick={() => {
-              setSelectedUser(user);
-              setShowRejectDialog(true);
-            }}
-          >
-            <UserX className="w-4 h-4 mr-1" />
-            Reject
-          </Button>
-        </div>
-      );
-    }
 
     if (scope === "inactive") {
       return (
@@ -299,7 +273,7 @@ export function UserManagementModule() {
           className={actionClass}
           onClick={() => {
             setSelectedUser(user);
-            setNewRole(user.role);
+            setNewRole(normalizeRole(user.role));
             setIsEditDialogOpen(true);
           }}
           title="Edit Role"
@@ -351,7 +325,7 @@ export function UserManagementModule() {
                 <p>ID: {user.id || "N/A"}</p>
               </div>
               <Badge variant="outline" className="user-role-badge">
-                {user.role || (scope === "pending" ? "Pending" : "Unassigned")}
+                {user.roleLabel || getRoleLabel(user.role) || "Unassigned"}
               </Badge>
             </div>
 
@@ -368,12 +342,6 @@ export function UserManagementModule() {
                 <span>Branch</span>
                 <strong title={user.branch}>{user.branch || "Not set"}</strong>
               </div>
-              {scope === "pending" && (
-                <div className="user-mobile-field">
-                  <span>Created</span>
-                  <strong>{user.createdDate || "N/A"}</strong>
-                </div>
-              )}
             </div>
 
             <div className="user-mobile-card-footer">
@@ -398,17 +366,6 @@ export function UserManagementModule() {
     );
     return mergeSort(filtered, activeComparator);
   }, [activeUsers, activeComparator, searchQuery]);
-
-  const filteredPendingUsers = useMemo(() => {
-    const lowerQuery = pendingSearchQuery.toLowerCase();
-    const filtered = pendingUsers.filter(user =>
-      (user.fullName || "").toLowerCase().includes(lowerQuery) ||
-      (user.username || "").toLowerCase().includes(lowerQuery) ||
-      (user.email || "").toLowerCase().includes(lowerQuery) ||
-      (user.branch || "").toLowerCase().includes(lowerQuery)
-    );
-    return mergeSort(filtered, pendingComparator);
-  }, [pendingUsers, pendingComparator, pendingSearchQuery]);
 
   const filteredInactiveUsers = useMemo(() => {
     const lowerQuery = inactiveSearchQuery.toLowerCase();
@@ -456,15 +413,15 @@ export function UserManagementModule() {
     );
   };
 
-  const resetCreateUserForm = () => {
+  const resetCreateUserForm = ({ clearCredentials = true } = {}) => {
     setNewAccount({
       fullName: "",
       username: "",
       email: "",
-      role: "Employee",
+      role: "Inventory Staff",
       branch: sessionUser?.branch || "Manggahan"
     });
-    setCreatedAccountCredentials(null);
+    if (clearCredentials) setCreatedAccountCredentials(null);
   };
 
   const handleCreateUserAccount = async event => {
@@ -514,10 +471,15 @@ export function UserManagementModule() {
       setCreatedAccountCredentials({
         fullName: createdUser.fullName,
         username: createdUser.username,
-        temporaryPassword: data.temporaryPassword
+        email: createdUser.email,
+        temporaryPassword: data.temporaryPassword,
+        emailDeliveryStatus: data.emailDeliveryStatus || "unknown"
       });
+      setIsCreateUserDialogOpen(false);
       toast.success("User account created", {
-        description: "Temporary credentials were generated and sent by email when email service is available."
+        description: data.emailDeliveryStatus === "sent"
+          ? "The notification email was sent. Temporary credentials are also ready to copy."
+          : "Temporary credentials are ready to copy and share with the account owner."
       });
     } catch (err) {
       console.error(err);
@@ -536,6 +498,20 @@ export function UserManagementModule() {
     } catch {
       toast.error("Unable to copy credentials automatically.");
     }
+  };
+
+  const getCreatedAccountEmailMessage = () => {
+    if (!createdAccountCredentials) return "";
+    if (createdAccountCredentials.emailDeliveryStatus === "sent") {
+      return `Notification email sent to ${createdAccountCredentials.email}. Keep the credentials visible here in case the user needs help signing in.`;
+    }
+    if (createdAccountCredentials.emailDeliveryStatus === "failed") {
+      return `Email sending failed. Copy and share these temporary credentials directly with ${createdAccountCredentials.fullName}.`;
+    }
+    if (createdAccountCredentials.emailDeliveryStatus === "local_preview") {
+      return "Email service is not configured for live delivery. Copy and share these temporary credentials directly with the assigned user.";
+    }
+    return "Copy and share these temporary credentials directly if the user does not receive an email.";
   };
 
   const handleApprove = async user => {
@@ -662,7 +638,7 @@ export function UserManagementModule() {
 
   const handleInitiateRoleChange = () => {
     if (!selectedUser || !newRole) return;
-    if (newRole === selectedUser.role) {
+    if (normalizeRole(newRole) === normalizeRole(selectedUser.role)) {
       toast.info("No changes made", {
         description: "The selected role is the same as the current role"
       });
@@ -707,7 +683,7 @@ export function UserManagementModule() {
 
       if (actingUserId && targetUserId && actingUserId === targetUserId) {
         toast.success("Role updated", {
-          description: `Your role is now ${updated.role}. Please re-login to refresh your access.`
+          description: `Your role is now ${getRoleLabel(updated.role)}. Please re-login to refresh your access.`
         });
       } else {
         toast.success("Role updated successfully. User must re-login to apply changes.");
@@ -717,7 +693,7 @@ export function UserManagementModule() {
       if (data.selfDemoted) {
         localStorage.setItem('postLogoutToast', JSON.stringify({
           title: 'Your role has been updated. You have been logged out to refresh your permissions.',
-          description: `Role changed to ${updated.role}. Please log in again.`
+          description: `Role changed to ${getRoleLabel(updated.role)}. Please log in again.`
         }));
         localStorage.removeItem('token');
         localStorage.removeItem('user');
@@ -816,7 +792,7 @@ export function UserManagementModule() {
         }
 
         .user-summary-grid {
-          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-template-columns: repeat(2, minmax(0, 1fr));
         }
 
         .user-summary-card {
@@ -1439,21 +1415,7 @@ export function UserManagementModule() {
             <CardContent className="pt-6">
               <div className="user-summary-content flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-slate-600 mb-1">Pending Approval</p>
-                  <p className="text-2xl text-slate-900">{pendingUsers.length}</p>
-                </div>
-                <div className="user-summary-icon bg-orange-100 rounded-lg flex items-center justify-center">
-                  <Mail className="w-6 h-6 text-orange-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="user-summary-card">
-            <CardContent className="pt-6">
-              <div className="user-summary-content flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-slate-600 mb-1">Inactive Users</p>
+                  <p className="text-sm text-slate-600 mb-1">Accounts Without Access</p>
                   <p className="text-2xl text-slate-900">{inactiveUsers.length}</p>
                 </div>
                 <div className="user-summary-icon bg-red-100 rounded-lg flex items-center justify-center">
@@ -1486,8 +1448,7 @@ export function UserManagementModule() {
             <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
               <TabsList className="user-tabs-list">
                 <TabsTrigger value="active">Active ({activeUsers.length})</TabsTrigger>
-                <TabsTrigger value="pending">Pending ({pendingUsers.length})</TabsTrigger>
-                <TabsTrigger value="inactive">Inactive ({inactiveUsers.length})</TabsTrigger>
+                <TabsTrigger value="inactive">No Access ({inactiveUsers.length})</TabsTrigger>
               </TabsList>
 
               <TabsContent value="active">
@@ -1543,7 +1504,7 @@ export function UserManagementModule() {
                               {user.email}
                             </TableCell>
                             <TableCell>
-                              <Badge variant="outline">{user.role}</Badge>
+                              <Badge variant="outline">{user.roleLabel || getRoleLabel(user.role)}</Badge>
                             </TableCell>
                             <TableCell className="text-sm">{user.branch}</TableCell>
                             <TableCell>
@@ -1562,85 +1523,6 @@ export function UserManagementModule() {
                   </Table>
                 </div>
                 {renderMobileUserCards("active", filteredActiveUsers, "No active users found")}
-              </TabsContent>
-
-              <TabsContent value="pending">
-                <div className="user-search-wrap mb-4">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                    <Input
-                      placeholder="Search by name, username, email, or role..."
-                      value={pendingSearchQuery}
-                      onChange={e => setPendingSearchQuery(e.target.value)}
-                      className="pl-10 border-[#7a4b00] ring-1 ring-[#7a4b00] focus:border-[#593500] focus:ring-[#593500]"
-                    />
-                  </div>
-                </div>
-
-                <div className="user-table-shell border border-slate-200 rounded-lg">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-[18%]">
-                          {renderSortableHeader("pending", "fullName", "Full Name")}
-                        </TableHead>
-                        <TableHead className="w-[14%]">
-                          {renderSortableHeader("pending", "username", "Username")}
-                        </TableHead>
-                        <TableHead className="w-[22%]">
-                          {renderSortableHeader("pending", "email", "Email")}
-                        </TableHead>
-                        <TableHead className="w-[12%]">
-                          {renderSortableHeader("pending", "role", "Role")}
-                        </TableHead>
-                        <TableHead className="w-[12%]">Branch</TableHead>
-                        <TableHead className="w-[10%]">Status</TableHead>
-                        <TableHead className="w-[8%]">
-                          {renderSortableHeader("pending", "createdDate", "Created")}
-                        </TableHead>
-                        <TableHead className="w-[6%]">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredPendingUsers.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={8} className="text-center text-slate-400 py-8">
-                            No pending users
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        filteredPendingUsers.map(user => (
-                          <TableRow key={user.id}>
-                            <TableCell className="truncate" title={user.fullName}>
-                              {user.fullName}
-                            </TableCell>
-                            <TableCell className="font-mono text-sm truncate" title={user.username}>
-                              {user.username}
-                            </TableCell>
-                            <TableCell className="text-sm truncate" title={user.email}>
-                              {user.email}
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant="outline">{user.role || "Pending"}</Badge>
-                            </TableCell>
-                            <TableCell className="text-sm">{user.branch}</TableCell>
-                            <TableCell>
-                              <div className="flex flex-col items-start gap-1">
-                                {renderUserStatusBadge(user)}
-                                {renderPasswordSetupBadge(user)}
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-sm">{user.createdDate}</TableCell>
-                            <TableCell>
-                              {renderUserActions("pending", user)}
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-                {renderMobileUserCards("pending", filteredPendingUsers, "No pending users")}
               </TabsContent>
 
               <TabsContent value="inactive">
@@ -1681,7 +1563,7 @@ export function UserManagementModule() {
                       {filteredInactiveUsers.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={7} className="text-center text-slate-400 py-8">
-                            No inactive users
+                            No blocked or inactive accounts
                           </TableCell>
                         </TableRow>
                       ) : (
@@ -1697,7 +1579,7 @@ export function UserManagementModule() {
                               {user.email}
                             </TableCell>
                             <TableCell>
-                              <Badge variant="outline">{user.role}</Badge>
+                              <Badge variant="outline">{user.roleLabel || getRoleLabel(user.role)}</Badge>
                             </TableCell>
                             <TableCell className="text-sm">{user.branch}</TableCell>
                             <TableCell>
@@ -1715,7 +1597,7 @@ export function UserManagementModule() {
                     </TableBody>
                   </Table>
                 </div>
-                {renderMobileUserCards("inactive", filteredInactiveUsers, "No inactive users")}
+                {renderMobileUserCards("inactive", filteredInactiveUsers, "No blocked or inactive accounts")}
               </TabsContent>
             </Tabs>
           </CardContent>
@@ -1724,13 +1606,13 @@ export function UserManagementModule() {
         {/* Dialogs and AlertDialogs */}
         <Dialog open={isCreateUserDialogOpen} onOpenChange={(open) => {
           setIsCreateUserDialogOpen(open);
-          if (!open) resetCreateUserForm();
+          if (!open) resetCreateUserForm({ clearCredentials: false });
         }}>
           <DialogContent className="user-edit-dialog user-create-dialog">
             <DialogHeader>
               <DialogTitle>Create User Account</DialogTitle>
               <DialogDescription className="mt-2 max-w-[30rem] text-base leading-7 text-slate-700">
-                Create an account for approved store personnel. Use Admin only for trusted users who need access to system settings, user management, and protected records.
+                Create accounts only for approved store personnel. Use Admin / Manager for trusted users who need full system control.
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleCreateUserAccount} className="space-y-4 py-2">
@@ -1796,10 +1678,16 @@ export function UserManagementModule() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Employee">Employee</SelectItem>
-                      <SelectItem value="Admin">Admin</SelectItem>
+                      {ROLE_OPTIONS.map(option => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
+                  <p className="text-xs leading-5 text-slate-500">
+                    {ROLE_OPTIONS.find(option => option.value === newAccount.role)?.description}
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="create-branch">Assigned Branch</Label>
@@ -1819,26 +1707,9 @@ export function UserManagementModule() {
                 </div>
               </div>
 
-              {createdAccountCredentials ? (
-                <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-900">
-                  <p className="font-semibold">Account created for {createdAccountCredentials.fullName}</p>
-                  <div className="mt-3 rounded-lg bg-white p-3 font-mono text-slate-900">
-                    <p>Username: {createdAccountCredentials.username}</p>
-                    <p>Temporary Password: {createdAccountCredentials.temporaryPassword}</p>
-                  </div>
-                  <p className="mt-3">
-                    Share these credentials only with the assigned account owner. They will be required to set a new password after first login.
-                  </p>
-                  <Button type="button" variant="outline" className="mt-3" onClick={copyTemporaryCredentials}>
-                    <Copy className="mr-2 h-4 w-4" />
-                    Copy Credentials
-                  </Button>
-                </div>
-              ) : (
-                <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
-                  Temporary credentials will be generated after creation. Share them only with the assigned account owner.
-                </div>
-              )}
+              <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
+                Temporary credentials will be generated after creation. Share them only with the assigned account owner.
+              </div>
 
               <DialogFooter>
                 <Button
@@ -1850,15 +1721,61 @@ export function UserManagementModule() {
                   }}
                   disabled={isActionLoading}
                 >
-                  {createdAccountCredentials ? "Close" : "Cancel"}
+                  Cancel
                 </Button>
-                {!createdAccountCredentials && (
-                  <Button type="submit" disabled={isActionLoading} className="bg-[#FF0000] text-white hover:bg-[#cc0000]">
-                    {isActionLoading ? "Creating..." : "Create Account"}
-                  </Button>
-                )}
+                <Button type="submit" disabled={isActionLoading} className="bg-[#FF0000] text-white hover:bg-[#cc0000]">
+                  {isActionLoading ? "Creating..." : "Create Account"}
+                </Button>
               </DialogFooter>
             </form>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={Boolean(createdAccountCredentials)}
+          onOpenChange={open => {
+            if (!open) setCreatedAccountCredentials(null);
+          }}
+        >
+          <DialogContent className="user-edit-dialog">
+            <DialogHeader>
+              <div className="flex items-start gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+                  <KeyRound className="h-5 w-5" />
+                </div>
+              <div>
+                <DialogTitle>Temporary password generated</DialogTitle>
+                <DialogDescription className="mt-2 text-sm leading-6 text-slate-600">
+                    The account is active because it was created by an Admin / Manager, but the user must change this password after first login.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+            <div className={`rounded-xl border p-3 text-sm leading-6 ${
+              createdAccountCredentials?.emailDeliveryStatus === "sent"
+                ? "border-green-200 bg-green-50 text-green-900"
+                : createdAccountCredentials?.emailDeliveryStatus === "failed"
+                  ? "border-red-200 bg-red-50 text-red-900"
+                  : "border-amber-200 bg-amber-50 text-amber-900"
+            }`}>
+              {getCreatedAccountEmailMessage()}
+            </div>
+            <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-900">
+              <p className="font-semibold">Account created for {createdAccountCredentials?.fullName}</p>
+              <div className="mt-3 rounded-lg bg-white p-3 font-mono text-slate-900">
+                <p>Username: {createdAccountCredentials?.username}</p>
+                <p>Temporary Password: {createdAccountCredentials?.temporaryPassword}</p>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setCreatedAccountCredentials(null)}>
+                Close
+              </Button>
+              <Button type="button" onClick={copyTemporaryCredentials} className="bg-[#FF0000] text-white hover:bg-[#cc0000]">
+                <Copy className="mr-2 h-4 w-4" />
+                Copy Credentials
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
 
@@ -1876,12 +1793,15 @@ export function UserManagementModule() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Admin">Admin</SelectItem>
-                    <SelectItem value="Employee">Employee</SelectItem>
+                    {ROLE_OPTIONS.map(option => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
-              {renderChangePreview("Role", selectedUser?.role, newRole || selectedUser?.role)}
+              {renderChangePreview("Role", getRoleLabel(selectedUser?.role), getRoleLabel(newRole || selectedUser?.role))}
             </div>
             <DialogFooter>
               <Button
@@ -1904,19 +1824,19 @@ export function UserManagementModule() {
             <AlertDialogHeader showBrand={false}>
               <AlertDialogTitle>Confirm Role Change</AlertDialogTitle>
               <AlertDialogDescription>
-                {newRole === 'Admin' && selectedUser?.role !== 'Admin' ? (
-                  <>Are you sure you want to promote <strong className="text-gray-900">{selectedUser?.fullName}</strong> to Admin?</>
-                ) : selectedUser && sessionUser?.id === selectedUser.id && newRole !== 'Admin' ? (
-                  <>You are changing your own role from <strong className="text-gray-900">Admin</strong> to <strong className="text-gray-900">{newRole}</strong>. You will lose administrative access and will be logged out immediately after this change.</>
+                {isAdminRole(newRole) && !isAdminRole(selectedUser?.role) ? (
+                  <>Are you sure you want to promote <strong className="text-gray-900">{selectedUser?.fullName}</strong> to Admin / Manager?</>
+                ) : selectedUser && sessionUser?.id === selectedUser.id && !isAdminRole(newRole) ? (
+                  <>You are changing your own role from <strong className="text-gray-900">Admin / Manager</strong> to <strong className="text-gray-900">{getRoleLabel(newRole)}</strong>. You will lose administrative access and will be logged out immediately after this change.</>
                 ) : (
                   <>Are you sure you want to change <strong className="text-gray-900">{selectedUser?.fullName}</strong>'s role from{' '}
-                    <strong className="text-gray-900">{selectedUser?.role}</strong> to{' '}
-                    <strong className="text-gray-900">{newRole}</strong>? This will affect their system permissions.</>
+                    <strong className="text-gray-900">{getRoleLabel(selectedUser?.role)}</strong> to{' '}
+                    <strong className="text-gray-900">{getRoleLabel(newRole)}</strong>? This will affect their system permissions.</>
                 )}
               </AlertDialogDescription>
-              {renderChangePreview("Role", selectedUser?.role, newRole, "red")}
+              {renderChangePreview("Role", getRoleLabel(selectedUser?.role), getRoleLabel(newRole), "red")}
 
-              {selectedUser && sessionUser?.id === selectedUser.id && newRole !== 'Admin' && (
+              {selectedUser && sessionUser?.id === selectedUser.id && !isAdminRole(newRole) && (
                 <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                   <p className="font-medium text-amber-900">What happens after you confirm</p>
                   <ul className="mt-2 list-disc space-y-1 pl-4">
@@ -1971,9 +1891,9 @@ export function UserManagementModule() {
         <AlertDialog open={showApproveDialog} onOpenChange={setShowApproveDialog}>
           <AlertDialogContent className="user-confirm-dialog bg-white rounded-lg border border-gray-200 p-0 shadow-lg">
             <AlertDialogHeader showBrand={false}>
-              <AlertDialogTitle>Approve User Registration</AlertDialogTitle>
+              <AlertDialogTitle>Approve User Account</AlertDialogTitle>
               <AlertDialogDescription>
-                Approve the registration request for <strong className="text-gray-900">{selectedUser?.fullName}</strong>? They will receive an activation email and gain access as an Active user.
+                Approve the pending account for <strong className="text-gray-900">{selectedUser?.fullName}</strong>? They will gain access as an Active user.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter className="mt-4">
@@ -2020,7 +1940,7 @@ export function UserManagementModule() {
               {renderChangePreview("Branch", selectedUser?.branch, newBranch || selectedUser?.branch)}
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                 <p className="text-sm text-yellow-800">
-                  <strong>Note:</strong> Transferring this {selectedUser?.role?.toLowerCase() || "employee"} will automatically update their system access to view and modify records only for the newly assigned branch.
+                  <strong>Note:</strong> Transferring this {(getRoleLabel(selectedUser?.role) || "user").toLowerCase()} will automatically update their system access to view and modify records only for the newly assigned branch.
                 </p>
               </div>
             </div>
@@ -2047,7 +1967,7 @@ export function UserManagementModule() {
             <AlertDialogHeader showBrand={false}>
               <AlertDialogTitle>Confirm Branch Transfer</AlertDialogTitle>
               <AlertDialogDescription>
-                Are you sure you want to transfer this {selectedUser?.role?.toLowerCase() || "employee"} from{" "}
+                Are you sure you want to transfer this {(getRoleLabel(selectedUser?.role) || "user").toLowerCase()} from{" "}
                 <strong className="text-gray-900">{selectedUser?.branch}</strong> to{" "}
                 <strong className="text-gray-900">{newBranch}</strong>? This will affect their system access.
               </AlertDialogDescription>
@@ -2073,9 +1993,9 @@ export function UserManagementModule() {
         <AlertDialog open={showRejectDialog} onOpenChange={setShowRejectDialog}>
           <AlertDialogContent className="user-confirm-dialog bg-white rounded-lg border border-gray-200 p-0 shadow-lg">
             <AlertDialogHeader showBrand={false}>
-              <AlertDialogTitle>Reject User Registration</AlertDialogTitle>
+              <AlertDialogTitle>Reject User Account</AlertDialogTitle>
               <AlertDialogDescription>
-                Are you sure you want to reject the registration request from <strong>{selectedUser?.fullName}</strong>? This action cannot be undone and the user will be notified.
+                Are you sure you want to reject the pending account for <strong>{selectedUser?.fullName}</strong>? This action cannot be undone and the user will be notified.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter className="mt-4">

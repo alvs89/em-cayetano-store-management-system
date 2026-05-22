@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { toast } from 'sonner';
 import { useData } from './DataContext';
 import { PageHeader } from './PageHeader';
+import { isAdminRole } from '../utils/roles';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -140,7 +141,7 @@ export function AlertsModule({ user, onNavigate }) {
   } = useData();
   const [alertToDismiss, setAlertToDismiss] = useState(null);
   const [activeTab, setActiveTab] = useState('all');
-  const isAdmin = user?.role === 'Admin';
+  const isAdmin = isAdminRole(user?.role);
 
   const handleMarkAsRead = id => {
     markAlertRead(id);

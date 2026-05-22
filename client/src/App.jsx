@@ -25,7 +25,6 @@ import {
 import axios from "axios";
 import { LoginScreen } from "./components/LoginScreen";
 import { TwoFactorAuthScreen } from "./components/TwoFactorAuthScreen";
-import RegistrationScreen from './components/RegistrationScreen';
 import ForgotPasswordScreen from './components/ForgotPasswordScreen';
 import SetPasswordScreen from './components/SetPasswordScreen';
 import { Dashboard } from "./components/Dashboard.jsx";
@@ -59,6 +58,7 @@ import { DataProvider, useData } from "./components/DataContext";
 import { Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { apiUrl } from './utils/api';
 import { PASSWORD_HELP_TEXT, validatePasswordPolicy } from './utils/passwordPolicy';
+import { canAccessScreen, getRoleLabel, isAdminRole, normalizeRole } from './utils/roles';
 
 const emcLogoSrc = "/emc-logo.png"; // Place the logo file in public/emc-logo.png
 const emptyPasswordChangeForm = {
@@ -91,6 +91,8 @@ function AppContent() {
       fullName: user.fullName || user.full_name || user.username || "User",
       branch: user.branch || user.branchName || "Branch",
       role: user.role || "User",
+      normalizedRole: normalizeRole(user.role || "User"),
+      roleLabel: getRoleLabel(user.role || "User"),
       username: user.username || "",
       email: user.email || "",
       mustChangePassword: Boolean(user.mustChangePassword ?? user.must_change_password),
@@ -244,6 +246,13 @@ function AppContent() {
 
   // Sidebar navigation handler
   const navigateTo = (screen) => {
+    if (currentUser && !canAccessScreen(currentUser.role, screen)) {
+      toast.info("This action is not available for your current role.");
+      setCurrentScreen("dashboard");
+      setIsMobileSidebarOpen(false);
+      return;
+    }
+
     setCurrentScreen(screen);
     setIsMobileSidebarOpen(false);
   };
@@ -253,7 +262,7 @@ function AppContent() {
 
   // Keep unauthenticated browser entry points on the login page without breaking 2FA.
   useEffect(() => {
-    const publicPaths = ['/login', '/register', '/forgot-password', '/set-password', '/2fa'];
+    const publicPaths = ['/login', '/forgot-password', '/set-password', '/2fa'];
     const hasPending2FA = Boolean(localStorage.getItem('temp_username'));
 
     if (!currentUser && !hasPending2FA && !publicPaths.includes(location.pathname)) {
@@ -302,7 +311,9 @@ function AppContent() {
       "archive",
       "reports",
       "sales",
+      "maintenance",
       "user-management",
+      "audit-trail",
       "search",
       "help",
       "alerts",
@@ -316,6 +327,11 @@ function AppContent() {
       next.add(currentScreen);
       return next;
     });
+  }, [currentScreen, currentUser]);
+
+  useEffect(() => {
+    if (!currentUser || canAccessScreen(currentUser.role, currentScreen)) return;
+    setCurrentScreen("dashboard");
   }, [currentScreen, currentUser]);
 
   useEffect(() => {
@@ -394,7 +410,6 @@ function AppContent() {
             onLogin={handleLogin}
             onNavigateTo2FA={handleNavigateTo2FA}
             onForgotPassword={() => setCurrentScreen("forgot-password")}
-            onRegister={() => setCurrentScreen("registration")}
           />
         )}
         {currentScreen === "2fa" && (
@@ -412,9 +427,6 @@ function AppContent() {
         )}
         {currentScreen === "set-password" && (
           <SetPasswordScreen onSuccess={() => setCurrentScreen("login")} />
-        )}
-        {currentScreen === "registration" && (
-          <RegistrationScreen onBack={() => setCurrentScreen("login")} />
         )}
       </main>
     );
@@ -683,7 +695,7 @@ function AppContent() {
             {!isSidebarCollapsed && (
               <div className="flex-1 min-w-0">
               <p className="text-sm truncate text-gray-900">{currentUser.fullName || currentUser.username}</p>
-              <p className="text-xs text-gray-600">{currentUser.role}</p>
+              <p className="text-xs text-gray-600">{currentUser.roleLabel || getRoleLabel(currentUser.role)}</p>
             </div>
             )}
           </div>
@@ -716,27 +728,33 @@ function AppContent() {
             onClick={() => navigateTo("inventory")}
             collapsed={isSidebarCollapsed}
           />
-          <NavItem
-            icon={<Archive className="w-5 h-5" />}
-            label="Archive"
-            active={currentScreen === "archive"}
-            onClick={() => navigateTo("archive")}
-            collapsed={isSidebarCollapsed}
-          />
-          <NavItem
-            icon={<FileText className="w-5 h-5" />}
-            label="Reports"
-            active={currentScreen === "reports"}
-            onClick={() => navigateTo("reports")}
-            collapsed={isSidebarCollapsed}
-          />
-          <NavItem
-            icon={<ReceiptText className="w-5 h-5" />}
-            label="Sales"
-            active={currentScreen === "sales"}
-            onClick={() => navigateTo("sales")}
-            collapsed={isSidebarCollapsed}
-          />
+          {canAccessScreen(currentUser.role, "archive") && (
+            <NavItem
+              icon={<Archive className="w-5 h-5" />}
+              label="Archive"
+              active={currentScreen === "archive"}
+              onClick={() => navigateTo("archive")}
+              collapsed={isSidebarCollapsed}
+            />
+          )}
+          {canAccessScreen(currentUser.role, "reports") && (
+            <NavItem
+              icon={<FileText className="w-5 h-5" />}
+              label="Reports"
+              active={currentScreen === "reports"}
+              onClick={() => navigateTo("reports")}
+              collapsed={isSidebarCollapsed}
+            />
+          )}
+          {canAccessScreen(currentUser.role, "sales") && (
+            <NavItem
+              icon={<ReceiptText className="w-5 h-5" />}
+              label="Sales"
+              active={currentScreen === "sales"}
+              onClick={() => navigateTo("sales")}
+              collapsed={isSidebarCollapsed}
+            />
+          )}
           <NavItem
             icon={<Bell className="w-5 h-5" />}
             label="Alerts"
@@ -748,7 +766,7 @@ function AppContent() {
 
           <Separator className="my-3" />
 
-          {currentUser.role === "Admin" && (
+          {isAdminRole(currentUser.role) && (
             <>
               <NavItem
                 icon={<Settings className="w-5 h-5" />}
@@ -822,14 +840,14 @@ function AppContent() {
       <main className={mainClassName} aria-live="polite">
         {renderScreenPane("dashboard", <Dashboard onNavigate={navigateTo} user={currentUser} activeBranch={activeBranch} />)}
         {renderScreenPane("inventory", <InventoryModule user={currentUser} onNavigate={navigateTo} />)}
-        {renderScreenPane("archive", <ArchiveModule user={currentUser} />)}
-        {renderScreenPane("reports", <ReportsModule user={currentUser} />)}
-        {renderScreenPane("sales", <SalesModule user={currentUser} />)}
-        {currentUser.role === "Admin" && currentScreen === "maintenance" && (
+        {canAccessScreen(currentUser.role, "archive") && renderScreenPane("archive", <ArchiveModule user={currentUser} />)}
+        {canAccessScreen(currentUser.role, "reports") && renderScreenPane("reports", <ReportsModule user={currentUser} />)}
+        {canAccessScreen(currentUser.role, "sales") && renderScreenPane("sales", <SalesModule user={currentUser} />)}
+        {isAdminRole(currentUser.role) && currentScreen === "maintenance" && (
           <MaintenanceModule onNavigate={navigateTo} user={currentUser} />
         )}
-        {currentUser.role === "Admin" && renderScreenPane("user-management", <UserManagementModule />)}
-        {currentUser.role === "Admin" && renderScreenPane("audit-trail", <AuditTrailModule user={currentUser} />)}
+        {isAdminRole(currentUser.role) && renderScreenPane("user-management", <UserManagementModule />)}
+        {isAdminRole(currentUser.role) && renderScreenPane("audit-trail", <AuditTrailModule user={currentUser} />)}
         {renderScreenPane("search", <SearchModule user={currentUser} />)}
         {renderScreenPane("help", <HelpModule user={currentUser} />)}
         {renderScreenPane("alerts", <AlertsModule user={currentUser} onNavigate={navigateTo} />)}
@@ -1008,7 +1026,7 @@ function MobileSidebarDrawer({
             <UserInitialAvatar user={currentUser} size="lg" />
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-gray-900">{currentUser.fullName || currentUser.username}</p>
-              <p className="truncate text-xs text-gray-600">{currentUser.role}</p>
+              <p className="truncate text-xs text-gray-600">{currentUser.roleLabel || getRoleLabel(currentUser.role)}</p>
               <p className="truncate text-xs text-gray-600">{activeBranch || currentUser.branch}</p>
             </div>
           </div>
@@ -1022,14 +1040,14 @@ function MobileSidebarDrawer({
           <MobileNavItem icon={<Search className="h-5 w-5" />} label="Search Products" active={currentScreen === "search"} onClick={() => onNavigate("search")} />
           <MobileNavItem icon={<Home className="h-5 w-5" />} label="Dashboard" active={currentScreen === "dashboard"} onClick={() => onNavigate("dashboard")} />
           <MobileNavItem icon={<Box className="h-5 w-5" />} label="Inventory" active={currentScreen === "inventory"} onClick={() => onNavigate("inventory")} />
-          <MobileNavItem icon={<Archive className="h-5 w-5" />} label="Archive" active={currentScreen === "archive"} onClick={() => onNavigate("archive")} />
-          <MobileNavItem icon={<FileText className="h-5 w-5" />} label="Reports" active={currentScreen === "reports"} onClick={() => onNavigate("reports")} />
-          <MobileNavItem icon={<ReceiptText className="h-5 w-5" />} label="Sales" active={currentScreen === "sales"} onClick={() => onNavigate("sales")} />
+          {canAccessScreen(currentUser.role, "archive") && <MobileNavItem icon={<Archive className="h-5 w-5" />} label="Archive" active={currentScreen === "archive"} onClick={() => onNavigate("archive")} />}
+          {canAccessScreen(currentUser.role, "reports") && <MobileNavItem icon={<FileText className="h-5 w-5" />} label="Reports" active={currentScreen === "reports"} onClick={() => onNavigate("reports")} />}
+          {canAccessScreen(currentUser.role, "sales") && <MobileNavItem icon={<ReceiptText className="h-5 w-5" />} label="Sales" active={currentScreen === "sales"} onClick={() => onNavigate("sales")} />}
           <MobileNavItem icon={<Bell className="h-5 w-5" />} label="Alerts" active={currentScreen === "alerts"} onClick={() => onNavigate("alerts")} badge={unreadAlertCount} />
 
           <Separator className="my-4" />
 
-          {currentUser.role === "Admin" && (
+          {isAdminRole(currentUser.role) && (
             <>
               <MobileNavItem icon={<Settings className="h-5 w-5" />} label="Maintenance" active={currentScreen === "maintenance"} onClick={() => onNavigate("maintenance")} />
               <MobileNavItem icon={<Users className="h-5 w-5" />} label="User Management" active={currentScreen === "user-management"} onClick={() => onNavigate("user-management")} />
@@ -1178,7 +1196,7 @@ export default function App() {
           {/* Public Routes */}
           <Route path="/" element={<AppContent />} />
           <Route path="/login" element={<AppContent />} />
-          <Route path="/register" element={<RegistrationScreen />} />
+          <Route path="/register" element={<AppContent />} />
           <Route path="/forgot-password" element={<ForgotPasswordScreen />} />
           <Route path="/set-password" element={<SetPasswordScreen />} />
           <Route path="/2fa" element={<TwoFactorAuthScreen />} />

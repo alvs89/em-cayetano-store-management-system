@@ -1,5 +1,5 @@
-# E.M. Cayetano Trading - Inventory Management System
-## Complete User Guide (Updated Version with Algorithm Integration)
+# E.M. Cayetano Trading - POS-Integrated Inventory Management System
+## Complete User Guide (Updated Version with POS Workflow and Algorithm Integration)
 
 ---
 
@@ -10,33 +10,37 @@
 4. [Dashboard](#dashboard)
 5. [Inventory Module](#inventory-module)
 6. [Search Module](#search-module)
-7. [Reports Module](#reports-module)
-8. [Alerts Module](#alerts-module)
-9. [Archive Module](#archive-module)
-10. [User Management Module](#user-management-module)
-11. [Maintenance Module](#maintenance-module)
-12. [Help Module](#help-module)
-13. [Logging Out](#logging-out)
-14. [Technical Features & Algorithm Integration](#technical-features--algorithm-integration)
+7. [Sales / POS Module](#sales--pos-module)
+8. [Reports Module](#reports-module)
+9. [Alerts Module](#alerts-module)
+10. [Archive Module](#archive-module)
+11. [User Management Module](#user-management-module)
+12. [Maintenance Module](#maintenance-module)
+13. [Help Module](#help-module)
+14. [Logging Out](#logging-out)
+15. [Technical Features & Algorithm Integration](#technical-features--algorithm-integration)
 
 ---
 
 ## System Overview
 
 ### Purpose
-The E.M. Cayetano Trading Inventory Management System is a comprehensive web-based platform designed to modernize inventory operations across two branches (Manggahan and San Rafael) with enhanced security, performance, and user experience.
+The E.M. Cayetano Trading POS-Integrated Inventory Management System is a web-based platform designed to support daily hardware store operations. It combines inventory tracking with a practical sales/POS workflow so customer purchases can be recorded accurately and inventory can be deducted automatically after each completed transaction.
 
 ### Key Features
 - **Dual-Branch Support**: Manage inventory for Manggahan and San Rafael locations
-- **Role-Based Access**: Admin and Employee user roles with different permissions
+- **Role-Based Access**: Admin/Manager, Cashier, and Inventory Staff roles with clear responsibility boundaries
+- **POS-Integrated Sales**: Record sold items, unit prices, discounts, payment method, amount received, change, and completed sales records
+- **Automatic Inventory Deduction**: Successful sales reduce inventory immediately and create stock movement records
 - **Enhanced Security**: Bcrypt password hashing, Two-Factor Authentication (2FA)
 - **High Performance**: Merge Sort for efficient data sorting, Binary Search for fast lookups
 - **Real-Time Operations**: Live filtering, searching, and data updates
 - **Professional UI**: Yellow (#FFFF00) and Red (#FF0000) color scheme
 
 ### User Roles
-- **Admin**: Full system access including user management, maintenance, and all modules
-- **Employee**: Access to inventory, search, reports, and alerts modules
+- **Admin / Manager**: Full system access, including user management, reports, archive, maintenance, inventory setup, reorder review, and business oversight
+- **Cashier**: Records customer purchases through the Sales/POS workflow and helps keep sales-based stock deduction accurate
+- **Inventory Staff**: Handles inventory operations such as Stock In, Stock Out, physical stock checking, and inventory monitoring
 
 ---
 
@@ -55,32 +59,28 @@ The E.M. Cayetano Trading Inventory Management System is a comprehensive web-bas
 
 ## User Authentication Flow
 
-### 1. Registration (New Users)
+### 1. Admin-Managed Account Creation
+
+The system no longer supports public account requests. This is intentional. In a real hardware store, access should be given only to approved store personnel. The Admin/Manager creates accounts, assigns roles, assigns the branch, and provides the temporary password.
 
 #### Step-by-Step Process:
-1. **Navigate to Registration**
-   - Click "Register" or "Create Account" link on the Login Screen
-   
-2. **Fill Registration Form**
-   - **Full Name**: Enter your complete name
-   - **Username**: Choose a unique username (system checks for duplicates using **Linear Search**)
+1. **Admin / Manager Opens User Management**
+   - The Admin/Manager creates the account from the official employee list.
+
+2. **Fill Account Details**
+   - **Full Name**: Complete employee name
+   - **Username**: Unique username for login
    - **Email**: Valid email address
-   - **Branch**: Select either Manggahan or San Rafael
-   - **Role**: Admin or Employee (may be pre-selected based on permissions)
-   
-3. **Password Setup** (Redirects to Set Password Screen)
-   - **Enter Password**: Minimum 6 characters
-   - **Confirm Password**: Must match the first password
-   - **Algorithm Integration**: Your password is hashed using **Bcrypt** before storage
-     - Bcrypt generates a salt and creates a one-way hash
-     - Original password is never stored
-     - Hash includes 10 rounds of encryption for maximum security
-   
-4. **Account Creation**
-   - Click "Set Password" button
-   - System validates all inputs
-   - Success message displays
-   - Automatically redirected to Login Screen
+   - **Branch**: Manggahan or San Rafael
+   - **Role**: Admin/Manager, Cashier, or Inventory Staff
+
+3. **Temporary Password**
+   - The system generates a temporary password.
+   - The user must change this password during first login.
+   - Passwords are protected using **Bcrypt** before storage.
+
+4. **Access Control**
+   - If an employee resigns or should no longer use the system, the Admin/Manager can deactivate the account instead of deleting operational history.
 
 #### Technical Note:
 ```
@@ -101,7 +101,7 @@ The E.M. Cayetano Trading Inventory Management System is a comprehensive web-bas
    - **Password**: Your password (entered in plain text)
    
 2. **Authentication** (Behind the Scenes)
-   - System retrieves user data using **Linear Search** to find matching username
+   - System retrieves the matching user account from the database
    - Your entered password is compared with stored hash using **Bcrypt verification**
    - Bcrypt re-hashes your input and compares with stored hash
    - Only matching hashes grant access
@@ -123,7 +123,7 @@ Login Screen
     ↓
 Enter Username/Password
     ↓
-[Linear Search] Find User
+[Database Lookup] Find User
     ↓
 [Bcrypt] Verify Password Hash
     ↓
@@ -358,6 +358,44 @@ Return results in milliseconds
 
 ---
 
+## Sales / POS Module
+
+### Purpose
+The Sales / POS module records customer purchases and deducts inventory automatically after a successful transaction. This reduces manual stock updates, improves transaction accuracy, and makes sales-based stock movement traceable.
+
+### Standard Sales Workflow
+1. **Select Customer Type**
+   - Choose Walk-in Customer, Regular Customer, or Contractor / Project Buyer.
+
+2. **Add Sold Items**
+   - Select one or more inventory items.
+   - Enter the quantity sold.
+   - Confirm or enter the unit price.
+   - If the item has a default selling price, the Unit Price is auto-filled.
+   - The system prevents duplicate item lines and prevents selling more than the current stock.
+
+3. **Record Payment Details**
+   - Select the payment method: Cash, GCash, Bank Transfer, or Store Credit.
+   - Enter an optional discount.
+   - For cash payments, enter the amount received.
+   - The system computes the change automatically.
+
+4. **Save Sale**
+   - The system validates item quantity, unit price, discount, amount received, and available stock.
+   - The backend saves the sale as a database transaction.
+   - Inventory is deducted automatically.
+   - A stock movement is recorded as **Stock Out - Sales**.
+   - The audit trail records who saved the transaction.
+
+### Important Business Rules
+- Sales require a valid unit price because totals depend on it.
+- Discounts cannot be greater than the sales subtotal.
+- Cash amount received must be equal to or greater than the amount due.
+- Non-cash payments are recorded with zero change.
+- Sales deductions are separate from non-sales Stock Out reasons such as damage, expiry, missing items, transfer, or correction.
+
+---
+
 ## Reports Module
 
 ### Purpose
@@ -520,7 +558,7 @@ View and manage soft-deleted inventory items with restoration capabilities.
 
 ## User Management Module
 
-**Access**: Admin Only
+**Access**: Admin / Manager Only
 
 ### Purpose
 Manage user accounts, roles, and permissions across both branches.
@@ -533,7 +571,7 @@ Manage user accounts, roles, and permissions across both branches.
   - Full Name
   - Email
   - Branch
-  - Role (Admin/Employee)
+  - Role (Admin/Manager, Cashier, or Inventory Staff)
   - Status (Active/Inactive)
   - Created Date
   
@@ -546,18 +584,18 @@ Manage user accounts, roles, and permissions across both branches.
 - Algorithm selection based on sort state
 - Real-time filtering
 
-#### 3. **Add New User**
-- Click **"Add User"** button
+#### 3. **Create User Account**
+- Click **"Create User Account"** button
 - **Form Fields**:
   - Full Name
-  - Username (uniqueness check using **Linear Search**)
+  - Username
   - Email (format validation)
   - Branch (dropdown)
-  - Role (Admin/Employee)
+  - Role (Admin/Manager, Cashier, or Inventory Staff)
   
 - **Password Setup**:
-  - Auto-redirect to Set Password Screen
-  - New user creates password
+  - System generates a temporary password
+  - User changes password on first login
   - **Bcrypt hashing** applied
   
 - **Duplicate Prevention**:
@@ -570,7 +608,7 @@ Manage user accounts, roles, and permissions across both branches.
   - Full Name
   - Email
   - Branch
-  - Role (Admin can change roles)
+  - Role (Admin/Manager can change roles)
   - Status (Active/Inactive)
   
 - **Password Reset**:
@@ -912,7 +950,7 @@ Check item 4: "Laptop" ✓ Found!
 **Purpose**: Secure password storage and verification
 
 **Where It's Used**:
-- ✅ Registration Screen: Hash new passwords
+- ✅ Admin-created accounts: Protect temporary password setup
 - ✅ Login Screen: Verify entered passwords
 - ✅ Set Password Screen: Hash password changes
 - ✅ Forgot Password: Hash new passwords after reset
@@ -920,7 +958,7 @@ Check item 4: "Laptop" ✓ Found!
 
 **How It Works**:
 
-**Hashing Process** (Registration/Set Password):
+**Hashing Process** (Set Password / Password Change):
 ```javascript
 User enters: "MyPassword123"
          ↓

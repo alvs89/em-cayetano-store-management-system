@@ -7,9 +7,28 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from './ui/label';
 import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { toast } from 'sonner';
 import { useData } from './DataContext';
 import { PageHeader } from './PageHeader';
 import { getStockStatusBadgeClass } from '../utils/statusStyles';
+import { canAccessScreen, canPerformInventoryMovement, canRecordSales, isAdminRole } from '../utils/roles';
+const formatCurrency = value =>
+  new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: 'PHP',
+    minimumFractionDigits: 2
+  }).format(Number(value || 0));
+const sanitizeWholeNumberInput = (value, fieldName, toastId) => {
+  const rawValue = String(value || '');
+  const cleaned = rawValue.replace(/\D/g, '');
+  if (rawValue !== cleaned) {
+    toast.warning(`${fieldName} must contain numbers only.`, {
+      id: toastId,
+      duration: 2500
+    });
+  }
+  return cleaned;
+};
 export function Dashboard({
   onNavigate,
   user,
@@ -28,6 +47,10 @@ export function Dashboard({
     salesTransactions,
     users
   } = useData();
+  const canUseSales = canRecordSales(user?.role);
+  const canUseInventoryMovement = canPerformInventoryMovement(user?.role);
+  const canUseReports = canAccessScreen(user?.role, 'reports');
+  const canAddInventoryItem = isAdminRole(user?.role);
 
   // Calculate headline inventory stats for the metric cards.
   const totalItems = inventory.length;
@@ -59,8 +82,11 @@ export function Dashboard({
   }).length;
   const salesToday = (salesTransactions || []).filter(sale => {
     if (!sale.createdAt) return false;
-    return new Date(sale.createdAt).toDateString() === new Date().toDateString();
-  }).length;
+    return sale.status !== 'cancelled' && new Date(sale.createdAt).toDateString() === new Date().toDateString();
+  });
+  const salesTodayCount = salesToday.length;
+  const salesTodayAmountDue = salesToday.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0);
+  const salesTodayDiscount = salesToday.reduce((sum, sale) => sum + Number(sale.discountAmount || 0), 0);
   const reorderAttentionCount = lowStockItems + outOfStock;
   const selectedCountItem = inventory.find(item => item.id === stockCountForm.itemId);
   const physicalCountValue = stockCountForm.physicalCount === '' ? null : Number(stockCountForm.physicalCount);
@@ -82,10 +108,10 @@ export function Dashboard({
     resetStockCountForm();
     openInventoryAction(action, selectedItemId);
   };
-  const pendingUserCount = user?.role === 'Admin'
+  const pendingUserCount = isAdminRole(user?.role)
     ? (users || []).filter(account => account.status === 'Pending').length
     : 0;
-  const adminAttentionItems = user?.role === 'Admin'
+  const adminAttentionItems = isAdminRole(user?.role)
     ? [
         {
           label: 'Pending user requests',
@@ -150,6 +176,9 @@ export function Dashboard({
     onNavigate('search');
   };
   const openInventoryAction = (action, itemId = "") => {
+    if ((action === 'stock-in' || action === 'stock-out') && !canUseInventoryMovement) return;
+    if (action === 'add-item' && !canAddInventoryItem) return;
+
     localStorage.setItem("dashboardInventoryAction", action);
     if (itemId) {
       localStorage.setItem("dashboardInventoryItemId", String(itemId));
@@ -162,6 +191,8 @@ export function Dashboard({
     onNavigate('inventory');
   };
   const openTargetReport = reportType => {
+    if (!canUseReports) return;
+
     localStorage.setItem('reports_target_type', reportType);
     localStorage.setItem('reports_target_category', 'all');
     window.dispatchEvent(new CustomEvent('reports-target-view', {
@@ -170,6 +201,7 @@ export function Dashboard({
     onNavigate('reports');
   };
   const openSales = () => {
+    if (!canUseSales) return;
     onNavigate('sales');
   };
   const openUserManagementTab = tab => {
@@ -273,7 +305,7 @@ export function Dashboard({
     </Card>
   );
 
-  const adminPanel = user.role === 'Admin' ? (
+  const adminPanel = isAdminRole(user?.role) ? (
     <Card className="dashboard-admin-card overflow-hidden border-2 border-slate-200 bg-white shadow-md">
       <CardHeader className="rounded-t-xl bg-slate-50 pb-3" data-card-header>
         <CardTitle className="text-lg flex items-center gap-2">
@@ -373,7 +405,7 @@ export function Dashboard({
           }
 
           .dashboard-monitoring-grid {
-            grid-template-columns: repeat(${user.role === 'Admin' ? 3 : 2}, minmax(0, 1fr));
+            grid-template-columns: repeat(${isAdminRole(user?.role) ? 3 : 2}, minmax(0, 1fr));
           }
         }
 
@@ -584,47 +616,57 @@ export function Dashboard({
           <h2 className="text-2xl font-bold text-gray-900">Inventory Operations</h2>
         </div>
         <div className="dashboard-module-grid grid grid-cols-2 md:grid-cols-2 gap-4">
-          <ModuleCard
-            icon={<PackagePlus className="w-7 h-7" />}
-            title="Record Stock In"
-            description="Receive deliveries and update stock quantities."
-            onClick={() => openInventoryAction('stock-in')}
-            gradient="from-green-600 to-green-700"
-            badge="Receiving"
-          />
-          <ModuleCard
-            icon={<Activity className="w-7 h-7" />}
-            title="Record Stock Out"
-            description="Deduct sold, damaged, expired, or adjusted items."
-            onClick={() => openInventoryAction('stock-out')}
-            gradient="from-slate-700 to-slate-800"
-            badge="Movement"
-          />
-          <ModuleCard
-            icon={<ReceiptText className="w-7 h-7" />}
-            title="Record Sale"
-            description="Record customer purchases and deduct stock automatically."
-            onClick={openSales}
-            gradient="from-orange-500 to-orange-600"
-            badge={salesToday > 0 ? `${salesToday} Today` : "Sales"}
-          />
-          <ModuleCard
-            icon={<AlertTriangle className="w-7 h-7" />}
-            title="Review Reorder Items"
-            description="Open the supplier-based reorder report for purchasing review."
-            onClick={() => openTargetReport('supplier-reorder')}
-            gradient="from-red-600 to-red-700"
-            badge={`${reorderAttentionCount} ${reorderAttentionCount === 1 ? 'Item' : 'Items'}`}
-          />
-          <ModuleCard
-            icon={<Activity className="w-7 h-7" />}
-            title="Stock Movement History"
-            description="Review stock-in, stock-out, and sales movement records."
-            onClick={() => openTargetReport('movements')}
-            gradient="from-slate-700 to-slate-800"
-            badge={`${stockMovementsToday} Today`}
-          />
-          {user.role === 'Admin' && <ModuleCard
+          {canUseInventoryMovement && (
+            <ModuleCard
+              icon={<PackagePlus className="w-7 h-7" />}
+              title="Record Stock In"
+              description="Receive deliveries and update stock quantities."
+              onClick={() => openInventoryAction('stock-in')}
+              gradient="from-green-600 to-green-700"
+              badge="Receiving"
+            />
+          )}
+          {canUseInventoryMovement && (
+            <ModuleCard
+              icon={<Activity className="w-7 h-7" />}
+              title="Record Stock Out"
+              description="Deduct damaged, expired, missing, transferred, or corrected stock."
+              onClick={() => openInventoryAction('stock-out')}
+              gradient="from-slate-700 to-slate-800"
+              badge="Movement"
+            />
+          )}
+          {canUseSales && (
+            <ModuleCard
+              icon={<ReceiptText className="w-7 h-7" />}
+              title="Record Sale"
+              description="Record customer purchases, payment, and automatic stock deduction."
+              onClick={openSales}
+              gradient="from-orange-500 to-orange-600"
+              badge={salesTodayCount > 0 ? `${salesTodayCount} Today` : "POS"}
+            />
+          )}
+          {canUseReports && (
+            <ModuleCard
+              icon={<AlertTriangle className="w-7 h-7" />}
+              title="Review Reorder Items"
+              description="Open the supplier-based reorder report for purchasing review."
+              onClick={() => openTargetReport('supplier-reorder')}
+              gradient="from-red-600 to-red-700"
+              badge={`${reorderAttentionCount} ${reorderAttentionCount === 1 ? 'Item' : 'Items'}`}
+            />
+          )}
+          {canUseReports && (
+            <ModuleCard
+              icon={<Activity className="w-7 h-7" />}
+              title="Stock Movement History"
+              description="Review stock-in, stock-out, and sales movement records."
+              onClick={() => openTargetReport('movements')}
+              gradient="from-slate-700 to-slate-800"
+              badge={`${stockMovementsToday} Today`}
+            />
+          )}
+          {canAddInventoryItem && <ModuleCard
             icon={<Package className="w-7 h-7" />}
             title="Add New Item"
             description="Admin-only action for registering a new inventory record."
@@ -632,7 +674,7 @@ export function Dashboard({
             gradient="from-red-500 to-red-600"
             badge="Admin Only"
           />}
-          {user.role !== 'Admin' && <ModuleCard
+          {canUseInventoryMovement && <ModuleCard
             icon={<ClipboardCheck className="w-7 h-7" />}
             title="Verify Physical Stock"
             description="Check counted shelf stock against the system quantity."
@@ -650,6 +692,31 @@ export function Dashboard({
         </div>
         <div className="dashboard-monitoring-grid grid grid-cols-1 gap-6">
           {movementPanel}
+          <Card className="dashboard-sales-card overflow-hidden border-2 border-amber-200 bg-white shadow-md">
+            <CardHeader className="rounded-t-xl bg-amber-50 pb-3" data-card-header>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <ReceiptText className="w-5 h-5 text-amber-600" />
+                Today&apos;s Sales
+              </CardTitle>
+              <CardDescription>POS sales recorded for this branch</CardDescription>
+            </CardHeader>
+            <CardContent className="bg-white pt-2 pb-4" data-card-content>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2.5">
+                  <p className="text-xs font-semibold uppercase text-amber-700">Transactions</p>
+                  <p className="mt-1 text-lg font-bold text-slate-900">{salesTodayCount}</p>
+                </div>
+                <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2.5">
+                  <p className="text-xs font-semibold uppercase text-amber-700">Amount Due</p>
+                  <p className="mt-1 break-words text-lg font-bold text-slate-900">{formatCurrency(salesTodayAmountDue)}</p>
+                </div>
+                <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2.5">
+                  <p className="text-xs font-semibold uppercase text-amber-700">Discounts</p>
+                  <p className="mt-1 break-words text-lg font-bold text-slate-900">{formatCurrency(salesTodayDiscount)}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
           {stockAlertPanel}
           {adminPanel}
         </div>
@@ -695,12 +762,13 @@ export function Dashboard({
                 <Label htmlFor="physical-count">Actual Counted Quantity</Label>
                 <Input
                   id="physical-count"
-                  type="number"
-                  min="0"
-                  step="1"
                   inputMode="numeric"
+                  pattern="[0-9]*"
                   value={stockCountForm.physicalCount}
-                  onChange={event => setStockCountForm(prev => ({ ...prev, physicalCount: event.target.value }))}
+                  onChange={event => setStockCountForm(prev => ({
+                    ...prev,
+                    physicalCount: sanitizeWholeNumberInput(event.target.value, 'Actual counted quantity', 'dashboard-physical-count-numbers-only')
+                  }))}
                   placeholder="Type the actual units counted"
                 />
               </div>
@@ -710,13 +778,13 @@ export function Dashboard({
               <div className="dashboard-count-preview-row">
                 <span className="text-sm font-medium text-slate-600">Quantity in System</span>
                 <span className="text-sm font-semibold text-slate-900">
-                  {selectedCountItem ? `${selectedCountItem.quantity} units` : 'No item selected'}
+                  {selectedCountItem ? `${selectedCountItem.quantity} ${formatUnitLabel(selectedCountItem.quantity)}` : 'No item selected'}
                 </span>
               </div>
               <div className="dashboard-count-preview-row">
                 <span className="text-sm font-medium text-slate-600">Actual Counted Quantity</span>
                 <span className="text-sm font-semibold text-slate-900">
-                  {hasValidPhysicalCount ? `${physicalCountValue} units` : hasPhysicalCountEntry ? 'Whole number required' : 'Not entered'}
+                  {hasValidPhysicalCount ? `${physicalCountValue} ${formatUnitLabel(physicalCountValue)}` : hasPhysicalCountEntry ? 'Whole number required' : 'Not entered'}
                 </span>
               </div>
               <div className="dashboard-count-preview-row">

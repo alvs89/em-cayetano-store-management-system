@@ -64,7 +64,7 @@ const CORS_ALLOWED_ORIGINS = (process.env.CORS_ORIGIN || process.env.CLIENT_URL 
   .split(',')
   .map(origin => origin.trim())
   .filter(Boolean);
-const ALLOWED_ROLES = ['Admin', 'Employee'];
+const ALLOWED_ROLES = ['Admin', 'Cashier', 'Inventory Staff'];
 const ALLOWED_BRANCHES = ['Manggahan', 'San Rafael'];
 const OFFICIAL_INVENTORY_CATEGORIES = [
   'Tools',
@@ -220,7 +220,7 @@ async function ensureSchema() {
       username VARCHAR(50) UNIQUE NOT NULL,
       email VARCHAR(100) UNIQUE NOT NULL,
       password_hash VARCHAR(255) NOT NULL,
-      role VARCHAR(20) CHECK (role IN ('Admin', 'Employee')) NOT NULL,
+      role VARCHAR(30) CHECK (role IN ('Admin', 'Cashier', 'Inventory Staff', 'Employee')) NOT NULL,
       branch VARCHAR(50),
       status VARCHAR(20) DEFAULT 'Active',
       must_change_password BOOLEAN DEFAULT false,
@@ -256,6 +256,9 @@ async function ensureSchema() {
       lead_time_days INTEGER,
       safety_stock INTEGER,
       average_daily_sales NUMERIC(10,2),
+      average_daily_sales_mode VARCHAR(20) DEFAULT 'auto',
+      manual_average_daily_sales NUMERIC(10,2),
+      average_daily_sales_override_reason TEXT,
       status VARCHAR(20) DEFAULT 'In Stock',
       last_updated TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
       UNIQUE (product_id, branch)
@@ -289,7 +292,19 @@ async function ensureSchema() {
       branch VARCHAR(50) NOT NULL,
       customer_type VARCHAR(40) DEFAULT 'walk_in' CHECK (customer_type IN ('walk_in', 'regular', 'contractor')),
       total_quantity INTEGER NOT NULL DEFAULT 0,
+      subtotal_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      discount_type VARCHAR(40) DEFAULT 'none',
+      discount_label VARCHAR(120),
       total_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      payment_method VARCHAR(30) DEFAULT 'cash' CHECK (payment_method IN ('cash', 'gcash', 'bank_transfer', 'credit')),
+      amount_received NUMERIC(12,2),
+      change_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      payment_reference VARCHAR(120),
+      payment_confirmed BOOLEAN NOT NULL DEFAULT false,
+      payment_confirmed_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+      payment_confirmed_by_name TEXT,
+      payment_confirmed_at TIMESTAMP,
       status VARCHAR(20) DEFAULT 'completed' CHECK (status IN ('completed', 'cancelled')),
       sold_by INT REFERENCES users(user_id) ON DELETE SET NULL,
       sold_by_name TEXT,
@@ -332,6 +347,9 @@ async function ensureSchema() {
       lead_time_days INTEGER,
       safety_stock INTEGER,
       average_daily_sales NUMERIC(10,2),
+      average_daily_sales_mode VARCHAR(20) DEFAULT 'auto',
+      manual_average_daily_sales NUMERIC(10,2),
+      average_daily_sales_override_reason TEXT,
       status VARCHAR(20) DEFAULT 'In Stock',
       supplier_name VARCHAR(120),
       default_selling_price NUMERIC(12,2),
@@ -388,6 +406,22 @@ async function ensureSchema() {
 
   await pool.query(`
     ALTER TABLE users
+    ALTER COLUMN role TYPE VARCHAR(30);
+  `);
+
+  await pool.query(`
+    ALTER TABLE users
+    DROP CONSTRAINT IF EXISTS users_role_check;
+  `);
+
+  await pool.query(`
+    ALTER TABLE users
+    ADD CONSTRAINT users_role_check
+    CHECK (role IN ('Admin', 'Cashier', 'Inventory Staff', 'Employee'));
+  `);
+
+  await pool.query(`
+    ALTER TABLE users
     ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT false;
   `);
 
@@ -428,6 +462,21 @@ async function ensureSchema() {
 
   await pool.query(`
     ALTER TABLE branch_inventory
+    ADD COLUMN IF NOT EXISTS average_daily_sales_mode VARCHAR(20) DEFAULT 'auto';
+  `);
+
+  await pool.query(`
+    ALTER TABLE branch_inventory
+    ADD COLUMN IF NOT EXISTS manual_average_daily_sales NUMERIC(10,2);
+  `);
+
+  await pool.query(`
+    ALTER TABLE branch_inventory
+    ADD COLUMN IF NOT EXISTS average_daily_sales_override_reason TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE branch_inventory
     ALTER COLUMN lead_time_days DROP DEFAULT,
     ALTER COLUMN safety_stock DROP DEFAULT,
     ALTER COLUMN average_daily_sales DROP DEFAULT;
@@ -451,6 +500,72 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE sales_transactions
     ADD COLUMN IF NOT EXISTS total_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS subtotal_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS discount_type VARCHAR(40) DEFAULT 'none';
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS discount_label VARCHAR(120);
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS payment_method VARCHAR(30) DEFAULT 'cash';
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS amount_received NUMERIC(12,2);
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS change_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS payment_reference VARCHAR(120);
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS payment_confirmed BOOLEAN NOT NULL DEFAULT false;
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS payment_confirmed_by INT REFERENCES users(user_id) ON DELETE SET NULL;
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS payment_confirmed_by_name TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS payment_confirmed_at TIMESTAMP;
+  `);
+
+  await pool.query(`
+    UPDATE sales_transactions
+    SET subtotal_amount = total_amount
+    WHERE subtotal_amount = 0 AND total_amount > 0;
   `);
 
   await pool.query(`
@@ -496,6 +611,21 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE archived_inventory
     ADD COLUMN IF NOT EXISTS average_daily_sales NUMERIC(10,2);
+  `);
+
+  await pool.query(`
+    ALTER TABLE archived_inventory
+    ADD COLUMN IF NOT EXISTS average_daily_sales_mode VARCHAR(20) DEFAULT 'auto';
+  `);
+
+  await pool.query(`
+    ALTER TABLE archived_inventory
+    ADD COLUMN IF NOT EXISTS manual_average_daily_sales NUMERIC(10,2);
+  `);
+
+  await pool.query(`
+    ALTER TABLE archived_inventory
+    ADD COLUMN IF NOT EXISTS average_daily_sales_override_reason TEXT;
   `);
 
   await pool.query(`
@@ -678,8 +808,10 @@ const transporter = createTransporter();
 async function sendMail(mailOptions) {
   try {
     await transporter.sendMail(mailOptions);
+    return true;
   } catch (err) {
     console.error('Email send failed:', err.message);
+    return false;
   }
 }
 
@@ -869,6 +1001,44 @@ function getEffectiveReorderThreshold(row = {}) {
 
 function computeSuggestedOrderQuantity(row) {
   return Math.max(0, getEffectiveReorderThreshold(row) - Number(row.stock_level || 0));
+}
+
+function normalizeAverageDailySalesMode(value) {
+  return value === 'manual' ? 'manual' : 'auto';
+}
+
+function cleanAverageDailySalesOverrideReason(value) {
+  if (value === undefined || value === null) return null;
+  const cleaned = String(value).trim().replace(/\s+/g, ' ');
+  return cleaned || null;
+}
+
+async function calculateRecentAverageDailySales(client, inventoryId) {
+  const result = await client.query(
+    `SELECT
+       COALESCE(SUM(si.quantity_sold), 0) AS total_sold,
+       MIN(st.created_at)::date AS first_sale_date
+     FROM sales_items si
+     INNER JOIN sales_transactions st
+       ON st.sales_transaction_id = si.sales_transaction_id
+     WHERE si.inventory_id = $1
+       AND st.status = 'completed'
+       AND st.created_at >= (${PHILIPPINE_NOW_SQL} - INTERVAL '30 days')`,
+    [inventoryId]
+  );
+
+  const totalSold = Number(result.rows[0]?.total_sold || 0);
+  const firstSaleDate = result.rows[0]?.first_sale_date;
+  if (!firstSaleDate || totalSold <= 0) return null;
+
+  const firstDay = new Date(firstSaleDate);
+  const today = new Date();
+  const elapsedDays = Math.max(
+    1,
+    Math.ceil((today.setHours(0, 0, 0, 0) - firstDay.setHours(0, 0, 0, 0)) / (1000 * 60 * 60 * 24)) + 1
+  );
+
+  return Number((totalSold / Math.min(elapsedDays, 30)).toFixed(2));
 }
 
 function normalizeInventoryText(value) {
@@ -1225,6 +1395,9 @@ function mapInventoryRow(row) {
     lead_time_days: row.lead_time_days,
     safety_stock: row.safety_stock,
     average_daily_sales: row.average_daily_sales,
+    average_daily_sales_mode: row.average_daily_sales_mode || 'auto',
+    manual_average_daily_sales: row.manual_average_daily_sales,
+    average_daily_sales_override_reason: row.average_daily_sales_override_reason,
     recommended_reorder_point: computeReorderPoint(row),
     active_low_stock_threshold: getEffectiveReorderThreshold(row),
     suggested_order_quantity: computeSuggestedOrderQuantity(row),
@@ -1248,6 +1421,9 @@ function mapArchivedInventoryRow(row) {
     lead_time_days: row.lead_time_days,
     safety_stock: row.safety_stock,
     average_daily_sales: row.average_daily_sales,
+    average_daily_sales_mode: row.average_daily_sales_mode || 'auto',
+    manual_average_daily_sales: row.manual_average_daily_sales,
+    average_daily_sales_override_reason: row.average_daily_sales_override_reason,
     recommended_reorder_point: computeReorderPoint(row),
     active_low_stock_threshold: getEffectiveReorderThreshold(row),
     suggested_order_quantity: computeSuggestedOrderQuantity(row),
@@ -1286,7 +1462,19 @@ function mapSalesTransactionRow(row) {
     branch: row.branch,
     customer_type: row.customer_type,
     total_quantity: row.total_quantity,
+    subtotal_amount: row.subtotal_amount,
+    discount_amount: row.discount_amount,
+    discount_type: row.discount_type || 'none',
+    discount_label: row.discount_label,
     total_amount: row.total_amount,
+    payment_method: row.payment_method,
+    amount_received: row.amount_received,
+    change_amount: row.change_amount,
+    payment_reference: row.payment_reference,
+    payment_confirmed: row.payment_confirmed,
+    payment_confirmed_by: row.payment_confirmed_by,
+    payment_confirmed_by_name: row.payment_confirmed_by_name,
+    payment_confirmed_at: row.payment_confirmed_at,
     status: row.status,
     sold_by: row.sold_by,
     sold_by_name: row.sold_by_name,
@@ -1315,6 +1503,31 @@ function mapSalesItemRow(row) {
     new_quantity: row.new_quantity,
     created_at: row.created_at
   };
+}
+
+function getDiscountDetails(discountType, subtotalAmount, customDiscountAmount = 0) {
+  const normalizedType = String(discountType || 'none').trim().toLowerCase();
+  const roundedSubtotal = Number(subtotalAmount || 0);
+  const presets = {
+    none: { type: 'none', label: 'No Discount', amount: 0 },
+    store_promo_5: {
+      type: 'store_promo_5',
+      label: 'Store Promo 5%',
+      amount: Number((roundedSubtotal * 0.05).toFixed(2))
+    },
+    bulk_project_10: {
+      type: 'bulk_project_10',
+      label: 'Bulk / Project Discount 10%',
+      amount: Number((roundedSubtotal * 0.10).toFixed(2))
+    },
+    custom_amount: {
+      type: 'custom_amount',
+      label: 'Manual Discount',
+      amount: Number(customDiscountAmount || 0)
+    }
+  };
+
+  return presets[normalizedType] || null;
 }
 
 const STOCK_OUT_REASONS = new Map([
@@ -1430,33 +1643,9 @@ async function generateSalesNumber(client) {
 }
 
 async function refreshAverageDailySalesForInventory(client, inventoryId) {
-  const result = await client.query(
-    `SELECT
-       COALESCE(SUM(si.quantity_sold), 0) AS total_sold,
-       MIN(st.created_at)::date AS first_sale_date
-     FROM sales_items si
-     INNER JOIN sales_transactions st
-       ON st.sales_transaction_id = si.sales_transaction_id
-     WHERE si.inventory_id = $1
-       AND st.status = 'completed'
-       AND st.created_at >= (${PHILIPPINE_NOW_SQL} - INTERVAL '30 days')`,
-    [inventoryId]
-  );
-
-  const totalSold = Number(result.rows[0]?.total_sold || 0);
-  const firstSaleDate = result.rows[0]?.first_sale_date;
-  if (!firstSaleDate || totalSold <= 0) return;
-
-  const firstDay = new Date(firstSaleDate);
-  const today = new Date();
-  const elapsedDays = Math.max(
-    1,
-    Math.ceil((today.setHours(0, 0, 0, 0) - firstDay.setHours(0, 0, 0, 0)) / (1000 * 60 * 60 * 24)) + 1
-  );
-  const averageDailySales = Number((totalSold / Math.min(elapsedDays, 30)).toFixed(2));
-
   const inventoryResult = await client.query(
-    `SELECT stock_level, min_stock_level, lead_time_days, safety_stock
+    `SELECT stock_level, min_stock_level, lead_time_days, safety_stock,
+            average_daily_sales_mode, manual_average_daily_sales
      FROM branch_inventory
      WHERE inventory_id = $1
      FOR UPDATE`,
@@ -1466,6 +1655,12 @@ async function refreshAverageDailySalesForInventory(client, inventoryId) {
   if (inventoryResult.rowCount === 0) return null;
 
   const inventoryRow = inventoryResult.rows[0];
+  const mode = normalizeAverageDailySalesMode(inventoryRow.average_daily_sales_mode);
+  const averageDailySales = mode === 'manual'
+    ? (inventoryRow.manual_average_daily_sales === null || inventoryRow.manual_average_daily_sales === undefined
+        ? null
+        : Number(inventoryRow.manual_average_daily_sales))
+    : await calculateRecentAverageDailySales(client, inventoryId);
   const nextStatus = computeInventoryStatus(
     Number(inventoryRow.stock_level || 0),
     getEffectiveReorderThreshold({
@@ -1665,6 +1860,28 @@ function isAdmin(user) {
   return user && user.role === 'Admin';
 }
 
+function normalizeRole(role) {
+  return role === 'Employee' ? 'Inventory Staff' : role;
+}
+
+function canRecordSales(user) {
+  const role = normalizeRole(user?.role);
+  return role === 'Admin' || role === 'Cashier';
+}
+
+function canPerformInventoryMovement(user) {
+  const role = normalizeRole(user?.role);
+  return role === 'Admin' || role === 'Inventory Staff';
+}
+
+function getRoleLabel(role) {
+  const normalized = normalizeRole(role);
+  if (normalized === 'Admin') return 'Admin / Manager';
+  if (normalized === 'Cashier') return 'Cashier';
+  if (normalized === 'Inventory Staff') return 'Inventory Staff';
+  return role || 'User';
+}
+
 function signToken(user, branchOverride) {
   return jwt.sign(
     {
@@ -1744,7 +1961,7 @@ async function sendAdminCreatedAccountEmail(toEmail, fullName, username, tempora
         ${buildInfoCard('Username', username || 'Not provided', 'security')}
         ${buildInfoCard('Temporary Password', temporaryPassword || 'Provided by administrator', 'warning')}
         ${buildInfoCard('Assigned Branch', branch || 'Not specified', 'security')}
-        ${buildInfoCard('Role', role || 'Employee', 'security')}
+        ${buildInfoCard('Role', getRoleLabel(role || 'Inventory Staff'), 'security')}
         ${buildBulletList([
           'Do not share your temporary password with anyone.',
           'Log in using your assigned branch.',
@@ -2087,7 +2304,7 @@ async function authenticate(req, res, next) {
 
 function requireAdmin(req, res, next) {
   if (!isAdmin(req.user)) {
-    return res.status(403).json({ error: 'Admin access required' });
+    return res.status(403).json({ error: 'Admin / Manager access required' });
   }
 
   return next();
@@ -2098,6 +2315,10 @@ app.get('/', (req, res) => {
 });
 
 app.post('/api/auth/register', async (req, res) => {
+  return res.status(410).json({
+    error: 'Account requests are disabled. Please ask the Admin / Manager to create your account.'
+  });
+
   const { password, branch } = req.body;
   const fullName = cleanPersonName(req.body.fullName);
   const username = cleanUsername(req.body.username);
@@ -2181,7 +2402,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     if (user.status !== 'Active') {
-      return res.status(403).json({ error: `Account is ${user.status}. Please contact an administrator.` });
+      return res.status(403).json({ error: 'Your account does not have access. Please contact an administrator.' });
     }
 
     if (!selectedBranch) {
@@ -2235,6 +2456,10 @@ app.post('/api/auth/send-otp', async (req, res) => {
     }
 
     const user = result.rows[0];
+    if (user.status !== 'Active') {
+      return res.status(403).json({ error: 'Your account does not have access. Please contact an administrator.' });
+    }
+
     const rateLimitKey = normalizeOtpRateLimitIdentifier('username', user.username);
     const rateLimit = checkOtpRateLimit(rateLimitKey);
     if (!rateLimit.allowed) {
@@ -2289,6 +2514,9 @@ app.post('/api/auth/verify-otp', async (req, res) => {
     }
 
     const user = result.rows[0];
+    if (user.status !== 'Active') {
+      return res.status(403).json({ error: 'Your account does not have access. Please contact an administrator.' });
+    }
 
     if (user.login_otp_code !== code) {
       return res.status(400).json({ error: 'Invalid code' });
@@ -2519,7 +2747,7 @@ app.post('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
   const fullName = cleanPersonName(req.body.fullName || req.body.full_name);
   const username = cleanUsername(req.body.username);
   const email = String(req.body.email || '').trim().toLowerCase();
-  const role = ALLOWED_ROLES.includes(req.body.role) ? req.body.role : 'Employee';
+  const role = ALLOWED_ROLES.includes(req.body.role) ? req.body.role : 'Inventory Staff';
   const branch = normalizeBranch(req.body.branch || req.user.branch);
   const temporaryPassword = generateTemporaryPassword();
 
@@ -2580,15 +2808,23 @@ app.post('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
       }
     });
 
-    sendAdminCreatedAccountEmail(user.email, user.full_name, user.username, temporaryPassword, user.branch, user.role)
-      .catch(err => {
-        console.error('Admin-created account email failed:', err.message);
-      });
+    const emailSent = await sendAdminCreatedAccountEmail(
+      user.email,
+      user.full_name,
+      user.username,
+      temporaryPassword,
+      user.branch,
+      user.role
+    );
+    const emailDeliveryStatus = process.env.EMAIL_USER && process.env.EMAIL_PASS
+      ? (emailSent ? 'sent' : 'failed')
+      : 'local_preview';
 
     return res.status(201).json({
       message: 'User account created',
       user,
-      temporaryPassword
+      temporaryPassword,
+      emailDeliveryStatus
     });
   } catch (err) {
     console.error('Create user account error:', err);
@@ -2951,6 +3187,9 @@ app.get('/api/inventory', authenticate, async (req, res) => {
          bi.lead_time_days,
          bi.safety_stock,
          bi.average_daily_sales,
+         bi.average_daily_sales_mode,
+         bi.manual_average_daily_sales,
+         bi.average_daily_sales_override_reason,
          bi.status,
          bi.branch,
          bi.last_updated
@@ -2990,6 +3229,9 @@ app.get('/api/archive', authenticate, async (req, res) => {
          lead_time_days,
          safety_stock,
          average_daily_sales,
+         average_daily_sales_mode,
+         manual_average_daily_sales,
+         average_daily_sales_override_reason,
          status,
          last_updated,
          archive_reason,
@@ -3048,7 +3290,19 @@ app.get('/api/sales', authenticate, async (req, res) => {
          st.branch,
          st.customer_type,
          st.total_quantity,
+         st.subtotal_amount,
+         st.discount_amount,
+         st.discount_type,
+         st.discount_label,
          st.total_amount,
+         st.payment_method,
+         st.amount_received,
+         st.change_amount,
+         st.payment_reference,
+         st.payment_confirmed,
+         st.payment_confirmed_by,
+         st.payment_confirmed_by_name,
+         st.payment_confirmed_at,
          st.status,
          st.sold_by,
          st.sold_by_name,
@@ -3094,12 +3348,49 @@ app.get('/api/sales', authenticate, async (req, res) => {
 });
 
 app.post('/api/sales', authenticate, async (req, res) => {
-  const { customer_type = 'walk_in', items = [], remarks = '' } = req.body;
+  const {
+    customer_type = 'walk_in',
+    items = [],
+    remarks = '',
+    payment_method = 'cash',
+    discount_type = 'none',
+    discount_amount = 0,
+    amount_received = null,
+    payment_reference = '',
+    payment_confirmed = false
+  } = req.body;
   const normalizedCustomerType = String(customer_type || 'walk_in').trim().toLowerCase();
   const allowedCustomerTypes = new Set(['walk_in', 'regular', 'contractor']);
+  const normalizedPaymentMethod = String(payment_method || 'cash').trim().toLowerCase();
+  const allowedPaymentMethods = new Set(['cash', 'gcash', 'bank_transfer', 'credit']);
+  const requiresPaymentConfirmation = ['gcash', 'bank_transfer'].includes(normalizedPaymentMethod);
+  const cleanPaymentReference = String(payment_reference || '').trim().slice(0, 120) || null;
+  const isPaymentConfirmed = payment_confirmed === true || payment_confirmed === 'true';
+
+  if (!canRecordSales(req.user)) {
+    return res.status(403).json({
+      error: 'Sales recording is available only to Admin / Manager and Cashier accounts.'
+    });
+  }
 
   if (!allowedCustomerTypes.has(normalizedCustomerType)) {
     return res.status(400).json({ error: 'Please select a valid customer type.' });
+  }
+
+  if (!allowedPaymentMethods.has(normalizedPaymentMethod)) {
+    return res.status(400).json({ error: 'Please select a valid payment method.' });
+  }
+
+  if (requiresPaymentConfirmation && !isPaymentConfirmed) {
+    return res.status(400).json({
+      error: 'Please confirm that the GCash or bank transfer payment was received before completing the sale.'
+    });
+  }
+
+  if (cleanPaymentReference && !/^[A-Za-z0-9 ._#/-]+$/.test(cleanPaymentReference)) {
+    return res.status(400).json({
+      error: 'Payment reference may only contain letters, numbers, spaces, dash, slash, period, underscore, or #.'
+    });
   }
 
   if (!Array.isArray(items) || items.length === 0) {
@@ -3143,7 +3434,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
     const soldByName = req.user.fullName || req.user.username || 'System User';
     const cleanRemarks = String(remarks || '').trim().slice(0, 500) || null;
     let totalQuantity = 0;
-    let totalAmount = 0;
+    let subtotalAmount = 0;
     const saleLines = [];
     const updatedItems = [];
 
@@ -3193,7 +3484,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
       const nextStatus = computeInventoryStatus(newQuantity, getEffectiveReorderThreshold(currentItem));
 
       totalQuantity += quantitySold;
-      totalAmount += subtotal;
+      subtotalAmount += subtotal;
 
       const updatedResult = await client.query(
         `UPDATE branch_inventory
@@ -3230,26 +3521,89 @@ app.post('/api/sales', authenticate, async (req, res) => {
       });
     }
 
+    const roundedSubtotalAmount = Number(subtotalAmount.toFixed(2));
+    const inferredDiscountType = String(discount_type || '').trim()
+      ? discount_type
+      : Number(discount_amount || 0) > 0 ? 'custom_amount' : 'none';
+    const parsedCustomDiscountAmount = parseNonNegativeDecimal(discount_amount, 'Discount amount', { max: 100000000 });
+    const discountDetails = getDiscountDetails(inferredDiscountType, roundedSubtotalAmount, parsedCustomDiscountAmount);
+
+    if (!discountDetails) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Please select a valid discount option.' });
+    }
+
+    const roundedDiscountAmount = Number(discountDetails.amount.toFixed(2));
+
+    if (discountDetails.type === 'custom_amount' && roundedDiscountAmount <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Manual discount must be greater than zero, or choose No Discount.' });
+    }
+
+    if (roundedDiscountAmount > roundedSubtotalAmount) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Discount cannot be greater than the sales subtotal.' });
+    }
+
+    const netTotalAmount = Number((roundedSubtotalAmount - roundedDiscountAmount).toFixed(2));
+    const parsedAmountReceived = amount_received === null || amount_received === undefined || amount_received === ''
+      ? null
+      : parseNonNegativeDecimal(amount_received, 'Amount received', { max: 100000000 });
+    const effectiveAmountReceived = normalizedPaymentMethod === 'cash'
+      ? Number((parsedAmountReceived || 0).toFixed(2))
+      : netTotalAmount;
+
+    if (normalizedPaymentMethod === 'cash' && effectiveAmountReceived < netTotalAmount) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Amount received must be equal to or greater than the total amount due.' });
+    }
+
+    const changeAmount = normalizedPaymentMethod === 'cash'
+      ? Number((effectiveAmountReceived - netTotalAmount).toFixed(2))
+      : 0;
+
     const transactionResult = await client.query(
       `INSERT INTO sales_transactions (
          sales_number,
          branch,
          customer_type,
          total_quantity,
+         subtotal_amount,
+         discount_amount,
+         discount_type,
+         discount_label,
          total_amount,
+         payment_method,
+         amount_received,
+         change_amount,
+         payment_reference,
+         payment_confirmed,
+         payment_confirmed_by,
+         payment_confirmed_by_name,
+         payment_confirmed_at,
          status,
          sold_by,
          sold_by_name,
          remarks
        )
-       VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true, $14, $15, ${PHILIPPINE_NOW_SQL}, 'completed', $16, $17, $18)
        RETURNING *`,
       [
         salesNumber,
         req.user.branch,
         normalizedCustomerType,
         totalQuantity,
-        Number(totalAmount.toFixed(2)),
+        roundedSubtotalAmount,
+        roundedDiscountAmount,
+        discountDetails.type,
+        discountDetails.label,
+        netTotalAmount,
+        normalizedPaymentMethod,
+        effectiveAmountReceived,
+        changeAmount,
+        cleanPaymentReference,
+        req.user.id,
+        soldByName,
         req.user.id,
         soldByName,
         cleanRemarks
@@ -3322,7 +3676,17 @@ app.post('/api/sales', authenticate, async (req, res) => {
         branch: req.user.branch,
         customerType: normalizedCustomerType,
         totalQuantity,
-        totalAmount: Number(totalAmount.toFixed(2)),
+        subtotalAmount: roundedSubtotalAmount,
+        discountAmount: roundedDiscountAmount,
+        discountType: discountDetails.type,
+        discountLabel: discountDetails.label,
+        totalAmount: netTotalAmount,
+        paymentMethod: normalizedPaymentMethod,
+        amountReceived: effectiveAmountReceived,
+        changeAmount,
+        paymentReference: cleanPaymentReference,
+        paymentConfirmed: true,
+        paymentConfirmedBy: soldByName,
         itemCount: insertedItems.length,
         remarks: cleanRemarks
       }
@@ -3349,6 +3713,178 @@ app.post('/api/sales', authenticate, async (req, res) => {
   }
 });
 
+app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) => {
+  const salesTransactionId = Number(req.params.id);
+  const cleanReason = String(req.body?.cancel_reason || '').trim().slice(0, 500);
+
+  if (!Number.isInteger(salesTransactionId) || salesTransactionId <= 0) {
+    return res.status(400).json({ error: 'Please select a valid sales record to cancel.' });
+  }
+
+  if (cleanReason.length < 5) {
+    return res.status(400).json({ error: 'Please enter a clear cancellation reason.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const saleResult = await client.query(
+      `SELECT *
+       FROM sales_transactions
+       WHERE sales_transaction_id = $1
+         AND branch = $2
+       FOR UPDATE`,
+      [salesTransactionId, req.user.branch]
+    );
+
+    if (saleResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Sales record was not found for this branch.' });
+    }
+
+    const sale = saleResult.rows[0];
+    if (sale.status === 'cancelled') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'This sales record has already been cancelled.' });
+    }
+
+    const itemsResult = await client.query(
+      `SELECT *
+       FROM sales_items
+       WHERE sales_transaction_id = $1
+       ORDER BY sales_item_id ASC`,
+      [salesTransactionId]
+    );
+
+    if (itemsResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'This sales record has no item lines to restore.' });
+    }
+
+    const restoredItems = [];
+
+    for (const saleItem of itemsResult.rows) {
+      const inventoryResult = await client.query(
+        `SELECT
+           bi.inventory_id,
+           bi.product_id,
+           p.name,
+           p.category,
+           p.supplier_name,
+           p.default_selling_price,
+           bi.branch,
+           bi.stock_level,
+           bi.min_stock_level,
+           bi.lead_time_days,
+           bi.safety_stock,
+           bi.average_daily_sales,
+           bi.status,
+           bi.last_updated
+         FROM branch_inventory bi
+         INNER JOIN products p ON p.product_id = bi.product_id
+         WHERE bi.inventory_id = $1
+           AND bi.branch = $2
+         FOR UPDATE`,
+        [saleItem.inventory_id, req.user.branch]
+      );
+
+      if (inventoryResult.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: `${saleItem.item_name} is no longer available in active inventory. Restore cannot be completed safely.` });
+      }
+
+      const currentItem = inventoryResult.rows[0];
+      const previousQuantity = Number(currentItem.stock_level || 0);
+      const restoredQuantity = Number(saleItem.quantity_sold || 0);
+      const newQuantity = previousQuantity + restoredQuantity;
+      const nextStatus = computeInventoryStatus(newQuantity, getEffectiveReorderThreshold(currentItem));
+
+      const updatedResult = await client.query(
+        `UPDATE branch_inventory
+         SET stock_level = $1,
+             status = $2,
+             last_updated = ${PHILIPPINE_NOW_SQL}
+         WHERE inventory_id = $3
+           AND branch = $4
+         RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
+        [newQuantity, nextStatus, saleItem.inventory_id, req.user.branch]
+      );
+
+      await recordStockMovement(client, {
+        inventoryId: saleItem.inventory_id,
+        productId: saleItem.product_id,
+        itemName: saleItem.item_name,
+        category: saleItem.category,
+        branch: saleItem.branch,
+        action: 'stock_in',
+        quantityChanged: restoredQuantity,
+        previousQuantity,
+        newQuantity,
+        reason: 'correction',
+        note: `Cancelled sales transaction ${sale.sales_number}. Reason: ${cleanReason}`,
+        actorId: req.user.id
+      });
+
+      await refreshAverageDailySalesForInventory(client, saleItem.inventory_id);
+
+      restoredItems.push({
+        ...updatedResult.rows[0],
+        name: currentItem.name,
+        category: currentItem.category,
+        supplier_name: currentItem.supplier_name,
+        default_selling_price: currentItem.default_selling_price,
+        lead_time_days: currentItem.lead_time_days,
+        safety_stock: currentItem.safety_stock,
+        average_daily_sales: currentItem.average_daily_sales
+      });
+    }
+
+    const cancelledSaleResult = await client.query(
+      `UPDATE sales_transactions
+       SET status = 'cancelled',
+           cancelled_at = ${PHILIPPINE_NOW_SQL},
+           cancelled_by = $1,
+           cancel_reason = $2
+       WHERE sales_transaction_id = $3
+       RETURNING *`,
+      [req.user.id, cleanReason, salesTransactionId]
+    );
+
+    await recordAuditLog(client, {
+      actorId: req.user.id,
+      targetId: salesTransactionId,
+      targetName: sale.sales_number,
+      targetType: 'sales_transaction',
+      action: 'CANCEL_SALES_TRANSACTION',
+      reason: 'Sales Cancellation',
+      details: {
+        branch: req.user.branch,
+        cancelReason: cleanReason,
+        totalQuantity: Number(sale.total_quantity || 0),
+        totalAmount: Number(sale.total_amount || 0),
+        restoredItemCount: itemsResult.rowCount
+      }
+    });
+
+    await client.query('COMMIT');
+
+    return res.json({
+      sale: mapSalesTransactionRow({
+        ...cancelledSaleResult.rows[0],
+        items: itemsResult.rows.map(mapSalesItemRow)
+      }),
+      products: restoredItems.map(mapInventoryRow)
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Cancel sale error:', err);
+    return res.status(500).json({ error: 'Failed to cancel sale. Inventory was not restored.' });
+  } finally {
+    client.release();
+  }
+});
+
 app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
   const {
     name,
@@ -3360,6 +3896,9 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
     lead_time_days,
     safety_stock,
     average_daily_sales,
+    average_daily_sales_mode,
+    manual_average_daily_sales,
+    average_daily_sales_override_reason,
     allow_similar_duplicate = false
   } = req.body;
 
@@ -3387,7 +3926,17 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
     const defaultSellingPrice = parseOptionalPositiveDecimal(default_selling_price, 'Default selling price', { max: 100000000 });
     const leadTimeDays = parseOptionalNonNegativeInteger(lead_time_days, 'Supplier lead time', { max: 365 });
     const safetyStock = parseOptionalNonNegativeInteger(safety_stock, 'Safety stock', { max: 100000 });
-    const averageDailySales = parseOptionalNonNegativeDecimal(average_daily_sales, 'Average daily sales', { max: 100000 });
+    const averageDailySalesMode = normalizeAverageDailySalesMode(average_daily_sales_mode);
+    const manualAverageDailySales = averageDailySalesMode === 'manual'
+      ? parseOptionalNonNegativeDecimal(manual_average_daily_sales ?? average_daily_sales, 'Manual average daily sales', { max: 100000 })
+      : null;
+    if (averageDailySalesMode === 'manual' && manualAverageDailySales === null) {
+      throw Object.assign(new Error('Manual average daily sales is required when manual override is enabled.'), { statusCode: 400 });
+    }
+    const averageDailySalesOverrideReason = averageDailySalesMode === 'manual'
+      ? cleanAverageDailySalesOverrideReason(average_daily_sales_override_reason)
+      : null;
+    const averageDailySales = averageDailySalesMode === 'manual' ? manualAverageDailySales : null;
 
     const archivedDuplicate = await findSimilarArchivedInventoryItem(client, {
       branch: req.user.branch,
@@ -3487,11 +4036,26 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
          lead_time_days,
          safety_stock,
          average_daily_sales,
+         average_daily_sales_mode,
+         manual_average_daily_sales,
+         average_daily_sales_override_reason,
          status
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
-      [productId, req.user.branch, stockLevel, minStockLevel, leadTimeDays, safetyStock, averageDailySales, status]
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, average_daily_sales_mode, manual_average_daily_sales, average_daily_sales_override_reason, status, last_updated`,
+      [
+        productId,
+        req.user.branch,
+        stockLevel,
+        minStockLevel,
+        leadTimeDays,
+        safetyStock,
+        averageDailySales,
+        averageDailySalesMode,
+        manualAverageDailySales,
+        averageDailySalesOverrideReason,
+        status
+      ]
     );
 
     const merged = await client.query(
@@ -3507,6 +4071,9 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
          bi.lead_time_days,
          bi.safety_stock,
          bi.average_daily_sales,
+         bi.average_daily_sales_mode,
+         bi.manual_average_daily_sales,
+         bi.average_daily_sales_override_reason,
          bi.status,
          bi.branch,
          bi.last_updated
@@ -3533,6 +4100,9 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
         leadTimeDays,
         safetyStock,
         averageDailySales,
+        averageDailySalesMode,
+        manualAverageDailySales,
+        averageDailySalesOverrideReason,
         recommendedReorderPoint: computeReorderPoint({
           averageDailySales,
           leadTimeDays,
@@ -3592,6 +4162,12 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
 app.post('/api/inventory/batch-stock-out', authenticate, async (req, res) => {
   const { items = [], movement_reason, movement_note } = req.body;
   const normalizedMovementReason = normalizeStockMovementReasonForAction('stock_out', movement_reason);
+
+  if (!canPerformInventoryMovement(req.user)) {
+    return res.status(403).json({
+      error: 'Batch Stock Out is available only to Admin / Manager and Inventory Staff accounts.'
+    });
+  }
 
   if (!normalizedMovementReason) {
     return res.status(400).json({ error: 'Please select the stock-out reason for this deduction.' });
@@ -3742,6 +4318,9 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     lead_time_days,
     safety_stock,
     average_daily_sales,
+    average_daily_sales_mode,
+    manual_average_daily_sales,
+    average_daily_sales_override_reason,
     movement_action,
     movement_quantity,
     movement_reason,
@@ -3767,6 +4346,9 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
          bi.lead_time_days,
          bi.safety_stock,
          bi.average_daily_sales,
+         bi.average_daily_sales_mode,
+         bi.manual_average_daily_sales,
+         bi.average_daily_sales_override_reason,
          bi.status
        FROM branch_inventory bi
        INNER JOIN products p ON p.product_id = bi.product_id
@@ -3790,9 +4372,29 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     const nextSafetyStock = safety_stock === undefined
       ? inventoryRow.safety_stock
       : parseOptionalNonNegativeInteger(safety_stock, 'Safety stock', { max: 100000 });
-    const nextAverageDailySales = average_daily_sales === undefined
-      ? inventoryRow.average_daily_sales
-      : parseOptionalNonNegativeDecimal(average_daily_sales, 'Average daily sales', { max: 100000 });
+    const nextAverageDailySalesMode = average_daily_sales_mode === undefined
+      ? normalizeAverageDailySalesMode(inventoryRow.average_daily_sales_mode)
+      : normalizeAverageDailySalesMode(average_daily_sales_mode);
+    const nextManualAverageDailySales = nextAverageDailySalesMode === 'manual'
+      ? parseOptionalNonNegativeDecimal(
+          manual_average_daily_sales ?? average_daily_sales ?? inventoryRow.manual_average_daily_sales,
+          'Manual average daily sales',
+          { max: 100000 }
+        )
+      : null;
+    if (nextAverageDailySalesMode === 'manual' && nextManualAverageDailySales === null) {
+      throw Object.assign(new Error('Manual average daily sales is required when manual override is enabled.'), { statusCode: 400 });
+    }
+    const nextAverageDailySales = nextAverageDailySalesMode === 'manual'
+      ? nextManualAverageDailySales
+      : await calculateRecentAverageDailySales(client, id);
+    const nextAverageDailySalesOverrideReason = nextAverageDailySalesMode === 'manual'
+      ? cleanAverageDailySalesOverrideReason(
+          average_daily_sales_override_reason === undefined
+            ? inventoryRow.average_daily_sales_override_reason
+            : average_daily_sales_override_reason
+        )
+      : null;
     const nextDefaultSellingPrice = default_selling_price === undefined
       ? (inventoryRow.default_selling_price === null || inventoryRow.default_selling_price === undefined ? null : Number(inventoryRow.default_selling_price))
       : parseOptionalPositiveDecimal(default_selling_price, 'Default selling price', { max: 100000000 });
@@ -3830,7 +4432,10 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     const reorderPlanningChanged =
       normalizeNullableNumber(inventoryRow.lead_time_days) !== normalizeNullableNumber(nextLeadTimeDays) ||
       normalizeNullableNumber(inventoryRow.safety_stock) !== normalizeNullableNumber(nextSafetyStock) ||
-      normalizeNullableNumber(inventoryRow.average_daily_sales) !== normalizeNullableNumber(nextAverageDailySales);
+      normalizeNullableNumber(inventoryRow.average_daily_sales) !== normalizeNullableNumber(nextAverageDailySales) ||
+      normalizeAverageDailySalesMode(inventoryRow.average_daily_sales_mode) !== nextAverageDailySalesMode ||
+      normalizeNullableNumber(inventoryRow.manual_average_daily_sales) !== normalizeNullableNumber(nextManualAverageDailySales) ||
+      cleanAverageDailySalesOverrideReason(inventoryRow.average_daily_sales_override_reason) !== nextAverageDailySalesOverrideReason;
     const quantityChanged = previousQuantity !== nextQuantity;
     const allowedMovementActions = ['stock_in', 'stock_out'];
     const action = allowedMovementActions.includes(movement_action) ? movement_action : null;
@@ -3879,10 +4484,17 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       });
     }
 
+    if (!canPerformInventoryMovement(req.user)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        error: 'Stock In and Stock Out are available only to Admin / Manager and Inventory Staff accounts.'
+      });
+    }
+
     if (!isAdmin(req.user) && !isValidStockMovementRequest) {
       await client.query('ROLLBACK');
       return res.status(403).json({
-        error: 'Admin access is required to change item details. Employees can only perform Stock In and Stock Out.'
+        error: 'Admin / Manager access is required to change item details. Inventory Staff can only perform Stock In and Stock Out.'
       });
     }
 
@@ -3997,10 +4609,13 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
            lead_time_days = $4,
            safety_stock = $5,
            average_daily_sales = $6,
+           average_daily_sales_mode = $11,
+           manual_average_daily_sales = $12,
+           average_daily_sales_override_reason = $13,
            status = $7,
            last_updated = CASE WHEN $10 THEN ${PHILIPPINE_NOW_SQL} ELSE last_updated END
        WHERE inventory_id = $8 AND branch = $9
-       RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
+       RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, average_daily_sales_mode, manual_average_daily_sales, average_daily_sales_override_reason, status, last_updated`,
       [
         targetProductId,
         nextQuantity,
@@ -4011,7 +4626,10 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
         status,
         id,
         req.user.branch,
-        shouldRefreshInventoryTimestamp
+        shouldRefreshInventoryTimestamp,
+        nextAverageDailySalesMode,
+        nextManualAverageDailySales,
+        nextAverageDailySalesOverrideReason
       ]
     );
 
@@ -4033,6 +4651,9 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
          bi.lead_time_days,
          bi.safety_stock,
          bi.average_daily_sales,
+         bi.average_daily_sales_mode,
+         bi.manual_average_daily_sales,
+         bi.average_daily_sales_override_reason,
          bi.status,
          bi.branch,
          bi.last_updated
@@ -4120,6 +4741,9 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
               leadTimeDays: Number(inventoryRow.lead_time_days || 0),
               safetyStock: Number(inventoryRow.safety_stock || 0),
               averageDailySales: Number(inventoryRow.average_daily_sales || 0),
+              averageDailySalesMode: normalizeAverageDailySalesMode(inventoryRow.average_daily_sales_mode),
+              manualAverageDailySales: normalizeNullableNumber(inventoryRow.manual_average_daily_sales),
+              averageDailySalesOverrideReason: inventoryRow.average_daily_sales_override_reason || null,
               recommendedReorderPoint: computeReorderPoint(inventoryRow)
             },
             current: {
@@ -4131,6 +4755,9 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
               leadTimeDays: nextLeadTimeDays,
               safetyStock: nextSafetyStock,
               averageDailySales: nextAverageDailySales,
+              averageDailySalesMode: nextAverageDailySalesMode,
+              manualAverageDailySales: nextManualAverageDailySales,
+              averageDailySalesOverrideReason: nextAverageDailySalesOverrideReason,
               recommendedReorderPoint: computeReorderPoint(updatedItem)
             }
           }
@@ -4192,6 +4819,9 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
          bi.lead_time_days,
          bi.safety_stock,
          bi.average_daily_sales,
+         bi.average_daily_sales_mode,
+         bi.manual_average_daily_sales,
+         bi.average_daily_sales_override_reason,
          bi.status,
          bi.last_updated
        FROM branch_inventory bi
@@ -4220,12 +4850,15 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
          lead_time_days,
          safety_stock,
          average_daily_sales,
+         average_daily_sales_mode,
+         manual_average_daily_sales,
+         average_daily_sales_override_reason,
          status,
          last_updated,
          archive_reason,
          archived_by
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
       [
         archivedItem.inventory_id,
         archivedItem.product_id,
@@ -4239,6 +4872,9 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
         archivedItem.lead_time_days,
         archivedItem.safety_stock,
         archivedItem.average_daily_sales,
+        archivedItem.average_daily_sales_mode,
+        archivedItem.manual_average_daily_sales,
+        archivedItem.average_daily_sales_override_reason,
         archivedItem.status,
         archivedItem.last_updated,
         normalizedArchiveReason,
@@ -4324,6 +4960,9 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
          lead_time_days,
          safety_stock,
          average_daily_sales,
+         average_daily_sales_mode,
+         manual_average_daily_sales,
+         average_daily_sales_override_reason,
          status
        FROM archived_inventory
        WHERE archived_inventory_id = $1 AND branch = $2`,
@@ -4388,10 +5027,13 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
              lead_time_days = $3,
              safety_stock = $4,
              average_daily_sales = $5,
+             average_daily_sales_mode = $9,
+             manual_average_daily_sales = $10,
+             average_daily_sales_override_reason = $11,
              status = $6,
              last_updated = ${PHILIPPINE_NOW_SQL}
          WHERE inventory_id = $7 AND branch = $8
-         RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
+         RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, average_daily_sales_mode, manual_average_daily_sales, average_daily_sales_override_reason, status, last_updated`,
         [
           archivedItem.stock_level,
           archivedItem.min_stock_level,
@@ -4400,7 +5042,10 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
           archivedItem.average_daily_sales,
           computeInventoryStatus(Number(archivedItem.stock_level || 0), getEffectiveReorderThreshold(archivedItem)),
           activeItem.inventory_id,
-          archivedItem.branch
+          archivedItem.branch,
+          normalizeAverageDailySalesMode(archivedItem.average_daily_sales_mode),
+          archivedItem.manual_average_daily_sales,
+          archivedItem.average_daily_sales_override_reason
         ]
       );
       restoredInventoryId = reconciled.rows[0].inventory_id;
@@ -4414,11 +5059,14 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
            lead_time_days,
            safety_stock,
            average_daily_sales,
+           average_daily_sales_mode,
+           manual_average_daily_sales,
+           average_daily_sales_override_reason,
            status,
            last_updated
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ${PHILIPPINE_NOW_SQL})
-         RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, ${PHILIPPINE_NOW_SQL})
+         RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, average_daily_sales_mode, manual_average_daily_sales, average_daily_sales_override_reason, status, last_updated`,
         [
           productId,
           archivedItem.branch,
@@ -4427,6 +5075,9 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
           archivedItem.lead_time_days,
           archivedItem.safety_stock,
           archivedItem.average_daily_sales,
+          normalizeAverageDailySalesMode(archivedItem.average_daily_sales_mode),
+          archivedItem.manual_average_daily_sales,
+          archivedItem.average_daily_sales_override_reason,
           computeInventoryStatus(Number(archivedItem.stock_level || 0), getEffectiveReorderThreshold(archivedItem)),
         ]
       );
@@ -4463,6 +5114,9 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
          bi.lead_time_days,
          bi.safety_stock,
          bi.average_daily_sales,
+         bi.average_daily_sales_mode,
+         bi.manual_average_daily_sales,
+         bi.average_daily_sales_override_reason,
          bi.status,
          bi.branch,
          bi.last_updated
@@ -4728,30 +5382,35 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
          FROM users
          WHERE (
              branch = $1
-             OR (role = 'Employee' AND (branch IS NULL OR TRIM(branch) = ''))
+             OR (role IN ('Employee', 'Cashier', 'Inventory Staff') AND (branch IS NULL OR TRIM(branch) = ''))
            )
            AND (
-             role NOT IN ('Admin', 'Employee')
+             role NOT IN ('Admin', 'Employee', 'Cashier', 'Inventory Staff')
              OR status NOT IN ('Active', 'Pending', 'Inactive', 'Rejected')
-             OR (role = 'Employee' AND (branch IS NULL OR TRIM(branch) = ''))
+             OR (role IN ('Employee', 'Cashier', 'Inventory Staff') AND (branch IS NULL OR TRIM(branch) = ''))
            )`,
         [scopeBranch]
       ),
       pool.query(
-        `SELECT sales_transaction_id, transaction_number, branch, status, total_quantity, total_amount
+        `SELECT sales_transaction_id, sales_number, branch, status, total_quantity, subtotal_amount, discount_amount, total_amount, payment_method, change_amount
          FROM sales_transactions
          WHERE branch = $1
            AND (
              total_quantity < 0
+             OR subtotal_amount < 0
+             OR discount_amount < 0
              OR total_amount < 0
+             OR change_amount < 0
+             OR discount_amount > subtotal_amount
+             OR payment_method NOT IN ('cash', 'gcash', 'bank_transfer', 'credit')
              OR status NOT IN ('completed', 'cancelled')
-             OR transaction_number IS NULL
-             OR TRIM(transaction_number) = ''
+             OR sales_number IS NULL
+             OR TRIM(sales_number) = ''
            )`,
         [scopeBranch]
       ),
       pool.query(
-        `SELECT si.sales_item_id, st.transaction_number, si.item_name, si.quantity_sold, si.unit_price, si.subtotal
+        `SELECT si.sales_item_id, st.sales_number, si.item_name, si.quantity_sold, si.unit_price, si.subtotal
          FROM sales_items si
          INNER JOIN sales_transactions st
            ON st.sales_transaction_id = si.sales_transaction_id

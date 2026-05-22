@@ -24,6 +24,7 @@ import { Input } from './ui/input';
 import { toast } from 'sonner';
 import { PageHeader } from './PageHeader';
 import { useData } from './DataContext';
+import { isAdminRole } from '../utils/roles';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -159,7 +160,7 @@ export function MaintenanceModule({ onNavigate, user }) {
     databaseStatus: 'Checking...'
   });
 
-  const isAdmin = user?.role === 'Admin';
+  const isAdmin = isAdminRole(user?.role);
   const currentBranch = user?.branch || 'All branches';
 
   const loadSummary = async () => {

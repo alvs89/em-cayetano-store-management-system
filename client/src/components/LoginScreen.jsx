@@ -16,7 +16,7 @@ import { apiUrl } from "../utils/api";
 const emcLogoSrc = "/emc-logo.png";
 const LOGIN_BACKGROUND_CLASS = "login-screen-active";
 
-export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegister }) {
+export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
   const { users } = useData();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -575,15 +575,8 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword, onRegi
                 <p>
                   <Link to="/forgot-password" className="login-forgot-link text-blue-600 hover:text-blue-700 hover:underline">Forgot Password?</Link>
                 </p>
-                <div className="login-link-divider items-center gap-4 py-3 text-xs text-slate-500">
-                  <span className="h-px flex-1 bg-slate-200" />
-                  <span className="login-divider-text">or</span>
-                  <span className="h-px flex-1 bg-slate-200" />
-                </div>
-                <p className="login-register-row">
-                  <span>Don't have an account?</span>
-                  {' '}
-                  <Link to="/register" className="login-register-link text-blue-600 hover:text-blue-700 hover:underline">Request account access</Link>
+                <p className="mt-3 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">
+                  Accounts are created by the Admin / Manager for approved store personnel.
                 </p>
               </div>
             </form>

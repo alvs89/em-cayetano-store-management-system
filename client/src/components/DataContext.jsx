@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo } 
 import axios from "axios";
 import { apiUrl } from "../utils/api";
 import { formatArchiveReferenceId, formatItemCode } from "../utils/itemCodes";
+import { isAdminRole } from "../utils/roles";
 
 const DataContext = createContext(undefined);
 
@@ -129,7 +130,7 @@ const buildSystemEventAlert = event => {
 const generateSystemAlerts = (summary, role) => {
   const alerts = [];
 
-  if (role === "Admin") {
+  if (isAdminRole(role)) {
     if (summary.lastBackupAt) {
       const backupTime = new Date(summary.lastBackupAt).getTime();
       const ageDays = Math.floor((Date.now() - backupTime) / (1000 * 60 * 60 * 24));
@@ -164,8 +165,8 @@ const generateSystemAlerts = (summary, role) => {
       alerts.push({
         id: `pending-user-${user.user_id}`,
         type: 'info',
-        title: 'New User Registration',
-        message: `${user.full_name || user.username || 'A user'} has registered${branchLabel} and is pending admin approval.`,
+        title: 'Pending User Account',
+        message: `${user.full_name || user.username || 'A user'}${branchLabel} is still waiting for account review.`,
         timestampRaw: user.created_at || new Date().toISOString(),
         read: false,
         actionable: true,
@@ -246,6 +247,9 @@ export function DataProvider({ children }) {
           leadTimeDays: p.lead_time_days === null || p.lead_time_days === undefined ? null : Number(p.lead_time_days),
           safetyStock: p.safety_stock === null || p.safety_stock === undefined ? null : Number(p.safety_stock),
           averageDailySales: p.average_daily_sales === null || p.average_daily_sales === undefined ? null : Number(p.average_daily_sales),
+          averageDailySalesMode: p.average_daily_sales_mode || 'auto',
+          manualAverageDailySales: p.manual_average_daily_sales === null || p.manual_average_daily_sales === undefined ? null : Number(p.manual_average_daily_sales),
+          averageDailySalesOverrideReason: p.average_daily_sales_override_reason || '',
           recommendedReorderPoint: p.recommended_reorder_point === null || p.recommended_reorder_point === undefined ? null : Number(p.recommended_reorder_point),
           activeLowStockThreshold: Number(p.active_low_stock_threshold ?? p.min_stock_level ?? 0),
           suggestedOrderQuantity: Number(p.suggested_order_quantity ?? 0),
@@ -292,6 +296,9 @@ export function DataProvider({ children }) {
           leadTimeDays: p.lead_time_days === null || p.lead_time_days === undefined ? null : Number(p.lead_time_days),
           safetyStock: p.safety_stock === null || p.safety_stock === undefined ? null : Number(p.safety_stock),
           averageDailySales: p.average_daily_sales === null || p.average_daily_sales === undefined ? null : Number(p.average_daily_sales),
+          averageDailySalesMode: p.average_daily_sales_mode || 'auto',
+          manualAverageDailySales: p.manual_average_daily_sales === null || p.manual_average_daily_sales === undefined ? null : Number(p.manual_average_daily_sales),
+          averageDailySalesOverrideReason: p.average_daily_sales_override_reason || '',
           recommendedReorderPoint: p.recommended_reorder_point === null || p.recommended_reorder_point === undefined ? null : Number(p.recommended_reorder_point),
           activeLowStockThreshold: Number(p.active_low_stock_threshold ?? p.min_stock_level ?? 0),
           suggestedOrderQuantity: Number(p.suggested_order_quantity ?? 0),
@@ -348,6 +355,47 @@ export function DataProvider({ children }) {
     }
   }, []);
 
+  const mapSalesTransaction = (sale) => ({
+    id: sale.sales_transaction_id?.toString() ?? '',
+    salesNumber: sale.sales_number || '',
+    branch: sale.branch || '',
+    customerType: sale.customer_type || 'walk_in',
+    totalQuantity: Number(sale.total_quantity || 0),
+    subtotalAmount: Number(sale.subtotal_amount || sale.total_amount || 0),
+    discountAmount: Number(sale.discount_amount || 0),
+    discountType: sale.discount_type || 'none',
+    discountLabel: sale.discount_label || '',
+    totalAmount: Number(sale.total_amount || 0),
+    paymentMethod: sale.payment_method || 'cash',
+    amountReceived: sale.amount_received === null || sale.amount_received === undefined ? null : Number(sale.amount_received || 0),
+    changeAmount: Number(sale.change_amount || 0),
+    paymentReference: sale.payment_reference || '',
+    paymentConfirmed: Boolean(sale.payment_confirmed),
+    paymentConfirmedBy: sale.payment_confirmed_by_name || '',
+    paymentConfirmedAt: sale.payment_confirmed_at ? new Date(sale.payment_confirmed_at).toISOString() : '',
+    status: sale.status || 'completed',
+    soldBy: sale.sold_by?.toString() ?? '',
+    soldByName: sale.sold_by_name || '',
+    remarks: sale.remarks || '',
+    createdAt: sale.created_at ? new Date(sale.created_at).toISOString() : '',
+    cancelledAt: sale.cancelled_at ? new Date(sale.cancelled_at).toISOString() : '',
+    cancelReason: sale.cancel_reason || '',
+    items: (sale.items || []).map((item) => ({
+      id: item.sales_item_id?.toString() ?? '',
+      inventoryId: item.inventory_id?.toString() ?? '',
+      productId: item.product_id?.toString() ?? '',
+      itemName: item.item_name || '',
+      category: item.category || '',
+      branch: item.branch || '',
+      quantitySold: Number(item.quantity_sold || 0),
+      unitPrice: Number(item.unit_price || 0),
+      subtotal: Number(item.subtotal || 0),
+      previousQuantity: Number(item.previous_quantity || 0),
+      newQuantity: Number(item.new_quantity || 0),
+      createdAt: item.created_at ? new Date(item.created_at).toISOString() : '',
+    })),
+  });
+
   const fetchSalesTransactions = useCallback(async () => {
     try {
       const token = localStorage.getItem("token");
@@ -358,35 +406,7 @@ export function DataProvider({ children }) {
       const res = await axios.get(apiUrl("/api/sales"), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      const sales = (res.data.sales || []).map((sale) => ({
-        id: sale.sales_transaction_id?.toString() ?? '',
-        salesNumber: sale.sales_number || '',
-        branch: sale.branch || '',
-        customerType: sale.customer_type || 'walk_in',
-        totalQuantity: Number(sale.total_quantity || 0),
-        totalAmount: Number(sale.total_amount || 0),
-        status: sale.status || 'completed',
-        soldBy: sale.sold_by?.toString() ?? '',
-        soldByName: sale.sold_by_name || '',
-        remarks: sale.remarks || '',
-        createdAt: sale.created_at ? new Date(sale.created_at).toISOString() : '',
-        cancelledAt: sale.cancelled_at ? new Date(sale.cancelled_at).toISOString() : '',
-        cancelReason: sale.cancel_reason || '',
-        items: (sale.items || []).map((item) => ({
-          id: item.sales_item_id?.toString() ?? '',
-          inventoryId: item.inventory_id?.toString() ?? '',
-          productId: item.product_id?.toString() ?? '',
-          itemName: item.item_name || '',
-          category: item.category || '',
-          branch: item.branch || '',
-          quantitySold: Number(item.quantity_sold || 0),
-          unitPrice: Number(item.unit_price || 0),
-          subtotal: Number(item.subtotal || 0),
-          previousQuantity: Number(item.previous_quantity || 0),
-          newQuantity: Number(item.new_quantity || 0),
-          createdAt: item.created_at ? new Date(item.created_at).toISOString() : '',
-        })),
-      }));
+      const sales = (res.data.sales || []).map(mapSalesTransaction);
       setSalesTransactions(sales);
     } catch (err) {
       console.error('Failed to load sales records:', err);
@@ -462,14 +482,14 @@ export function DataProvider({ children }) {
   }, [fetchSalesTransactions]);
 
   useEffect(() => {
-    const intervalMs = activeUserRole === "Admin" ? 10000 : 30000;
+    const intervalMs = isAdminRole(activeUserRole) ? 10000 : 30000;
     const id = setInterval(refreshSystemSummary, intervalMs);
 
     return () => clearInterval(id);
   }, [activeUserRole, refreshSystemSummary]);
 
   useEffect(() => {
-    if (activeUserRole !== "Admin") return undefined;
+    if (!isAdminRole(activeUserRole)) return undefined;
 
     const refreshAdminAlerts = () => {
       refreshSystemSummary();
@@ -508,7 +528,7 @@ export function DataProvider({ children }) {
   }, [readAlertIds]);
 
   useEffect(() => {
-    if (activeUserRole !== "Admin") return;
+    if (!isAdminRole(activeUserRole)) return;
 
     const activePendingAlertIds = new Set(
       (systemSummary.pendingRegistrations || []).map(user => `pending-user-${user.user_id}`)
@@ -603,6 +623,9 @@ export function DataProvider({ children }) {
         lead_time_days: item.leadTimeDays,
         safety_stock: item.safetyStock,
         average_daily_sales: item.averageDailySales,
+        average_daily_sales_mode: item.averageDailySalesMode,
+        manual_average_daily_sales: item.manualAverageDailySales,
+        average_daily_sales_override_reason: item.averageDailySalesOverrideReason,
         allow_similar_duplicate: Boolean(item.allowSimilarDuplicate),
       },
       { headers: token ? { Authorization: `Bearer ${token}` } : {} }
@@ -635,6 +658,9 @@ export function DataProvider({ children }) {
                 leadTimeDays: updates.leadTimeDays ?? it.leadTimeDays,
                 safetyStock: updates.safetyStock ?? it.safetyStock,
                 averageDailySales: updates.averageDailySales ?? it.averageDailySales,
+                averageDailySalesMode: updates.averageDailySalesMode ?? it.averageDailySalesMode,
+                manualAverageDailySales: updates.manualAverageDailySales ?? it.manualAverageDailySales,
+                averageDailySalesOverrideReason: updates.averageDailySalesOverrideReason ?? it.averageDailySalesOverrideReason,
                 lastUpdated: quantityChanged ? new Date().toISOString() : it.lastUpdated,
               };
             })()
@@ -655,6 +681,9 @@ export function DataProvider({ children }) {
           lead_time_days: updates.leadTimeDays,
           safety_stock: updates.safetyStock,
           average_daily_sales: updates.averageDailySales,
+          average_daily_sales_mode: updates.averageDailySalesMode,
+          manual_average_daily_sales: updates.manualAverageDailySales,
+          average_daily_sales_override_reason: updates.averageDailySalesOverrideReason,
           movement_action: updates.movementAction,
           movement_quantity: updates.movementQuantity,
           movement_reason: updates.movementReason,
@@ -705,7 +734,7 @@ export function DataProvider({ children }) {
     }
   };
 
-  const recordSale = async ({ customerType, items, remarks }) => {
+  const recordSale = async ({ customerType, items, remarks, paymentMethod, discountType, discountAmount, amountReceived, paymentReference, paymentConfirmed }) => {
     const token = localStorage.getItem("token");
     try {
       const res = await axios.post(
@@ -713,6 +742,12 @@ export function DataProvider({ children }) {
         {
           customer_type: customerType,
           remarks,
+          payment_method: paymentMethod,
+          discount_type: discountType,
+          discount_amount: discountAmount,
+          amount_received: amountReceived,
+          payment_reference: paymentReference,
+          payment_confirmed: paymentConfirmed,
           items: items.map(item => ({
             inventory_id: item.inventoryId,
             quantity: item.quantity,
@@ -725,7 +760,29 @@ export function DataProvider({ children }) {
       await fetchArchivedInventory();
       await fetchStockMovements();
       await fetchSalesTransactions();
-      return res.data.sale;
+      return mapSalesTransaction(res.data.sale || {});
+    } catch (err) {
+      await fetchInventory();
+      await fetchArchivedInventory();
+      await fetchStockMovements();
+      await fetchSalesTransactions();
+      throw err;
+    }
+  };
+
+  const cancelSale = async (saleId, cancelReason) => {
+    const token = localStorage.getItem("token");
+    try {
+      const res = await axios.post(
+        apiUrl(`/api/sales/${saleId}/cancel`),
+        { cancel_reason: cancelReason },
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      await fetchInventory();
+      await fetchArchivedInventory();
+      await fetchStockMovements();
+      await fetchSalesTransactions();
+      return mapSalesTransaction(res.data.sale || {});
     } catch (err) {
       await fetchInventory();
       await fetchArchivedInventory();
@@ -797,6 +854,7 @@ export function DataProvider({ children }) {
         updateInventoryItem,
         batchStockOut,
         recordSale,
+        cancelSale,
         archiveInventoryItem,
         restoreArchivedInventoryItem,
         alerts,

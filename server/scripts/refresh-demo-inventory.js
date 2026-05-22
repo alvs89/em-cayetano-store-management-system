@@ -465,16 +465,20 @@ async function refreshDemoInventory() {
 
       const transactionResult = await client.query(
         `INSERT INTO sales_transactions (
-           sales_number, branch, customer_type, total_quantity, total_amount,
-           status, sold_by, sold_by_name, remarks, created_at
+           sales_number, branch, customer_type, total_quantity, subtotal_amount,
+           discount_amount, discount_type, discount_label, total_amount,
+           payment_method, amount_received, change_amount, status, sold_by,
+           sold_by_name, remarks, created_at
          )
-         VALUES ($1, $2, $3, $4, $5, 'completed', $6, $7, $8, $9)
+         VALUES ($1, $2, $3, $4, $5, 0, 'none', 'No Discount', $6, 'cash', $7, 0, 'completed', $8, $9, $10, $11)
          RETURNING sales_transaction_id`,
         [
           formatSalesNumber(salesSequence),
           sale.branch,
           sale.customerType,
           totalQuantity,
+          totalAmount,
+          totalAmount,
           totalAmount,
           actor.user_id,
           actor.full_name,

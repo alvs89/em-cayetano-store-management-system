@@ -16,6 +16,7 @@ import { Label } from "./ui/label";
 import { toast } from "sonner";
 import { useData } from "./DataContext";
 import { PageHeader } from "./PageHeader";
+import { canManageInventory, canPerformInventoryMovement } from "../utils/roles";
 
 const OFFICIAL_INVENTORY_CATEGORIES = [
   "Tools",
@@ -363,7 +364,10 @@ export function InventoryModule({
     reorderLevel: "",
     leadTimeDays: "",
     safetyStock: "",
-    averageDailySales: ""
+    averageDailySales: "",
+    averageDailySalesMode: "auto",
+    manualAverageDailySales: "",
+    averageDailySalesOverrideReason: ""
   });
 
   // 🔄 Sorting state: track which column and direction to sort
@@ -379,6 +383,8 @@ export function InventoryModule({
     categoryFilter !== "all" ||
     supplierFilter !== "all" ||
     stockStatusFilter !== "all";
+  const canShowInventoryActions =
+    canPerformInventoryMovement(user?.role) || canManageInventory(user?.role);
   const clearInventoryFilters = () => {
     setSearchQuery("");
     setCategoryFilter("all");
@@ -409,7 +415,10 @@ export function InventoryModule({
     reorderLevel: "10", // Default manual threshold
     leadTimeDays: "",
     safetyStock: "",
-    averageDailySales: ""
+    averageDailySales: "",
+    averageDailySalesMode: "auto",
+    manualAverageDailySales: "",
+    averageDailySalesOverrideReason: ""
   });
 
   const getStockPreview = direction => {
@@ -689,7 +698,10 @@ export function InventoryModule({
       reorderLevel: "10",
       leadTimeDays: "",
       safetyStock: "",
-      averageDailySales: ""
+      averageDailySales: "",
+      averageDailySalesMode: "auto",
+      manualAverageDailySales: "",
+      averageDailySalesOverrideReason: ""
     });
     setNewItemSupplierMode("listed");
     setArchivedDuplicatePrompt(null);
@@ -699,8 +711,8 @@ export function InventoryModule({
   const applyDashboardInventoryAction = React.useCallback((action, itemId = "") => {
     if (!action) return;
     if (action === "add-item") {
-      if (user?.role !== "Admin") {
-        toast.error("Admin access is required to add a new inventory item.");
+      if (!canManageInventory(user?.role)) {
+        toast.error("Admin / Manager access is required to add a new inventory item.");
         return;
       }
       setDashboardPickerAction(null);
@@ -709,18 +721,30 @@ export function InventoryModule({
     }
 
     if (action === "daily-sales-deduction") {
+      if (!canPerformInventoryMovement(user?.role)) {
+        toast.error("Batch Stock Out is available only to Admin / Manager and Inventory Staff accounts.");
+        return;
+      }
       setDashboardPickerAction(null);
       setIsBatchStockOutDialogOpen(true);
       return;
     }
 
     if (action === "stock-in") {
+      if (!canPerformInventoryMovement(user?.role)) {
+        toast.error("Stock In is available only to Admin / Manager and Inventory Staff accounts.");
+        return;
+      }
       setDashboardPickerItemId(itemId ? String(itemId) : "");
       setDashboardPickerAction("stock-in");
       return;
     }
 
     if (action === "stock-out") {
+      if (!canPerformInventoryMovement(user?.role)) {
+        toast.error("Stock Out is available only to Admin / Manager and Inventory Staff accounts.");
+        return;
+      }
       setDashboardPickerItemId(itemId ? String(itemId) : "");
       setDashboardPickerAction("stock-out");
     }
@@ -778,7 +802,9 @@ export function InventoryModule({
       newItem.reorderLevel !== "10" ||
       newItem.leadTimeDays !== "" ||
       newItem.safetyStock !== "" ||
-      newItem.averageDailySales !== "";
+      newItem.averageDailySalesMode === "manual" ||
+      newItem.manualAverageDailySales !== "" ||
+      newItem.averageDailySalesOverrideReason !== "";
   };
 
   const hasStockFormChanges = () => {
@@ -798,7 +824,9 @@ export function InventoryModule({
       String(editItem.reorderLevel) !== String(selectedItem.reorderLevel) ||
       String(editItem.leadTimeDays) !== String(selectedItem.leadTimeDays ?? 7) ||
       String(editItem.safetyStock) !== String(selectedItem.safetyStock ?? 0) ||
-      String(editItem.averageDailySales) !== String(selectedItem.averageDailySales ?? 0);
+      String(editItem.averageDailySalesMode) !== String(selectedItem.averageDailySalesMode ?? "auto") ||
+      String(editItem.manualAverageDailySales) !== String(selectedItem.manualAverageDailySales ?? "") ||
+      String(editItem.averageDailySalesOverrideReason) !== String(selectedItem.averageDailySalesOverrideReason ?? "");
   };
 
   const closeAddItemDialog = () => {
@@ -828,7 +856,10 @@ export function InventoryModule({
       reorderLevel: "",
       leadTimeDays: "7",
       safetyStock: "0",
-      averageDailySales: "0"
+      averageDailySales: "",
+      averageDailySalesMode: "auto",
+      manualAverageDailySales: "",
+      averageDailySalesOverrideReason: ""
     });
     setEditItemSupplierMode("listed");
   };
@@ -955,14 +986,20 @@ export function InventoryModule({
       toast.error("Safety stock must be a whole number.");
       return null;
     }
-    if (hasPlanningValue(values.averageDailySales) && !isDecimalNumberText(values.averageDailySales)) {
-      toast.error("Average daily sales must be a valid number.");
+    const usesManualAverageSales = values.averageDailySalesMode === "manual";
+    if (usesManualAverageSales && !hasPlanningValue(values.manualAverageDailySales)) {
+      toast.error("Enter the manual average daily sales, or turn off manual override.");
+      return null;
+    }
+    if (usesManualAverageSales && !isDecimalNumberText(values.manualAverageDailySales)) {
+      toast.error("Manual average daily sales must be a valid number.");
       return null;
     }
 
     const leadTimeDays = hasPlanningValue(values.leadTimeDays) ? Number(values.leadTimeDays) : null;
     const safetyStock = hasPlanningValue(values.safetyStock) ? Number(values.safetyStock) : null;
     const averageDailySales = hasPlanningValue(values.averageDailySales) ? Number(values.averageDailySales) : null;
+    const manualAverageDailySales = usesManualAverageSales ? Number(values.manualAverageDailySales) : null;
 
     if (leadTimeDays !== null && (leadTimeDays < 0 || leadTimeDays > 365)) {
       toast.error("Supplier lead time must be between 0 and 365 days.");
@@ -972,12 +1009,21 @@ export function InventoryModule({
       toast.error("Safety stock must be 0 or higher.");
       return null;
     }
-    if (averageDailySales !== null && averageDailySales < 0) {
-      toast.error("Average daily sales must be 0 or higher.");
+    if (manualAverageDailySales !== null && manualAverageDailySales < 0) {
+      toast.error("Manual average daily sales must be 0 or higher.");
       return null;
     }
 
-    return { leadTimeDays, safetyStock, averageDailySales };
+    return {
+      leadTimeDays,
+      safetyStock,
+      averageDailySales,
+      averageDailySalesMode: usesManualAverageSales ? "manual" : "auto",
+      manualAverageDailySales,
+      averageDailySalesOverrideReason: usesManualAverageSales
+        ? String(values.averageDailySalesOverrideReason || "").trim()
+        : ""
+    };
   };
 
   const renderAddSectionHeader = title => (
@@ -1060,20 +1106,28 @@ export function InventoryModule({
   };
 
   const renderReorderPlanningFields = (values, setValues) => {
-    const recommendedPoint = getRecommendedReorderPoint(values);
+    const effectiveAverageDailySales = values.averageDailySalesMode === "manual"
+      ? values.manualAverageDailySales
+      : values.averageDailySales;
+    const planningValues = { ...values, averageDailySales: effectiveAverageDailySales };
+    const recommendedPoint = getRecommendedReorderPoint(planningValues);
     const recommendedPointText = recommendedPoint === null
       ? "Not available"
       : `${recommendedPoint} ${recommendedPoint === 1 ? "unit" : "units"}`;
-    const hasCompletePlanning = hasCompleteReorderPlanning(values);
+    const hasCompletePlanning = hasCompleteReorderPlanning(planningValues);
     const rawRecommendedPoint = hasCompletePlanning
-      ? Number(values.averageDailySales) * Number(values.leadTimeDays) + Number(values.safetyStock)
+      ? Number(effectiveAverageDailySales) * Number(values.leadTimeDays) + Number(values.safetyStock)
       : null;
     const formulaText = hasCompletePlanning
-      ? `${Number(values.averageDailySales)} x ${Number(values.leadTimeDays)} + ${Number(values.safetyStock)} = ${Number(rawRecommendedPoint.toFixed(2))}`
+      ? `${Number(effectiveAverageDailySales)} x ${Number(values.leadTimeDays)} + ${Number(values.safetyStock)} = ${Number(rawRecommendedPoint.toFixed(2))}`
       : "Complete supplier lead time, safety stock, and average daily sales to calculate this automatically.";
     const roundedFormulaText = hasCompletePlanning && rawRecommendedPoint !== recommendedPoint
       ? `${formulaText}, rounded up to ${recommendedPoint}`
       : formulaText;
+    const averageSalesMode = values.averageDailySalesMode === "manual" ? "manual" : "auto";
+    const averageSalesDisplay = hasPlanningValue(values.averageDailySales)
+      ? `${Number(values.averageDailySales)} ${Number(values.averageDailySales) === 1 ? "unit" : "units"}/day`
+      : "Not enough completed sales yet";
 
     return (
       <div className="inventory-reorder-planning-card rounded-md border border-blue-100 bg-blue-50/60">
@@ -1119,18 +1173,51 @@ export function InventoryModule({
           </div>
           <div className="inventory-reorder-planning-field">
             <Label htmlFor="average-daily-sales" className="inventory-reorder-planning-label">Average Daily Sales</Label>
-            <Input
-              id="average-daily-sales"
-              type="text"
-              min="0"
-              step="0.01"
-              value={values.averageDailySales}
-              onChange={e => setValues({
-                averageDailySales: sanitizeDecimalInput(e.target.value, "Average Daily Sales", "inventory-average-sales-numbers-only")
+            <div className="inventory-average-sales-summary">
+              <span className="inventory-average-sales-value">{averageSalesDisplay}</span>
+              <span className="inventory-average-sales-source">
+                {averageSalesMode === "manual" ? "Manual override" : "Auto-computed from completed sales in the last 30 days"}
+              </span>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="inventory-average-sales-toggle"
+              onClick={() => setValues({
+                averageDailySalesMode: averageSalesMode === "manual" ? "auto" : "manual",
+                manualAverageDailySales: averageSalesMode === "manual" ? "" : String(values.manualAverageDailySales || values.averageDailySales || ""),
+                averageDailySalesOverrideReason: averageSalesMode === "manual" ? "" : values.averageDailySalesOverrideReason
               })}
-              placeholder="e.g., 2.5"
-            />
-            <p className="inventory-reorder-planning-helper text-slate-500">Optional. Estimated units sold per day.</p>
+            >
+              {averageSalesMode === "manual" ? "Use System Average" : "Use Manual Override"}
+            </Button>
+            {averageSalesMode === "manual" && (
+              <div className="inventory-average-sales-override">
+                <Input
+                  id="average-daily-sales"
+                  type="text"
+                  min="0"
+                  step="0.01"
+                  value={values.manualAverageDailySales}
+                  onChange={e => setValues({
+                    manualAverageDailySales: sanitizeDecimalInput(e.target.value, "Manual Average Daily Sales", "inventory-average-sales-numbers-only")
+                  })}
+                  placeholder="e.g., 2.5"
+                />
+                <Input
+                  id="average-daily-sales-reason"
+                  type="text"
+                  value={values.averageDailySalesOverrideReason}
+                  onChange={e => setValues({
+                    averageDailySalesOverrideReason: sanitizeInventoryTextInput(e.target.value, "Override reason", "inventory-average-sales-reason")
+                  })}
+                  placeholder="Reason for override, optional"
+                />
+              </div>
+            )}
+            <p className="inventory-reorder-planning-helper text-slate-500">
+              The system uses completed sales by default. Manual override is for new items, seasonal demand, or incomplete sales history.
+            </p>
           </div>
         </div>
         <div className="inventory-reorder-result-card">
@@ -1181,7 +1268,10 @@ export function InventoryModule({
       reorderLevel: String(item.reorderLevel ?? 10),
       leadTimeDays: item.leadTimeDays === null || item.leadTimeDays === undefined ? "" : String(item.leadTimeDays),
       safetyStock: item.safetyStock === null || item.safetyStock === undefined ? "" : String(item.safetyStock),
-      averageDailySales: item.averageDailySales === null || item.averageDailySales === undefined ? "" : String(item.averageDailySales)
+      averageDailySales: item.averageDailySales === null || item.averageDailySales === undefined ? "" : String(item.averageDailySales),
+      averageDailySalesMode: item.averageDailySalesMode || "auto",
+      manualAverageDailySales: item.manualAverageDailySales === null || item.manualAverageDailySales === undefined ? "" : String(item.manualAverageDailySales),
+      averageDailySalesOverrideReason: item.averageDailySalesOverrideReason || ""
     });
     setEditItemSupplierMode(supplierName && !HARDWARE_SUPPLIER_OPTIONS.includes(supplierName.trim()) ? "custom" : "listed");
     setIsEditDialogOpen(true);
@@ -2296,6 +2386,44 @@ export function InventoryModule({
       padding: 0 12px !important;
     }
 
+    .inventory-average-sales-summary {
+      min-height: 42px;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      background: #ffffff;
+      padding: 7px 12px;
+      display: grid;
+      align-content: center;
+      gap: 2px;
+    }
+
+    .inventory-average-sales-value {
+      color: #0f172a;
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .inventory-average-sales-source {
+      color: #64748b;
+      font-size: 11px;
+      line-height: 1.25;
+    }
+
+    .inventory-average-sales-toggle {
+      min-height: 36px !important;
+      height: 36px !important;
+      justify-content: center;
+      border-radius: 10px !important;
+      font-size: 13px !important;
+      font-weight: 650 !important;
+    }
+
+    .inventory-average-sales-override {
+      display: grid;
+      gap: 8px;
+    }
+
     .inventory-reorder-planning-helper {
       font-size: 12px !important;
       line-height: 1.35 !important;
@@ -2950,13 +3078,13 @@ export function InventoryModule({
     className: "inventory-list-title"
   }, /*#__PURE__*/React.createElement(CardTitle, null, "Inventory Items"), /*#__PURE__*/React.createElement(CardDescription, null, sortedInventory.length, " items found", sortBy && /*#__PURE__*/React.createElement("span", {
     className: "text-slate-500 ml-2"
-  }, "\u2022 Sorted by ", sortLabel, " (", realtimeDisplayOrderLabel, ")"))), /*#__PURE__*/React.createElement(Button, {
+  }, "\u2022 Sorted by ", sortLabel, " (", realtimeDisplayOrderLabel, ")"))), canPerformInventoryMovement(user.role) && /*#__PURE__*/React.createElement(Button, {
     type: "button",
     className: "inventory-batch-stock-out-button bg-red-600 text-white hover:bg-red-700 font-semibold shadow-md transition-all duration-300",
     onClick: () => setIsBatchStockOutDialogOpen(true)
   }, /*#__PURE__*/React.createElement(PackageMinus, {
     className: "w-4 h-4 mr-2"
-  }), "Batch Non-Sales Out"), user.role === "Admin" && /*#__PURE__*/React.createElement(Dialog, {
+  }), "Batch Non-Sales Out"), canManageInventory(user.role) && /*#__PURE__*/React.createElement(Dialog, {
     open: isAddDialogOpen,
     onOpenChange: open => {
       if (open) {
@@ -3405,10 +3533,10 @@ export function InventoryModule({
     className: "w-[150px]"
   }, renderSortButton('status', 'Status')), /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[160px] text-right"
-  }, renderSortButton('date', 'Last Updated', 'right')), /*#__PURE__*/React.createElement(TableHead, {
+  }, renderSortButton('date', 'Last Updated', 'right')), canShowInventoryActions && /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[150px] pl-3 text-left"
   }, "Actions"))), /*#__PURE__*/React.createElement(TableBody, null, sortedInventory.length === 0 ? /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableCell, {
-    colSpan: 8,
+    colSpan: canShowInventoryActions ? 8 : 7,
     className: "py-12 text-center"
   }, /*#__PURE__*/React.createElement(Box, {
     className: "mx-auto mb-4 h-14 w-14 text-slate-300"
@@ -3427,9 +3555,9 @@ export function InventoryModule({
     className: getStatusBadgeClass(item.status)
   }, item.status)), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-sm text-slate-600 text-right"
-  }, formatDateTime(item.lastUpdated)), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement("div", {
+  }, formatDateTime(item.lastUpdated)), canShowInventoryActions && /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement("div", {
     className: "flex items-center justify-end gap-2"
-  }, /*#__PURE__*/React.createElement(Button, {
+  }, canPerformInventoryMovement(user.role) && /*#__PURE__*/React.createElement(Button, {
     size: "sm",
     variant: "outline",
     className: "inventory-action-stock-in border-green-500 text-green-700 hover:bg-green-50",
@@ -3441,7 +3569,7 @@ export function InventoryModule({
     }
   }, /*#__PURE__*/React.createElement(Plus, {
     className: "w-4 h-4"
-  })), /*#__PURE__*/React.createElement(Button, {
+  })), canPerformInventoryMovement(user.role) && /*#__PURE__*/React.createElement(Button, {
     size: "sm",
     variant: "outline",
     className: "inventory-action-stock-out border-red-500 text-red-700 hover:bg-red-50",
@@ -3453,7 +3581,7 @@ export function InventoryModule({
     }
   }, /*#__PURE__*/React.createElement(Minus, {
     className: "w-4 h-4"
-  })), user.role === "Admin" && /*#__PURE__*/React.createElement(Button, {
+  })), canManageInventory(user.role) && /*#__PURE__*/React.createElement(Button, {
     size: "sm",
     variant: "outline",
     className: "inventory-action-edit border-blue-500 text-blue-700 hover:bg-blue-100",
@@ -3461,7 +3589,7 @@ export function InventoryModule({
     onClick: () => openEditDialog(item)
   }, /*#__PURE__*/React.createElement(Pencil, {
     className: "w-4 h-4"
-  })), user.role === "Admin" && /*#__PURE__*/React.createElement(Button, {
+  })), canManageInventory(user.role) && /*#__PURE__*/React.createElement(Button, {
     size: "sm",
     variant: "outline",
     className: "inventory-action-archive border-amber-400 text-amber-800 hover:bg-amber-100 hover:border-amber-500 hover:text-amber-950",
@@ -3531,9 +3659,9 @@ export function InventoryModule({
     className: "inventory-mobile-value"
   }, item.quantity, " ", item.quantity === 1 ? "unit" : "units"))), /*#__PURE__*/React.createElement("p", {
     className: "inventory-mobile-date"
-  }, "Last Updated: ", formatDateTime(item.lastUpdated)), /*#__PURE__*/React.createElement("div", {
+  }, "Last Updated: ", formatDateTime(item.lastUpdated)), canShowInventoryActions && /*#__PURE__*/React.createElement("div", {
     className: "inventory-mobile-actions"
-  }, /*#__PURE__*/React.createElement(Button, {
+  }, canPerformInventoryMovement(user.role) && /*#__PURE__*/React.createElement(Button, {
     variant: "outline",
     className: "inventory-action-stock-in border-green-500 text-green-700 hover:bg-green-50",
     title: "Stock In: Add new stock",
@@ -3544,7 +3672,7 @@ export function InventoryModule({
     }
   }, /*#__PURE__*/React.createElement(Plus, {
     className: "mr-1 h-4 w-4"
-  }), "Stock In"), /*#__PURE__*/React.createElement(Button, {
+  }), "Stock In"), canPerformInventoryMovement(user.role) && /*#__PURE__*/React.createElement(Button, {
     variant: "outline",
     className: "inventory-action-stock-out border-red-500 text-red-700 hover:bg-red-50",
     title: "Stock Out: Deduct stock",
@@ -3555,14 +3683,14 @@ export function InventoryModule({
     }
   }, /*#__PURE__*/React.createElement(Minus, {
     className: "mr-1 h-4 w-4"
-  }), "Stock Out"), user.role === "Admin" && /*#__PURE__*/React.createElement(Button, {
+  }), "Stock Out"), canManageInventory(user.role) && /*#__PURE__*/React.createElement(Button, {
     variant: "outline",
     className: "inventory-action-edit border-blue-500 text-blue-700 hover:bg-blue-100",
     title: "Edit item details",
     onClick: () => openEditDialog(item)
   }, /*#__PURE__*/React.createElement(Pencil, {
     className: "mr-1 h-4 w-4"
-  }), "Edit"), user.role === "Admin" && /*#__PURE__*/React.createElement(Button, {
+  }), "Edit"), canManageInventory(user.role) && /*#__PURE__*/React.createElement(Button, {
     variant: "outline",
     className: "inventory-action-archive border-amber-400 text-amber-800 hover:bg-amber-100 hover:border-amber-500 hover:text-amber-950",
     title: "Archive: Remove item from list",
