@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Plus, ReceiptText, Trash2, ShoppingCart, History, CheckCircle, Info, PackageCheck, AlertTriangle, TrendingUp, User, Coins, ClipboardList, Search, CalendarDays, Tag, Wallet, MessageSquareText, X, ChevronRight, ChevronDown, Download } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Plus, Minus, ReceiptText, Trash2, ShoppingCart, History, CheckCircle, Info, PackageCheck, AlertTriangle, TrendingUp, User, Coins, ClipboardList, Search, CalendarDays, Tag, Wallet, MessageSquareText, X, ChevronLeft, ChevronRight, ChevronDown, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import jsPDF from 'jspdf';
 import { PageHeader } from './PageHeader';
@@ -22,6 +22,7 @@ const emptySaleLine = () => ({
 });
 
 const SALES_REMARKS_MAX_LENGTH = 500;
+const PRODUCT_PAGE_SIZE = 10;
 
 const customerTypeLabels = {
   walk_in: 'Walk-in Customer',
@@ -427,9 +428,12 @@ export function SalesModule({ user }) {
   const [isCancellingSale, setIsCancellingSale] = useState(false);
   const [productSearch, setProductSearch] = useState('');
   const [productCategory, setProductCategory] = useState('all');
+  const [productSort, setProductSort] = useState('name_az');
+  const [productPage, setProductPage] = useState(1);
   const [historySearch, setHistorySearch] = useState('');
   const [historyPeriod, setHistoryPeriod] = useState('all');
   const [selectedHistorySaleId, setSelectedHistorySaleId] = useState('');
+  const [isClearItemsConfirmOpen, setIsClearItemsConfirmOpen] = useState(false);
   const canCancelSales = isAdminRole(user?.role);
 
   const activeInventory = useMemo(
@@ -456,7 +460,7 @@ export function SalesModule({ user }) {
   const filteredSaleInventory = useMemo(() => {
     const query = productSearch.trim().toLowerCase();
 
-    return activeInventory.filter(item => {
+    const filteredItems = activeInventory.filter(item => {
       const matchesCategory = productCategory === 'all' || (item.category || 'Uncategorized') === productCategory;
       if (!matchesCategory) return false;
       if (!query) return true;
@@ -465,7 +469,7 @@ export function SalesModule({ user }) {
         item.itemCode,
         item.name,
         item.category,
-        item.supplier,
+        item.supplierName,
         item.defaultSellingPrice
       ]
         .filter(Boolean)
@@ -473,7 +477,41 @@ export function SalesModule({ user }) {
         .toLowerCase()
         .includes(query);
     });
-  }, [activeInventory, productCategory, productSearch]);
+
+    const sorters = {
+      name_az: (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' }),
+      name_za: (a, b) => String(b.name || '').localeCompare(String(a.name || ''), undefined, { numeric: true, sensitivity: 'base' }),
+      stock_low: (a, b) => Number(a.quantity || 0) - Number(b.quantity || 0),
+      stock_high: (a, b) => Number(b.quantity || 0) - Number(a.quantity || 0),
+      price_low: (a, b) => Number(a.defaultSellingPrice || 0) - Number(b.defaultSellingPrice || 0),
+      price_high: (a, b) => Number(b.defaultSellingPrice || 0) - Number(a.defaultSellingPrice || 0)
+    };
+
+    return mergeSort(filteredItems, sorters[productSort] || sorters.name_az);
+  }, [activeInventory, productCategory, productSearch, productSort]);
+
+  const productPageCount = Math.max(1, Math.ceil(filteredSaleInventory.length / PRODUCT_PAGE_SIZE));
+  const safeProductPage = Math.min(productPage, productPageCount);
+  const productPageStartIndex = (safeProductPage - 1) * PRODUCT_PAGE_SIZE;
+  const paginatedSaleInventory = filteredSaleInventory.slice(productPageStartIndex, productPageStartIndex + PRODUCT_PAGE_SIZE);
+  const productItemStart = filteredSaleInventory.length === 0 ? 0 : productPageStartIndex + 1;
+  const productItemEnd = Math.min(productPageStartIndex + PRODUCT_PAGE_SIZE, filteredSaleInventory.length);
+  const productPageNumbers = useMemo(() => {
+    const maxVisiblePages = 5;
+    const endPage = Math.min(productPageCount, Math.max(maxVisiblePages, safeProductPage + 2));
+    const startPage = Math.max(1, Math.min(safeProductPage - 2, endPage - maxVisiblePages + 1));
+    const adjustedEndPage = Math.min(productPageCount, startPage + maxVisiblePages - 1);
+
+    return Array.from({ length: adjustedEndPage - startPage + 1 }, (_, index) => startPage + index);
+  }, [productPageCount, safeProductPage]);
+
+  useEffect(() => {
+    setProductPage(1);
+  }, [productSearch, productCategory, productSort]);
+
+  useEffect(() => {
+    setProductPage(currentPage => Math.min(currentPage, productPageCount));
+  }, [productPageCount]);
 
   const getInventoryById = inventoryId => {
     if (!inventoryId) return null;
@@ -499,6 +537,7 @@ export function SalesModule({ user }) {
         : 0
     };
   });
+  const cartLines = selectedLineDetails.filter(line => line.inventoryId && line.item);
 
   const totalQuantity = selectedLineDetails.reduce((sum, line) => sum + (Number.isFinite(line.quantity) ? line.quantity : 0), 0);
   const subtotalAmount = selectedLineDetails.reduce((sum, line) => sum + (Number.isFinite(line.subtotal) ? line.subtotal : 0), 0);
@@ -601,6 +640,47 @@ export function SalesModule({ user }) {
     )));
   };
 
+  const updateLineQuantity = (index, rawValue) => {
+    setSaleLines(prev => prev.map((line, lineIndex) => {
+      if (lineIndex !== index) return line;
+
+      if (rawValue === '') {
+        return { ...line, quantity: '' };
+      }
+
+      const selectedItem = activeInventory.find(item => String(item.id) === String(line.inventoryId));
+      if (!selectedItem) {
+        toast.info('Select an item before entering quantity.');
+        return line;
+      }
+
+      const availableStock = Number(selectedItem.quantity || 0);
+      const requestedQuantity = Number(rawValue);
+
+      if (Number.isFinite(requestedQuantity) && requestedQuantity <= 0) {
+        toast.warning('Quantity must be at least 1. Use the remove button if the item is not being sold.', {
+          id: `sales-min-quantity-${selectedItem.id}`
+        });
+        return {
+          ...line,
+          quantity: '1'
+        };
+      }
+
+      if (Number.isFinite(requestedQuantity) && requestedQuantity > availableStock) {
+        toast.warning(`${selectedItem.name} has only ${availableStock} unit${availableStock === 1 ? '' : 's'} available.`, {
+          id: `sales-stock-limit-${selectedItem.id}`
+        });
+        return {
+          ...line,
+          quantity: String(availableStock)
+        };
+      }
+
+      return { ...line, quantity: rawValue };
+    }));
+  };
+
   const updateLineInventoryItem = (index, inventoryId) => {
     const selectedItem = activeInventory.find(item => String(item.id) === String(inventoryId));
     const defaultPrice = Number(selectedItem?.defaultSellingPrice || 0);
@@ -620,13 +700,83 @@ export function SalesModule({ user }) {
     setSaleLines(prev => [...prev, emptySaleLine()]);
   };
 
-  const addInventoryItemToSale = () => {};
+  const addInventoryItemToSale = item => {
+    if (!item || isSaving) return;
+
+    const inventoryId = String(item.id);
+    const availableStock = Number(item.quantity || 0);
+    if (availableStock <= 0) {
+      toast.warning(`${item.name} is out of stock and cannot be added to the sale.`);
+      return;
+    }
+
+    const defaultPrice = Number(item.defaultSellingPrice || 0);
+    const preparedLine = {
+      inventoryId,
+      quantity: '1',
+      unitPrice: defaultPrice > 0 ? defaultPrice.toFixed(2) : ''
+    };
+
+    setSaleLines(prev => {
+      const existingIndex = prev.findIndex(line => String(line.inventoryId) === inventoryId);
+
+      if (existingIndex >= 0) {
+        const currentQuantity = Number(prev[existingIndex].quantity || 0);
+        if (currentQuantity >= availableStock) {
+          toast.warning(`${item.name} has only ${availableStock} unit${availableStock === 1 ? '' : 's'} available.`);
+          return prev;
+        }
+
+        return prev.map((line, lineIndex) => (
+          lineIndex === existingIndex
+            ? { ...line, quantity: String(currentQuantity + 1) }
+            : line
+        ));
+      }
+
+      const emptyIndex = prev.findIndex(line => (
+        !String(line.inventoryId || '').trim() &&
+        !String(line.quantity || '').trim() &&
+        !String(line.unitPrice || '').trim()
+      ));
+
+      if (emptyIndex >= 0) {
+        return prev.map((line, lineIndex) => lineIndex === emptyIndex ? preparedLine : line);
+      }
+
+      return [...prev, preparedLine];
+    });
+  };
+
+  const adjustLineQuantity = (index, change) => {
+    setSaleLines(prev => prev.map((line, lineIndex) => {
+      if (lineIndex !== index) return line;
+
+      const selectedItem = activeInventory.find(item => String(item.id) === String(line.inventoryId));
+      if (!selectedItem) {
+        toast.info('Select an item before changing the quantity.');
+        return line;
+      }
+
+      const availableStock = Number(selectedItem.quantity || 0);
+      const currentQuantity = Number(line.quantity || 0);
+      const nextQuantity = Math.max(1, currentQuantity + change);
+
+      if (nextQuantity > availableStock) {
+        toast.warning(`${selectedItem.name} has only ${availableStock} unit${availableStock === 1 ? '' : 's'} available.`, {
+          id: `sales-stock-limit-${selectedItem.id}`
+        });
+        return line;
+      }
+
+      return { ...line, quantity: String(nextQuantity) };
+    }));
+  };
 
   const removeLine = index => {
     setSaleLines(prev => {
       if (prev.length === 1) {
-        toast.info('At least one sold item must remain in the sale form.');
-        return prev;
+        return [emptySaleLine()];
       }
       return prev.filter((_, lineIndex) => lineIndex !== index);
     });
@@ -675,6 +825,21 @@ export function SalesModule({ user }) {
     resetForm();
     setIsClearConfirmOpen(false);
     toast.success('Sales form cleared.');
+  };
+
+  const handleClearSelectedItemsRequest = () => {
+    if (isSaving) return;
+    if (cartLines.length === 0) {
+      toast.info('No selected items to clear.');
+      return;
+    }
+    setIsClearItemsConfirmOpen(true);
+  };
+
+  const confirmClearSelectedItems = () => {
+    setSaleLines([emptySaleLine()]);
+    setIsClearItemsConfirmOpen(false);
+    toast.success('Selected items cleared.');
   };
 
   const validateSale = () => {
@@ -960,7 +1125,7 @@ export function SalesModule({ user }) {
         }
 
         .sales-page-toolbar {
-          display: flex;
+          display: none;
           justify-content: flex-end;
           margin-bottom: 1rem;
         }
@@ -1649,9 +1814,574 @@ export function SalesModule({ user }) {
           box-shadow: 0 8px 18px rgba(220, 38, 38, 0.16);
         }
 
+        .sales-pos-layout {
+          display: grid;
+          grid-template-columns: minmax(0, 1.42fr) minmax(360px, 0.92fr);
+          gap: 1rem;
+          align-items: stretch;
+        }
+
+        .sales-grid {
+          grid-template-columns: minmax(0, 1.45fr) minmax(360px, 0.82fr);
+          align-items: stretch;
+        }
+
+        .sales-grid > .sales-record-card:not(.sales-product-panel) {
+          display: none;
+        }
+
+        .sales-product-panel {
+          display: flex;
+          gap: 0;
+          min-height: calc(100vh - 16.5rem);
+          max-height: calc(100vh - 11.5rem);
+          flex-direction: column;
+        }
+
+        .sales-product-panel .sales-record-header {
+          padding: 1rem 1rem 0.15rem;
+        }
+
+        .sales-product-panel .sales-record-content {
+          min-height: 0;
+          flex: 1;
+          gap: 0.65rem;
+          grid-template-rows: auto minmax(0, 1fr) auto;
+        }
+
+        .sales-product-toolbar {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(160px, 0.28fr) minmax(175px, 0.3fr);
+          gap: 0.75rem;
+          align-items: center;
+        }
+
+        .sales-product-list {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+          gap: 0.75rem;
+          align-content: start;
+          align-items: start;
+          grid-auto-rows: max-content;
+          min-height: 0;
+          overflow-y: auto;
+          padding-right: 0.25rem;
+          overscroll-behavior: contain;
+          scrollbar-gutter: stable;
+        }
+
+        .sales-pos-panel {
+          display: flex;
+          min-height: calc(100vh - 16.5rem);
+          max-height: calc(100vh - 11.5rem);
+          flex-direction: column;
+          border-color: #e2e8f0;
+          background: #ffffff;
+          box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+        }
+
+        .sales-pos-panel-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 1rem;
+          border-bottom: 1px solid #e2e8f0;
+          padding: 1rem;
+        }
+
+        .sales-pos-panel-title {
+          display: flex;
+          min-width: 0;
+          align-items: center;
+          gap: 0.75rem;
+        }
+
+        .sales-pos-panel-title h3 {
+          color: #0f172a;
+          font-size: 1.05rem;
+          font-weight: 800;
+          line-height: 1.3rem;
+        }
+
+        .sales-pos-panel-title p {
+          color: #64748b;
+          font-size: 0.8rem;
+          line-height: 1.15rem;
+        }
+
+        .sales-pos-icon {
+          display: inline-flex;
+          width: 2.4rem;
+          height: 2.4rem;
+          flex-shrink: 0;
+          align-items: center;
+          justify-content: center;
+          border-radius: 0.85rem;
+          background: #f8fafc;
+          color: #334155;
+        }
+
+        .sales-pos-content {
+          display: flex;
+          min-height: 0;
+          flex: 1;
+          flex-direction: column;
+          gap: 0.85rem;
+          padding: 1rem;
+        }
+
+        .sales-pos-customer-bar {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+          gap: 0.85rem;
+        }
+
+        .sales-pos-field {
+          display: grid;
+          gap: 0.45rem;
+        }
+
+        .sales-pos-search-row {
+          display: grid;
+          grid-template-columns: minmax(260px, 1fr) minmax(180px, 0.34fr);
+          gap: 0.75rem;
+        }
+
+        .sales-product-search {
+          display: flex;
+          min-height: 3rem;
+          height: 3rem;
+          align-items: center;
+          gap: 0.65rem;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.8rem;
+          background: #f8fafc;
+          padding: 0 0.85rem;
+          transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+        }
+
+        .sales-product-search:focus-within {
+          border-color: #f4f400;
+          background: #ffffff;
+          box-shadow: 0 0 0 3px rgba(244, 244, 0, 0.28);
+        }
+
+        .sales-product-filter-trigger[data-slot="select-trigger"] {
+          min-height: 3rem;
+          height: 3rem;
+          border-radius: 0.8rem;
+          background: #f8fafc;
+        }
+
+        .sales-product-footer {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 1rem;
+          border-top: 1px solid #e2e8f0;
+          padding-top: 0.7rem;
+        }
+
+        .sales-product-pagination {
+          display: flex;
+          align-items: center;
+          gap: 0.35rem;
+        }
+
+        .sales-page-button {
+          display: inline-flex;
+          min-width: 2.15rem;
+          height: 2.15rem;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid transparent;
+          border-radius: 0.55rem;
+          color: #334155;
+          font-size: 0.82rem;
+          font-weight: 750;
+          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+        }
+
+        .sales-page-button:hover,
+        .sales-page-button:focus-visible {
+          border-color: #cbd5e1;
+          background: #f8fafc;
+          outline: none;
+        }
+
+        .sales-page-button-active,
+        .sales-page-button-active:hover,
+        .sales-page-button-active:focus-visible {
+          border-color: #ef4444;
+          background: #fff7f7;
+          color: #dc2626;
+        }
+
+        .sales-page-button:disabled {
+          cursor: not-allowed;
+          opacity: 0.45;
+        }
+
+        .sales-product-count {
+          color: #64748b;
+          font-size: 0.78rem;
+          font-weight: 650;
+          white-space: nowrap;
+        }
+
+        .sales-product-browser {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(245px, 1fr));
+          gap: 0.75rem;
+          min-height: 0;
+          overflow-y: auto;
+          padding-right: 0.25rem;
+        }
+
+        .sales-product-card {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(6.25rem, auto);
+          gap: 0.8rem;
+          align-items: center;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.95rem;
+          background: #ffffff;
+          min-height: 7.15rem;
+          padding: 0.95rem;
+          text-align: left;
+          transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .sales-product-card:hover,
+        .sales-product-card:focus-within {
+          border-color: #cbd5e1;
+          background: #f8fafc;
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.07);
+        }
+
+        .sales-product-add-pill:hover,
+        .sales-product-add-pill:focus-visible {
+          border-color: #ef4444;
+          background: #fee2e2;
+          color: #b91c1c;
+        }
+
+        .sales-product-card.is-disabled {
+          opacity: 0.65;
+        }
+
+        .sales-product-card.is-out-of-stock {
+          background: #f8fafc;
+        }
+
+        .sales-product-card.is-out-of-stock .sales-product-add-pill {
+          border-color: #e2e8f0;
+          background: #f1f5f9;
+          color: #64748b;
+        }
+
+        .sales-product-avatar {
+          display: flex;
+          width: 3.25rem;
+          height: 3.25rem;
+          align-items: center;
+          justify-content: center;
+          border-radius: 0.85rem;
+          background: #f1f5f9;
+          color: #334155;
+        }
+
+        .sales-product-meta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.35rem;
+          color: #64748b;
+          font-size: 0.76rem;
+          line-height: 1.1rem;
+        }
+
+        .sales-product-actions {
+          grid-column: 1 / -1;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 0.75rem;
+          align-items: center;
+          padding-top: 0.35rem;
+        }
+
+        .sales-add-product-button {
+          min-height: 2.3rem;
+          border-color: #fecaca;
+          color: #dc2626;
+          font-weight: 700;
+        }
+
+        .sales-product-add-pill {
+          display: inline-flex;
+          min-height: 2.35rem;
+          min-width: 6rem;
+          align-items: center;
+          justify-content: center;
+          gap: 0.45rem;
+          border: 1px solid #fecaca;
+          border-radius: 999px;
+          background: #fff7f7;
+          padding: 0 0.9rem;
+          color: #dc2626;
+          cursor: pointer;
+          font-size: 0.8rem;
+          font-weight: 800;
+          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+        }
+
+        .sales-product-add-pill:disabled {
+          cursor: not-allowed;
+          opacity: 0.65;
+        }
+
+        .sales-product-card-action {
+          display: flex;
+          width: 6.9rem;
+          height: 100%;
+          flex-direction: column;
+          align-items: flex-end;
+          justify-content: center;
+          gap: 0.55rem;
+          justify-self: end;
+        }
+
+        .sales-product-card-price {
+          width: 100%;
+          text-align: right;
+        }
+
+        .sales-add-product-button:hover,
+        .sales-add-product-button:focus-visible {
+          border-color: #ef4444;
+          background: #fef2f2;
+          color: #b91c1c;
+        }
+
+        .sales-cart-list {
+          display: grid;
+          gap: 0.55rem;
+          min-height: 0;
+          overflow: visible;
+        }
+
+        .sales-cart-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 0.6rem;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.9rem;
+          background: #ffffff;
+          padding: 0.7rem;
+        }
+
+        .sales-cart-main {
+          min-width: 0;
+        }
+
+        .sales-cart-title {
+          color: #0f172a;
+          font-size: 0.92rem;
+          font-weight: 800;
+          line-height: 1.2rem;
+        }
+
+        .sales-cart-meta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.35rem;
+          margin-top: 0.2rem;
+          color: #64748b;
+          font-size: 0.75rem;
+          line-height: 1.1rem;
+        }
+
+        .sales-cart-controls {
+          display: grid;
+          grid-template-columns: auto minmax(7.25rem, 1fr) auto;
+          grid-column: 1 / -1;
+          gap: 0.6rem;
+          align-items: center;
+          margin-top: 0.55rem;
+        }
+
+        .sales-qty-stepper {
+          display: inline-grid;
+          grid-template-columns: 2.05rem 2.35rem 2.05rem;
+          align-items: center;
+          overflow: hidden;
+          border: 1px solid #cbd5e1;
+          border-radius: 999px;
+          background: #f8fafc;
+        }
+
+        .sales-qty-stepper button {
+          display: inline-flex;
+          width: 2.1rem;
+          height: 2.1rem;
+          align-items: center;
+          justify-content: center;
+          color: #0f172a;
+          transition: background-color 160ms ease;
+        }
+
+        .sales-qty-stepper button:hover,
+        .sales-qty-stepper button:focus-visible {
+          outline: none;
+        }
+
+        .sales-qty-button-decrease:hover,
+        .sales-qty-button-decrease:focus-visible {
+          background: #fee2e2;
+          color: #b91c1c;
+        }
+
+        .sales-qty-button-increase:hover,
+        .sales-qty-button-increase:focus-visible {
+          background: #dcfce7;
+          color: #15803d;
+        }
+
+        .sales-qty-stepper button:disabled {
+          cursor: not-allowed;
+          opacity: 0.45;
+        }
+
+        .sales-qty-stepper input {
+          width: 2.35rem;
+          border: 0;
+          background: transparent;
+          text-align: center;
+          color: #0f172a;
+          font-weight: 800;
+          outline: none;
+        }
+
+        .sales-cart-price-input {
+          height: 2.45rem;
+          min-width: 7.25rem;
+          max-width: 8.5rem;
+          border: 1px solid #cbd5e1;
+          border-radius: 0.7rem;
+          background: #ffffff;
+          color: #0f172a;
+          font-weight: 650;
+          text-align: right;
+          box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04);
+          transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+        }
+
+        .sales-cart-price-input:hover {
+          border-color: #94a3b8;
+          background: #f8fafc;
+        }
+
+        .sales-cart-price-input:focus-visible {
+          border-color: #f4f400;
+          background: #ffffff;
+          box-shadow: 0 0 0 3px rgba(244, 244, 0, 0.28);
+        }
+
+        .sales-cart-subtotal {
+          color: #0f172a;
+          font-size: 0.95rem;
+          font-weight: 850;
+          line-height: 1.2rem;
+          text-align: right;
+        }
+
+        .sales-cart-empty {
+          display: grid;
+          place-items: center;
+          min-height: 7.5rem;
+          border: 1px dashed #cbd5e1;
+          border-radius: 0.9rem;
+          background: #f8fafc;
+          color: #64748b;
+          text-align: center;
+          padding: 1rem;
+        }
+
+        .sales-checkout-compact {
+          display: grid;
+          gap: 0.75rem;
+          min-height: 0;
+          overflow-y: auto;
+          padding-right: 0.25rem;
+        }
+
+        .sales-total-strip {
+          border: 1px solid #e2e8f0;
+          border-radius: 0.9rem;
+          background: #f8fafc;
+          padding: 0.85rem;
+        }
+
+        .sales-total-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 1rem;
+          color: #334155;
+          font-size: 0.88rem;
+          line-height: 1.35rem;
+        }
+
+        .sales-total-row-strong {
+          margin-top: 0.55rem;
+          border-top: 1px solid #e2e8f0;
+          padding-top: 0.65rem;
+          color: #0f172a;
+          font-size: 1rem;
+          font-weight: 800;
+        }
+
+        .sales-total-row-strong span:last-child {
+          color: #dc2626;
+          font-size: 1.35rem;
+        }
+
+        .sales-checkout-card {
+          min-height: calc(100vh - 16.5rem);
+          max-height: calc(100vh - 11.5rem);
+        }
+
+        .sales-checkout-content {
+          min-height: 0;
+          overscroll-behavior: contain;
+          scrollbar-gutter: stable;
+        }
+
         @media (max-width: 1100px) {
+          .sales-pos-layout {
+            grid-template-columns: 1fr;
+          }
+
+          .sales-pos-panel {
+            min-height: auto;
+            max-height: none;
+          }
+
+          .sales-product-browser,
+          .sales-cart-list,
+          .sales-checkout-compact {
+            max-height: none;
+          }
+
+          .sales-product-toolbar {
+            grid-template-columns: minmax(0, 1fr) minmax(150px, 0.35fr) minmax(165px, 0.35fr);
+          }
+
           .sales-grid {
             grid-template-columns: 1fr;
+          }
+
+          .sales-grid > .sales-record-card:not(.sales-product-panel) {
+            display: none;
           }
 
           .sales-product-panel,
@@ -1710,6 +2440,36 @@ export function SalesModule({ user }) {
 
           .sales-line-fields {
             grid-template-columns: 1fr;
+          }
+
+          .sales-product-toolbar,
+          .sales-pos-customer-bar,
+          .sales-pos-search-row {
+            grid-template-columns: 1fr;
+          }
+
+          .sales-product-footer {
+            align-items: stretch;
+            flex-direction: column;
+            gap: 0.65rem;
+          }
+
+          .sales-product-pagination {
+            justify-content: center;
+            flex-wrap: wrap;
+          }
+
+          .sales-product-count {
+            text-align: center;
+          }
+
+          .sales-cart-controls {
+            grid-template-columns: 1fr;
+          }
+
+          .sales-cart-price-input {
+            max-width: none;
+            width: 100%;
           }
 
           .sales-customer-grid,
@@ -1878,7 +2638,7 @@ export function SalesModule({ user }) {
                   />
                 </div>
                 <Select value={productCategory} onValueChange={setProductCategory}>
-                  <SelectTrigger className="h-12 rounded-xl border-slate-200 bg-slate-50">
+                  <SelectTrigger className="sales-product-filter-trigger border-slate-200">
                     <SelectValue placeholder="All Categories" />
                   </SelectTrigger>
                   <SelectContent>
@@ -1889,6 +2649,19 @@ export function SalesModule({ user }) {
                     ))}
                   </SelectContent>
                 </Select>
+                <Select value={productSort} onValueChange={setProductSort}>
+                  <SelectTrigger className="sales-product-filter-trigger border-slate-200">
+                    <SelectValue placeholder="Sort items" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="name_az">Sort: Name A-Z</SelectItem>
+                    <SelectItem value="name_za">Sort: Name Z-A</SelectItem>
+                    <SelectItem value="stock_low">Sort: Stock Low</SelectItem>
+                    <SelectItem value="stock_high">Sort: Stock High</SelectItem>
+                    <SelectItem value="price_low">Sort: Price Low</SelectItem>
+                    <SelectItem value="price_high">Sort: Price High</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="sales-product-list">
@@ -1896,15 +2669,15 @@ export function SalesModule({ user }) {
                   <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-600">
                     No available items match the selected filters.
                   </div>
-                ) : filteredSaleInventory.map(item => {
+                ) : paginatedSaleInventory.map(item => {
                   const defaultPrice = Number(item.defaultSellingPrice || 0);
+                  const existingLine = saleLines.find(line => String(line.inventoryId) === String(item.id));
+                  const selectedQuantity = Number(existingLine?.quantity || 0);
+                  const isOutOfStock = Number(item.quantity || 0) <= 0;
                   return (
-                    <button
+                    <div
                       key={item.id}
-                      type="button"
-                      className="sales-product-card"
-                      onClick={() => addInventoryItemToSale(item)}
-                      disabled={isSaving}
+                      className={`sales-product-card${isOutOfStock ? ' is-out-of-stock' : ''}${isSaving ? ' is-disabled' : ''}`}
                     >
                       <span className="min-w-0">
                         <span className="block truncate text-sm font-bold text-slate-900">
@@ -1917,19 +2690,71 @@ export function SalesModule({ user }) {
                           <span>{item.category || 'Uncategorized'}</span>
                           <span>&middot;</span>
                           <span>{item.quantity} unit{Number(item.quantity) === 1 ? '' : 's'}</span>
+                          {selectedQuantity > 0 && (
+                            <>
+                              <span>&middot;</span>
+                              <span>{selectedQuantity} selected</span>
+                            </>
+                          )}
                         </span>
                       </span>
-                      <span className="flex flex-col items-end gap-2">
-                        <strong className="whitespace-nowrap text-sm text-slate-900">
+                      <span className="sales-product-card-action">
+                        <strong className="sales-product-card-price whitespace-nowrap text-sm text-slate-900">
                           {defaultPrice > 0 ? formatCurrency(defaultPrice) : 'No price'}
                         </strong>
-                        <span className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-green-200 bg-green-50 text-green-700">
-                          <Plus className="h-4 w-4" />
-                        </span>
+                        <button
+                          type="button"
+                          className="sales-product-add-pill"
+                          onClick={() => addInventoryItemToSale(item)}
+                          disabled={isSaving || isOutOfStock}
+                          aria-label={`${isOutOfStock ? 'Out of stock: ' : 'Add '}${item.name}`}
+                        >
+                          <ShoppingCart className="h-4 w-4" />
+                          {isOutOfStock ? 'Out' : 'Add'}
+                        </button>
                       </span>
-                    </button>
+                    </div>
                   );
                 })}
+              </div>
+              <div className="sales-product-footer">
+                <div className="sales-product-pagination" aria-label="Item pagination">
+                  <button
+                    type="button"
+                    className="sales-page-button"
+                    onClick={() => setProductPage(page => Math.max(1, page - 1))}
+                    disabled={safeProductPage <= 1}
+                    aria-label="Previous item page"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  {productPageNumbers.map(pageNumber => (
+                    <button
+                      key={pageNumber}
+                      type="button"
+                      className={`sales-page-button${pageNumber === safeProductPage ? ' sales-page-button-active' : ''}`}
+                      onClick={() => setProductPage(pageNumber)}
+                      aria-label={`Go to item page ${pageNumber}`}
+                      aria-current={pageNumber === safeProductPage ? 'page' : undefined}
+                    >
+                      {pageNumber}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="sales-page-button"
+                    onClick={() => setProductPage(page => Math.min(productPageCount, page + 1))}
+                    disabled={safeProductPage >= productPageCount}
+                    aria-label="Next item page"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+                <span className="sales-product-count">
+                  {filteredSaleInventory.length === 0
+                    ? '0 items'
+                    : `${productItemStart}-${productItemEnd} of ${filteredSaleInventory.length} item${filteredSaleInventory.length === 1 ? '' : 's'}`}
+                </span>
               </div>
             </CardContent>
           </Card>
@@ -2038,9 +2863,8 @@ export function SalesModule({ user }) {
                             placeholder="e.g., 2"
                             value={line.quantity}
                             disabled={isSaving}
-                            onChange={event => updateLine(
+                            onChange={event => updateLineQuantity(
                               index,
-                              'quantity',
                               sanitizeWholeNumberInput(event.target.value, 'Quantity sold', 'sales-quantity-numbers-only')
                             )}
                           />
@@ -2144,14 +2968,162 @@ export function SalesModule({ user }) {
           <div className="sales-side-panel">
             <Card className="sales-checkout-card gap-0 overflow-hidden bg-white">
               <CardHeader className="sales-checkout-header">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
-                    <Wallet className="h-5 w-5" />
-                  </span>
-                  Checkout Summary
-                </CardTitle>
+                <div className="flex items-center justify-between gap-3">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
+                      <Wallet className="h-5 w-5" />
+                    </span>
+                    Checkout Summary
+                  </CardTitle>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="sales-action-button sales-view-all-button shrink-0"
+                    onClick={() => {
+                      setSelectedHistorySaleId('');
+                      setIsHistoryOpen(true);
+                    }}
+                  >
+                    <History className="h-4 w-4" />
+                    History
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="sales-checkout-content">
+                <div className="sales-form-section sales-checkout-section bg-slate-50/60">
+                  <div className="sales-pos-customer-bar">
+                    <div className="sales-pos-field">
+                      <Label htmlFor="customer-type">Customer Type</Label>
+                      <Select value={customerType} onValueChange={setCustomerType}>
+                        <SelectTrigger id="customer-type" className="sales-customer-control">
+                          <SelectValue placeholder="Select customer type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="walk_in">Walk-in Customer</SelectItem>
+                          <SelectItem value="regular">Regular Customer</SelectItem>
+                          <SelectItem value="contractor">Contractor / Project Buyer</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="sales-pos-field">
+                      <Label>Sold By</Label>
+                      <div className="sales-readonly-user">
+                        <User />
+                        {user?.fullName || user?.username || 'Current user'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="sales-form-section sales-checkout-section bg-slate-50/60">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="sales-section-title">Selected Items</h3>
+                      <p className="text-xs font-medium text-slate-500">
+                        {totalQuantity} unit{totalQuantity === 1 ? '' : 's'}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="sales-action-button border-red-200 text-red-600 hover:border-red-500 hover:bg-red-50 hover:text-red-700"
+                      onClick={handleClearSelectedItemsRequest}
+                      disabled={isSaving || cartLines.length === 0}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Clear All
+                    </Button>
+                  </div>
+
+                  <div className="sales-cart-list">
+                    {cartLines.length === 0 ? (
+                      <div className="sales-cart-empty">
+                        Choose items from the available inventory list.
+                      </div>
+                    ) : saleLines.map((line, index) => {
+                      const detail = selectedLineDetails[index];
+                      const selectedItem = detail.item;
+                      if (!selectedItem) return null;
+                      const remainingStock = Math.max(Number(selectedItem.quantity || 0) - Number(detail.quantity || 0), 0);
+
+                      return (
+                        <div key={`cart-line-${index}`} className="sales-cart-row">
+                          <div className="sales-cart-main">
+                            <p className="sales-cart-title">{selectedItem.name}</p>
+                            <div className="sales-cart-meta">
+                              <span>{selectedItem.itemCode || 'No item code'}</span>
+                              <span>&middot;</span>
+                              <span>{selectedItem.category || 'Uncategorized'}</span>
+                              <span>&middot;</span>
+                              <span>{remainingStock} left after sale</span>
+                            </div>
+                          </div>
+                          <div className="sales-cart-subtotal">
+                            {formatCurrency(detail.subtotal)}
+                          </div>
+                          <div className="sales-cart-controls">
+                            <div className="sales-qty-stepper" aria-label={`Quantity for ${selectedItem.name}`}>
+                              <button
+                                type="button"
+                                className="sales-qty-button-decrease"
+                                onClick={() => adjustLineQuantity(index, -1)}
+                                disabled={isSaving || Number(line.quantity || 0) <= 1}
+                                aria-label={`Decrease quantity for ${selectedItem.name}`}
+                              >
+                                <Minus className="h-4 w-4" />
+                              </button>
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                value={line.quantity}
+                                disabled={isSaving}
+                                onChange={event => updateLineQuantity(
+                                  index,
+                                  sanitizeWholeNumberInput(event.target.value, 'Quantity sold', 'sales-quantity-numbers-only')
+                                )}
+                                aria-label={`Quantity sold for ${selectedItem.name}`}
+                              />
+                              <button
+                                type="button"
+                                className="sales-qty-button-increase"
+                                onClick={() => adjustLineQuantity(index, 1)}
+                                disabled={isSaving}
+                                aria-label={`Increase quantity for ${selectedItem.name}`}
+                              >
+                                <Plus className="h-4 w-4" />
+                              </button>
+                            </div>
+                            <Input
+                              type="text"
+                              inputMode="decimal"
+                              pattern="^\\d*(\\.\\d{0,2})?$"
+                              className="sales-cart-price-input"
+                              value={line.unitPrice}
+                              placeholder="0.00"
+                              disabled={isSaving}
+                              onChange={event => updateLine(index, 'unitPrice', sanitizePriceInput(event.target.value))}
+                              aria-label={`Unit price for ${selectedItem.name}`}
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              className="sales-action-button h-9 w-9 border-red-200 text-red-600 hover:border-red-500 hover:bg-red-50 hover:text-red-700"
+                              onClick={() => removeLine(index)}
+                              disabled={isSaving}
+                              aria-label={`Remove ${selectedItem.name}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <div className="sales-form-section sales-checkout-section bg-slate-50/60">
                   <div className="sales-section-heading">
                     <span className="sales-section-icon">
@@ -2350,6 +3322,22 @@ export function SalesModule({ user }) {
         onOpenChange={setIsClearConfirmOpen}
         onConfirm={confirmClearForm}
       />
+      <ClearSalesFormDialog
+        open={isClearItemsConfirmOpen}
+        onOpenChange={setIsClearItemsConfirmOpen}
+        onConfirm={confirmClearSelectedItems}
+        title="Clear selected items?"
+        message={(
+          <>
+            All items in the current sale will be removed.
+            <br />
+            Payment details and saved sales records will not be affected.
+          </>
+        )}
+        infoText="Continue only if you want to choose the sold items again."
+        cancelLabel="Keep Items"
+        confirmLabel="Clear Items"
+      />
       <CancelSaleDialog
         open={Boolean(saleToCancel)}
         sale={saleToCancel}
@@ -2481,7 +3469,22 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
   );
 }
 
-function ClearSalesFormDialog({ open, onOpenChange, onConfirm }) {
+function ClearSalesFormDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+  title = 'Clear sales form?',
+  message = (
+    <>
+      The details you entered will be removed.
+      <br />
+      This will not affect saved sales records or inventory.
+    </>
+  ),
+  infoText = 'Continue only if you want to start a new sales entry.',
+  cancelLabel = 'Keep Editing',
+  confirmLabel = 'Clear Form'
+}) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sales-confirm-clear-dialog border border-slate-200 bg-white p-0 shadow-2xl">
@@ -2493,20 +3496,18 @@ function ClearSalesFormDialog({ open, onOpenChange, onConfirm }) {
               </span>
               <div className="min-w-0">
                 <DialogTitle className="text-lg font-bold leading-tight text-slate-950">
-                  Clear sales form?
+                  {title}
                 </DialogTitle>
               </div>
             </div>
           </DialogHeader>
           <DialogDescription className="sales-confirm-clear-message">
-            The details you entered will be removed.
-            <br />
-            This will not affect saved sales records or inventory.
+            {message}
           </DialogDescription>
           <div className="sales-confirm-clear-info">
             <Info className="h-4 w-4 shrink-0 text-blue-600" />
             <span>
-              Continue only if you want to start a new sales entry.
+              {infoText}
             </span>
           </div>
           <div className="sales-confirm-clear-actions">
@@ -2516,14 +3517,14 @@ function ClearSalesFormDialog({ open, onOpenChange, onConfirm }) {
               className="sales-confirm-clear-button sales-confirm-clear-cancel h-10 min-w-[116px] bg-white"
               onClick={() => onOpenChange(false)}
             >
-              Keep Editing
+              {cancelLabel}
             </Button>
             <Button
               type="button"
               className="sales-confirm-clear-button sales-confirm-clear-submit h-10 min-w-[116px] bg-[#FF0000] text-white"
               onClick={onConfirm}
             >
-              Clear Form
+              {confirmLabel}
             </Button>
           </div>
         </div>

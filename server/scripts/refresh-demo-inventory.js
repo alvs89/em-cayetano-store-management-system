@@ -87,6 +87,8 @@ const SALES_PLANS = [
   {
     branch: 'Manggahan',
     customerType: 'walk_in',
+    paymentMethod: 'cash',
+    discountType: 'none',
     daysAgo: 0,
     hour: 9,
     minute: 15,
@@ -100,6 +102,9 @@ const SALES_PLANS = [
   {
     branch: 'Manggahan',
     customerType: 'contractor',
+    paymentMethod: 'bank_transfer',
+    paymentReference: 'BPI-EMC-20260522-1435',
+    discountType: 'bulk_project_10',
     daysAgo: 0,
     hour: 14,
     minute: 35,
@@ -113,6 +118,9 @@ const SALES_PLANS = [
   {
     branch: 'Manggahan',
     customerType: 'regular',
+    paymentMethod: 'gcash',
+    paymentReference: 'GCASH-8427195630',
+    discountType: 'store_promo_5',
     daysAgo: 1,
     hour: 16,
     minute: 20,
@@ -126,6 +134,9 @@ const SALES_PLANS = [
   {
     branch: 'San Rafael',
     customerType: 'walk_in',
+    paymentMethod: 'cash',
+    cashTendered: 1000,
+    discountType: 'none',
     daysAgo: 0,
     hour: 10,
     minute: 40,
@@ -139,6 +150,9 @@ const SALES_PLANS = [
   {
     branch: 'San Rafael',
     customerType: 'contractor',
+    paymentMethod: 'bank_transfer',
+    paymentReference: 'BDO-PO-20260520-1310',
+    discountType: 'bulk_project_10',
     daysAgo: 2,
     hour: 13,
     minute: 10,
@@ -188,6 +202,31 @@ const philippineTimestamp = (daysAgo, hour = 8, minute = 0) => {
 };
 
 const formatSalesNumber = sequence => `SALE-${new Date().getFullYear()}-${String(sequence).padStart(5, '0')}`;
+
+const getDiscountDetails = (discountType, subtotalAmount, customAmount = 0) => {
+  const normalizedType = String(discountType || 'none').trim().toLowerCase();
+  const subtotal = Number(subtotalAmount || 0);
+  const presets = {
+    none: { type: 'none', label: 'No Discount', amount: 0 },
+    store_promo_5: {
+      type: 'store_promo_5',
+      label: 'Store Promo 5%',
+      amount: Number((subtotal * 0.05).toFixed(2))
+    },
+    bulk_project_10: {
+      type: 'bulk_project_10',
+      label: 'Bulk / Project Discount 10%',
+      amount: Number((subtotal * 0.10).toFixed(2))
+    },
+    custom_amount: {
+      type: 'custom_amount',
+      label: 'Manual Discount',
+      amount: Number(customAmount || 0)
+    }
+  };
+
+  return presets[normalizedType] || presets.none;
+};
 
 const computeStatus = (stock, minStock, leadTimeDays, safetyStock, averageDailySales) => {
   const hasPlanning = [leadTimeDays, safetyStock, averageDailySales].every(value => value !== null && value !== undefined);
@@ -292,7 +331,9 @@ async function refreshDemoInventory() {
         archived_inventory,
         branch_inventory,
         products,
-        audit_logs
+        audit_logs,
+        backup_logs,
+        system_logs
       RESTART IDENTITY
       CASCADE
     `);
@@ -461,25 +502,49 @@ async function refreshDemoInventory() {
         };
       });
       const totalQuantity = saleLines.reduce((sum, line) => sum + line.quantity, 0);
-      const totalAmount = Number(saleLines.reduce((sum, line) => sum + line.subtotal, 0).toFixed(2));
+      const subtotalAmount = Number(saleLines.reduce((sum, line) => sum + line.subtotal, 0).toFixed(2));
+      const discountDetails = getDiscountDetails(sale.discountType, subtotalAmount, sale.discountAmount);
+      const discountAmount = Math.min(discountDetails.amount, subtotalAmount);
+      const totalAmount = Number(Math.max(subtotalAmount - discountAmount, 0).toFixed(2));
+      const paymentMethod = sale.paymentMethod || 'cash';
+      const amountReceived = paymentMethod === 'cash'
+        ? Number(Math.max(Number(sale.cashTendered || totalAmount), totalAmount).toFixed(2))
+        : totalAmount;
+      const changeAmount = paymentMethod === 'cash'
+        ? Number((amountReceived - totalAmount).toFixed(2))
+        : 0;
+      const paymentReference = ['gcash', 'bank_transfer'].includes(paymentMethod)
+        ? sale.paymentReference
+        : null;
 
       const transactionResult = await client.query(
         `INSERT INTO sales_transactions (
            sales_number, branch, customer_type, total_quantity, subtotal_amount,
            discount_amount, discount_type, discount_label, total_amount,
-           payment_method, amount_received, change_amount, status, sold_by,
-           sold_by_name, remarks, created_at
+           payment_method, amount_received, change_amount, payment_reference,
+           payment_confirmed, payment_confirmed_by, payment_confirmed_by_name,
+           payment_confirmed_at, status, sold_by, sold_by_name, remarks, created_at
          )
-         VALUES ($1, $2, $3, $4, $5, 0, 'none', 'No Discount', $6, 'cash', $7, 0, 'completed', $8, $9, $10, $11)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                 true, $14, $15, $16, 'completed', $17, $18, $19, $20)
          RETURNING sales_transaction_id`,
         [
           formatSalesNumber(salesSequence),
           sale.branch,
           sale.customerType,
           totalQuantity,
+          subtotalAmount,
+          discountAmount,
+          discountDetails.type,
+          discountDetails.label,
           totalAmount,
-          totalAmount,
-          totalAmount,
+          paymentMethod,
+          amountReceived,
+          changeAmount,
+          paymentReference,
+          actor.user_id,
+          actor.full_name,
+          saleTime,
           actor.user_id,
           actor.full_name,
           sale.remarks,

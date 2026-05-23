@@ -39,7 +39,8 @@ async function verifyDemoInventory() {
         GROUP BY sales_transaction_id
       ) si ON si.sales_transaction_id = st.sales_transaction_id
       WHERE st.total_quantity != COALESCE(si.qty, 0)
-         OR st.total_amount != COALESCE(si.total, 0)
+         OR st.subtotal_amount != COALESCE(si.total, 0)
+         OR st.total_amount != GREATEST((COALESCE(si.total, 0) - COALESCE(st.discount_amount, 0))::numeric(12,2), 0::numeric)
     `);
 
     const negativeStock = await getScalar(`
@@ -53,7 +54,15 @@ async function verifyDemoInventory() {
       FROM branch_inventory
       WHERE status != CASE
         WHEN stock_level <= 0 THEN 'Out of Stock'
-        WHEN stock_level <= COALESCE(CEIL(average_daily_sales * lead_time_days + safety_stock), min_stock_level) THEN 'Low Stock'
+        WHEN stock_level <= COALESCE(
+          CEIL(
+            CASE
+              WHEN average_daily_sales_mode = 'manual' THEN manual_average_daily_sales
+              ELSE average_daily_sales
+            END * lead_time_days + safety_stock
+          ),
+          min_stock_level
+        ) THEN 'Low Stock'
         ELSE 'In Stock'
       END
     `);
@@ -72,13 +81,65 @@ async function verifyDemoInventory() {
       WHERE p.product_id IS NULL
     `);
 
+    const invalidPaymentRecords = await getScalar(`
+      SELECT COUNT(*)::int AS count
+      FROM sales_transactions
+      WHERE status = 'completed'
+        AND (
+          (payment_method = 'cash' AND (
+            amount_received IS NULL
+            OR amount_received < total_amount
+            OR change_amount != (amount_received - total_amount)
+          ))
+          OR (payment_method IN ('gcash', 'bank_transfer') AND (
+            payment_confirmed IS DISTINCT FROM true
+            OR amount_received != total_amount
+            OR change_amount != 0
+            OR payment_reference IS NULL
+            OR TRIM(payment_reference) = ''
+          ))
+        )
+    `);
+
+    const invalidSalesItemQuantities = await getScalar(`
+      SELECT COUNT(*)::int AS count
+      FROM sales_items
+      WHERE quantity_sold <= 0
+         OR previous_quantity < 0
+         OR new_quantity < 0
+         OR previous_quantity - quantity_sold != new_quantity
+    `);
+
+    const salesMovementMismatch = await getScalar(`
+      SELECT COUNT(*)::int AS count
+      FROM sales_items si
+      INNER JOIN sales_transactions st
+        ON st.sales_transaction_id = si.sales_transaction_id
+      WHERE st.status = 'completed'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM stock_movements sm
+          WHERE sm.inventory_id = si.inventory_id
+            AND sm.product_id = si.product_id
+            AND sm.action = 'stock_out'
+            AND sm.reason = 'sales'
+            AND sm.quantity_changed = si.quantity_sold
+            AND sm.previous_quantity = si.previous_quantity
+            AND sm.new_quantity = si.new_quantity
+            AND sm.branch = si.branch
+        )
+    `);
+
     const result = {
       counts: counts.rows[0],
       badSalesTotals,
       negativeStock,
       statusMismatch,
       orphanSalesItems,
-      orphanInventory
+      orphanInventory,
+      invalidPaymentRecords,
+      invalidSalesItemQuantities,
+      salesMovementMismatch
     };
 
     console.log(JSON.stringify(result, null, 2));
