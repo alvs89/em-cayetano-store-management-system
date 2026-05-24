@@ -1103,7 +1103,7 @@ function MobileAlertBadge({ count, inline = false }) {
         fontSize: "12px",
       }
     : {
-        minWidth: label.length === 1 ? "18px" : "26px",
+        minWidth: label.length === 1 ? "18px" : "30px",
         height: "18px",
         padding: label.length === 1 ? "0" : "0 6px",
         fontSize: label.length === 1 ? "11px" : "10px",
@@ -1111,10 +1111,14 @@ function MobileAlertBadge({ count, inline = false }) {
 
   return (
     <span
-      className={`${inline ? "ml-auto shrink-0" : "absolute -right-1 -top-1 shadow-sm ring-2 ring-white"} flex items-center justify-center rounded-full bg-[#FF0000] text-center font-semibold leading-none text-white`}
+      className={`${inline ? "ml-auto shrink-0" : "absolute -right-1 -top-1 shadow-sm ring-2 ring-white"} mobile-alert-badge flex items-center justify-center rounded-full bg-[#FF0000] text-center font-semibold leading-none text-white`}
       style={{
         ...badgeSize,
         borderRadius: "999px",
+        whiteSpace: "nowrap",
+        overflowWrap: "normal",
+        wordBreak: "normal",
+        lineHeight: "1",
       }}
       aria-label={`${count} unread alerts`}
     >
