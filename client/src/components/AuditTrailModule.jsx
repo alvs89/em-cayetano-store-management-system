@@ -83,6 +83,8 @@ const normalizeDetails = details => {
 const formatCustomerType = value => {
   const customerTypes = {
     walk_in: 'Walk-in Customer',
+    sister_company: 'Sister Company',
+    hardware_reseller: 'Other Hardware / Reseller',
     regular: 'Regular Customer',
     contractor: 'Contractor'
   };
@@ -103,6 +105,11 @@ const formatDetailValue = (value, key = '') => {
 
 const getDetailEntries = details => Object.entries(normalizeDetails(details))
   .filter(([, value]) => value !== null && value !== undefined && value !== '');
+
+const LONG_DETAIL_FIELDS = new Set(['remarks', 'reason', 'note', 'movementnote', 'cancelreason']);
+const isLongDetailField = key => LONG_DETAIL_FIELDS.has(String(key || '').replace(/[_\s-]/g, '').toLowerCase());
+const isStructuredDetailValue = value => value && typeof value === 'object';
+const shouldUseDetailBlock = (key, value) => isLongDetailField(key) || isStructuredDetailValue(value);
 
 const getDateRangeStart = range => {
   const now = new Date();
@@ -337,6 +344,88 @@ export function AuditTrailModule({ user }) {
           padding: 16px 18px;
         }
 
+        .audit-detail-list {
+          display: grid;
+          gap: 8px;
+          max-width: 100%;
+        }
+
+        .audit-detail-chips {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          min-width: 0;
+        }
+
+        .audit-detail-chip {
+          max-width: 100%;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+          border-radius: 8px;
+          background: #F1F5F9;
+          padding: 4px 10px;
+          font-size: 12px;
+          line-height: 1.45;
+          color: #334155;
+        }
+
+        .audit-detail-block {
+          max-width: min(100%, 760px);
+          min-width: 0;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+          border: 1px solid #E2E8F0;
+          border-radius: 10px;
+          background: #F8FAFC;
+          padding: 9px 11px;
+          font-size: 12px;
+          line-height: 1.55;
+          color: #334155;
+        }
+
+        .audit-detail-block strong,
+        .audit-detail-chip strong {
+          color: #0F172A;
+        }
+
+        .audit-detail-block-value {
+          display: -webkit-box;
+          margin-top: 3px;
+          -webkit-line-clamp: 3;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+
+        .audit-detail-kv-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 6px;
+          margin-top: 8px;
+        }
+
+        .audit-detail-kv-row {
+          display: grid;
+          grid-template-columns: minmax(92px, 0.8fr) minmax(0, 1.2fr);
+          gap: 8px;
+          align-items: start;
+          border-radius: 8px;
+          background: #FFFFFF;
+          padding: 6px 8px;
+          min-width: 0;
+        }
+
+        .audit-detail-kv-label {
+          color: #64748B;
+          font-weight: 600;
+          overflow-wrap: anywhere;
+        }
+
+        .audit-detail-kv-value {
+          color: #0F172A;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+        }
+
         .audit-view-all-button {
           border: 1px solid #BFDBFE !important;
           background: #FFFFFF !important;
@@ -385,6 +474,18 @@ export function AuditTrailModule({ user }) {
 
           .audit-record-row {
             grid-template-columns: minmax(0, 1fr) 170px 110px;
+          }
+
+          .audit-detail-block {
+            max-width: 100%;
+          }
+
+          .audit-detail-kv-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .audit-detail-kv-row {
+            grid-template-columns: minmax(82px, 0.75fr) minmax(0, 1.25fr);
           }
         }
 
@@ -608,15 +709,43 @@ export function AuditTrailModule({ user }) {
                       </h3>
                       <p className="mt-1 text-xs text-slate-500">{formatDateTime(log.createdAt)}</p>
                       {log.reason && <p className="mt-2 text-sm text-slate-600">{log.reason}</p>}
-                      {details.length > 0 && (
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {details.slice(0, 4).map(([key, value]) => (
-                            <span key={key} className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs text-slate-700">
-                              <strong>{formatFieldLabel(key)}:</strong> {formatDetailValue(value, key)}
-                            </span>
-                          ))}
-                        </div>
-                      )}
+                      {details.length > 0 && (() => {
+                        const visibleDetails = details.slice(0, 4);
+                        const blockDetails = visibleDetails.filter(([key, value]) => shouldUseDetailBlock(key, value));
+                        const shortDetails = visibleDetails.filter(([key, value]) => !shouldUseDetailBlock(key, value));
+                        return (
+                          <div className="audit-detail-list mt-2">
+                            {blockDetails.map(([key, value]) => (
+                              <div key={key} className="audit-detail-block">
+                                <strong>{formatFieldLabel(key)}</strong>
+                                {isStructuredDetailValue(value) ? (
+                                  <div className="audit-detail-kv-grid">
+                                    {Object.entries(value)
+                                      .filter(([, nestedValue]) => nestedValue !== null && nestedValue !== undefined && nestedValue !== '')
+                                      .map(([nestedKey, nestedValue]) => (
+                                        <div key={nestedKey} className="audit-detail-kv-row">
+                                          <span className="audit-detail-kv-label">{formatFieldLabel(nestedKey)}</span>
+                                          <span className="audit-detail-kv-value">{formatDetailValue(nestedValue, nestedKey)}</span>
+                                        </div>
+                                      ))}
+                                  </div>
+                                ) : (
+                                  <span className="audit-detail-block-value">{formatDetailValue(value, key)}</span>
+                                )}
+                              </div>
+                            ))}
+                            {shortDetails.length > 0 && (
+                              <div className="audit-detail-chips">
+                                {shortDetails.map(([key, value]) => (
+                                  <span key={key} className="audit-detail-chip">
+                                    <strong>{formatFieldLabel(key)}:</strong> {formatDetailValue(value, key)}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     <div>

@@ -62,6 +62,7 @@ const getStockOutReasonLabel = value =>
 
 const STOCK_IN_REASON_OPTIONS = [
   { value: "delivery_received", label: "Delivery Received", description: "New stock received from a supplier or delivery." },
+  { value: "purchase_received", label: "Purchase Received", description: "Stock added through a supplier purchase entry." },
   { value: "returned_item", label: "Returned Item", description: "Returned items added back after checking their condition." },
   { value: "beginning_balance", label: "Beginning Balance", description: "Starting stock entered during setup or inventory reset." },
   { value: "manual_adjustment", label: "Manual Adjustment", description: "Stock corrected after a verified count." },
@@ -255,6 +256,38 @@ const areLikelyDuplicateInventoryNames = (leftName, rightName) => {
 };
 const isWholeNumberText = value => /^\d+$/.test(String(value ?? "").trim());
 const isDecimalNumberText = value => /^\d+(?:\.\d{1,2})?$/.test(String(value ?? "").trim());
+const WSP_CODE_DIGITS = {
+  Q: "1",
+  U: "2",
+  I: "3",
+  C: "4",
+  K: "5",
+  E: "6",
+  P: "7",
+  O: "8",
+  X: "9",
+  Y: "0"
+};
+const formatPesoAmount = value => `P${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const sanitizeWspCodeInput = value => String(value ?? "").toUpperCase().replace(/[^QUICKEPOXYS]/g, "");
+const decodeWspCode = value => {
+  const code = sanitizeWspCodeInput(value);
+  if (!code) return { code, value: "", error: "" };
+
+  let decoded = "";
+  for (const letter of code) {
+    if (letter === "S") {
+      if (!decoded) {
+        return { code, value: "", error: "S can only repeat a previous WSP digit." };
+      }
+      decoded += decoded[decoded.length - 1];
+    } else {
+      decoded += WSP_CODE_DIGITS[letter];
+    }
+  }
+
+  return { code, value: Number(decoded), error: "" };
+};
 const notifyNumbersOnly = (fieldName, toastId) => {
   toast.warning(`${fieldName} accepts numbers only.`, {
     id: toastId,
@@ -304,6 +337,11 @@ const getRecommendedReorderPoint = item => {
 const getActiveLowStockThreshold = item => {
   const recommendedPoint = getRecommendedReorderPoint(item);
   return recommendedPoint !== null ? recommendedPoint : Number(item?.reorderLevel || 0);
+};
+const getComputedStockStatus = item => {
+  const quantity = Number(item?.quantity || 0);
+  if (quantity <= 0) return "Out of Stock";
+  return quantity <= getActiveLowStockThreshold(item) ? "Low Stock" : "In Stock";
 };
 const normalizeCategory = value => {
   const normalized = normalizeDuplicateKeyPart(value);
@@ -361,6 +399,8 @@ export function InventoryModule({
     category: "",
     supplierName: "",
     defaultSellingPrice: "",
+    wspCode: "",
+    costPrice: "",
     reorderLevel: "",
     leadTimeDays: "",
     safetyStock: "",
@@ -385,6 +425,9 @@ export function InventoryModule({
     stockStatusFilter !== "all";
   const canShowInventoryActions =
     canPerformInventoryMovement(user?.role) || canManageInventory(user?.role);
+  const canViewCostPrice = canManageInventory(user?.role);
+  const inventoryTableColumnCount =
+    8 + (canViewCostPrice ? 1 : 0) + (canShowInventoryActions ? 1 : 0);
   const clearInventoryFilters = () => {
     setSearchQuery("");
     setCategoryFilter("all");
@@ -411,6 +454,8 @@ export function InventoryModule({
     category: "",
     supplierName: "",
     defaultSellingPrice: "",
+    wspCode: "",
+    costPrice: "",
     quantity: "",
     reorderLevel: "10", // Default manual threshold
     leadTimeDays: "",
@@ -561,12 +606,64 @@ export function InventoryModule({
     const matchesCategory = categoryFilter === "all" || normalizeCategory(item.category) === categoryFilter;
     const matchesSupplier = supplierFilter === "all" ||
       (supplierFilter === "unassigned" ? !supplierName : supplierName === supplierFilter);
-    const matchesStatus = stockStatusFilter === "all" || item.status === stockStatusFilter;
+    const matchesStatus = stockStatusFilter === "all" || getComputedStockStatus(item) === stockStatusFilter;
     return matchesSearch && matchesCategory && matchesSupplier && matchesStatus;
   });
 
+  const inventoryStatusOverview = React.useMemo(() => {
+    return inventory.reduce((summary, item) => {
+      const status = getComputedStockStatus(item);
+      return {
+        ...summary,
+        [status]: (summary[status] || 0) + 1
+      };
+    }, {
+      "Out of Stock": 0,
+      "Low Stock": 0,
+      "In Stock": 0
+    });
+  }, [inventory]);
+
+  const inventoryStatusOverviewItems = [
+    {
+      status: "all",
+      label: "All Items",
+      count: inventory.length,
+      className: "inventory-overview-pill-all"
+    },
+    {
+      status: "Out of Stock",
+      label: "Out of Stock",
+      count: inventoryStatusOverview["Out of Stock"],
+      className: "inventory-overview-pill-out"
+    },
+    {
+      status: "Low Stock",
+      label: "Low Stock",
+      count: inventoryStatusOverview["Low Stock"],
+      className: "inventory-overview-pill-low"
+    },
+    {
+      status: "In Stock",
+      label: "In Stock",
+      count: inventoryStatusOverview["In Stock"],
+      className: "inventory-overview-pill-in"
+    }
+  ];
+
   const getInventoryId = item => item.id || "";
   const getInventoryDate = item => new Date(item.lastUpdated || 0).getTime();
+  const compareOptionalNumber = (a, b, getValue, direction) => {
+    const aValue = Number(getValue(a));
+    const bValue = Number(getValue(b));
+    const aHasValue = Number.isFinite(aValue) && aValue > 0;
+    const bHasValue = Number.isFinite(bValue) && bValue > 0;
+
+    if (!aHasValue && !bHasValue) return 0;
+    if (!aHasValue) return 1;
+    if (!bHasValue) return -1;
+    return (aValue - bValue) * direction;
+  };
 
   // 📊 Sorted inventory using Merge Sort Algorithm
   // Merge Sort: O(n log n) - efficient sorting for any data size
@@ -582,10 +679,16 @@ export function InventoryModule({
         return mergeSort(filteredInventory, (a, b) => normalizeCategory(a.category).localeCompare(normalizeCategory(b.category)) * direction);
       case 'supplier':
         return mergeSort(filteredInventory, (a, b) => (a.supplierName || '').localeCompare(b.supplierName || '') * direction);
+      case 'srp':
+        return mergeSort(filteredInventory, (a, b) => compareOptionalNumber(a, b, item => item.defaultSellingPrice, direction));
+      case 'wsp':
+        return canViewCostPrice
+          ? mergeSort(filteredInventory, (a, b) => (a.wspCode || '').localeCompare(b.wspCode || '') * direction)
+          : filteredInventory;
       case 'quantity':
         return mergeSort(filteredInventory, (a, b) => ((a.quantity ?? 0) - (b.quantity ?? 0)) * direction);
       case 'status':
-        return mergeSort(filteredInventory, (a, b) => ((STATUS_PRIORITY[a.status] ?? 999) - (STATUS_PRIORITY[b.status] ?? 999)) * direction);
+        return mergeSort(filteredInventory, (a, b) => ((STATUS_PRIORITY[getComputedStockStatus(a)] ?? 999) - (STATUS_PRIORITY[getComputedStockStatus(b)] ?? 999)) * direction);
       case 'date':
         return mergeSort(filteredInventory, (a, b) => (getInventoryDate(a) - getInventoryDate(b)) * direction);
       default:
@@ -615,6 +718,34 @@ export function InventoryModule({
   }, [highlightedInventoryRowId, sortedInventory]);
 
   React.useEffect(() => {
+    if (!highlightedInventoryRowId) return;
+    const timeoutId = window.setTimeout(() => {
+      const target = Array.from(document.querySelectorAll("[data-inventory-record-id]"))
+        .find(element => element.getAttribute("data-inventory-record-id") === highlightedInventoryRowId);
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      if (typeof target.focus === "function") {
+        target.focus({ preventScroll: true });
+      }
+    }, 120);
+    return () => window.clearTimeout(timeoutId);
+  }, [highlightedInventoryRowId, currentPage]);
+
+  const focusInventoryRecord = React.useCallback(id => {
+    if (!id) return;
+    const normalizedId = String(id);
+    if (!inventory.some(item => String(item.id) === normalizedId)) return;
+    setSearchQuery("");
+    setCategoryFilter("all");
+    setSupplierFilter("all");
+    setStockStatusFilter("all");
+    setSortBy("name");
+    setSortOrder("asc");
+    setCurrentPage(1);
+    highlightInventoryRow(normalizedId);
+  }, [inventory, highlightInventoryRow]);
+
+  React.useEffect(() => {
     const pendingHighlightId = localStorage.getItem("inventoryRowHighlightId");
     if (!pendingHighlightId) return;
     if (!inventory.some(item => String(item.id) === pendingHighlightId)) return;
@@ -630,6 +761,25 @@ export function InventoryModule({
     window.addEventListener("inventory-row-highlight", handleInventoryRowHighlight);
     return () => window.removeEventListener("inventory-row-highlight", handleInventoryRowHighlight);
   }, [highlightInventoryRow]);
+
+  React.useEffect(() => {
+    const pendingFocusId = localStorage.getItem("inventoryFocusItemId");
+    if (pendingFocusId && inventory.some(item => String(item.id) === pendingFocusId)) {
+      localStorage.removeItem("inventoryFocusItemId");
+      focusInventoryRecord(pendingFocusId);
+    }
+
+    const handleInventoryFocusItem = event => {
+      const focusedId = event.detail?.id;
+      if (focusedId) {
+        localStorage.removeItem("inventoryFocusItemId");
+        focusInventoryRecord(focusedId);
+      }
+    };
+
+    window.addEventListener("inventory-focus-item", handleInventoryFocusItem);
+    return () => window.removeEventListener("inventory-focus-item", handleInventoryFocusItem);
+  }, [inventory, focusInventoryRecord]);
 
   // 🔀 Handle column header click to change sort
   const handleSort = column => {
@@ -655,6 +805,22 @@ export function InventoryModule({
     className: `h-4 w-4 shrink-0 transition-transform ${sortBy === column ? 'opacity-100' : 'opacity-45'} ${sortBy === column && sortOrder === 'desc' ? 'rotate-180' : ''}`,
     "aria-hidden": "true"
   })));
+
+  const renderInventoryStatusOverview = () => /*#__PURE__*/React.createElement("div", {
+    className: "inventory-status-overview",
+    "aria-label": "Inventory status overview"
+  }, inventoryStatusOverviewItems.map(item => /*#__PURE__*/React.createElement("button", {
+    key: item.status,
+    type: "button",
+    className: `inventory-overview-pill ${item.className} ${(item.status === "all" ? stockStatusFilter === "all" : stockStatusFilter === item.status) ? "inventory-overview-pill-active" : ""}`,
+    onClick: () => setStockStatusFilter(item.status),
+    "aria-pressed": item.status === "all" ? stockStatusFilter === "all" : stockStatusFilter === item.status,
+    title: item.status === "all" ? "Show all inventory items" : `Show ${item.label} items`
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "inventory-overview-count"
+  }, item.count), /*#__PURE__*/React.createElement("span", {
+    className: "inventory-overview-label"
+  }, item.label))));
 
   const renderInventoryPagination = () => sortedInventory.length > INVENTORY_ITEMS_PER_PAGE ? /*#__PURE__*/React.createElement("div", {
     className: "inventory-pagination",
@@ -694,6 +860,8 @@ export function InventoryModule({
       category: "",
       supplierName: "",
       defaultSellingPrice: "",
+      wspCode: "",
+      costPrice: "",
       quantity: "",
       reorderLevel: "10",
       leadTimeDays: "",
@@ -750,22 +918,45 @@ export function InventoryModule({
     }
   }, [user?.role]);
 
+  const applyDashboardInventoryStatusFilter = React.useCallback(status => {
+    const allowedStatuses = new Set(["all", ...Object.keys(STATUS_PRIORITY)]);
+    const nextStatus = allowedStatuses.has(status) ? status : "all";
+
+    setSearchQuery("");
+    setCategoryFilter("all");
+    setSupplierFilter("all");
+    setStockStatusFilter(nextStatus);
+    setCurrentPage(1);
+  }, []);
+
   React.useEffect(() => {
     const pendingAction = localStorage.getItem("dashboardInventoryAction");
     const pendingItemId = localStorage.getItem("dashboardInventoryItemId") || "";
+    const pendingStatusFilter = localStorage.getItem("dashboardInventoryStatusFilter");
     if (pendingAction) {
       localStorage.removeItem("dashboardInventoryAction");
       localStorage.removeItem("dashboardInventoryItemId");
       window.setTimeout(() => applyDashboardInventoryAction(pendingAction, pendingItemId), 0);
     }
+    if (pendingStatusFilter) {
+      localStorage.removeItem("dashboardInventoryStatusFilter");
+      window.setTimeout(() => applyDashboardInventoryStatusFilter(pendingStatusFilter), 0);
+    }
 
     const handleDashboardInventoryAction = event => {
       applyDashboardInventoryAction(event.detail?.action, event.detail?.itemId || "");
     };
+    const handleDashboardInventoryStatusFilter = event => {
+      applyDashboardInventoryStatusFilter(event.detail?.status || "all");
+    };
 
     window.addEventListener("dashboard-inventory-action", handleDashboardInventoryAction);
-    return () => window.removeEventListener("dashboard-inventory-action", handleDashboardInventoryAction);
-  }, [applyDashboardInventoryAction]);
+    window.addEventListener("dashboard-inventory-status-filter", handleDashboardInventoryStatusFilter);
+    return () => {
+      window.removeEventListener("dashboard-inventory-action", handleDashboardInventoryAction);
+      window.removeEventListener("dashboard-inventory-status-filter", handleDashboardInventoryStatusFilter);
+    };
+  }, [applyDashboardInventoryAction, applyDashboardInventoryStatusFilter]);
 
   const closeDashboardPicker = () => {
     setDashboardPickerAction(null);
@@ -798,6 +989,8 @@ export function InventoryModule({
       newItem.category.trim() !== "" ||
       newItem.supplierName.trim() !== "" ||
       newItem.defaultSellingPrice.trim() !== "" ||
+      newItem.wspCode.trim() !== "" ||
+      newItem.costPrice.trim() !== "" ||
       newItem.quantity !== "" ||
       newItem.reorderLevel !== "10" ||
       newItem.leadTimeDays !== "" ||
@@ -821,6 +1014,8 @@ export function InventoryModule({
       normalizeCategory(editItem.category) !== normalizeCategory(selectedItem.category) ||
       editItem.supplierName.trim() !== (selectedItem.supplierName || "") ||
       String(editItem.defaultSellingPrice || "") !== String(selectedItem.defaultSellingPrice ?? "") ||
+      String(editItem.wspCode || "") !== String(selectedItem.wspCode ?? "") ||
+      String(editItem.costPrice || "") !== String(selectedItem.costPrice ?? "") ||
       String(editItem.reorderLevel) !== String(selectedItem.reorderLevel) ||
       String(editItem.leadTimeDays) !== String(selectedItem.leadTimeDays ?? 7) ||
       String(editItem.safetyStock) !== String(selectedItem.safetyStock ?? 0) ||
@@ -1106,6 +1301,7 @@ export function InventoryModule({
   };
 
   const renderReorderPlanningFields = (values, setValues) => {
+    return null;
     const effectiveAverageDailySales = values.averageDailySalesMode === "manual"
       ? values.manualAverageDailySales
       : values.averageDailySales;
@@ -1265,6 +1461,8 @@ export function InventoryModule({
       category: normalizeCategory(item.category) || item.category || "",
       supplierName,
       defaultSellingPrice: item.defaultSellingPrice === null || item.defaultSellingPrice === undefined || item.defaultSellingPrice === "" ? "" : String(item.defaultSellingPrice),
+      wspCode: item.wspCode || "",
+      costPrice: item.costPrice === null || item.costPrice === undefined || item.costPrice === "" ? "" : String(item.costPrice),
       reorderLevel: String(item.reorderLevel ?? 10),
       leadTimeDays: item.leadTimeDays === null || item.leadTimeDays === undefined ? "" : String(item.leadTimeDays),
       safetyStock: item.safetyStock === null || item.safetyStock === undefined ? "" : String(item.safetyStock),
@@ -1312,6 +1510,14 @@ export function InventoryModule({
       toast.error("Default Selling Price must be greater than zero.");
       return;
     }
+    const decodedWsp = decodeWspCode(newItem.wspCode);
+    if (canViewCostPrice && decodedWsp.error) {
+      toast.error("Invalid WSP Code", { description: decodedWsp.error });
+      return;
+    }
+    const costPrice = canViewCostPrice
+      ? (decodedWsp.value !== "" ? decodedWsp.value : (selectedItem.costPrice ?? ""))
+      : "";
     if (isNaN(quantity) || quantity < 0) {
       toast.error("Please enter a valid quantity.");
       return;
@@ -1384,6 +1590,8 @@ export function InventoryModule({
         category: normalizeCategory(newItem.category),
         supplierName: newItem.supplierName.trim().replace(/\s+/g, " "),
         defaultSellingPrice,
+        wspCode: canViewCostPrice ? decodedWsp.code : "",
+        costPrice,
         quantity,
         reorderLevel,
         ...reorderPlanning,
@@ -1619,6 +1827,12 @@ export function InventoryModule({
       toast.error("Default Selling Price must be greater than zero.");
       return;
     }
+    const decodedWsp = decodeWspCode(editItem.wspCode);
+    if (canViewCostPrice && decodedWsp.error) {
+      toast.error("Invalid WSP Code", { description: decodedWsp.error });
+      return;
+    }
+    const costPrice = canViewCostPrice && decodedWsp.value !== "" ? decodedWsp.value : "";
 
     if (!cleanName || !canonicalCategory) {
       toast.error("Please provide a valid item name and category.");
@@ -1712,6 +1926,8 @@ export function InventoryModule({
         category: canonicalCategory,
         supplierName: editItem.supplierName.trim().replace(/\s+/g, " "),
         defaultSellingPrice,
+        wspCode: canViewCostPrice ? decodedWsp.code : selectedItem.wspCode || "",
+        costPrice,
         quantity: selectedItem.quantity,
         reorderLevel,
         ...reorderPlanning,
@@ -1917,6 +2133,41 @@ export function InventoryModule({
             </p>
           </div>
 
+          {canViewCostPrice && (
+            <div className="inventory-add-field space-y-1.5">
+              <Label
+                htmlFor="edit-wsp-code"
+                className="font-semibold text-slate-950"
+                style={{ display: "block", marginBottom: "8px", fontSize: "14px", lineHeight: "1.25" }}
+              >
+                Encoded WSP
+              </Label>
+              <Input
+                id="edit-wsp-code"
+                type="text"
+                value={editItem.wspCode}
+                onChange={e => setEditItem({
+                  ...editItem,
+                  wspCode: sanitizeWspCodeInput(e.target.value)
+                })}
+                placeholder="e.g., USPU"
+                className="border-slate-300 bg-white text-slate-950"
+                style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
+              />
+              <p className="text-slate-600" style={{ fontSize: "12px" }}>
+                Decoded Cost / Puhunan: {
+                  decodeWspCode(editItem.wspCode).error
+                    ? decodeWspCode(editItem.wspCode).error
+                    : decodeWspCode(editItem.wspCode).value !== ""
+                      ? formatPesoAmount(decodeWspCode(editItem.wspCode).value)
+                      : editItem.costPrice
+                        ? `${formatPesoAmount(editItem.costPrice)} saved from older cost data`
+                        : "Not set"
+                }
+              </p>
+            </div>
+          )}
+
           {renderAddSectionHeader("Stock Level and Alert Threshold")}
 
           <div className="inventory-add-field inventory-add-field-full space-y-1.5">
@@ -1943,7 +2194,7 @@ export function InventoryModule({
               style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
             />
             <p className="text-slate-600" style={{ fontSize: "12px" }}>
-              Used as the fallback low-stock alert level when automatic reorder planning is not available.
+              The item will be marked Low Stock when its quantity is equal to or below this number.
             </p>
           </div>
 
@@ -2115,9 +2366,104 @@ export function InventoryModule({
       min-width: 0;
     }
 
+    .inventory-status-overview {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .inventory-overview-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 30px;
+      border: 1px solid #e2e8f0;
+      border-radius: 999px;
+      background: #ffffff;
+      padding: 5px 10px 5px 6px;
+      color: #334155;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+      transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+    }
+
+    .inventory-overview-pill:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+    }
+
+    .inventory-overview-pill-active {
+      box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.22);
+    }
+
+    .inventory-overview-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
+      height: 22px;
+      border-radius: 999px;
+      padding: 0 7px;
+      background: #f8fafc;
+      color: #0f172a;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .inventory-overview-label {
+      white-space: nowrap;
+    }
+
+    .inventory-overview-pill-all {
+      border-color: #cbd5e1;
+      background: #f8fafc;
+      color: #334155;
+    }
+
+    .inventory-overview-pill-all .inventory-overview-count {
+      background: #e2e8f0;
+      color: #0f172a;
+    }
+
+    .inventory-overview-pill-out {
+      border-color: #fecaca;
+      background: #fff1f2;
+      color: #991b1b;
+    }
+
+    .inventory-overview-pill-out .inventory-overview-count {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .inventory-overview-pill-low {
+      border-color: #fde68a;
+      background: #fffbeb;
+      color: #92400e;
+    }
+
+    .inventory-overview-pill-low .inventory-overview-count {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .inventory-overview-pill-in {
+      border-color: #bbf7d0;
+      background: #f0fdf4;
+      color: #166534;
+    }
+
+    .inventory-overview-pill-in .inventory-overview-count {
+      background: #dcfce7;
+      color: #166534;
+    }
+
     .inventory-search-grid {
       display: grid;
-      grid-template-columns: minmax(280px, 1fr) repeat(3, minmax(160px, 190px)) 132px;
+      grid-template-columns: minmax(280px, 1fr) repeat(2, minmax(170px, 210px)) 132px;
       gap: 14px;
       align-items: center;
     }
@@ -2533,6 +2879,25 @@ export function InventoryModule({
       .inventory-list-title {
         flex-basis: 100%;
         min-width: 0;
+      }
+
+      .inventory-status-overview {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        width: 100%;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .inventory-overview-pill {
+        justify-content: center;
+        min-width: 0;
+        padding: 6px 8px;
+      }
+
+      .inventory-overview-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .inventory-list-title [data-card-title] {
@@ -2964,6 +3329,14 @@ export function InventoryModule({
         flex-direction: column;
       }
 
+      .inventory-status-overview {
+        grid-template-columns: 1fr;
+      }
+
+      .inventory-overview-pill {
+        justify-content: space-between;
+      }
+
       .inventory-search-grid {
         grid-template-columns: 1fr;
       }
@@ -3046,29 +3419,13 @@ export function InventoryModule({
     value: supplier
   }, supplier)), /*#__PURE__*/React.createElement(SelectItem, {
     value: "unassigned"
-  }, "No supplier assigned")))), /*#__PURE__*/React.createElement("div", {
-    className: "inventory-filter-control"
-  }, /*#__PURE__*/React.createElement(Select, {
-    value: stockStatusFilter,
-    onValueChange: value => setStockStatusFilter(value)
-  }, /*#__PURE__*/React.createElement(SelectTrigger, {
-    className: "inventory-filter-trigger"
-  }, /*#__PURE__*/React.createElement(Filter, {
-    className: "w-4 h-4 mr-2"
-  }), /*#__PURE__*/React.createElement(SelectValue, {
-    placeholder: "All Statuses"
-  })), /*#__PURE__*/React.createElement(SelectContent, null, /*#__PURE__*/React.createElement(SelectItem, {
-    value: "all"
-  }, "All Statuses"), Object.keys(STATUS_PRIORITY).map(status => /*#__PURE__*/React.createElement(SelectItem, {
-    key: status,
-    value: status
-  }, status)))))), /*#__PURE__*/React.createElement(Button, {
+  }, "No supplier assigned")))), /*#__PURE__*/React.createElement(Button, {
     type: "button",
     variant: "outline",
     className: "inventory-clear-filters-button",
     disabled: !hasActiveInventoryFilters,
     onClick: clearInventoryFilters
-  }, "Clear Filters")))), /*#__PURE__*/React.createElement(Card, {
+  }, "Clear Filters"))))), /*#__PURE__*/React.createElement(Card, {
     className: "inventory-list-card"
   }, /*#__PURE__*/React.createElement(CardHeader, {
     "data-inventory-header": true
@@ -3078,7 +3435,7 @@ export function InventoryModule({
     className: "inventory-list-title"
   }, /*#__PURE__*/React.createElement(CardTitle, null, "Inventory Items"), /*#__PURE__*/React.createElement(CardDescription, null, sortedInventory.length, " items found", sortBy && /*#__PURE__*/React.createElement("span", {
     className: "text-slate-500 ml-2"
-  }, "\u2022 Sorted by ", sortLabel, " (", realtimeDisplayOrderLabel, ")"))), canPerformInventoryMovement(user.role) && /*#__PURE__*/React.createElement(Button, {
+  }, "\u2022 Sorted by ", sortLabel, " (", realtimeDisplayOrderLabel, ")")), renderInventoryStatusOverview()), canPerformInventoryMovement(user.role) && /*#__PURE__*/React.createElement(Button, {
     type: "button",
     className: "inventory-batch-stock-out-button bg-red-600 text-white hover:bg-red-700 font-semibold shadow-md transition-all duration-300",
     onClick: () => setIsBatchStockOutDialogOpen(true)
@@ -3299,7 +3656,39 @@ export function InventoryModule({
     style: {
       fontSize: "12px"
     }
-  }, "Optional. This price will automatically appear as the Unit Price when the item is selected in Sales Recording.")), renderAddSectionHeader("Stock Level and Alert Threshold"), /*#__PURE__*/React.createElement("div", {
+  }, "Optional. This price will automatically appear as the Unit Price when the item is selected in Sales Recording.")), canViewCostPrice && /*#__PURE__*/React.createElement("div", {
+    className: "inventory-add-field space-y-1.5"
+  }, /*#__PURE__*/React.createElement(Label, {
+    htmlFor: "cost-price",
+    className: "font-semibold text-slate-950",
+    style: {
+      display: "block",
+      marginBottom: "8px",
+      fontSize: "14px",
+      lineHeight: "1.25"
+    }
+  }, "Encoded WSP"), /*#__PURE__*/React.createElement(Input, {
+    id: "wsp-code",
+    type: "text",
+    value: newItem.wspCode,
+    onChange: e => setNewItem({
+      ...newItem,
+      wspCode: sanitizeWspCodeInput(e.target.value)
+    }),
+    placeholder: "e.g., USPU",
+    className: "border-slate-300 bg-white text-slate-950",
+    style: {
+      height: "42px",
+      borderRadius: "10px",
+      fontSize: "14px",
+      padding: "0 14px"
+    }
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "text-slate-600",
+    style: {
+      fontSize: "12px"
+    }
+  }, "Decoded Cost / Puhunan: ", decodeWspCode(newItem.wspCode).error ? decodeWspCode(newItem.wspCode).error : decodeWspCode(newItem.wspCode).value !== "" ? formatPesoAmount(decodeWspCode(newItem.wspCode).value) : "Not set")), renderAddSectionHeader("Stock Level and Alert Threshold"), /*#__PURE__*/React.createElement("div", {
     className: "inventory-add-field space-y-1.5"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "quantity",
@@ -3364,7 +3753,7 @@ export function InventoryModule({
     style: {
       fontSize: "12px"
     }
-  }, "Used as the fallback low-stock alert level when automatic reorder planning is not available.")), renderReorderPlanningFields(newItem, updates => setNewItem(prev => ({
+  }, "The item will be marked Low Stock when its quantity is equal to or below this number.")), renderReorderPlanningFields(newItem, updates => setNewItem(prev => ({
     ...prev,
     ...updates
   })))), archivedDuplicatePrompt && /*#__PURE__*/React.createElement("div", {
@@ -3528,6 +3917,10 @@ export function InventoryModule({
   }, renderSortButton('category', 'Category')), /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[190px]"
   }, renderSortButton('supplier', 'Supplier')), /*#__PURE__*/React.createElement(TableHead, {
+    className: "w-[130px] text-right"
+  }, renderSortButton('srp', 'SRP', 'right')), canViewCostPrice && /*#__PURE__*/React.createElement(TableHead, {
+    className: "w-[130px] text-right"
+  }, renderSortButton('wsp', 'WSP Code', 'right')), /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[120px] text-right"
   }, renderSortButton('quantity', 'Quantity', 'right')), /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[150px]"
@@ -3536,7 +3929,7 @@ export function InventoryModule({
   }, renderSortButton('date', 'Last Updated', 'right')), canShowInventoryActions && /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[150px] pl-3 text-left"
   }, "Actions"))), /*#__PURE__*/React.createElement(TableBody, null, sortedInventory.length === 0 ? /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableCell, {
-    colSpan: canShowInventoryActions ? 8 : 7,
+    colSpan: inventoryTableColumnCount,
     className: "py-12 text-center"
   }, /*#__PURE__*/React.createElement(Box, {
     className: "mx-auto mb-4 h-14 w-14 text-slate-300"
@@ -3546,14 +3939,20 @@ export function InventoryModule({
     className: "text-sm text-slate-500"
   }, inventory.length === 0 ? "Items added to inventory will appear here." : "Try adjusting your search or category filter."))) : paginatedInventory.map(item => /*#__PURE__*/React.createElement(TableRow, {
     key: item.id,
+    tabIndex: -1,
+    "data-inventory-record-id": String(item.id),
     className: highlightedInventoryRowId === String(item.id) ? "inventory-row-highlight" : ""
   }, /*#__PURE__*/React.createElement(TableCell, {
     className: "font-mono text-sm align-middle"
   }, item.itemCode || item.id), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, null, item.supplierName || "Unassigned"), /*#__PURE__*/React.createElement(TableCell, {
+    className: "text-right font-medium text-slate-900"
+  }, item.defaultSellingPrice ? `P${Number(item.defaultSellingPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "No price"), canViewCostPrice && /*#__PURE__*/React.createElement(TableCell, {
+    className: "text-right font-medium text-slate-900"
+  }, item.wspCode || "Not set"), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-right"
   }, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
-    className: getStatusBadgeClass(item.status)
-  }, item.status)), /*#__PURE__*/React.createElement(TableCell, {
+    className: getStatusBadgeClass(getComputedStockStatus(item))
+  }, getComputedStockStatus(item))), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-sm text-slate-600 text-right"
   }, formatDateTime(item.lastUpdated)), canShowInventoryActions && /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement("div", {
     className: "flex items-center justify-end gap-2"
@@ -3605,7 +4004,7 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement("div", {
     className: "inventory-mobile-sortbar",
     "aria-label": "Sort inventory items"
-  }, [["id", "Code"], ["name", "Name"], ["category", "Category"], ["supplier", "Supplier"], ["quantity", "Qty"], ["status", "Status"], ["date", "Updated"]].map(([column, label]) => /*#__PURE__*/React.createElement(Button, {
+  }, [["id", "Code"], ["name", "Name"], ["category", "Category"], ["supplier", "Supplier"], ["srp", "SRP"], ...(canViewCostPrice ? [["wsp", "WSP Code"]] : []), ["quantity", "Qty"], ["status", "Status"], ["date", "Updated"]].map(([column, label]) => /*#__PURE__*/React.createElement(Button, {
     key: column,
     type: "button",
     variant: "outline",
@@ -3626,6 +4025,8 @@ export function InventoryModule({
     className: "text-sm text-slate-500"
   }, inventory.length === 0 ? "Items added to inventory will appear here." : "Try adjusting your search or category filter.")) : paginatedInventory.map(item => /*#__PURE__*/React.createElement("article", {
     key: item.id,
+    tabIndex: -1,
+    "data-inventory-record-id": String(item.id),
     className: `inventory-mobile-card ${highlightedInventoryRowId === String(item.id) ? "inventory-row-highlight" : ""}`
   }, /*#__PURE__*/React.createElement("div", {
     className: "inventory-mobile-card-top"
@@ -3636,8 +4037,8 @@ export function InventoryModule({
   }, item.name), /*#__PURE__*/React.createElement("p", {
     className: "inventory-mobile-id"
   }, "Item Code: ", item.itemCode || item.id)), /*#__PURE__*/React.createElement(Badge, {
-    className: `inventory-status-badge ${getStatusBadgeClass(item.status)}`
-  }, item.status)), /*#__PURE__*/React.createElement("div", {
+    className: `inventory-status-badge ${getStatusBadgeClass(getComputedStockStatus(item))}`
+  }, getComputedStockStatus(item))), /*#__PURE__*/React.createElement("div", {
     className: "inventory-mobile-meta"
   }, /*#__PURE__*/React.createElement("div", {
     className: "inventory-mobile-field"
@@ -4475,8 +4876,8 @@ export function InventoryModule({
   }, selectedItem?.quantity ?? 0), /*#__PURE__*/React.createElement("span", {
     className: "font-semibold text-slate-600"
   }, "Status:"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement(Badge, {
-    className: `inventory-status-badge ${getStatusBadgeClass(selectedItem?.status)}`
-  }, selectedItem?.status))))))), (selectedItem?.quantity ?? 0) > 0 && /*#__PURE__*/React.createElement("div", {
+    className: `inventory-status-badge ${getStatusBadgeClass(getComputedStockStatus(selectedItem))}`
+  }, getComputedStockStatus(selectedItem))))))), (selectedItem?.quantity ?? 0) > 0 && /*#__PURE__*/React.createElement("div", {
     className: "flex items-center text-orange-950",
     style: {
       gap: "12px",
@@ -4774,5 +5175,5 @@ export function InventoryModule({
       fontSize: "13px"
     },
     onClick: confirmDiscardChanges
-  }, "Discard"))))));
+  }, "Discard")))))));
 }

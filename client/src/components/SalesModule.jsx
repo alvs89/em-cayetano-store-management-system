@@ -17,6 +17,9 @@ import { isAdminRole } from '../utils/roles';
 
 const emptySaleLine = () => ({
   inventoryId: '',
+  isManual: false,
+  itemName: '',
+  category: 'Other',
   quantity: '',
   unitPrice: ''
 });
@@ -26,6 +29,8 @@ const PRODUCT_PAGE_SIZE = 10;
 
 const customerTypeLabels = {
   walk_in: 'Walk-in Customer',
+  sister_company: 'Sister Company',
+  hardware_reseller: 'Other Hardware / Reseller',
   regular: 'Regular Customer',
   contractor: 'Contractor / Project Buyer'
 };
@@ -39,8 +44,6 @@ const paymentMethodLabels = {
 
 const discountOptions = {
   none: { label: 'No Discount', rate: 0, manual: false },
-  store_promo_5: { label: 'Store Promo 5%', rate: 0.05, manual: false },
-  bulk_project_10: { label: 'Bulk / Project Discount 10%', rate: 0.10, manual: false },
   custom_amount: { label: 'Manual Amount', rate: null, manual: true }
 };
 
@@ -48,6 +51,16 @@ const getDiscountLabel = sale =>
   sale?.discountLabel || discountOptions[sale?.discountType]?.label || (Number(sale?.discountAmount || 0) > 0 ? 'Manual Discount' : 'No Discount');
 
 const requiresPaymentConfirmation = paymentMethod => ['gcash', 'bank_transfer'].includes(paymentMethod);
+const VAT_RATE = 0.12;
+
+const computeVatBreakdown = totalAmount => {
+  const gross = Number(totalAmount || 0);
+  const vatableSales = Number((gross / (1 + VAT_RATE)).toFixed(2));
+  const vatAmount = Number((gross - vatableSales).toFixed(2));
+  return { vatableSales, vatAmount };
+};
+
+const getReceiptVatBreakdown = sale => computeVatBreakdown(Number(sale?.totalAmount || 0));
 
 const escapeReceiptText = value =>
   String(value ?? '')
@@ -71,137 +84,244 @@ const formatDateTime = value => {
   return date.toLocaleString();
 };
 
+const RECEIPT_BUSINESS_INFO = {
+  businessName: 'E.M. CAYETANO TRADING',
+  tin: 'VAT REG TIN: [Client\'s Official TIN]',
+  addresses: {
+    manggahan: '196 J. P. Rizal St, Rodriguez, 1860 Rizal',
+    san_rafael: '482 MH del Pilar St, Rodriguez, 1860 Rizal'
+  },
+  permit: 'PERMIT TO USE LOOSE LEAF NO.: [To be provided]',
+  authority: 'BIR AUTHORITY TO PRINT NO.: [To be provided]',
+  approvedSeries: 'APPROVED SERIES: [System-generated series]'
+};
+
+const getReceiptBranchAddress = branch => {
+  const normalizedBranch = String(branch || '').toLowerCase().replace(/\s+/g, '_');
+  if (normalizedBranch.includes('san_rafael') || normalizedBranch.includes('sanrafael')) {
+    return RECEIPT_BUSINESS_INFO.addresses.san_rafael;
+  }
+  return RECEIPT_BUSINESS_INFO.addresses.manggahan;
+};
+
 const downloadSaleTransactionSummary = sale => {
   if (!sale) return;
 
   const saleNumber = sale.salesNumber || 'Sales record';
-  const generatedAt = new Date().toLocaleString();
   const items = sale.items || [];
-  const remarksLines = sale.remarks ? Math.ceil(String(sale.remarks).length / 34) : 0;
-  const referenceHeight = sale.paymentReference ? 6 : 0;
-  const receiptHeight = Math.max(180, 128 + (items.length * 18) + (remarksLines * 5) + referenceHeight);
-  const doc = new jsPDF({
-    unit: 'mm',
-    format: [80, receiptHeight]
-  });
-  const pageWidth = 80;
-  const margin = 6;
-  let y = 8;
-  const center = text => doc.text(text, pageWidth / 2, y, { align: 'center' });
-  const line = () => {
-    doc.setLineWidth(0.15);
-    doc.line(margin, y, pageWidth - margin, y);
-    y += 4;
-  };
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 12;
+  const contentWidth = pageWidth - (margin * 2);
   const money = value => `P${Number(value || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   })}`;
-  const textRight = (label, value, bold = false) => {
-    doc.setFont('courier', bold ? 'bold' : 'normal');
-    doc.text(label, margin, y);
-    doc.text(value, pageWidth - margin, y, { align: 'right' });
-    y += 5;
+  const paymentLabel = paymentMethodLabels[sale.paymentMethod] || 'Cash';
+  const customerName = sale.customerName || (sale.customerType === 'walk_in' ? 'Various' : customerTypeLabels[sale.customerType] || 'Various');
+  const branchAddress = getReceiptBranchAddress(sale.branch);
+  const receiptVat = getReceiptVatBreakdown(sale);
+  const saleDate = sale.createdAt ? new Date(sale.createdAt) : new Date();
+  const formattedDate = Number.isNaN(saleDate.getTime())
+    ? formatDateTime(sale.createdAt)
+    : saleDate.toLocaleDateString();
+  const drawText = (text, x, y, options = {}) => {
+    doc.text(String(text ?? ''), x, y, options);
+  };
+  const drawBox = (x, y, w, h, fill = false) => {
+    if (fill) {
+      doc.setFillColor(fill);
+      doc.rect(x, y, w, h, 'FD');
+      return;
+    }
+    doc.rect(x, y, w, h);
   };
 
   doc.setProperties({
-    title: `${saleNumber} Transaction Receipt`,
-    subject: 'Sales transaction receipt',
+    title: `${saleNumber} Receipt`,
+    subject: 'Sales transaction invoice-style receipt',
     author: sale.soldByName || 'System',
     creator: 'E.M. Cayetano Trading POS-Integrated Inventory System'
   });
 
-  doc.setFont('courier', 'bold');
-  doc.setFontSize(11);
-  center('E.M. CAYETANO TRADING');
-  y += 5;
-  doc.setFont('courier', 'normal');
+  doc.setDrawColor(17, 24, 39);
+  doc.setLineWidth(0.35);
+  doc.setFillColor(17, 45, 84);
+  doc.rect(margin, 8, contentWidth, 2.5, 'F');
+
+  let y = 18;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(15);
+  drawText(RECEIPT_BUSINESS_INFO.businessName, margin + 20, y);
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'bold');
+  drawText(RECEIPT_BUSINESS_INFO.tin, margin + 20, y + 6);
+  doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
-  center(sale.branch || 'Manggahan Branch');
-  y += 4;
-  center('TRANSACTION RECEIPT');
-  y += 4;
-  center('Inventory-linked sales record');
-  y += 5;
-  line();
-
-  doc.setFontSize(8);
-  doc.setFont('courier', 'normal');
-  doc.text(`Sale No: ${saleNumber}`, margin, y); y += 4;
-  doc.text(`Date: ${formatDateTime(sale.createdAt)}`, margin, y); y += 4;
-  doc.text(`Cashier: ${sale.soldByName || 'System'}`, margin, y); y += 4;
-  doc.text(`Customer: ${customerTypeLabels[sale.customerType] || 'Walk-in Customer'}`, margin, y); y += 5;
-  line();
-
-  doc.setFont('courier', 'bold');
-  doc.text('ITEM', margin, y);
-  doc.text('AMOUNT', pageWidth - margin, y, { align: 'right' });
-  y += 4;
-  doc.setFont('courier', 'normal');
-
-  items.forEach(item => {
-    const nameLines = doc.splitTextToSize(item.itemName || 'Inventory item', 48);
-    nameLines.slice(0, 2).forEach((nameLine, index) => {
-      doc.text(nameLine, margin, y);
-      if (index === 0) {
-        doc.text(money(item.subtotal), pageWidth - margin, y, { align: 'right' });
-      }
-      y += 4;
-    });
-    doc.setFontSize(7.5);
-    doc.text(`${item.quantitySold || 0} x ${money(item.unitPrice)} (${item.category || 'Item'})`, margin, y);
-    doc.setFontSize(8);
-    y += 5;
+  doc.splitTextToSize(branchAddress, 76).forEach((lineText, index) => {
+    drawText(lineText, margin + 20, y + 11 + (index * 4));
   });
 
-  line();
-  textRight('Subtotal', money(sale.subtotalAmount ?? sale.totalAmount));
-  if (Number(sale.discountAmount || 0) > 0) {
-    textRight(getDiscountLabel(sale), `-${money(sale.discountAmount)}`);
-  } else {
-    textRight('Discount', money(0));
-  }
-  textRight('AMOUNT DUE', money(sale.totalAmount), true);
-  textRight(`Paid (${paymentMethodLabels[sale.paymentMethod] || 'Cash'})`, money(sale.amountReceived ?? sale.totalAmount));
-  textRight('Change', money(sale.changeAmount));
-  if (sale.paymentReference) {
-    textRight('Reference', String(sale.paymentReference).slice(0, 24));
-  }
-  line();
+  doc.setDrawColor(220, 38, 38);
+  doc.setLineWidth(1.1);
+  doc.circle(margin + 8, y + 7, 3.2);
+  doc.circle(margin + 3, y + 15, 3.2);
+  doc.circle(margin + 13, y + 15, 3.2);
+  doc.line(margin + 6, y + 9, margin + 4.5, y + 12);
+  doc.line(margin + 10, y + 9, margin + 12, y + 12);
+  doc.line(margin + 6.2, y + 15, margin + 9.8, y + 15);
 
-  if (sale.status === 'cancelled') {
-    doc.setFont('courier', 'bold');
-    center('CANCELLED TRANSACTION');
-    y += 4;
-    doc.setFont('courier', 'normal');
-    const reasonLines = doc.splitTextToSize(`Reason: ${sale.cancelReason || 'No reason recorded'}`, 66);
-    reasonLines.forEach(text => {
-      doc.text(text, margin, y);
-      y += 4;
-    });
-    line();
-  }
+  doc.setDrawColor(17, 24, 39);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(20);
+  doc.setTextColor(17, 45, 84);
+  drawText('INVOICE', pageWidth - margin, y + 10, { align: 'right' });
+  doc.setTextColor(220, 38, 38);
+  doc.setFontSize(12);
+  drawText(`Invoice No.: ${saleNumber}`, pageWidth - margin, y + 22, { align: 'right' });
+  doc.setTextColor(17, 24, 39);
 
+  y = 45;
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  const drawCheckbox = (x, boxY, checked) => {
+    doc.rect(x, boxY, 3.5, 3.5);
+    if (checked) {
+      doc.setLineWidth(0.35);
+      doc.line(x + 0.7, boxY + 1.9, x + 1.5, boxY + 2.8);
+      doc.line(x + 1.5, boxY + 2.8, x + 3, boxY + 0.8);
+    }
+  };
+  drawCheckbox(margin + 10, y - 3, sale.paymentMethod !== 'credit');
+  drawText('CASH SALES', margin + 16, y);
+  drawCheckbox(margin + 10, y + 2, sale.paymentMethod === 'credit');
+  drawText('CHARGE SALES', margin + 16, y + 5);
+  drawBox(pageWidth - margin - 72, y - 3, 72, 11);
+  doc.line(pageWidth - margin - 46, y - 3, pageWidth - margin - 46, y + 8);
+  doc.setFont('helvetica', 'bold');
+  drawText('Date:', pageWidth - margin - 70, y + 4);
+  doc.setFont('helvetica', 'normal');
+  drawText(formattedDate, pageWidth - margin - 42, y + 4);
+
+  y = 58;
+  drawBox(margin, y, contentWidth, 27);
+  doc.setFillColor(243, 244, 246);
+  doc.rect(margin, y, contentWidth, 6, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  drawText('SOLD TO:', margin + 2, y + 4.2);
+  doc.setFont('helvetica', 'normal');
+  drawText('Registered Name :', margin + 8, y + 12);
+  drawText(customerName, margin + 52, y + 12);
+  drawText('TIN             :', margin + 8, y + 18);
+  drawText(sale.customerTin || '-', margin + 52, y + 18);
+  drawText('Business Address:', margin + 8, y + 24);
+  drawText(sale.customerAddress || '-', margin + 52, y + 24);
+
+  y = 90;
+  const tableX = margin;
+  const tableWidth = contentWidth;
+  const colWidths = [88, 26, 34, tableWidth - 88 - 26 - 34];
+  const headerHeight = 10;
+  const rowHeight = 8;
+  const minimumRows = 10;
+  const rowCount = Math.max(minimumRows, items.length);
+  const tableHeight = headerHeight + (rowCount * rowHeight);
+  drawBox(tableX, y, tableWidth, tableHeight);
+  doc.setFillColor(229, 231, 235);
+  doc.rect(tableX, y, tableWidth, headerHeight, 'F');
+  let colX = tableX;
+  colWidths.forEach(width => {
+    doc.line(colX, y, colX, y + tableHeight);
+    colX += width;
+  });
+  doc.line(tableX + tableWidth, y, tableX + tableWidth, y + tableHeight);
+  doc.line(tableX, y + headerHeight, tableX + tableWidth, y + headerHeight);
+  for (let row = 1; row <= rowCount; row += 1) {
+    const rowY = y + headerHeight + (row * rowHeight);
+    doc.line(tableX, rowY, tableX + tableWidth, rowY);
+  }
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  drawText('Item Description /', tableX + colWidths[0] / 2, y + 3.8, { align: 'center' });
+  drawText('Nature of Service', tableX + colWidths[0] / 2, y + 7.4, { align: 'center' });
+  drawText('Quantity', tableX + colWidths[0] + colWidths[1] / 2, y + 6.4, { align: 'center' });
+  drawText('Unit Price', tableX + colWidths[0] + colWidths[1] + colWidths[2] / 2, y + 6.4, { align: 'center' });
+  drawText('Amount', tableX + tableWidth - colWidths[3] / 2, y + 6.4, { align: 'center' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  items.forEach((item, index) => {
+    const rowTop = y + headerHeight + (index * rowHeight);
+    const nameLines = doc.splitTextToSize(item.itemName || 'Inventory item', colWidths[0] - 5).slice(0, 2);
+    drawText(nameLines[0] || 'Inventory item', tableX + 2, rowTop + 3.4);
+    if (nameLines[1]) drawText(nameLines[1], tableX + 2, rowTop + 6.6);
+    drawText(String(item.quantitySold || 0), tableX + colWidths[0] + colWidths[1] / 2, rowTop + 5.2, { align: 'center' });
+    drawText(money(item.unitPrice), tableX + colWidths[0] + colWidths[1] + colWidths[2] - 2, rowTop + 5.2, { align: 'right' });
+    drawText(money(item.subtotal), tableX + tableWidth - 2, rowTop + 5.2, { align: 'right' });
+  });
+
+  y += tableHeight + 8;
+  const taxBoxWidth = 75;
+  const totalsBoxWidth = 92;
+  const boxRowHeight = 8;
+  const leftRows = [
+    ['VATable Sales', money(receiptVat.vatableSales)],
+    ['VAT', money(receiptVat.vatAmount)],
+    ['Zero-Rated Sales', money(0)],
+    ['VAT-Exempt Sales', money(0)]
+  ];
+  const rightRows = [
+    ['Sales Subtotal', money(sale.subtotalAmount ?? sale.totalAmount)],
+    [`Less: Discount`, money(sale.discountAmount)],
+    ['Add: Delivery Charge', money(sale.deliveryCharge)],
+    ['Total Sales (VAT Inclusive)', money(sale.totalAmount)],
+    ['Less: VAT', money(receiptVat.vatAmount)],
+    ['Amount: Net of VAT', money(receiptVat.vatableSales)],
+    ['Add: VAT', money(receiptVat.vatAmount)],
+    ['TOTAL AMOUNT DUE', money(sale.totalAmount)]
+  ];
+  drawBox(margin, y, taxBoxWidth, leftRows.length * boxRowHeight);
+  leftRows.forEach(([label, value], index) => {
+    const rowY = y + (index * boxRowHeight);
+    if (index > 0) doc.line(margin, rowY, margin + taxBoxWidth, rowY);
+    doc.line(margin + 45, rowY, margin + 45, rowY + boxRowHeight);
+    drawText(label, margin + 43, rowY + 5.2, { align: 'right' });
+    drawText(value, margin + taxBoxWidth - 2, rowY + 5.2, { align: 'right' });
+  });
+  const totalsX = pageWidth - margin - totalsBoxWidth;
+  drawBox(totalsX, y, totalsBoxWidth, rightRows.length * boxRowHeight);
+  rightRows.forEach(([label, value], index) => {
+    const rowY = y + (index * boxRowHeight);
+    if (index > 0) doc.line(totalsX, rowY, totalsX + totalsBoxWidth, rowY);
+    doc.line(totalsX + 54, rowY, totalsX + 54, rowY + boxRowHeight);
+    doc.setFont('helvetica', index === rightRows.length - 1 ? 'bold' : 'normal');
+    drawText(label, totalsX + 52, rowY + 5.2, { align: 'right' });
+    drawText(value, totalsX + totalsBoxWidth - 2, rowY + 5.2, { align: 'right' });
+  });
+  doc.setFont('helvetica', 'normal');
+  y += rightRows.length * boxRowHeight + 7;
+
+  drawText(`Received the amount of ${money(sale.amountReceived ?? sale.totalAmount)} via ${paymentLabel}.`, margin, y);
+  drawText(`Change: ${money(sale.changeAmount)}`, margin, y + 5);
+  if (sale.paymentReference) drawText(`Payment Reference: ${String(sale.paymentReference).slice(0, 40)}`, margin, y + 10);
   if (sale.remarks) {
-    doc.setFont('courier', 'bold');
-    doc.text('Remarks:', margin, y);
-    y += 4;
-    doc.setFont('courier', 'normal');
-    doc.splitTextToSize(sale.remarks, 66).forEach(text => {
-      doc.text(text, margin, y);
-      y += 4;
+    doc.setFont('helvetica', 'bold');
+    drawText('Remarks:', margin, y + 17);
+    doc.setFont('helvetica', 'normal');
+    doc.splitTextToSize(sale.remarks, contentWidth).slice(0, 3).forEach((lineText, index) => {
+      drawText(lineText, margin, y + 22 + (index * 4));
     });
-    line();
   }
 
-  doc.setFontSize(7);
-  center('Thank you.');
-  y += 4;
-  center('This receipt is generated by the');
-  y += 4;
-  center('Inventory System.');
-  y += 5;
-  center(`Generated: ${generatedAt}`);
+  const footerY = Math.max(274, y + (sale.remarks ? 36 : 14));
+  drawBox(margin, footerY - 6, contentWidth, 14);
+  doc.setFontSize(6.5);
+  drawText(RECEIPT_BUSINESS_INFO.permit, margin + 2, footerY - 1);
+  drawText('DATE ISSUED: [To be provided]', margin + 2, footerY + 3);
+  drawText(RECEIPT_BUSINESS_INFO.authority, pageWidth - margin - 88, footerY - 1);
+  drawText('DATE ISSUED: [To be provided]', pageWidth - margin - 88, footerY + 3);
+  drawText(RECEIPT_BUSINESS_INFO.approvedSeries, pageWidth - margin - 88, footerY + 7);
 
   doc.save(`${saleNumber}_transaction_receipt.pdf`);
 };
@@ -245,17 +365,31 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
 
   const items = sale.items || [];
   const saleNumber = escapeReceiptText(sale.salesNumber || 'Sales record');
-  const itemRows = items.map(item => `
-    <div class="line-item">
-      <div class="line-top">
-        <strong>${escapeReceiptText(item.itemName || 'Inventory item')}</strong>
-        <span>${escapeReceiptText(formatCurrency(item.subtotal))}</span>
-      </div>
-      <div class="line-meta">
-        ${escapeReceiptText(item.quantitySold || 0)} x ${escapeReceiptText(formatCurrency(item.unitPrice))} &middot; ${escapeReceiptText(item.category || 'Item')}
-      </div>
-    </div>
-  `).join('');
+  const minimumReceiptRows = 10;
+  const itemRows = [
+    ...items.map(item => `
+      <tr>
+        <td>${escapeReceiptText(item.itemName || 'Inventory item')}</td>
+        <td class="center-cell">${escapeReceiptText(item.quantitySold || 0)}</td>
+        <td class="amount-cell">${escapeReceiptText(formatCurrency(item.unitPrice))}</td>
+        <td class="amount-cell">${escapeReceiptText(formatCurrency(item.subtotal))}</td>
+      </tr>
+    `),
+    ...Array.from({ length: Math.max(0, minimumReceiptRows - items.length) }, () => `
+      <tr>
+        <td>&nbsp;</td>
+        <td></td>
+        <td></td>
+        <td></td>
+      </tr>
+    `)
+  ].join('');
+  const customerName = escapeReceiptText(sale.customerName || (sale.customerType === 'walk_in' ? 'Various' : customerTypeLabels[sale.customerType] || 'Various'));
+  const branchAddress = escapeReceiptText(getReceiptBranchAddress(sale.branch));
+  const receiptVat = getReceiptVatBreakdown(sale);
+  const receiptDate = escapeReceiptText(formatDateTime(sale.createdAt));
+  const cashChecked = sale.paymentMethod === 'credit' ? '' : 'checked';
+  const chargeChecked = sale.paymentMethod === 'credit' ? 'checked' : '';
 
   receiptWindow.document.write(`
     <!doctype html>
@@ -263,86 +397,297 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
       <head>
         <title>${saleNumber} Receipt</title>
         <style>
-          @page { size: 80mm auto; margin: 6mm; }
+          @page { size: A4; margin: 0; }
           * { box-sizing: border-box; }
           body {
             margin: 0;
+            padding: 10mm;
             color: #111827;
-            font-family: "Courier New", monospace;
+            background: #fff;
+            font-family: Arial, Helvetica, sans-serif;
             font-size: 12px;
-            line-height: 1.45;
+            line-height: 1.35;
           }
           .receipt {
-            width: 72mm;
+            width: 190mm;
             margin: 0 auto;
+            border: 1px solid #111827;
+            background: #fff;
           }
-          .center { text-align: center; }
-          .title {
-            font-size: 15px;
+          .top-rule {
+            height: 4px;
+            background: #112d54;
+          }
+          .header {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 20px;
+            padding: 20px 22px 12px;
+          }
+          .brand {
+            display: grid;
+            grid-template-columns: 48px 1fr;
+            gap: 14px;
+            align-items: start;
+          }
+          .mark {
+            position: relative;
+            width: 42px;
+            height: 42px;
+            margin-top: 2px;
+          }
+          .mark span {
+            position: absolute;
+            display: block;
+            width: 12px;
+            height: 12px;
+            border: 3px solid #dc2626;
+            border-radius: 999px;
+            background: #fff;
+          }
+          .mark span:nth-child(1) { top: 0; left: 15px; }
+          .mark span:nth-child(2) { bottom: 0; left: 0; }
+          .mark span:nth-child(3) { bottom: 0; right: 0; }
+          .brand-name {
+            font-size: 20px;
+            font-weight: 800;
+            letter-spacing: .02em;
+          }
+          .tin {
+            margin-top: 2px;
             font-weight: 700;
-            letter-spacing: 0.02em;
           }
-          .muted { color: #4b5563; }
-          .divider {
-            border-top: 1px dashed #111827;
-            margin: 10px 0;
+          .address {
+            max-width: 84mm;
+            margin-top: 2px;
+            font-size: 11px;
           }
-          .row,
-          .line-top {
+          .invoice-title {
+            color: #112d54;
+            font-size: 30px;
+            font-weight: 800;
+            text-align: right;
+          }
+          .invoice-number {
+            margin-top: 18px;
+            color: #dc2626;
+            font-size: 18px;
+            font-weight: 700;
+            text-align: right;
+          }
+          .meta-row {
             display: flex;
             justify-content: space-between;
-            gap: 10px;
+            align-items: end;
+            padding: 0 22px;
+            margin-top: 2px;
+            gap: 16px;
           }
-          .row span:last-child,
-          .line-top span {
+          .check-lines {
+            width: 45%;
+            padding-left: 8px;
+          }
+          .check-line {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+          }
+          .box {
+            width: 12px;
+            height: 12px;
+            border: 1px solid #111827;
+            display: inline-grid;
+            place-items: center;
+            font-size: 10px;
+            line-height: 1;
+          }
+          .date-box {
+            width: 38%;
+            border: 1px solid #111827;
+            display: grid;
+            grid-template-columns: 72px 1fr;
+            min-height: 34px;
+          }
+          .date-box strong,
+          .date-box span {
+            padding: 9px 10px;
+          }
+          .date-box strong {
+            border-right: 1px solid #111827;
+          }
+          .sold-to {
+            margin: 0 22px;
+            border: 1px solid #111827;
+          }
+          .sold-to-title,
+          .section-title {
+            border-bottom: 1px solid #111827;
+            background: #f3f4f6;
+            padding: 4px 8px;
+            font-weight: 800;
+          }
+          .sold-to-body {
+            padding: 8px 16px 12px;
+            min-height: 58px;
+          }
+          .sold-line {
+            display: grid;
+            grid-template-columns: 132px 1fr;
+            gap: 10px;
+            margin: 7px 0;
+          }
+          table {
+            width: calc(100% - 44px);
+            margin: 14px 22px 0;
+            border-collapse: collapse;
+          }
+          th,
+          td {
+            border: 1px solid #111827;
+            padding: 6px 8px;
+            vertical-align: top;
+          }
+          th {
+            background: #e5e7eb;
+            text-align: center;
+            font-weight: 700;
+          }
+          tbody tr { height: 29px; }
+          .center-cell { text-align: center; }
+          .amount-cell { text-align: right; white-space: nowrap; }
+          .bottom-grid {
+            display: grid;
+            grid-template-columns: 78mm 1fr;
+            gap: 18mm;
+            padding: 16px 22px 14px;
+            align-items: start;
+          }
+          .summary-table {
+            width: 100%;
+            margin: 0;
+          }
+          .summary-table td {
+            height: 25px;
+            padding: 5px 8px;
+          }
+          .summary-table td:first-child {
+            text-align: right;
+            font-weight: 600;
+          }
+          .summary-table td:last-child {
             text-align: right;
             white-space: nowrap;
           }
-          .line-item {
-            padding: 5px 0;
+          .total-row td {
+            font-weight: 800;
+            font-size: 13px;
           }
-          .line-meta {
-            color: #4b5563;
-            font-size: 11px;
-            margin-top: 2px;
+          .received {
+            margin-top: 16px;
+            font-size: 12px;
           }
-          .total {
-            font-size: 14px;
-            font-weight: 700;
-          }
-          .remarks {
-            white-space: pre-wrap;
-            word-break: break-word;
+          .footer {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 18px;
+            border-top: 1px solid #111827;
+            padding: 7px 10px;
+            font-size: 9px;
           }
         </style>
       </head>
       <body>
         <main class="receipt">
-          <div class="center title">E.M. CAYETANO TRADING</div>
-          <div class="center muted">${escapeReceiptText(sale.branch || 'Manggahan Branch')}</div>
-          <div class="center muted">TRANSACTION RECEIPT</div>
-          <div class="divider"></div>
-          <div>Sale No: ${saleNumber}</div>
-          <div>Date: ${escapeReceiptText(formatDateTime(sale.createdAt))}</div>
-          <div>Cashier: ${escapeReceiptText(sale.soldByName || 'System')}</div>
-          <div>Customer: ${escapeReceiptText(customerTypeLabels[sale.customerType] || 'Walk-in Customer')}</div>
-          <div class="divider"></div>
-          ${itemRows || '<div class="muted">No item details recorded.</div>'}
-          <div class="divider"></div>
-          <div class="row"><span>Subtotal</span><span>${escapeReceiptText(formatCurrency(sale.subtotalAmount ?? sale.totalAmount))}</span></div>
-          <div class="row"><span>${escapeReceiptText(getDiscountLabel(sale))}</span><span>-${escapeReceiptText(formatCurrency(sale.discountAmount))}</span></div>
-          <div class="row total"><span>AMOUNT DUE</span><span>${escapeReceiptText(formatCurrency(sale.totalAmount))}</span></div>
-          <div class="row"><span>Paid (${escapeReceiptText(paymentMethodLabels[sale.paymentMethod] || 'Cash')})</span><span>${escapeReceiptText(formatCurrency(sale.amountReceived ?? sale.totalAmount))}</span></div>
-          <div class="row"><span>Change</span><span>${escapeReceiptText(formatCurrency(sale.changeAmount))}</span></div>
-          ${sale.paymentReference ? `<div class="row"><span>Reference</span><span>${escapeReceiptText(sale.paymentReference)}</span></div>` : ''}
+          <div class="top-rule"></div>
+          <header class="header">
+            <div class="brand">
+              <div class="mark"><span></span><span></span><span></span></div>
+              <div>
+                <div class="brand-name">${escapeReceiptText(RECEIPT_BUSINESS_INFO.businessName)}</div>
+                <div class="tin">${escapeReceiptText(RECEIPT_BUSINESS_INFO.tin)}</div>
+                <div class="address">${branchAddress}</div>
+              </div>
+            </div>
+            <div>
+              <div class="invoice-title">INVOICE</div>
+              <div class="invoice-number">Invoice No.: ${saleNumber}</div>
+            </div>
+          </header>
+
+          <section class="meta-row">
+            <div class="check-lines">
+              <div class="check-line"><span class="box">${cashChecked ? '&#10003;' : ''}</span> CASH SALES</div>
+              <div class="check-line"><span class="box">${chargeChecked ? '&#10003;' : ''}</span> CHARGE SALES</div>
+            </div>
+            <div class="date-box"><strong>Date:</strong><span>${receiptDate}</span></div>
+          </section>
+
+          <section class="sold-to">
+            <div class="sold-to-title">SOLD TO:</div>
+            <div class="sold-to-body">
+              <div class="sold-line"><span>Registered Name :</span><strong>${customerName}</strong></div>
+              <div class="sold-line"><span>TIN :</span><span>${escapeReceiptText(sale.customerTin || '-')}</span></div>
+              <div class="sold-line"><span>Business Address :</span><span>${escapeReceiptText(sale.customerAddress || '-')}</span></div>
+            </div>
+          </section>
+
+          <table aria-label="Sold items">
+            <thead>
+              <tr>
+                <th>Item Description /<br>Nature of Service</th>
+                <th>Quantity</th>
+                <th>Unit Price</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>${itemRows}</tbody>
+          </table>
+
+          <section class="bottom-grid">
+            <div>
+              <table class="summary-table">
+                <tbody>
+                  <tr><td>VATable Sales</td><td>${escapeReceiptText(formatCurrency(receiptVat.vatableSales))}</td></tr>
+                  <tr><td>VAT</td><td>${escapeReceiptText(formatCurrency(receiptVat.vatAmount))}</td></tr>
+                  <tr><td>Zero-Rated Sales</td><td>${escapeReceiptText(formatCurrency(0))}</td></tr>
+                  <tr><td>VAT-Exempt Sales</td><td>${escapeReceiptText(formatCurrency(0))}</td></tr>
+                </tbody>
+              </table>
+              <div class="received">Received the amount of ${escapeReceiptText(formatCurrency(sale.amountReceived ?? sale.totalAmount))} via ${escapeReceiptText(paymentMethodLabels[sale.paymentMethod] || 'Cash')}.</div>
+            </div>
+            <div>
+              <table class="summary-table">
+                <tbody>
+                  <tr><td>Sales Subtotal</td><td>${escapeReceiptText(formatCurrency(sale.subtotalAmount ?? sale.totalAmount))}</td></tr>
+                  <tr><td>Less: Discount</td><td>${escapeReceiptText(formatCurrency(sale.discountAmount))}</td></tr>
+                  <tr><td>Add: Delivery Charge</td><td>${escapeReceiptText(formatCurrency(sale.deliveryCharge))}</td></tr>
+                  <tr><td>Total Sales<br><small>(VAT Inclusive)</small></td><td>${escapeReceiptText(formatCurrency(sale.totalAmount))}</td></tr>
+                  <tr><td>Less: VAT</td><td>${escapeReceiptText(formatCurrency(receiptVat.vatAmount))}</td></tr>
+                  <tr><td>Amount: Net of VAT</td><td>${escapeReceiptText(formatCurrency(receiptVat.vatableSales))}</td></tr>
+                  <tr><td>Add: VAT</td><td>${escapeReceiptText(formatCurrency(receiptVat.vatAmount))}</td></tr>
+                  <tr class="total-row"><td>TOTAL AMOUNT DUE</td><td>${escapeReceiptText(formatCurrency(sale.totalAmount))}</td></tr>
+                  <tr><td>Change</td><td>${escapeReceiptText(formatCurrency(sale.changeAmount))}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
           ${sale.remarks ? `
-            <div class="divider"></div>
-            <strong>Remarks</strong>
-            <div class="remarks">${escapeReceiptText(sale.remarks)}</div>
+            <section style="padding: 0 22px 14px;">
+              <strong>Remarks:</strong> ${escapeReceiptText(sale.remarks)}
+            </section>
           ` : ''}
-          <div class="divider"></div>
-          <div class="center">Thank you.</div>
-          <div class="center muted">Inventory-linked sales record</div>
+          <footer class="footer">
+            <div>
+              ${escapeReceiptText(RECEIPT_BUSINESS_INFO.permit)}<br>
+              DATE ISSUED: [To be provided]
+            </div>
+            <div>
+              ${escapeReceiptText(RECEIPT_BUSINESS_INFO.authority)}<br>
+              DATE ISSUED: [To be provided]<br>
+              ${escapeReceiptText(RECEIPT_BUSINESS_INFO.approvedSeries)}
+            </div>
+          </footer>
         </main>
         <script>
           window.addEventListener('load', () => {
@@ -413,6 +758,7 @@ export function SalesModule({ user }) {
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [discountType, setDiscountType] = useState('none');
   const [discountAmount, setDiscountAmount] = useState('');
+  const [deliveryCharge, setDeliveryCharge] = useState('');
   const [amountReceived, setAmountReceived] = useState('');
   const [paymentReference, setPaymentReference] = useState('');
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
@@ -421,6 +767,7 @@ export function SalesModule({ user }) {
   const [saleLines, setSaleLines] = useState([emptySaleLine()]);
   const [isSaving, setIsSaving] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isSaveConfirmOpen, setIsSaveConfirmOpen] = useState(false);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [saleToCancel, setSaleToCancel] = useState(null);
   const [completedSale, setCompletedSale] = useState(null);
@@ -524,12 +871,14 @@ export function SalesModule({ user }) {
   };
 
   const selectedLineDetails = saleLines.map(line => {
-    const item = getInventoryById(line.inventoryId);
+    const item = line.isManual ? null : getInventoryById(line.inventoryId);
     const quantity = line.quantity === '' ? 0 : Number(line.quantity);
     const unitPrice = line.unitPrice === '' ? 0 : Number(line.unitPrice);
     return {
       ...line,
       item,
+      itemName: line.isManual ? String(line.itemName || '').trim() : item?.name || '',
+      category: line.isManual ? line.category || 'Other' : item?.category || '',
       quantity,
       unitPrice,
       subtotal: Number.isFinite(quantity) && Number.isFinite(unitPrice)
@@ -537,7 +886,7 @@ export function SalesModule({ user }) {
         : 0
     };
   });
-  const cartLines = selectedLineDetails.filter(line => line.inventoryId && line.item);
+  const cartLines = selectedLineDetails.filter(line => line.isManual ? line.itemName : (line.inventoryId && line.item));
 
   const totalQuantity = selectedLineDetails.reduce((sum, line) => sum + (Number.isFinite(line.quantity) ? line.quantity : 0), 0);
   const subtotalAmount = selectedLineDetails.reduce((sum, line) => sum + (Number.isFinite(line.subtotal) ? line.subtotal : 0), 0);
@@ -547,13 +896,28 @@ export function SalesModule({ user }) {
   const safeDiscountAmount = selectedDiscountOption.manual
     ? safeCustomDiscountAmount
     : Number((subtotalAmount * selectedDiscountOption.rate).toFixed(2));
-  const totalAmount = Math.max(subtotalAmount - safeDiscountAmount, 0);
+  const parsedDeliveryCharge = deliveryCharge === '' ? 0 : Number(deliveryCharge);
+  const safeDeliveryCharge = Number.isFinite(parsedDeliveryCharge) ? parsedDeliveryCharge : 0;
+  const totalAmount = Math.max(subtotalAmount - safeDiscountAmount + safeDeliveryCharge, 0);
+  const { vatableSales, vatAmount } = computeVatBreakdown(totalAmount);
   const parsedAmountReceived = amountReceived === '' ? 0 : Number(amountReceived);
   const safeAmountReceived = Number.isFinite(parsedAmountReceived) ? parsedAmountReceived : 0;
   const needsPaymentConfirmation = requiresPaymentConfirmation(paymentMethod);
   const changeAmount = paymentMethod === 'cash' && safeAmountReceived >= totalAmount
     ? safeAmountReceived - totalAmount
     : 0;
+
+  useEffect(() => {
+    if (!needsPaymentConfirmation || !paymentConfirmed || paymentConfirmedAmount === null) return;
+
+    const verifiedAmount = Number(paymentConfirmedAmount);
+    const currentAmountDue = Number(totalAmount.toFixed(2));
+    if (verifiedAmount !== currentAmountDue) {
+      setPaymentConfirmed(false);
+      setPaymentConfirmedAmount(null);
+    }
+  }, [needsPaymentConfirmation, paymentConfirmed, paymentConfirmedAmount, totalAmount]);
+
   const sortedSales = useMemo(
     () => [...(salesTransactions || [])]
       .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()),
@@ -565,16 +929,18 @@ export function SalesModule({ user }) {
     paymentMethod !== 'cash' ||
     discountType !== 'none' ||
     String(discountAmount || '').trim() !== '' ||
+    String(deliveryCharge || '').trim() !== '' ||
     String(amountReceived || '').trim() !== '' ||
     String(paymentReference || '').trim() !== '' ||
     paymentConfirmed ||
     remarks.trim() !== '' ||
     saleLines.some(line => (
       String(line.inventoryId || '').trim() !== '' ||
+      String(line.itemName || '').trim() !== '' ||
       String(line.quantity || '').trim() !== '' ||
       String(line.unitPrice || '').trim() !== ''
     ))
-  ), [amountReceived, customerType, discountAmount, discountType, paymentConfirmed, paymentMethod, paymentReference, remarks, saleLines]);
+  ), [amountReceived, customerType, deliveryCharge, discountAmount, discountType, paymentConfirmed, paymentMethod, paymentReference, remarks, saleLines]);
 
   const filteredSalesHistory = useMemo(() => {
     const now = new Date();
@@ -648,7 +1014,15 @@ export function SalesModule({ user }) {
         return { ...line, quantity: '' };
       }
 
-      const selectedItem = activeInventory.find(item => String(item.id) === String(line.inventoryId));
+      const selectedItem = line.isManual ? null : activeInventory.find(item => String(item.id) === String(line.inventoryId));
+      if (line.isManual) {
+        const requestedQuantity = Number(rawValue);
+        if (Number.isFinite(requestedQuantity) && requestedQuantity <= 0) {
+          toast.warning('Quantity must be at least 1.', { id: `sales-manual-min-quantity-${index}` });
+          return { ...line, quantity: '1' };
+        }
+        return { ...line, quantity: rawValue };
+      }
       if (!selectedItem) {
         toast.info('Select an item before entering quantity.');
         return line;
@@ -689,8 +1063,11 @@ export function SalesModule({ user }) {
       lineIndex === index
         ? {
             ...line,
-            inventoryId,
-            unitPrice: defaultPrice > 0 ? defaultPrice.toFixed(2) : ''
+          inventoryId,
+          isManual: false,
+          itemName: '',
+          category: selectedItem?.category || 'Other',
+          unitPrice: defaultPrice > 0 ? defaultPrice.toFixed(2) : ''
           }
         : line
     )));
@@ -698,6 +1075,27 @@ export function SalesModule({ user }) {
 
   const addLine = () => {
     setSaleLines(prev => [...prev, emptySaleLine()]);
+  };
+
+  const addManualLine = () => {
+    setSaleLines(prev => {
+      const emptyIndex = prev.findIndex(line => (
+        !String(line.inventoryId || '').trim() &&
+        !String(line.itemName || '').trim() &&
+        !String(line.quantity || '').trim() &&
+        !String(line.unitPrice || '').trim()
+      ));
+      const preparedLine = {
+        ...emptySaleLine(),
+        isManual: true,
+        category: 'Other'
+      };
+      if (emptyIndex >= 0) {
+        return prev.map((line, lineIndex) => lineIndex === emptyIndex ? preparedLine : line);
+      }
+      return [...prev, preparedLine];
+    });
+    toast.info('Manual item line added. It will appear in sales and receipt without changing inventory.');
   };
 
   const addInventoryItemToSale = item => {
@@ -736,6 +1134,7 @@ export function SalesModule({ user }) {
 
       const emptyIndex = prev.findIndex(line => (
         !String(line.inventoryId || '').trim() &&
+        !String(line.itemName || '').trim() &&
         !String(line.quantity || '').trim() &&
         !String(line.unitPrice || '').trim()
       ));
@@ -752,7 +1151,11 @@ export function SalesModule({ user }) {
     setSaleLines(prev => prev.map((line, lineIndex) => {
       if (lineIndex !== index) return line;
 
-      const selectedItem = activeInventory.find(item => String(item.id) === String(line.inventoryId));
+      const selectedItem = line.isManual ? null : activeInventory.find(item => String(item.id) === String(line.inventoryId));
+      if (line.isManual) {
+        const currentQuantity = Number(line.quantity || 0);
+        return { ...line, quantity: String(Math.max(1, currentQuantity + change)) };
+      }
       if (!selectedItem) {
         toast.info('Select an item before changing the quantity.');
         return line;
@@ -787,6 +1190,7 @@ export function SalesModule({ user }) {
     setPaymentMethod('cash');
     setDiscountType('none');
     setDiscountAmount('');
+    setDeliveryCharge('');
     setAmountReceived('');
     setPaymentReference('');
     setPaymentConfirmed(false);
@@ -849,6 +1253,22 @@ export function SalesModule({ user }) {
       const line = selectedLineDetails[index];
       const lineLabel = `Line ${index + 1}`;
 
+      if (line.isManual) {
+        if (!line.itemName || line.itemName.length > 150) {
+          toast.error(`${lineLabel}: enter an item description for the manual item.`);
+          return false;
+        }
+        if (!Number.isInteger(line.quantity) || line.quantity <= 0) {
+          toast.error(`${line.itemName}: quantity sold must be a whole number greater than zero.`);
+          return false;
+        }
+        if (String(line.unitPrice || '').trim() === '' || !Number.isFinite(line.unitPrice) || line.unitPrice <= 0) {
+          toast.error(`${line.itemName}: unit price is required and must be greater than zero.`);
+          return false;
+        }
+        continue;
+      }
+
       if (!line.inventoryId || !line.item) {
         toast.error(`${lineLabel}: please select an inventory item.`);
         return false;
@@ -906,6 +1326,11 @@ export function SalesModule({ user }) {
       return false;
     }
 
+    if (!isValidMoneyText(deliveryCharge) || safeDeliveryCharge < 0) {
+      toast.error('Delivery charge must be a valid amount or blank.');
+      return false;
+    }
+
     if (paymentMethod === 'cash' && totalAmount > 0 && String(amountReceived || '').trim() === '') {
       toast.error('Enter the cash amount received before saving the sale.');
       return false;
@@ -951,11 +1376,15 @@ export function SalesModule({ user }) {
         paymentMethod,
         discountType,
         discountAmount: safeDiscountAmount,
+        deliveryCharge: safeDeliveryCharge,
         amountReceived: paymentMethod === 'cash' ? safeAmountReceived : totalAmount,
         paymentReference: needsPaymentConfirmation ? paymentReference.trim() : '',
         paymentConfirmed: needsPaymentConfirmation || paymentMethod === 'cash',
         items: selectedLineDetails.map(line => ({
           inventoryId: line.inventoryId,
+          isManual: Boolean(line.isManual),
+          itemName: line.itemName,
+          category: line.category,
           quantity: line.quantity,
           unitPrice: line.unitPrice
         }))
@@ -976,6 +1405,16 @@ export function SalesModule({ user }) {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSaveSaleRequest = () => {
+    if (!validateSale()) return;
+    setIsSaveConfirmOpen(true);
+  };
+
+  const confirmSaveSale = () => {
+    setIsSaveConfirmOpen(false);
+    handleRecordSale();
   };
 
   const handleDownloadSaleSummary = sale => {
@@ -1187,6 +1626,7 @@ export function SalesModule({ user }) {
 
         .sales-payment-confirmation {
           display: flex;
+          width: 100%;
           min-height: 3.5rem;
           align-items: center;
           gap: 0.7rem;
@@ -1197,20 +1637,25 @@ export function SalesModule({ user }) {
           color: #334155;
           font-size: 0.875rem;
           font-weight: 650;
+          text-align: left;
           cursor: pointer;
           transition: border-color 160ms ease, background-color 160ms ease;
         }
 
         .sales-payment-confirmation:hover,
-        .sales-payment-confirmation:focus-within {
+        .sales-payment-confirmation:focus-visible {
           border-color: #cbd5e1;
           background: #f8fafc;
         }
 
-        .sales-payment-confirmation input {
-          position: absolute;
-          opacity: 0;
-          pointer-events: none;
+        .sales-payment-confirmation:focus-visible {
+          outline: 3px solid rgba(34, 197, 94, 0.24);
+          outline-offset: 2px;
+        }
+
+        .sales-payment-confirmation:disabled {
+          cursor: not-allowed;
+          opacity: 0.65;
         }
 
         .sales-payment-confirmation-box {
@@ -1235,6 +1680,23 @@ export function SalesModule({ user }) {
         .sales-payment-confirmation-checked .sales-payment-confirmation-box {
           border-color: #22c55e;
           background: #dcfce7;
+        }
+
+        .sales-payment-confirmation-text {
+          display: grid;
+          min-width: 0;
+          gap: 0.1rem;
+        }
+
+        .sales-payment-confirmation-text small {
+          color: #64748b;
+          font-size: 0.75rem;
+          font-weight: 500;
+          line-height: 1.35;
+        }
+
+        .sales-payment-confirmation-checked .sales-payment-confirmation-text small {
+          color: #166534;
         }
 
         .sales-digital-payment-note {
@@ -1788,6 +2250,39 @@ export function SalesModule({ user }) {
           padding: 0.65rem 0.75rem;
           font-size: 0.8rem;
           line-height: 1.25rem;
+        }
+
+        .sales-confirm-sale-summary {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.65rem;
+          margin-top: 1rem;
+        }
+
+        .sales-confirm-sale-summary-item {
+          border: 1px solid #e2e8f0;
+          border-radius: 0.75rem;
+          background: #f8fafc;
+          padding: 0.75rem;
+        }
+
+        .sales-confirm-sale-summary-label {
+          display: block;
+          color: #64748b;
+          font-size: 0.72rem;
+          font-weight: 700;
+          line-height: 1rem;
+          text-transform: uppercase;
+        }
+
+        .sales-confirm-sale-summary-value {
+          display: block;
+          margin-top: 0.2rem;
+          color: #0f172a;
+          font-size: 0.95rem;
+          font-weight: 800;
+          line-height: 1.25rem;
+          overflow-wrap: break-word;
         }
 
         .sales-confirm-clear-button {
@@ -2576,6 +3071,10 @@ export function SalesModule({ user }) {
             max-width: none;
           }
 
+          .sales-confirm-sale-summary {
+            grid-template-columns: 1fr;
+          }
+
           .sales-confirm-clear-actions {
             flex-direction: column-reverse;
             gap: 0.75rem;
@@ -2779,8 +3278,8 @@ export function SalesModule({ user }) {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="walk_in">Walk-in Customer</SelectItem>
-                        <SelectItem value="regular">Regular Customer</SelectItem>
-                        <SelectItem value="contractor">Contractor / Project Buyer</SelectItem>
+                        <SelectItem value="sister_company">Sister Company</SelectItem>
+                        <SelectItem value="hardware_reseller">Other Hardware / Reseller</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -2830,29 +3329,61 @@ export function SalesModule({ user }) {
                           </Button>
                         </div>
 
-                      <div className="sales-line-fields">
-                        <div className="space-y-2">
-                          <Label>Inventory Item <span className="text-red-600">*</span></Label>
-                          <select
-                            value={line.inventoryId}
-                            onChange={event => updateLineInventoryItem(index, event.target.value)}
-                            disabled={isSaving}
-                            className="sales-native-select"
-                          >
-                            <option value="">
-                              {activeInventory.length === 0 ? 'No items with available stock' : 'Select sold item'}
-                            </option>
-                            {activeInventory.map(item => (
-                              <option
-                                key={item.id}
-                                value={String(item.id)}
-                                disabled={usedByOtherLine.has(String(item.id))}
+                        <div className="sales-line-fields">
+                        {line.isManual ? (
+                          <>
+                            <div className="space-y-2">
+                              <Label>Manual Item Description <span className="text-red-600">*</span></Label>
+                              <Input
+                                value={line.itemName}
+                                maxLength={150}
+                                placeholder="e.g., hinges, catches, delivery charge item"
+                                disabled={isSaving}
+                                onChange={event => updateLine(index, 'itemName', event.target.value)}
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Category</Label>
+                              <Select
+                                value={line.category || 'Other'}
+                                onValueChange={value => updateLine(index, 'category', value)}
+                                disabled={isSaving}
                               >
-                                {item.itemCode ? `${item.itemCode} - ` : ''}{item.name}
+                                <SelectTrigger className="sales-customer-control">
+                                  <SelectValue placeholder="Category" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {productCategories.filter(category => category !== 'all').concat(productCategories.includes('Other') ? [] : ['Other']).map(category => (
+                                    <SelectItem key={category} value={category}>{category}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="space-y-2">
+                            <Label>Inventory Item <span className="text-red-600">*</span></Label>
+                            <select
+                              value={line.inventoryId}
+                              onChange={event => updateLineInventoryItem(index, event.target.value)}
+                              disabled={isSaving}
+                              className="sales-native-select"
+                            >
+                              <option value="">
+                                {activeInventory.length === 0 ? 'No items with available stock' : 'Select sold item'}
                               </option>
-                            ))}
-                          </select>
-                        </div>
+                              {activeInventory.map(item => (
+                                <option
+                                  key={item.id}
+                                  value={String(item.id)}
+                                  disabled={usedByOtherLine.has(String(item.id))}
+                                >
+                                  {item.itemCode ? `${item.itemCode} - ` : ''}{item.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
                         <div className="space-y-2">
                           <Label>Quantity Sold <span className="text-red-600">*</span></Label>
                           <Input
@@ -2885,6 +3416,18 @@ export function SalesModule({ user }) {
                       </div>
 
                       <div className="sales-stock-preview mt-4 text-sm">
+                        {line.isManual ? (
+                          <div className="sales-stock-preview-item sales-stock-preview-item-muted">
+                            <span className="sales-stock-preview-icon">
+                              <Info className="h-5 w-5" />
+                            </span>
+                            <div className="min-w-0">
+                              <span className="sales-stock-preview-label">Manual Sale Item</span>
+                              <strong className="sales-stock-preview-value">Recorded in sales only</strong>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
                         <div className={`sales-stock-preview-item ${selectedItem ? 'sales-stock-preview-item-ok' : 'sales-stock-preview-item-muted'}`}>
                           <span className="sales-stock-preview-icon">
                             <PackageCheck className="h-5 w-5" />
@@ -2924,6 +3467,8 @@ export function SalesModule({ user }) {
                             </strong>
                           </div>
                         </div>
+                          </>
+                        )}
                       </div>
                       </div>
                     );
@@ -2940,6 +3485,16 @@ export function SalesModule({ user }) {
                   >
                     <Plus className="mr-2 h-4 w-4" />
                     Add Another Item
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="sales-action-button ml-2 border-slate-200 text-slate-700 hover:border-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                    onClick={addManualLine}
+                    disabled={isSaving}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add Other Item
                   </Button>
                 </div>
               </div>
@@ -3001,8 +3556,8 @@ export function SalesModule({ user }) {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="walk_in">Walk-in Customer</SelectItem>
-                          <SelectItem value="regular">Regular Customer</SelectItem>
-                          <SelectItem value="contractor">Contractor / Project Buyer</SelectItem>
+                          <SelectItem value="sister_company">Sister Company</SelectItem>
+                          <SelectItem value="hardware_reseller">Other Hardware / Reseller</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -3045,32 +3600,38 @@ export function SalesModule({ user }) {
                     ) : saleLines.map((line, index) => {
                       const detail = selectedLineDetails[index];
                       const selectedItem = detail.item;
-                      if (!selectedItem) return null;
-                      const remainingStock = Math.max(Number(selectedItem.quantity || 0) - Number(detail.quantity || 0), 0);
+                      if (!line.isManual && !selectedItem) return null;
+                      const displayName = line.isManual ? detail.itemName : selectedItem.name;
+                      const displayCategory = line.isManual ? detail.category : selectedItem.category;
+                      const remainingStock = line.isManual ? null : Math.max(Number(selectedItem.quantity || 0) - Number(detail.quantity || 0), 0);
 
                       return (
                         <div key={`cart-line-${index}`} className="sales-cart-row">
                           <div className="sales-cart-main">
-                            <p className="sales-cart-title">{selectedItem.name}</p>
+                            <p className="sales-cart-title">{displayName || 'Manual item'}</p>
                             <div className="sales-cart-meta">
-                              <span>{selectedItem.itemCode || 'No item code'}</span>
+                              <span>{line.isManual ? 'Other item' : selectedItem.itemCode || 'No item code'}</span>
                               <span>&middot;</span>
-                              <span>{selectedItem.category || 'Uncategorized'}</span>
-                              <span>&middot;</span>
-                              <span>{remainingStock} left after sale</span>
+                              <span>{displayCategory || 'Uncategorized'}</span>
+                              {!line.isManual && (
+                                <>
+                                  <span>&middot;</span>
+                                  <span>{remainingStock} left after sale</span>
+                                </>
+                              )}
                             </div>
                           </div>
                           <div className="sales-cart-subtotal">
                             {formatCurrency(detail.subtotal)}
                           </div>
                           <div className="sales-cart-controls">
-                            <div className="sales-qty-stepper" aria-label={`Quantity for ${selectedItem.name}`}>
+                            <div className="sales-qty-stepper" aria-label={`Quantity for ${displayName || 'manual item'}`}>
                               <button
                                 type="button"
                                 className="sales-qty-button-decrease"
                                 onClick={() => adjustLineQuantity(index, -1)}
                                 disabled={isSaving || Number(line.quantity || 0) <= 1}
-                                aria-label={`Decrease quantity for ${selectedItem.name}`}
+                                aria-label={`Decrease quantity for ${displayName || 'manual item'}`}
                               >
                                 <Minus className="h-4 w-4" />
                               </button>
@@ -3083,14 +3644,14 @@ export function SalesModule({ user }) {
                                   index,
                                   sanitizeWholeNumberInput(event.target.value, 'Quantity sold', 'sales-quantity-numbers-only')
                                 )}
-                                aria-label={`Quantity sold for ${selectedItem.name}`}
+                                aria-label={`Quantity sold for ${displayName || 'manual item'}`}
                               />
                               <button
                                 type="button"
                                 className="sales-qty-button-increase"
                                 onClick={() => adjustLineQuantity(index, 1)}
                                 disabled={isSaving}
-                                aria-label={`Increase quantity for ${selectedItem.name}`}
+                                aria-label={`Increase quantity for ${displayName || 'manual item'}`}
                               >
                                 <Plus className="h-4 w-4" />
                               </button>
@@ -3104,7 +3665,7 @@ export function SalesModule({ user }) {
                               placeholder="0.00"
                               disabled={isSaving}
                               onChange={event => updateLine(index, 'unitPrice', sanitizePriceInput(event.target.value))}
-                              aria-label={`Unit price for ${selectedItem.name}`}
+                              aria-label={`Unit price for ${displayName || 'manual item'}`}
                             />
                             <Button
                               type="button"
@@ -3113,7 +3674,7 @@ export function SalesModule({ user }) {
                               className="sales-action-button h-9 w-9 border-red-200 text-red-600 hover:border-red-500 hover:bg-red-50 hover:text-red-700"
                               onClick={() => removeLine(index)}
                               disabled={isSaving}
-                              aria-label={`Remove ${selectedItem.name}`}
+                              aria-label={`Remove ${displayName || 'manual item'}`}
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>
@@ -3156,8 +3717,6 @@ export function SalesModule({ user }) {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">No Discount</SelectItem>
-                          <SelectItem value="store_promo_5">Store Promo 5%</SelectItem>
-                          <SelectItem value="bulk_project_10">Bulk / Project Discount 10%</SelectItem>
                           <SelectItem value="custom_amount">Manual Amount</SelectItem>
                         </SelectContent>
                       </Select>
@@ -3173,6 +3732,17 @@ export function SalesModule({ user }) {
                         onChange={event => setDiscountAmount(sanitizeDecimalInput(event.target.value, 'Discount', 'sales-discount-numbers-only'))}
                         placeholder="0.00"
                         disabled={isSaving || !selectedDiscountOption.manual}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="delivery-charge">Delivery Charge</Label>
+                      <Input
+                        id="delivery-charge"
+                        inputMode="decimal"
+                        value={deliveryCharge}
+                        onChange={event => setDeliveryCharge(sanitizeDecimalInput(event.target.value, 'Delivery charge', 'sales-delivery-charge-numbers-only'))}
+                        placeholder="0.00"
+                        disabled={isSaving}
                       />
                     </div>
                     <div className="space-y-2">
@@ -3214,24 +3784,35 @@ export function SalesModule({ user }) {
                         </div>
                         <div className="space-y-2">
                           <Label>Payment Confirmation</Label>
-                          <label className={`sales-payment-confirmation ${paymentConfirmed ? 'sales-payment-confirmation-checked' : ''}`}>
-                            <input
-                              type="checkbox"
-                              checked={paymentConfirmed}
-                              onChange={event => {
-                                const checked = event.target.checked;
-                                setPaymentConfirmed(checked);
-                                setPaymentConfirmedAmount(checked ? Number(totalAmount.toFixed(2)) : null);
-                              }}
-                              disabled={isSaving}
-                            />
-                            <span className="sales-payment-confirmation-box">
-                              {paymentConfirmed && <CheckCircle className="h-4 w-4" />}
+                          <button
+                            type="button"
+                            className={`sales-payment-confirmation ${paymentConfirmed ? 'sales-payment-confirmation-checked' : ''}`}
+                            role="checkbox"
+                            aria-checked={paymentConfirmed}
+                            aria-label="Payment received and verified"
+                            onClick={() => {
+                              const checked = !paymentConfirmed;
+                              setPaymentConfirmed(checked);
+                              setPaymentConfirmedAmount(checked ? Number(totalAmount.toFixed(2)) : null);
+                            }}
+                            disabled={isSaving}
+                          >
+                            <span className="sales-payment-confirmation-box" aria-hidden="true">
+                              {paymentConfirmed ? (
+                                <CheckCircle className="h-4 w-4" />
+                              ) : (
+                                <span className="h-2.5 w-2.5 rounded-full border border-slate-300 bg-white" />
+                              )}
                             </span>
-                            <span>
-                              Payment received and verified
+                            <span className="sales-payment-confirmation-text">
+                              <span>Payment received and verified</span>
+                              <small>
+                                {paymentConfirmed
+                                  ? `Confirmed for ${formatCurrency(totalAmount)}`
+                                  : 'Required for GCash and bank transfer payments'}
+                              </small>
                             </span>
-                          </label>
+                          </button>
                         </div>
                         <div className="sales-digital-payment-note">
                           <Info className="h-4 w-4" />
@@ -3261,6 +3842,9 @@ export function SalesModule({ user }) {
                     <SummaryBlock icon={<PackageCheck className="h-5 w-5" />} label="Total Quantity" value={`${totalQuantity} unit${totalQuantity === 1 ? '' : 's'}`} tone="green" />
                     <SummaryBlock icon={<Coins className="h-5 w-5" />} label="Subtotal" value={formatCurrency(subtotalAmount)} tone="amber" />
                     <SummaryBlock icon={<Tag className="h-5 w-5" />} label={selectedDiscountOption.label} value={formatCurrency(safeDiscountAmount)} tone="amber" />
+                    <SummaryBlock icon={<PackageCheck className="h-5 w-5" />} label="Delivery Charge" value={formatCurrency(safeDeliveryCharge)} tone="amber" />
+                    <SummaryBlock icon={<ReceiptText className="h-5 w-5" />} label="VAT 12%" value={formatCurrency(vatAmount)} tone="amber" />
+                    <SummaryBlock icon={<ReceiptText className="h-5 w-5" />} label="VATable Sales" value={formatCurrency(vatableSales)} tone="amber" />
                     <SummaryBlock icon={<Wallet className="h-5 w-5" />} label="Amount Due" value={formatCurrency(totalAmount)} tone="amber" />
                     <SummaryBlock icon={<ReceiptText className="h-5 w-5" />} label="Payment" value={paymentMethodLabels[paymentMethod]} tone="blue" />
                   </div>
@@ -3279,7 +3863,7 @@ export function SalesModule({ user }) {
                   <Button
                     type="button"
                     className="sales-action-button bg-[#FF0000] px-6 text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
-                    onClick={handleRecordSale}
+                    onClick={handleSaveSaleRequest}
                     disabled={isSaving}
                   >
                     {isSaving
@@ -3315,6 +3899,17 @@ export function SalesModule({ user }) {
         onDownloadSummary={handleDownloadSaleSummary}
         onCancelSale={openCancelSaleDialog}
         canCancelSales={canCancelSales}
+      />
+
+      <ConfirmSaveSaleDialog
+        open={isSaveConfirmOpen}
+        onOpenChange={setIsSaveConfirmOpen}
+        onConfirm={confirmSaveSale}
+        isSaving={isSaving}
+        itemCount={cartLines.length}
+        totalQuantity={totalQuantity}
+        totalAmount={totalAmount}
+        paymentMethod={paymentMethod}
       />
 
       <ClearSalesFormDialog
@@ -3365,6 +3960,7 @@ export function SalesModule({ user }) {
 
 function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownload, onStartNewSale }) {
   const items = sale?.items || [];
+  const receiptVat = getReceiptVatBreakdown(sale);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -3427,6 +4023,9 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
             <div className="space-y-1">
               <div className="sales-receipt-row"><span>Subtotal</span><span>{formatCurrency(sale?.subtotalAmount ?? sale?.totalAmount)}</span></div>
               <div className="sales-receipt-row"><span>{getDiscountLabel(sale)}</span><span>-{formatCurrency(sale?.discountAmount)}</span></div>
+              <div className="sales-receipt-row"><span>Delivery Charge</span><span>{formatCurrency(sale?.deliveryCharge)}</span></div>
+              <div className="sales-receipt-row"><span>VATable Sales</span><span>{formatCurrency(receiptVat.vatableSales)}</span></div>
+              <div className="sales-receipt-row"><span>VAT 12%</span><span>{formatCurrency(receiptVat.vatAmount)}</span></div>
               <div className="sales-receipt-row text-sm font-bold"><span>AMOUNT DUE</span><span>{formatCurrency(sale?.totalAmount)}</span></div>
               <div className="sales-receipt-row"><span>Paid ({paymentMethodLabels[sale?.paymentMethod] || 'Cash'})</span><span>{formatCurrency(sale?.amountReceived ?? sale?.totalAmount)}</span></div>
               <div className="sales-receipt-row"><span>Change</span><span>{formatCurrency(sale?.changeAmount)}</span></div>
@@ -3525,6 +4124,88 @@ function ClearSalesFormDialog({
               onClick={onConfirm}
             >
               {confirmLabel}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ConfirmSaveSaleDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+  isSaving,
+  itemCount,
+  totalQuantity,
+  totalAmount,
+  paymentMethod
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sales-confirm-clear-dialog border border-slate-200 bg-white p-0 shadow-2xl">
+        <div className="sales-confirm-clear-content">
+          <DialogHeader className="text-left">
+            <div className="sales-confirm-clear-header">
+              <span className="sales-confirm-clear-icon">
+                <ReceiptText className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <DialogTitle className="text-lg font-bold leading-tight text-slate-950">
+                  Save this sale?
+                </DialogTitle>
+              </div>
+            </div>
+          </DialogHeader>
+          <DialogDescription className="sales-confirm-clear-message">
+            Are you sure you want to save this sale? This will record the transaction and deduct the selected items from inventory.
+          </DialogDescription>
+          <div className="sales-confirm-sale-summary" aria-label="Sale summary">
+            <div className="sales-confirm-sale-summary-item">
+              <span className="sales-confirm-sale-summary-label">Items</span>
+              <span className="sales-confirm-sale-summary-value">
+                {itemCount} line{itemCount === 1 ? '' : 's'}
+              </span>
+            </div>
+            <div className="sales-confirm-sale-summary-item">
+              <span className="sales-confirm-sale-summary-label">Quantity</span>
+              <span className="sales-confirm-sale-summary-value">
+                {totalQuantity} unit{totalQuantity === 1 ? '' : 's'}
+              </span>
+            </div>
+            <div className="sales-confirm-sale-summary-item">
+              <span className="sales-confirm-sale-summary-label">Amount Due</span>
+              <span className="sales-confirm-sale-summary-value">{formatCurrency(totalAmount)}</span>
+            </div>
+            <div className="sales-confirm-sale-summary-item">
+              <span className="sales-confirm-sale-summary-label">Payment</span>
+              <span className="sales-confirm-sale-summary-value">{paymentMethodLabels[paymentMethod] || 'Cash'}</span>
+            </div>
+          </div>
+          <div className="sales-confirm-clear-info">
+            <Info className="h-4 w-4 shrink-0 text-blue-600" />
+            <span>
+              Inventory stock will be updated after you confirm.
+            </span>
+          </div>
+          <div className="sales-confirm-clear-actions">
+            <Button
+              type="button"
+              variant="outline"
+              className="sales-confirm-clear-button sales-confirm-clear-cancel h-10 min-w-[116px] bg-white"
+              onClick={() => onOpenChange(false)}
+              disabled={isSaving}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="sales-confirm-clear-button sales-confirm-clear-submit h-10 min-w-[116px] bg-[#FF0000] text-white"
+              onClick={onConfirm}
+              disabled={isSaving}
+            >
+              {isSaving ? 'Saving...' : 'Confirm Sale'}
             </Button>
           </div>
         </div>
@@ -3832,6 +4513,8 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
         <HistoryDetail icon={<PackageCheck className="h-5 w-5" />} label="Total Quantity" value={`${sale.totalQuantity} item${sale.totalQuantity === 1 ? '' : 's'}`} />
         <HistoryDetail icon={<Coins className="h-5 w-5" />} label="Subtotal" value={formatCurrency(sale.subtotalAmount ?? sale.totalAmount)} />
         <HistoryDetail icon={<Tag className="h-5 w-5" />} label={getDiscountLabel(sale)} value={formatCurrency(sale.discountAmount)} />
+        <HistoryDetail icon={<PackageCheck className="h-5 w-5" />} label="Delivery Charge" value={formatCurrency(sale.deliveryCharge)} />
+        <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="VAT 12%" value={formatCurrency(sale.vatAmount)} />
         <HistoryDetail icon={<Wallet className="h-5 w-5" />} label="Amount Due" value={formatCurrency(sale.totalAmount)} />
         <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="Payment Method" value={paymentMethodLabels[sale.paymentMethod] || 'Cash'} />
         <HistoryDetail icon={<Coins className="h-5 w-5" />} label="Amount Received" value={formatCurrency(sale.amountReceived ?? sale.totalAmount)} />

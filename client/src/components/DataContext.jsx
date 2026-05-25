@@ -31,8 +31,8 @@ const generateInventoryAlerts = inventory => {
         read: false,
         actionable: true,
         relatedModule: 'reports',
-        actionLabel: 'Review Reorder',
-        reportType: 'supplier-reorder',
+        actionLabel: 'Review Stock',
+        reportType: 'low-stock',
         reportCategory: item.category
       });
     } else if (item.status === 'Low Stock') {
@@ -45,8 +45,8 @@ const generateInventoryAlerts = inventory => {
         read: false,
         actionable: true,
         relatedModule: 'reports',
-        actionLabel: 'Review Reorder',
-        reportType: 'supplier-reorder',
+        actionLabel: 'Review Stock',
+        reportType: 'low-stock',
         reportCategory: item.category
       });
     }
@@ -187,6 +187,7 @@ export function DataProvider({ children }) {
   const [archivedInventory, setArchivedInventory] = useState([]);
   const [stockMovements, setStockMovements] = useState([]);
   const [salesTransactions, setSalesTransactions] = useState([]);
+  const [purchaseTransactions, setPurchaseTransactions] = useState([]);
   const [users, setUsers] = useState([]); // User logic remains as before
   const [loadingInventory, setLoadingInventory] = useState(true);
   const [inventoryError, setInventoryError] = useState(null);
@@ -242,6 +243,8 @@ export function DataProvider({ children }) {
           category: p.category,
           supplierName: p.supplier_name || '',
           defaultSellingPrice: p.default_selling_price === null || p.default_selling_price === undefined ? '' : Number(p.default_selling_price),
+          wspCode: p.wsp_code || '',
+          costPrice: p.cost_price === null || p.cost_price === undefined ? '' : Number(p.cost_price),
           quantity: p.stock_level,
           reorderLevel: p.min_stock_level,
           leadTimeDays: p.lead_time_days === null || p.lead_time_days === undefined ? null : Number(p.lead_time_days),
@@ -291,6 +294,8 @@ export function DataProvider({ children }) {
           category: p.category,
           supplierName: p.supplier_name || '',
           defaultSellingPrice: p.default_selling_price === null || p.default_selling_price === undefined ? '' : Number(p.default_selling_price),
+          wspCode: p.wsp_code || '',
+          costPrice: p.cost_price === null || p.cost_price === undefined ? '' : Number(p.cost_price),
           quantity: p.stock_level,
           reorderLevel: p.min_stock_level,
           leadTimeDays: p.lead_time_days === null || p.lead_time_days === undefined ? null : Number(p.lead_time_days),
@@ -365,6 +370,9 @@ export function DataProvider({ children }) {
     discountAmount: Number(sale.discount_amount || 0),
     discountType: sale.discount_type || 'none',
     discountLabel: sale.discount_label || '',
+    deliveryCharge: Number(sale.delivery_charge || 0),
+    vatableSales: Number(sale.vatable_sales || 0),
+    vatAmount: Number(sale.vat_amount || 0),
     totalAmount: Number(sale.total_amount || 0),
     paymentMethod: sale.payment_method || 'cash',
     amountReceived: sale.amount_received === null || sale.amount_received === undefined ? null : Number(sale.amount_received || 0),
@@ -384,6 +392,7 @@ export function DataProvider({ children }) {
       id: item.sales_item_id?.toString() ?? '',
       inventoryId: item.inventory_id?.toString() ?? '',
       productId: item.product_id?.toString() ?? '',
+      isInventoryItem: item.is_inventory_item !== false,
       itemName: item.item_name || '',
       category: item.category || '',
       branch: item.branch || '',
@@ -414,6 +423,56 @@ export function DataProvider({ children }) {
     }
   }, []);
 
+  const mapPurchaseTransaction = (purchase) => ({
+    id: purchase.purchase_transaction_id?.toString() ?? '',
+    purchaseNumber: purchase.purchase_number || '',
+    branch: purchase.branch || '',
+    supplierName: purchase.supplier_name || '',
+    documentType: purchase.document_type || 'DR',
+    documentNumber: purchase.document_number || '',
+    paymentTerms: purchase.payment_terms || 'cash',
+    subtotalAmount: Number(purchase.subtotal_amount || 0),
+    totalQuantity: Number(purchase.total_quantity || 0),
+    remarks: purchase.remarks || '',
+    status: purchase.status || 'completed',
+    encodedBy: purchase.encoded_by?.toString() ?? '',
+    encodedByName: purchase.encoded_by_name || '',
+    createdAt: purchase.created_at ? new Date(purchase.created_at).toISOString() : '',
+    cancelledAt: purchase.cancelled_at ? new Date(purchase.cancelled_at).toISOString() : '',
+    cancelReason: purchase.cancel_reason || '',
+    items: (purchase.items || []).map((item) => ({
+      id: item.purchase_item_id?.toString() ?? '',
+      inventoryId: item.inventory_id?.toString() ?? '',
+      productId: item.product_id?.toString() ?? '',
+      itemName: item.item_name || '',
+      category: item.category || '',
+      branch: item.branch || '',
+      quantityReceived: Number(item.quantity_received || 0),
+      unitCost: Number(item.unit_cost || 0),
+      subtotal: Number(item.subtotal || 0),
+      previousQuantity: Number(item.previous_quantity || 0),
+      newQuantity: Number(item.new_quantity || 0),
+      createdAt: item.created_at ? new Date(item.created_at).toISOString() : '',
+    })),
+  });
+
+  const fetchPurchaseTransactions = useCallback(async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        setPurchaseTransactions([]);
+        return;
+      }
+      const res = await axios.get(apiUrl("/api/purchases"), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      setPurchaseTransactions((res.data.purchases || []).map(mapPurchaseTransaction));
+    } catch (err) {
+      console.error('Failed to load purchase records:', err);
+      setPurchaseTransactions([]);
+    }
+  }, []);
+
   const refreshSystemSummary = useCallback(async () => {
     try {
       const token = localStorage.getItem("token");
@@ -435,8 +494,9 @@ export function DataProvider({ children }) {
     fetchArchivedInventory();
     fetchStockMovements();
     fetchSalesTransactions();
+    fetchPurchaseTransactions();
     refreshSystemSummary();
-  }, [fetchInventory, fetchArchivedInventory, fetchStockMovements, fetchSalesTransactions, refreshSystemSummary]);
+  }, [fetchInventory, fetchArchivedInventory, fetchStockMovements, fetchSalesTransactions, fetchPurchaseTransactions, refreshSystemSummary]);
 
   useEffect(() => {
     const handleAuthStateChanged = () => {
@@ -450,6 +510,7 @@ export function DataProvider({ children }) {
       fetchArchivedInventory();
       fetchStockMovements();
       fetchSalesTransactions();
+      fetchPurchaseTransactions();
       refreshSystemSummary();
     };
 
@@ -461,7 +522,7 @@ export function DataProvider({ children }) {
       window.removeEventListener('database-restored', handleAuthStateChanged);
       window.removeEventListener('maintenance-action-completed', handleAuthStateChanged);
     };
-  }, [fetchInventory, fetchArchivedInventory, fetchStockMovements, fetchSalesTransactions, refreshSystemSummary]);
+  }, [fetchInventory, fetchArchivedInventory, fetchStockMovements, fetchSalesTransactions, fetchPurchaseTransactions, refreshSystemSummary]);
 
   useEffect(() => {
     const id = setInterval(fetchInventory, 30000);
@@ -480,6 +541,12 @@ export function DataProvider({ children }) {
 
     return () => clearInterval(id);
   }, [fetchSalesTransactions]);
+
+  useEffect(() => {
+    const id = setInterval(fetchPurchaseTransactions, 30000);
+
+    return () => clearInterval(id);
+  }, [fetchPurchaseTransactions]);
 
   useEffect(() => {
     const intervalMs = isAdminRole(activeUserRole) ? 10000 : 30000;
@@ -618,6 +685,8 @@ export function DataProvider({ children }) {
         category: item.category,
         supplier_name: item.supplierName,
         default_selling_price: item.defaultSellingPrice,
+        wsp_code: item.wspCode,
+        cost_price: item.costPrice,
         stock_level: item.quantity,
         min_stock_level: item.reorderLevel,
         lead_time_days: item.leadTimeDays,
@@ -653,6 +722,8 @@ export function DataProvider({ children }) {
                 category: updates.category ?? it.category,
                 supplierName: updates.supplierName ?? it.supplierName,
                 defaultSellingPrice: updates.defaultSellingPrice ?? it.defaultSellingPrice,
+                wspCode: updates.wspCode ?? it.wspCode,
+                costPrice: updates.costPrice ?? it.costPrice,
                 quantity: nextQuantity,
                 reorderLevel: updates.reorderLevel ?? it.reorderLevel,
                 leadTimeDays: updates.leadTimeDays ?? it.leadTimeDays,
@@ -676,6 +747,8 @@ export function DataProvider({ children }) {
           category: updates.category,
           supplier_name: updates.supplierName,
           default_selling_price: updates.defaultSellingPrice,
+          wsp_code: updates.wspCode,
+          cost_price: updates.costPrice,
           stock_level: updates.quantity,
           min_stock_level: updates.reorderLevel,
           lead_time_days: updates.leadTimeDays,
@@ -734,7 +807,7 @@ export function DataProvider({ children }) {
     }
   };
 
-  const recordSale = async ({ customerType, items, remarks, paymentMethod, discountType, discountAmount, amountReceived, paymentReference, paymentConfirmed }) => {
+  const recordSale = async ({ customerType, items, remarks, paymentMethod, discountType, discountAmount, deliveryCharge, amountReceived, paymentReference, paymentConfirmed }) => {
     const token = localStorage.getItem("token");
     try {
       const res = await axios.post(
@@ -745,11 +818,15 @@ export function DataProvider({ children }) {
           payment_method: paymentMethod,
           discount_type: discountType,
           discount_amount: discountAmount,
+          delivery_charge: deliveryCharge,
           amount_received: amountReceived,
           payment_reference: paymentReference,
           payment_confirmed: paymentConfirmed,
           items: items.map(item => ({
             inventory_id: item.inventoryId,
+            is_manual: Boolean(item.isManual),
+            item_name: item.itemName,
+            category: item.category,
             quantity: item.quantity,
             unit_price: item.unitPrice,
           })),
@@ -760,12 +837,47 @@ export function DataProvider({ children }) {
       await fetchArchivedInventory();
       await fetchStockMovements();
       await fetchSalesTransactions();
+      await fetchPurchaseTransactions();
       return mapSalesTransaction(res.data.sale || {});
     } catch (err) {
       await fetchInventory();
       await fetchArchivedInventory();
       await fetchStockMovements();
       await fetchSalesTransactions();
+      await fetchPurchaseTransactions();
+      throw err;
+    }
+  };
+
+  const recordPurchase = async ({ supplierName, documentType, documentNumber, paymentTerms, remarks, items }) => {
+    const token = localStorage.getItem("token");
+    try {
+      const res = await axios.post(
+        apiUrl("/api/purchases"),
+        {
+          supplier_name: supplierName,
+          document_type: documentType,
+          document_number: documentNumber,
+          payment_terms: paymentTerms,
+          remarks,
+          items: items.map(item => ({
+            inventory_id: item.inventoryId,
+            quantity: item.quantity,
+            unit_cost: item.unitCost,
+          })),
+        },
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      await fetchInventory();
+      await fetchArchivedInventory();
+      await fetchStockMovements();
+      await fetchPurchaseTransactions();
+      return mapPurchaseTransaction(res.data.purchase || {});
+    } catch (err) {
+      await fetchInventory();
+      await fetchArchivedInventory();
+      await fetchStockMovements();
+      await fetchPurchaseTransactions();
       throw err;
     }
   };
@@ -842,8 +954,10 @@ export function DataProvider({ children }) {
         setArchivedInventory,
         stockMovements,
         salesTransactions,
+        purchaseTransactions,
         fetchStockMovements,
         fetchSalesTransactions,
+        fetchPurchaseTransactions,
         users,
         setUsers,
         loadingInventory,
@@ -854,6 +968,7 @@ export function DataProvider({ children }) {
         updateInventoryItem,
         batchStockOut,
         recordSale,
+        recordPurchase,
         cancelSale,
         archiveInventoryItem,
         restoreArchivedInventoryItem,

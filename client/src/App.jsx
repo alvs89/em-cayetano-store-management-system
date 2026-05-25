@@ -21,6 +21,7 @@ import {
   Eye,
   EyeOff,
   ReceiptText,
+  Truck,
 } from "lucide-react";
 import axios from "axios";
 import { LoginScreen } from "./components/LoginScreen";
@@ -32,6 +33,7 @@ import { InventoryModule } from "./components/InventoryModule";
 import { ArchiveModule } from "./components/ArchiveModule";
 import { ReportsModule } from "./components/ReportsModule";
 import { SalesModule } from "./components/SalesModule";
+import { PurchasesModule } from "./components/PurchasesModule";
 import { MaintenanceModule } from "./components/MaintenanceModule";
 import { UserManagementModule } from "./components/UserManagementModule";
 import { AuditTrailModule } from "./components/AuditTrailModule";
@@ -311,6 +313,7 @@ function AppContent() {
       "archive",
       "reports",
       "sales",
+      "purchases",
       "maintenance",
       "user-management",
       "audit-trail",
@@ -755,6 +758,15 @@ function AppContent() {
               collapsed={isSidebarCollapsed}
             />
           )}
+          {canAccessScreen(currentUser.role, "purchases") && (
+            <NavItem
+              icon={<Truck className="w-5 h-5" />}
+              label="Purchases"
+              active={currentScreen === "purchases"}
+              onClick={() => navigateTo("purchases")}
+              collapsed={isSidebarCollapsed}
+            />
+          )}
           <NavItem
             icon={<Bell className="w-5 h-5" />}
             label="Alerts"
@@ -843,12 +855,13 @@ function AppContent() {
         {canAccessScreen(currentUser.role, "archive") && renderScreenPane("archive", <ArchiveModule user={currentUser} />)}
         {canAccessScreen(currentUser.role, "reports") && renderScreenPane("reports", <ReportsModule user={currentUser} />)}
         {canAccessScreen(currentUser.role, "sales") && renderScreenPane("sales", <SalesModule user={currentUser} />)}
+        {canAccessScreen(currentUser.role, "purchases") && renderScreenPane("purchases", <PurchasesModule user={currentUser} />)}
         {isAdminRole(currentUser.role) && currentScreen === "maintenance" && (
           <MaintenanceModule onNavigate={navigateTo} user={currentUser} />
         )}
         {isAdminRole(currentUser.role) && renderScreenPane("user-management", <UserManagementModule />)}
         {isAdminRole(currentUser.role) && renderScreenPane("audit-trail", <AuditTrailModule user={currentUser} />)}
-        {renderScreenPane("search", <SearchModule user={currentUser} />)}
+        {renderScreenPane("search", <SearchModule user={currentUser} onNavigate={navigateTo} />)}
         {renderScreenPane("help", <HelpModule user={currentUser} />)}
         {renderScreenPane("alerts", <AlertsModule user={currentUser} onNavigate={navigateTo} />)}
       </main>
@@ -863,6 +876,7 @@ function getScreenTitle(screen) {
     archive: "Archive",
     reports: "Reports",
     sales: "Sales",
+    purchases: "Purchases",
     maintenance: "Maintenance",
     "user-management": "User Management",
     "audit-trail": "Audit Trail",
@@ -1043,6 +1057,7 @@ function MobileSidebarDrawer({
           {canAccessScreen(currentUser.role, "archive") && <MobileNavItem icon={<Archive className="h-5 w-5" />} label="Archive" active={currentScreen === "archive"} onClick={() => onNavigate("archive")} />}
           {canAccessScreen(currentUser.role, "reports") && <MobileNavItem icon={<FileText className="h-5 w-5" />} label="Reports" active={currentScreen === "reports"} onClick={() => onNavigate("reports")} />}
           {canAccessScreen(currentUser.role, "sales") && <MobileNavItem icon={<ReceiptText className="h-5 w-5" />} label="Sales" active={currentScreen === "sales"} onClick={() => onNavigate("sales")} />}
+          {canAccessScreen(currentUser.role, "purchases") && <MobileNavItem icon={<Truck className="h-5 w-5" />} label="Purchases" active={currentScreen === "purchases"} onClick={() => onNavigate("purchases")} />}
           <MobileNavItem icon={<Bell className="h-5 w-5" />} label="Alerts" active={currentScreen === "alerts"} onClick={() => onNavigate("alerts")} badge={unreadAlertCount} />
 
           <Separator className="my-4" />
@@ -1211,6 +1226,7 @@ export default function App() {
           <Route path="/archive" element={<AppContent />} />
           <Route path="/reports" element={<AppContent />} />
           <Route path="/sales" element={<AppContent />} />
+          <Route path="/purchases" element={<AppContent />} />
           <Route path="/maintenance" element={<AppContent />} />
           <Route path="/user-management" element={<AppContent />} />
           <Route path="/search" element={<AppContent />} />

@@ -220,7 +220,7 @@ async function ensureSchema() {
       username VARCHAR(50) UNIQUE NOT NULL,
       email VARCHAR(100) UNIQUE NOT NULL,
       password_hash VARCHAR(255) NOT NULL,
-      role VARCHAR(30) CHECK (role IN ('Admin', 'Cashier', 'Inventory Staff', 'Employee')) NOT NULL,
+      role VARCHAR(30) CHECK (role IN ('Admin', 'Cashier', 'Inventory Staff')) NOT NULL,
       branch VARCHAR(50),
       status VARCHAR(20) DEFAULT 'Active',
       must_change_password BOOLEAN DEFAULT false,
@@ -235,6 +235,11 @@ async function ensureSchema() {
     );
   `);
 
+  // Removed out-of-scope Daily Operations / Invoice Series modules. Drop legacy tables
+  // if they exist in older Neon databases so they cannot be mistaken for active data.
+  await pool.query('DROP TABLE IF EXISTS invoice_series_entries CASCADE;');
+  await pool.query('DROP TABLE IF EXISTS daily_operations CASCADE;');
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS products (
       product_id SERIAL PRIMARY KEY,
@@ -242,6 +247,8 @@ async function ensureSchema() {
       category VARCHAR(50) NOT NULL,
       supplier_name VARCHAR(120),
       default_selling_price NUMERIC(12,2),
+      wsp_code VARCHAR(60),
+      cost_price NUMERIC(12,2),
       created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
     );
   `);
@@ -290,12 +297,15 @@ async function ensureSchema() {
       sales_transaction_id SERIAL PRIMARY KEY,
       sales_number VARCHAR(40) UNIQUE NOT NULL,
       branch VARCHAR(50) NOT NULL,
-      customer_type VARCHAR(40) DEFAULT 'walk_in' CHECK (customer_type IN ('walk_in', 'regular', 'contractor')),
+      customer_type VARCHAR(40) DEFAULT 'walk_in' CHECK (customer_type IN ('walk_in', 'sister_company', 'hardware_reseller', 'regular', 'contractor')),
       total_quantity INTEGER NOT NULL DEFAULT 0,
       subtotal_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
       discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
       discount_type VARCHAR(40) DEFAULT 'none',
       discount_label VARCHAR(120),
+      delivery_charge NUMERIC(12,2) NOT NULL DEFAULT 0,
+      vatable_sales NUMERIC(12,2) NOT NULL DEFAULT 0,
+      vat_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
       total_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
       payment_method VARCHAR(30) DEFAULT 'cash' CHECK (payment_method IN ('cash', 'gcash', 'bank_transfer', 'credit')),
       amount_received NUMERIC(12,2),
@@ -322,6 +332,7 @@ async function ensureSchema() {
       sales_transaction_id INT NOT NULL REFERENCES sales_transactions(sales_transaction_id) ON DELETE CASCADE,
       inventory_id INT,
       product_id INT,
+      is_inventory_item BOOLEAN NOT NULL DEFAULT true,
       item_name VARCHAR(150) NOT NULL,
       category VARCHAR(50) NOT NULL,
       branch VARCHAR(50) NOT NULL,
@@ -330,6 +341,46 @@ async function ensureSchema() {
       subtotal NUMERIC(12,2) NOT NULL DEFAULT 0,
       previous_quantity INTEGER NOT NULL,
       new_quantity INTEGER NOT NULL,
+      created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS purchase_transactions (
+      purchase_transaction_id SERIAL PRIMARY KEY,
+      purchase_number VARCHAR(40) UNIQUE NOT NULL,
+      branch VARCHAR(50) NOT NULL,
+      supplier_name VARCHAR(120) NOT NULL,
+      document_type VARCHAR(20) DEFAULT 'DR' CHECK (document_type IN ('DR', 'SI', 'OR', 'OTHER')),
+      document_number VARCHAR(80),
+      payment_terms VARCHAR(30) DEFAULT 'cash' CHECK (payment_terms IN ('cash', 'cod', 'credit', 'branch_transfer')),
+      subtotal_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      total_quantity INTEGER NOT NULL DEFAULT 0,
+      remarks TEXT,
+      status VARCHAR(20) DEFAULT 'completed' CHECK (status IN ('completed', 'cancelled')),
+      encoded_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+      encoded_by_name TEXT,
+      created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
+      cancelled_at TIMESTAMP,
+      cancelled_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+      cancel_reason TEXT
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS purchase_items (
+      purchase_item_id SERIAL PRIMARY KEY,
+      purchase_transaction_id INT NOT NULL REFERENCES purchase_transactions(purchase_transaction_id) ON DELETE CASCADE,
+      inventory_id INT REFERENCES branch_inventory(inventory_id) ON DELETE SET NULL,
+      product_id INT REFERENCES products(product_id) ON DELETE SET NULL,
+      item_name VARCHAR(150) NOT NULL,
+      category VARCHAR(50) NOT NULL,
+      branch VARCHAR(50) NOT NULL,
+      quantity_received INTEGER NOT NULL,
+      unit_cost NUMERIC(12,2) NOT NULL DEFAULT 0,
+      subtotal NUMERIC(12,2) NOT NULL DEFAULT 0,
+      previous_quantity INTEGER NOT NULL DEFAULT 0,
+      new_quantity INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
     );
   `);
@@ -353,6 +404,8 @@ async function ensureSchema() {
       status VARCHAR(20) DEFAULT 'In Stock',
       supplier_name VARCHAR(120),
       default_selling_price NUMERIC(12,2),
+      wsp_code VARCHAR(60),
+      cost_price NUMERIC(12,2),
       last_updated TIMESTAMP,
       archived_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
       archive_reason VARCHAR(40),
@@ -415,9 +468,15 @@ async function ensureSchema() {
   `);
 
   await pool.query(`
+    UPDATE users
+    SET role = 'Inventory Staff'
+    WHERE role = 'Employee';
+  `);
+
+  await pool.query(`
     ALTER TABLE users
     ADD CONSTRAINT users_role_check
-    CHECK (role IN ('Admin', 'Cashier', 'Inventory Staff', 'Employee'));
+    CHECK (role IN ('Admin', 'Cashier', 'Inventory Staff'));
   `);
 
   await pool.query(`
@@ -438,6 +497,16 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE products
     ADD COLUMN IF NOT EXISTS default_selling_price NUMERIC(12,2);
+  `);
+
+  await pool.query(`
+    ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS wsp_code VARCHAR(60);
+  `);
+
+  await pool.query(`
+    ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS cost_price NUMERIC(12,2);
   `);
 
   await pool.query(`
@@ -499,6 +568,17 @@ async function ensureSchema() {
 
   await pool.query(`
     ALTER TABLE sales_transactions
+    DROP CONSTRAINT IF EXISTS sales_transactions_customer_type_check;
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD CONSTRAINT sales_transactions_customer_type_check
+    CHECK (customer_type IN ('walk_in', 'sister_company', 'hardware_reseller', 'regular', 'contractor'));
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
     ADD COLUMN IF NOT EXISTS total_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
   `);
 
@@ -520,6 +600,21 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE sales_transactions
     ADD COLUMN IF NOT EXISTS discount_label VARCHAR(120);
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS delivery_charge NUMERIC(12,2) NOT NULL DEFAULT 0;
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS vatable_sales NUMERIC(12,2) NOT NULL DEFAULT 0;
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
   `);
 
   await pool.query(`
@@ -579,6 +674,21 @@ async function ensureSchema() {
   `);
 
   await pool.query(`
+    ALTER TABLE sales_items
+    ADD COLUMN IF NOT EXISTS is_inventory_item BOOLEAN NOT NULL DEFAULT true;
+  `);
+
+  await pool.query(`
+    ALTER TABLE purchase_transactions
+    ALTER COLUMN created_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+
+  await pool.query(`
+    ALTER TABLE purchase_items
+    ALTER COLUMN created_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+
+  await pool.query(`
     ALTER TABLE archived_inventory
     ALTER COLUMN archived_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
   `);
@@ -596,6 +706,16 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE archived_inventory
     ADD COLUMN IF NOT EXISTS default_selling_price NUMERIC(12,2);
+  `);
+
+  await pool.query(`
+    ALTER TABLE archived_inventory
+    ADD COLUMN IF NOT EXISTS wsp_code VARCHAR(60);
+  `);
+
+  await pool.query(`
+    ALTER TABLE archived_inventory
+    ADD COLUMN IF NOT EXISTS cost_price NUMERIC(12,2);
   `);
 
   await pool.query(`
@@ -1272,6 +1392,57 @@ function parseOptionalPositiveDecimal(value, fieldName, { max = null } = {}) {
   return parsed;
 }
 
+const WSP_CODE_DIGITS = {
+  Q: '1',
+  U: '2',
+  I: '3',
+  C: '4',
+  K: '5',
+  E: '6',
+  P: '7',
+  O: '8',
+  X: '9',
+  Y: '0'
+};
+
+function normalizeWspCode(value) {
+  const code = String(value ?? '').trim().toUpperCase();
+  if (!code) return null;
+  if (!/^[QUICKEPOXYS]+$/.test(code)) {
+    const error = new Error('WSP Code can only use QUICK EPOXY letters and S for repeat.');
+    error.statusCode = 400;
+    throw error;
+  }
+  return code;
+}
+
+function decodeWspCodeToCost(value) {
+  const code = normalizeWspCode(value);
+  if (!code) return null;
+
+  let decoded = '';
+  for (const letter of code) {
+    if (letter === 'S') {
+      if (!decoded) {
+        const error = new Error('S in WSP Code can only repeat a previous digit.');
+        error.statusCode = 400;
+        throw error;
+      }
+      decoded += decoded[decoded.length - 1];
+    } else {
+      decoded += WSP_CODE_DIGITS[letter];
+    }
+  }
+
+  const amount = Number(decoded);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    const error = new Error('WSP Code must decode to an amount greater than zero.');
+    error.statusCode = 400;
+    throw error;
+  }
+  return amount;
+}
+
 async function findProductByIdentity(client, { name, category }) {
   const canonicalCategory = canonicalizeInventoryCategory(category);
   const cleanName = cleanInventoryName(name);
@@ -1279,7 +1450,7 @@ async function findProductByIdentity(client, { name, category }) {
   const normalizedIdentityName = normalizeInventoryIdentityName(cleanName);
 
   const existing = await client.query(
-    `SELECT product_id, name, category, supplier_name, default_selling_price
+    `SELECT product_id, name, category, supplier_name, default_selling_price, wsp_code, cost_price
      FROM products
      WHERE LOWER(category) = LOWER($1)`,
     [canonicalCategory]
@@ -1288,7 +1459,7 @@ async function findProductByIdentity(client, { name, category }) {
   return existing.rows.find(row => normalizeInventoryIdentityName(row.name) === normalizedIdentityName) || null;
 }
 
-async function findOrCreateProduct(client, { name, category, supplierName = null, defaultSellingPrice = null }) {
+async function findOrCreateProduct(client, { name, category, supplierName = null, defaultSellingPrice = null, wspCode = undefined, costPrice = null }) {
   const canonicalCategory = canonicalizeInventoryCategory(category);
   const cleanName = cleanInventoryName(name);
   const cleanSupplier = cleanSupplierName(supplierName);
@@ -1307,18 +1478,31 @@ async function findOrCreateProduct(client, { name, category, supplierName = null
     const nextDefaultPrice = defaultSellingPrice === null || defaultSellingPrice === undefined
       ? existingDefaultPrice
       : Number(defaultSellingPrice);
+    const existingCostPrice = existing.cost_price === null || existing.cost_price === undefined
+      ? null
+      : Number(existing.cost_price);
+    const nextCostPrice = costPrice === null || costPrice === undefined
+      ? existingCostPrice
+      : Number(costPrice);
     const shouldUpdateSupplier = cleanSupplier && cleanSupplier !== existing.supplier_name;
     const shouldUpdateDefaultPrice = nextDefaultPrice !== existingDefaultPrice;
+    const nextWspCode = wspCode === undefined ? existing.wsp_code : wspCode;
+    const shouldUpdateWspCode = nextWspCode !== existing.wsp_code;
+    const shouldUpdateCostPrice = nextCostPrice !== existingCostPrice;
 
-    if (shouldUpdateSupplier || shouldUpdateDefaultPrice) {
+    if (shouldUpdateSupplier || shouldUpdateDefaultPrice || shouldUpdateWspCode || shouldUpdateCostPrice) {
       await client.query(
         `UPDATE products
          SET supplier_name = $1,
-             default_selling_price = $2
-         WHERE product_id = $3`,
+             default_selling_price = $2,
+             wsp_code = $3,
+             cost_price = $4
+         WHERE product_id = $5`,
         [
           shouldUpdateSupplier ? cleanSupplier : existing.supplier_name,
           nextDefaultPrice,
+          nextWspCode,
+          nextCostPrice,
           existing.product_id
         ]
       );
@@ -1327,10 +1511,10 @@ async function findOrCreateProduct(client, { name, category, supplierName = null
   }
 
   const inserted = await client.query(
-    `INSERT INTO products (name, category, supplier_name, default_selling_price)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO products (name, category, supplier_name, default_selling_price, wsp_code, cost_price)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING product_id`,
-    [cleanName, canonicalCategory, cleanSupplier, defaultSellingPrice]
+    [cleanName, canonicalCategory, cleanSupplier, defaultSellingPrice, wspCode, costPrice]
   );
 
   return inserted.rows[0].product_id;
@@ -1382,8 +1566,8 @@ async function findSimilarArchivedInventoryItem(client, { branch, name, category
   return null;
 }
 
-function mapInventoryRow(row) {
-  return {
+function mapInventoryRow(row, options = {}) {
+  const mapped = {
     inventory_id: row.inventory_id,
     product_id: row.product_id,
     name: row.name,
@@ -1405,10 +1589,15 @@ function mapInventoryRow(row) {
     branch: row.branch,
     last_updated: row.last_updated
   };
+  if (options.includeCostPrice) {
+    mapped.wsp_code = row.wsp_code;
+    mapped.cost_price = row.cost_price;
+  }
+  return mapped;
 }
 
-function mapArchivedInventoryRow(row) {
-  return {
+function mapArchivedInventoryRow(row, options = {}) {
+  const mapped = {
     archived_inventory_id: row.archived_inventory_id,
     original_inventory_id: row.original_inventory_id,
     product_id: row.product_id,
@@ -1433,6 +1622,11 @@ function mapArchivedInventoryRow(row) {
     archive_reason: row.archive_reason,
     archived_at: row.archived_at
   };
+  if (options.includeCostPrice) {
+    mapped.wsp_code = row.wsp_code;
+    mapped.cost_price = row.cost_price;
+  }
+  return mapped;
 }
 
 function mapStockMovementRow(row) {
@@ -1466,6 +1660,9 @@ function mapSalesTransactionRow(row) {
     discount_amount: row.discount_amount,
     discount_type: row.discount_type || 'none',
     discount_label: row.discount_label,
+    delivery_charge: row.delivery_charge,
+    vatable_sales: row.vatable_sales,
+    vat_amount: row.vat_amount,
     total_amount: row.total_amount,
     payment_method: row.payment_method,
     amount_received: row.amount_received,
@@ -1493,6 +1690,7 @@ function mapSalesItemRow(row) {
     sales_transaction_id: row.sales_transaction_id,
     inventory_id: row.inventory_id,
     product_id: row.product_id,
+    is_inventory_item: row.is_inventory_item,
     item_name: row.item_name,
     category: row.category,
     branch: row.branch,
@@ -1503,6 +1701,54 @@ function mapSalesItemRow(row) {
     new_quantity: row.new_quantity,
     created_at: row.created_at
   };
+}
+
+function mapPurchaseTransactionRow(row) {
+  return {
+    purchase_transaction_id: row.purchase_transaction_id,
+    purchase_number: row.purchase_number,
+    branch: row.branch,
+    supplier_name: row.supplier_name,
+    document_type: row.document_type,
+    document_number: row.document_number,
+    payment_terms: row.payment_terms,
+    subtotal_amount: row.subtotal_amount,
+    total_quantity: row.total_quantity,
+    remarks: row.remarks,
+    status: row.status,
+    encoded_by: row.encoded_by,
+    encoded_by_name: row.encoded_by_name,
+    created_at: row.created_at,
+    cancelled_at: row.cancelled_at,
+    cancelled_by: row.cancelled_by,
+    cancel_reason: row.cancel_reason,
+    items: row.items || []
+  };
+}
+
+function mapPurchaseItemRow(row) {
+  return {
+    purchase_item_id: row.purchase_item_id,
+    purchase_transaction_id: row.purchase_transaction_id,
+    inventory_id: row.inventory_id,
+    product_id: row.product_id,
+    item_name: row.item_name,
+    category: row.category,
+    branch: row.branch,
+    quantity_received: row.quantity_received,
+    unit_cost: row.unit_cost,
+    subtotal: row.subtotal,
+    previous_quantity: row.previous_quantity,
+    new_quantity: row.new_quantity,
+    created_at: row.created_at
+  };
+}
+
+function computeVatBreakdown(totalAmount) {
+  const gross = Number(totalAmount || 0);
+  const vatableSales = Number((gross / 1.12).toFixed(2));
+  const vatAmount = Number((gross - vatableSales).toFixed(2));
+  return { vatableSales, vatAmount };
 }
 
 function getDiscountDetails(discountType, subtotalAmount, customDiscountAmount = 0) {
@@ -1542,6 +1788,7 @@ const STOCK_OUT_REASONS = new Map([
 
 const STOCK_IN_REASONS = new Map([
   ['delivery_received', 'Delivery Received'],
+  ['purchase_received', 'Purchase Received'],
   ['returned_item', 'Returned Item'],
   ['beginning_balance', 'Beginning Balance'],
   ['manual_adjustment', 'Manual Adjustment'],
@@ -1640,6 +1887,17 @@ async function generateSalesNumber(client) {
   );
   const sequence = Number(result.rows[0]?.next_number || 1);
   return `SALE-${year}-${String(sequence).padStart(5, '0')}`;
+}
+
+async function generatePurchaseNumber(client) {
+  const year = new Date().getFullYear();
+  await client.query('LOCK TABLE purchase_transactions IN EXCLUSIVE MODE');
+  const result = await client.query(
+    `SELECT COALESCE(MAX(purchase_transaction_id), 0) + 1 AS next_number
+     FROM purchase_transactions`
+  );
+  const sequence = Number(result.rows[0]?.next_number || 1);
+  return `PUR-${year}-${String(sequence).padStart(5, '0')}`;
 }
 
 async function refreshAverageDailySalesForInventory(client, inventoryId) {
@@ -1857,7 +2115,7 @@ function generateTemporaryPassword() {
 }
 
 function isAdmin(user) {
-  return user && user.role === 'Admin';
+  return normalizeRole(user?.role) === 'Admin';
 }
 
 function normalizeRole(role) {
@@ -1877,7 +2135,7 @@ function canPerformInventoryMovement(user) {
 function getRoleLabel(role) {
   const normalized = normalizeRole(role);
   if (normalized === 'Admin') return 'Admin / Manager';
-  if (normalized === 'Cashier') return 'Cashier';
+  if (normalized === 'Cashier') return 'Cashier / Encoder';
   if (normalized === 'Inventory Staff') return 'Inventory Staff';
   return role || 'User';
 }
@@ -2112,6 +2370,8 @@ const RESTORE_APP_TABLES = [
   'system_logs',
   'sales_items',
   'sales_transactions',
+  'purchase_items',
+  'purchase_transactions',
   'stock_movements',
   'archived_inventory',
   'branch_inventory',
@@ -2353,7 +2613,7 @@ app.post('/api/auth/register', async (req, res) => {
     return res.status(400).json({ error: passwordError });
   }
 
-  const safeRole = 'Employee';
+  const safeRole = 'Inventory Staff';
 
   try {
     const existing = await pool.query(
@@ -3182,6 +3442,8 @@ app.get('/api/inventory', authenticate, async (req, res) => {
          p.category,
          p.supplier_name,
          p.default_selling_price,
+         p.wsp_code,
+         p.cost_price,
          bi.stock_level,
          bi.min_stock_level,
          bi.lead_time_days,
@@ -3205,7 +3467,7 @@ app.get('/api/inventory', authenticate, async (req, res) => {
        ORDER BY p.name ASC`,
       [req.user.branch]
     );
-    return res.json({ products: result.rows.map(mapInventoryRow) });
+    return res.json({ products: result.rows.map(row => mapInventoryRow(row, { includeCostPrice: isAdmin(req.user) })) });
   } catch (err) {
     console.error('Fetch products error:', err);
     return res.status(500).json({ error: 'Failed to load products' });
@@ -3223,6 +3485,8 @@ app.get('/api/archive', authenticate, async (req, res) => {
          category,
          supplier_name,
          default_selling_price,
+         wsp_code,
+         cost_price,
          branch,
          stock_level,
          min_stock_level,
@@ -3242,7 +3506,7 @@ app.get('/api/archive', authenticate, async (req, res) => {
       [req.user.branch]
     );
 
-    return res.json({ archivedProducts: result.rows.map(mapArchivedInventoryRow) });
+    return res.json({ archivedProducts: result.rows.map(row => mapArchivedInventoryRow(row, { includeCostPrice: isAdmin(req.user) })) });
   } catch (err) {
     console.error('Get archive error:', err);
     return res.status(500).json({ error: 'Failed to load archive' });
@@ -3294,6 +3558,9 @@ app.get('/api/sales', authenticate, async (req, res) => {
          st.discount_amount,
          st.discount_type,
          st.discount_label,
+         st.delivery_charge,
+         st.vatable_sales,
+         st.vat_amount,
          st.total_amount,
          st.payment_method,
          st.amount_received,
@@ -3317,6 +3584,7 @@ app.get('/api/sales', authenticate, async (req, res) => {
                'sales_item_id', si.sales_item_id,
                'inventory_id', si.inventory_id,
                'product_id', si.product_id,
+               'is_inventory_item', si.is_inventory_item,
                'item_name', si.item_name,
                'category', si.category,
                'branch', si.branch,
@@ -3355,12 +3623,13 @@ app.post('/api/sales', authenticate, async (req, res) => {
     payment_method = 'cash',
     discount_type = 'none',
     discount_amount = 0,
+    delivery_charge = 0,
     amount_received = null,
     payment_reference = '',
     payment_confirmed = false
   } = req.body;
   const normalizedCustomerType = String(customer_type || 'walk_in').trim().toLowerCase();
-  const allowedCustomerTypes = new Set(['walk_in', 'regular', 'contractor']);
+  const allowedCustomerTypes = new Set(['walk_in', 'sister_company', 'hardware_reseller', 'regular', 'contractor']);
   const normalizedPaymentMethod = String(payment_method || 'cash').trim().toLowerCase();
   const allowedPaymentMethods = new Set(['cash', 'gcash', 'bank_transfer', 'credit']);
   const requiresPaymentConfirmation = ['gcash', 'bank_transfer'].includes(normalizedPaymentMethod);
@@ -3369,7 +3638,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
 
   if (!canRecordSales(req.user)) {
     return res.status(403).json({
-      error: 'Sales recording is available only to Admin / Manager and Cashier accounts.'
+      error: 'Sales recording is available only to Admin / Manager and Cashier / Encoder accounts.'
     });
   }
 
@@ -3398,18 +3667,41 @@ app.post('/api/sales', authenticate, async (req, res) => {
   }
 
   const aggregatedItems = new Map();
+  const manualItems = [];
   try {
     for (const item of items) {
-      const inventoryId = Number(item?.inventory_id);
+      const isManualItem = item?.is_manual === true || item?.is_inventory_item === false || !item?.inventory_id;
       const quantity = parseNonNegativeInteger(item?.quantity, 'Quantity sold');
       const unitPrice = parseNonNegativeDecimal(item?.unit_price, 'Unit price', { max: 100000000 });
 
-      if (!Number.isInteger(inventoryId) || inventoryId <= 0 || quantity <= 0) {
-        return res.status(400).json({ error: 'Each sold item must include a valid product and quantity.' });
+      if (quantity <= 0) {
+        return res.status(400).json({ error: 'Each sold item must include a valid quantity.' });
       }
 
       if (unitPrice <= 0) {
         return res.status(400).json({ error: 'Unit price is required and must be greater than zero for every sold item.' });
+      }
+
+      if (isManualItem) {
+        const itemName = String(item?.item_name || '').trim().replace(/\s+/g, ' ');
+        const category = normalizeCategory(item?.category || 'Other') || 'Other';
+        if (!itemName || itemName.length > 150) {
+          return res.status(400).json({ error: 'Manual sale items must include an item description of 150 characters or less.' });
+        }
+        manualItems.push({
+          itemName,
+          category,
+          quantity,
+          unitPrice,
+          subtotal: Number((quantity * unitPrice).toFixed(2))
+        });
+        continue;
+      }
+
+      const inventoryId = Number(item?.inventory_id);
+
+      if (!Number.isInteger(inventoryId) || inventoryId <= 0) {
+        return res.status(400).json({ error: 'Each inventory sale item must include a valid product.' });
       }
 
       if (aggregatedItems.has(inventoryId)) {
@@ -3499,6 +3791,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
       saleLines.push({
         inventoryId,
         productId: currentItem.product_id,
+        isInventoryItem: true,
         itemName: currentItem.name,
         category: currentItem.category,
         branch: currentItem.branch,
@@ -3521,6 +3814,24 @@ app.post('/api/sales', authenticate, async (req, res) => {
       });
     }
 
+    manualItems.forEach(line => {
+      totalQuantity += line.quantity;
+      subtotalAmount += line.subtotal;
+      saleLines.push({
+        inventoryId: null,
+        productId: null,
+        isInventoryItem: false,
+        itemName: line.itemName,
+        category: line.category,
+        branch: req.user.branch,
+        quantitySold: line.quantity,
+        unitPrice: line.unitPrice,
+        subtotal: line.subtotal,
+        previousQuantity: 0,
+        newQuantity: 0
+      });
+    });
+
     const roundedSubtotalAmount = Number(subtotalAmount.toFixed(2));
     const inferredDiscountType = String(discount_type || '').trim()
       ? discount_type
@@ -3534,6 +3845,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
     }
 
     const roundedDiscountAmount = Number(discountDetails.amount.toFixed(2));
+    const roundedDeliveryCharge = parseNonNegativeDecimal(delivery_charge, 'Delivery charge', { max: 100000000 });
 
     if (discountDetails.type === 'custom_amount' && roundedDiscountAmount <= 0) {
       await client.query('ROLLBACK');
@@ -3545,7 +3857,8 @@ app.post('/api/sales', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'Discount cannot be greater than the sales subtotal.' });
     }
 
-    const netTotalAmount = Number((roundedSubtotalAmount - roundedDiscountAmount).toFixed(2));
+    const netTotalAmount = Number((roundedSubtotalAmount - roundedDiscountAmount + roundedDeliveryCharge).toFixed(2));
+    const { vatableSales, vatAmount } = computeVatBreakdown(netTotalAmount);
     const parsedAmountReceived = amount_received === null || amount_received === undefined || amount_received === ''
       ? null
       : parseNonNegativeDecimal(amount_received, 'Amount received', { max: 100000000 });
@@ -3572,6 +3885,9 @@ app.post('/api/sales', authenticate, async (req, res) => {
          discount_amount,
          discount_type,
          discount_label,
+         delivery_charge,
+         vatable_sales,
+         vat_amount,
          total_amount,
          payment_method,
          amount_received,
@@ -3586,7 +3902,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
          sold_by_name,
          remarks
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true, $14, $15, ${PHILIPPINE_NOW_SQL}, 'completed', $16, $17, $18)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, true, $17, $18, ${PHILIPPINE_NOW_SQL}, 'completed', $19, $20, $21)
        RETURNING *`,
       [
         salesNumber,
@@ -3597,6 +3913,9 @@ app.post('/api/sales', authenticate, async (req, res) => {
         roundedDiscountAmount,
         discountDetails.type,
         discountDetails.label,
+        roundedDeliveryCharge,
+        vatableSales,
+        vatAmount,
         netTotalAmount,
         normalizedPaymentMethod,
         effectiveAmountReceived,
@@ -3619,6 +3938,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
            sales_transaction_id,
            inventory_id,
            product_id,
+           is_inventory_item,
            item_name,
            category,
            branch,
@@ -3628,12 +3948,13 @@ app.post('/api/sales', authenticate, async (req, res) => {
            previous_quantity,
            new_quantity
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING *`,
         [
           salesTransaction.sales_transaction_id,
           line.inventoryId,
           line.productId,
+          line.isInventoryItem,
           line.itemName,
           line.category,
           line.branch,
@@ -3646,6 +3967,10 @@ app.post('/api/sales', authenticate, async (req, res) => {
       );
 
       insertedItems.push(itemResult.rows[0]);
+
+      if (!line.isInventoryItem) {
+        continue;
+      }
 
       await recordStockMovement(client, {
         inventoryId: line.inventoryId,
@@ -3680,6 +4005,9 @@ app.post('/api/sales', authenticate, async (req, res) => {
         discountAmount: roundedDiscountAmount,
         discountType: discountDetails.type,
         discountLabel: discountDetails.label,
+        deliveryCharge: roundedDeliveryCharge,
+        vatableSales,
+        vatAmount,
         totalAmount: netTotalAmount,
         paymentMethod: normalizedPaymentMethod,
         amountReceived: effectiveAmountReceived,
@@ -3765,6 +4093,10 @@ app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) =
     const restoredItems = [];
 
     for (const saleItem of itemsResult.rows) {
+      if (saleItem.is_inventory_item === false || !saleItem.inventory_id) {
+        continue;
+      }
+
       const inventoryResult = await client.query(
         `SELECT
            bi.inventory_id,
@@ -3885,12 +4217,353 @@ app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) =
   }
 });
 
+app.get('/api/purchases', authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+         pt.purchase_transaction_id,
+         pt.purchase_number,
+         pt.branch,
+         pt.supplier_name,
+         pt.document_type,
+         pt.document_number,
+         pt.payment_terms,
+         pt.subtotal_amount,
+         pt.total_quantity,
+         pt.remarks,
+         pt.status,
+         pt.encoded_by,
+         pt.encoded_by_name,
+         pt.created_at,
+         pt.cancelled_at,
+         pt.cancelled_by,
+         pt.cancel_reason,
+         COALESCE(
+           json_agg(
+             json_build_object(
+               'purchase_item_id', pi.purchase_item_id,
+               'inventory_id', pi.inventory_id,
+               'product_id', pi.product_id,
+               'item_name', pi.item_name,
+               'category', pi.category,
+               'branch', pi.branch,
+               'quantity_received', pi.quantity_received,
+               'unit_cost', pi.unit_cost,
+               'subtotal', pi.subtotal,
+               'previous_quantity', pi.previous_quantity,
+               'new_quantity', pi.new_quantity,
+               'created_at', pi.created_at
+             )
+             ORDER BY pi.purchase_item_id ASC
+           ) FILTER (WHERE pi.purchase_item_id IS NOT NULL),
+           '[]'::json
+         ) AS items
+       FROM purchase_transactions pt
+       LEFT JOIN purchase_items pi
+         ON pi.purchase_transaction_id = pt.purchase_transaction_id
+       WHERE pt.branch = $1
+       GROUP BY pt.purchase_transaction_id
+       ORDER BY pt.created_at DESC, pt.purchase_transaction_id DESC`,
+      [req.user.branch]
+    );
+
+    return res.json({ purchases: result.rows.map(mapPurchaseTransactionRow) });
+  } catch (err) {
+    console.error('Get purchases error:', err);
+    return res.status(500).json({ error: 'Failed to load purchase records' });
+  }
+});
+
+app.post('/api/purchases', authenticate, async (req, res) => {
+  if (!canPerformInventoryMovement(req.user)) {
+    return res.status(403).json({
+      error: 'Purchase entry is available only to Admin / Manager and Inventory Staff accounts.'
+    });
+  }
+
+  const {
+    supplier_name,
+    document_type = 'DR',
+    document_number = '',
+    payment_terms = 'cash',
+    remarks = '',
+    items = []
+  } = req.body;
+  const cleanSupplierName = String(supplier_name || '').trim().replace(/\s+/g, ' ');
+  const normalizedDocumentType = String(document_type || 'DR').trim().toUpperCase();
+  const normalizedPaymentTerms = String(payment_terms || 'cash').trim().toLowerCase();
+  const cleanDocumentNumber = String(document_number || '').trim().slice(0, 80) || null;
+  const cleanRemarks = String(remarks || '').trim().slice(0, 500) || null;
+  const allowedDocumentTypes = new Set(['DR', 'SI', 'OR', 'OTHER']);
+  const allowedPaymentTerms = new Set(['cash', 'cod', 'credit', 'branch_transfer']);
+
+  if (!cleanSupplierName || cleanSupplierName.length > 120) {
+    return res.status(400).json({ error: 'Supplier name is required and must be 120 characters or less.' });
+  }
+
+  if (!allowedDocumentTypes.has(normalizedDocumentType)) {
+    return res.status(400).json({ error: 'Please select a valid purchase document type.' });
+  }
+
+  if (!allowedPaymentTerms.has(normalizedPaymentTerms)) {
+    return res.status(400).json({ error: 'Please select valid payment terms.' });
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Add at least one received item before saving the purchase.' });
+  }
+
+  const preparedItems = [];
+  try {
+    for (const item of items) {
+      const inventoryId = Number(item?.inventory_id);
+      const quantity = parseNonNegativeInteger(item?.quantity, 'Quantity received');
+      const unitCost = parseNonNegativeDecimal(item?.unit_cost, 'Unit cost', { max: 100000000 });
+
+      if (!Number.isInteger(inventoryId) || inventoryId <= 0) {
+        return res.status(400).json({ error: 'Each purchase item must select an active inventory item.' });
+      }
+
+      if (quantity <= 0) {
+        return res.status(400).json({ error: 'Quantity received must be greater than zero.' });
+      }
+
+      if (unitCost < 0) {
+        return res.status(400).json({ error: 'Unit cost cannot be negative.' });
+      }
+
+      preparedItems.push({
+        inventoryId,
+        quantity,
+        unitCost,
+        subtotal: Number((quantity * unitCost).toFixed(2))
+      });
+    }
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ error: err.message || 'Invalid purchase details.' });
+  }
+
+  const duplicateInventoryIds = new Set();
+  for (const item of preparedItems) {
+    if (duplicateInventoryIds.has(item.inventoryId)) {
+      return res.status(400).json({ error: 'Each purchase item should appear only once. Combine duplicate quantities into one line.' });
+    }
+    duplicateInventoryIds.add(item.inventoryId);
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const purchaseNumber = await generatePurchaseNumber(client);
+    const encodedByName = req.user.fullName || req.user.username || 'System User';
+    let totalQuantity = 0;
+    let subtotalAmount = 0;
+    const purchaseLines = [];
+    const updatedItems = [];
+
+    for (const line of preparedItems) {
+      const currentResult = await client.query(
+        `SELECT
+           bi.inventory_id,
+           bi.product_id,
+           p.name,
+           p.category,
+           p.supplier_name,
+           p.default_selling_price,
+           bi.branch,
+           bi.stock_level,
+           bi.min_stock_level,
+           bi.lead_time_days,
+           bi.safety_stock,
+           bi.average_daily_sales,
+           bi.status,
+           bi.last_updated
+         FROM branch_inventory bi
+         INNER JOIN products p ON p.product_id = bi.product_id
+         WHERE bi.inventory_id = $1 AND bi.branch = $2
+         FOR UPDATE`,
+        [line.inventoryId, req.user.branch]
+      );
+
+      if (currentResult.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'One selected purchase item was not found in your branch inventory.' });
+      }
+
+      const currentItem = currentResult.rows[0];
+      const previousQuantity = Number(currentItem.stock_level || 0);
+      const newQuantity = previousQuantity + line.quantity;
+      const nextStatus = computeInventoryStatus(newQuantity, getEffectiveReorderThreshold(currentItem));
+
+      const updatedResult = await client.query(
+        `UPDATE branch_inventory
+         SET stock_level = $1,
+             status = $2,
+             last_updated = ${PHILIPPINE_NOW_SQL}
+         WHERE inventory_id = $3 AND branch = $4
+         RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
+        [newQuantity, nextStatus, line.inventoryId, req.user.branch]
+      );
+
+      totalQuantity += line.quantity;
+      subtotalAmount += line.subtotal;
+      purchaseLines.push({
+        inventoryId: line.inventoryId,
+        productId: currentItem.product_id,
+        itemName: currentItem.name,
+        category: currentItem.category,
+        branch: currentItem.branch,
+        quantityReceived: line.quantity,
+        unitCost: line.unitCost,
+        subtotal: line.subtotal,
+        previousQuantity,
+        newQuantity
+      });
+
+      updatedItems.push({
+        ...updatedResult.rows[0],
+        name: currentItem.name,
+        category: currentItem.category,
+        supplier_name: currentItem.supplier_name,
+        default_selling_price: currentItem.default_selling_price,
+        lead_time_days: currentItem.lead_time_days,
+        safety_stock: currentItem.safety_stock,
+        average_daily_sales: currentItem.average_daily_sales
+      });
+    }
+
+    const roundedSubtotalAmount = Number(subtotalAmount.toFixed(2));
+    const transactionResult = await client.query(
+      `INSERT INTO purchase_transactions (
+         purchase_number,
+         branch,
+         supplier_name,
+         document_type,
+         document_number,
+         payment_terms,
+         subtotal_amount,
+         total_quantity,
+         remarks,
+         status,
+         encoded_by,
+         encoded_by_name
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'completed', $10, $11)
+       RETURNING *`,
+      [
+        purchaseNumber,
+        req.user.branch,
+        cleanSupplierName,
+        normalizedDocumentType,
+        cleanDocumentNumber,
+        normalizedPaymentTerms,
+        roundedSubtotalAmount,
+        totalQuantity,
+        cleanRemarks,
+        req.user.id,
+        encodedByName
+      ]
+    );
+
+    const purchaseTransaction = transactionResult.rows[0];
+    const insertedItems = [];
+
+    for (const line of purchaseLines) {
+      const itemResult = await client.query(
+        `INSERT INTO purchase_items (
+           purchase_transaction_id,
+           inventory_id,
+           product_id,
+           item_name,
+           category,
+           branch,
+           quantity_received,
+           unit_cost,
+           subtotal,
+           previous_quantity,
+           new_quantity
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         RETURNING *`,
+        [
+          purchaseTransaction.purchase_transaction_id,
+          line.inventoryId,
+          line.productId,
+          line.itemName,
+          line.category,
+          line.branch,
+          line.quantityReceived,
+          line.unitCost,
+          line.subtotal,
+          line.previousQuantity,
+          line.newQuantity
+        ]
+      );
+      insertedItems.push(itemResult.rows[0]);
+
+      await recordStockMovement(client, {
+        inventoryId: line.inventoryId,
+        productId: line.productId,
+        itemName: line.itemName,
+        category: line.category,
+        branch: line.branch,
+        action: 'stock_in',
+        quantityChanged: line.quantityReceived,
+        previousQuantity: line.previousQuantity,
+        newQuantity: line.newQuantity,
+        reason: 'purchase_received',
+        note: `Purchase entry ${purchaseNumber} from ${cleanSupplierName}${cleanDocumentNumber ? ` (${normalizedDocumentType} ${cleanDocumentNumber})` : ''}.`,
+        actorId: req.user.id
+      });
+    }
+
+    await recordAuditLog(client, {
+      actorId: req.user.id,
+      targetId: purchaseTransaction.purchase_transaction_id,
+      targetName: purchaseNumber,
+      targetType: 'purchase_transaction',
+      action: 'CREATE_PURCHASE_TRANSACTION',
+      reason: 'Purchase Entry',
+      details: {
+        branch: req.user.branch,
+        supplierName: cleanSupplierName,
+        documentType: normalizedDocumentType,
+        documentNumber: cleanDocumentNumber,
+        paymentTerms: normalizedPaymentTerms,
+        totalQuantity,
+        subtotalAmount: roundedSubtotalAmount,
+        itemCount: insertedItems.length,
+        remarks: cleanRemarks
+      }
+    });
+
+    await client.query('COMMIT');
+
+    return res.status(201).json({
+      purchase: mapPurchaseTransactionRow({
+        ...purchaseTransaction,
+        items: insertedItems.map(mapPurchaseItemRow)
+      }),
+      products: updatedItems.map(mapInventoryRow)
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Record purchase error:', err);
+    return res.status(500).json({ error: 'Failed to save purchase. No inventory was added.' });
+  } finally {
+    client.release();
+  }
+});
+
 app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
   const {
     name,
     category,
     supplier_name,
     default_selling_price,
+    wsp_code,
+    cost_price,
     stock_level,
     min_stock_level,
     lead_time_days,
@@ -3924,6 +4597,10 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
     const stockLevel = parseNonNegativeInteger(stock_level, 'Stock level');
     const minStockLevel = parseNonNegativeInteger(min_stock_level, 'Manual low-stock threshold');
     const defaultSellingPrice = parseOptionalPositiveDecimal(default_selling_price, 'Default selling price', { max: 100000000 });
+    const normalizedWspCode = normalizeWspCode(wsp_code);
+    const costPrice = normalizedWspCode
+      ? decodeWspCodeToCost(normalizedWspCode)
+      : parseOptionalPositiveDecimal(cost_price, 'Decoded WSP cost', { max: 100000000 });
     const leadTimeDays = parseOptionalNonNegativeInteger(lead_time_days, 'Supplier lead time', { max: 365 });
     const safetyStock = parseOptionalNonNegativeInteger(safety_stock, 'Safety stock', { max: 100000 });
     const averageDailySalesMode = normalizeAverageDailySalesMode(average_daily_sales_mode);
@@ -4004,10 +4681,12 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
 
     const productId = await findOrCreateProduct(client, {
       name: cleanName,
-      category: canonicalCategory,
-      supplierName: cleanSupplier,
-      defaultSellingPrice
-    });
+        category: canonicalCategory,
+        supplierName: cleanSupplier,
+        defaultSellingPrice,
+        wspCode: normalizedWspCode,
+        costPrice
+      });
     const status = computeInventoryStatus(stockLevel, getEffectiveReorderThreshold({
       min_stock_level: minStockLevel,
       lead_time_days: leadTimeDays,
@@ -4066,6 +4745,8 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
          p.category,
          p.supplier_name,
          p.default_selling_price,
+         p.wsp_code,
+         p.cost_price,
          bi.stock_level,
          bi.min_stock_level,
          bi.lead_time_days,
@@ -4095,6 +4776,8 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
         category: createdItem.category,
         supplier: createdItem.supplier_name || 'Unassigned',
         defaultSellingPrice,
+        wspCode: normalizedWspCode,
+        costPrice,
         initialQuantity: stockLevel,
         reorderLevel: minStockLevel,
         leadTimeDays,
@@ -4146,7 +4829,7 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
     }
 
     await client.query('COMMIT');
-    return res.status(201).json({ product: mapInventoryRow(createdItem) });
+    return res.status(201).json({ product: mapInventoryRow(createdItem, { includeCostPrice: true }) });
   } catch (err) {
     await client.query('ROLLBACK');
     if (err.statusCode) {
@@ -4313,6 +4996,8 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     category,
     supplier_name,
     default_selling_price,
+    wsp_code,
+    cost_price,
     stock_level,
     min_stock_level,
     lead_time_days,
@@ -4340,6 +5025,8 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
          p.category,
          p.supplier_name,
          p.default_selling_price,
+         p.wsp_code,
+         p.cost_price,
          bi.branch,
          bi.stock_level,
          bi.min_stock_level,
@@ -4398,6 +5085,12 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     const nextDefaultSellingPrice = default_selling_price === undefined
       ? (inventoryRow.default_selling_price === null || inventoryRow.default_selling_price === undefined ? null : Number(inventoryRow.default_selling_price))
       : parseOptionalPositiveDecimal(default_selling_price, 'Default selling price', { max: 100000000 });
+    const nextWspCode = wsp_code === undefined ? inventoryRow.wsp_code : normalizeWspCode(wsp_code);
+    const nextCostPrice = wsp_code !== undefined
+      ? (nextWspCode ? decodeWspCodeToCost(nextWspCode) : null)
+      : cost_price === undefined
+        ? (inventoryRow.cost_price === null || inventoryRow.cost_price === undefined ? null : Number(inventoryRow.cost_price))
+        : parseOptionalPositiveDecimal(cost_price, 'Decoded WSP cost', { max: 100000000 });
     const status = computeInventoryStatus(nextQuantity, getEffectiveReorderThreshold({
       min_stock_level: nextMinStockLevel,
       lead_time_days: nextLeadTimeDays,
@@ -4428,6 +5121,9 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     const supplierChanged = cleanSupplier !== cleanSupplierName(inventoryRow.supplier_name);
     const defaultSellingPriceChanged =
       normalizeNullableNumber(inventoryRow.default_selling_price) !== normalizeNullableNumber(nextDefaultSellingPrice);
+    const wspCodeChanged = (inventoryRow.wsp_code || null) !== (nextWspCode || null);
+    const costPriceChanged =
+      normalizeNullableNumber(inventoryRow.cost_price) !== normalizeNullableNumber(nextCostPrice);
     const reorderLevelChanged = Number(inventoryRow.min_stock_level || 0) !== nextMinStockLevel;
     const reorderPlanningChanged =
       normalizeNullableNumber(inventoryRow.lead_time_days) !== normalizeNullableNumber(nextLeadTimeDays) ||
@@ -4456,6 +5152,8 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       !identityChanged &&
       !supplierChanged &&
       !defaultSellingPriceChanged &&
+      !wspCodeChanged &&
+      !costPriceChanged &&
       !reorderLevelChanged &&
       !reorderPlanningChanged;
 
@@ -4580,7 +5278,9 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
         name: cleanName,
         category: canonicalCategory,
         supplierName: cleanSupplier,
-        defaultSellingPrice: nextDefaultSellingPrice
+        defaultSellingPrice: nextDefaultSellingPrice,
+        wspCode: nextWspCode,
+        costPrice: nextCostPrice
       });
     } else {
       await client.query(
@@ -4588,9 +5288,11 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
          SET name = $1,
              category = $2,
              supplier_name = $3,
-             default_selling_price = $4
-         WHERE product_id = $5`,
-        [cleanName, canonicalCategory, cleanSupplier, nextDefaultSellingPrice, productId]
+             default_selling_price = $4,
+             wsp_code = $5,
+             cost_price = $6
+         WHERE product_id = $7`,
+        [cleanName, canonicalCategory, cleanSupplier, nextDefaultSellingPrice, nextWspCode, nextCostPrice, productId]
       );
     }
 
@@ -4646,6 +5348,8 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
          p.category,
          p.supplier_name,
          p.default_selling_price,
+         p.wsp_code,
+         p.cost_price,
          bi.stock_level,
          bi.min_stock_level,
          bi.lead_time_days,
@@ -4718,6 +5422,8 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       if (inventoryRow.category !== canonicalCategory) changedFields.push('category');
       if (supplierChanged) changedFields.push('supplier');
       if (defaultSellingPriceChanged) changedFields.push('default selling price');
+      if (wspCodeChanged) changedFields.push('encoded WSP');
+      if (costPriceChanged) changedFields.push('decoded WSP cost');
       if (previousQuantity !== nextQuantity) changedFields.push('quantity');
       if (Number(inventoryRow.min_stock_level || 0) !== nextMinStockLevel) changedFields.push('reorder level');
       if (reorderPlanningChanged) changedFields.push('reorder planning');
@@ -4737,6 +5443,8 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
               category: inventoryRow.category,
               supplier: inventoryRow.supplier_name || 'Unassigned',
               defaultSellingPrice: normalizeNullableNumber(inventoryRow.default_selling_price),
+              wspCode: inventoryRow.wsp_code || null,
+              costPrice: normalizeNullableNumber(inventoryRow.cost_price),
               reorderLevel: Number(inventoryRow.min_stock_level || 0),
               leadTimeDays: Number(inventoryRow.lead_time_days || 0),
               safetyStock: Number(inventoryRow.safety_stock || 0),
@@ -4751,6 +5459,8 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
               category: updatedItem.category,
               supplier: updatedItem.supplier_name || 'Unassigned',
               defaultSellingPrice: normalizeNullableNumber(updatedItem.default_selling_price),
+              wspCode: updatedItem.wsp_code || null,
+              costPrice: normalizeNullableNumber(updatedItem.cost_price),
               reorderLevel: nextMinStockLevel,
               leadTimeDays: nextLeadTimeDays,
               safetyStock: nextSafetyStock,
@@ -4780,7 +5490,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     }
 
     await client.query('COMMIT');
-    return res.json({ product: mapInventoryRow(updatedItem) });
+    return res.json({ product: mapInventoryRow(updatedItem, { includeCostPrice: isAdmin(req.user) }) });
   } catch (err) {
     await client.query('ROLLBACK');
     if (err.statusCode) {
@@ -4813,6 +5523,8 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
          p.category,
          p.supplier_name,
          p.default_selling_price,
+         p.wsp_code,
+         p.cost_price,
          bi.branch,
          bi.stock_level,
          bi.min_stock_level,
@@ -4844,6 +5556,8 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
          category,
          supplier_name,
          default_selling_price,
+         wsp_code,
+         cost_price,
          branch,
          stock_level,
          min_stock_level,
@@ -4858,7 +5572,7 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
          archive_reason,
          archived_by
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
       [
         archivedItem.inventory_id,
         archivedItem.product_id,
@@ -4866,6 +5580,8 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
         archivedItem.category,
         archivedItem.supplier_name,
         archivedItem.default_selling_price,
+        archivedItem.wsp_code,
+        archivedItem.cost_price,
         archivedItem.branch,
         archivedItem.stock_level,
         archivedItem.min_stock_level,
@@ -4954,6 +5670,8 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
          category,
          supplier_name,
          default_selling_price,
+         wsp_code,
+         cost_price,
          branch,
          stock_level,
          min_stock_level,
@@ -4981,7 +5699,11 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
       supplierName: archivedItem.supplier_name,
       defaultSellingPrice: archivedItem.default_selling_price === null || archivedItem.default_selling_price === undefined
         ? null
-        : Number(archivedItem.default_selling_price)
+        : Number(archivedItem.default_selling_price),
+      wspCode: archivedItem.wsp_code,
+      costPrice: archivedItem.cost_price === null || archivedItem.cost_price === undefined
+        ? null
+        : Number(archivedItem.cost_price)
     });
 
     const existingInventory = await client.query(
@@ -5109,6 +5831,8 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
          p.category,
          p.supplier_name,
          p.default_selling_price,
+         p.wsp_code,
+         p.cost_price,
          bi.stock_level,
          bi.min_stock_level,
          bi.lead_time_days,
@@ -5148,7 +5872,7 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
     });
 
     await client.query('COMMIT');
-    return res.json({ product: mapInventoryRow(merged.rows[0]) });
+    return res.json({ product: mapInventoryRow(merged.rows[0], { includeCostPrice: true }) });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Restore archived product error:', err);
@@ -5268,6 +5992,8 @@ app.post('/api/maintenance/optimize', authenticate, requireAdmin, async (req, re
     'stock_movements',
     'sales_transactions',
     'sales_items',
+    'purchase_transactions',
+    'purchase_items',
     'archived_inventory',
     'audit_logs',
     'backup_logs',
@@ -5382,12 +6108,12 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
          FROM users
          WHERE (
              branch = $1
-             OR (role IN ('Employee', 'Cashier', 'Inventory Staff') AND (branch IS NULL OR TRIM(branch) = ''))
+             OR (role IN ('Cashier', 'Inventory Staff') AND (branch IS NULL OR TRIM(branch) = ''))
            )
            AND (
-             role NOT IN ('Admin', 'Employee', 'Cashier', 'Inventory Staff')
+             role NOT IN ('Admin', 'Cashier', 'Inventory Staff')
              OR status NOT IN ('Active', 'Pending', 'Inactive', 'Rejected')
-             OR (role IN ('Employee', 'Cashier', 'Inventory Staff') AND (branch IS NULL OR TRIM(branch) = ''))
+             OR (role IN ('Cashier', 'Inventory Staff') AND (branch IS NULL OR TRIM(branch) = ''))
            )`,
         [scopeBranch]
       ),

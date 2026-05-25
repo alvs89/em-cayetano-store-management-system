@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Package, PackagePlus, TrendingUp, AlertTriangle, CheckCircle, ArrowUpRight, ArrowRight, Activity, Zap, ReceiptText, Users, ClipboardCheck } from 'lucide-react';
+import { Home, Package, PackagePlus, TrendingUp, AlertTriangle, CheckCircle, ArrowUpRight, ArrowRight, Activity, Zap, ReceiptText, Users, ClipboardCheck, Truck, FileText } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -45,11 +45,13 @@ export function Dashboard({
     unreadAlertCount,
     stockMovements,
     salesTransactions,
+    purchaseTransactions,
     users
   } = useData();
   const canUseSales = canRecordSales(user?.role);
   const canUseInventoryMovement = canPerformInventoryMovement(user?.role);
   const canUseReports = canAccessScreen(user?.role, 'reports');
+  const canUsePurchases = canAccessScreen(user?.role, 'purchases');
   const canAddInventoryItem = isAdminRole(user?.role);
 
   // Calculate headline inventory stats for the metric cards.
@@ -61,9 +63,6 @@ export function Dashboard({
     'Out of Stock': 1,
     'Low Stock': 2
   };
-
-  // Basic activity signal: total units across inventory.
-  const monthlyActivity = inventory.reduce((sum, item) => sum + item.quantity, 0);
 
   // Surface the most urgent stock signals first.
   const stockAlerts = inventory.filter(item => item.status === 'Low Stock' || item.status === 'Out of Stock').sort((a, b) => {
@@ -87,6 +86,11 @@ export function Dashboard({
   const salesTodayCount = salesToday.length;
   const salesTodayAmountDue = salesToday.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0);
   const salesTodayDiscount = salesToday.reduce((sum, sale) => sum + Number(sale.discountAmount || 0), 0);
+  const purchasesToday = (purchaseTransactions || []).filter(purchase => {
+    if (!purchase.createdAt) return false;
+    return purchase.status !== 'cancelled' && new Date(purchase.createdAt).toDateString() === new Date().toDateString();
+  });
+  const purchasesTodayAmount = purchasesToday.reduce((sum, purchase) => sum + Number(purchase.subtotalAmount || 0), 0);
   const reorderAttentionCount = lowStockItems + outOfStock;
   const selectedCountItem = inventory.find(item => item.id === stockCountForm.itemId);
   const physicalCountValue = stockCountForm.physicalCount === '' ? null : Number(stockCountForm.physicalCount);
@@ -120,9 +124,9 @@ export function Dashboard({
           tone: pendingUserCount > 0 ? 'orange' : 'slate'
         },
         {
-          label: 'Stock needs reorder',
+          label: 'Stock alerts',
           value: reorderAttentionCount,
-          action: () => openTargetReport('supplier-reorder'),
+          action: () => openInventoryStatus('Low Stock'),
           tone: reorderAttentionCount > 0 ? 'red' : 'slate'
         },
         {
@@ -165,15 +169,13 @@ export function Dashboard({
     return 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-500 hover:bg-slate-200 active:bg-slate-100';
   };
   const openInventoryStatus = status => {
-    if (!status || status === 'all') {
-      onNavigate('inventory');
-      return;
-    }
-    localStorage.setItem("dashboardSearchStatusFilter", status);
-    window.dispatchEvent(new CustomEvent("dashboard-search-filter", {
-      detail: { status }
+    const targetStatus = status || 'all';
+    localStorage.removeItem("dashboardSearchStatusFilter");
+    localStorage.setItem("dashboardInventoryStatusFilter", targetStatus);
+    window.dispatchEvent(new CustomEvent("dashboard-inventory-status-filter", {
+      detail: { status: targetStatus }
     }));
-    onNavigate('search');
+    onNavigate('inventory');
   };
   const openInventoryAction = (action, itemId = "") => {
     if ((action === 'stock-in' || action === 'stock-out') && !canUseInventoryMovement) return;
@@ -559,17 +561,17 @@ export function Dashboard({
 
       <div className="dashboard-stat-grid grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         <StatCard
-          title="Total Inventory"
-          value={monthlyActivity.toString()}
-          change={`${totalItems} item records`}
-          icon={<Package className="w-6 h-6" />}
+          title="Today's Sales"
+          value={formatCurrency(salesTodayAmountDue)}
+          change={`${salesTodayCount} transaction${salesTodayCount === 1 ? '' : 's'}`}
+          icon={<ReceiptText className="w-6 h-6" />}
           iconTileStyle={{ backgroundColor: '#2563eb' }}
           bgOverlayStyle={{ background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 55%, #e2e8f0 100%)' }}
           bgGradient="from-blue-50 to-indigo-50"
           trend="up"
-          percentage="Units"
-          onClick={() => openInventoryStatus('all')}
-          actionLabel="View inventory"
+          percentage="Sales"
+          onClick={openSales}
+          actionLabel="Record sale"
         />
         <StatCard
           title="Out of Stock"
@@ -598,7 +600,7 @@ export function Dashboard({
         <StatCard
           title="In Stock"
           value={activeProducts.toString()}
-          change="Ready for use"
+          change={`${totalItems} inventory records`}
           icon={<CheckCircle className="w-6 h-6" />}
           iconTileStyle={{ backgroundColor: '#16a34a' }}
           bgOverlayStyle={{ background: 'linear-gradient(135deg, #ecfdf5 0%, #dcfce7 52%, #bbf7d0 100%)' }}
@@ -613,7 +615,7 @@ export function Dashboard({
       <section className="mb-6">
         <div className="dashboard-section-title flex items-center gap-2 mb-4">
           <Activity className="w-6 h-6 text-[#FF0000]" />
-          <h2 className="text-2xl font-bold text-gray-900">Inventory Operations</h2>
+          <h2 className="text-2xl font-bold text-gray-900">Daily Operations</h2>
         </div>
         <div className="dashboard-module-grid grid grid-cols-2 md:grid-cols-2 gap-4">
           {canUseInventoryMovement && (
@@ -648,12 +650,22 @@ export function Dashboard({
           )}
           {canUseReports && (
             <ModuleCard
-              icon={<AlertTriangle className="w-7 h-7" />}
-              title="Review Reorder Items"
-              description="Open the supplier-based reorder report for purchasing review."
-              onClick={() => openTargetReport('supplier-reorder')}
+              icon={<FileText className="w-7 h-7" />}
+              title="Reports"
+              description="Review sales, purchases, stock movements, and inventory status."
+              onClick={() => openTargetReport('summary')}
               gradient="from-red-600 to-red-700"
-              badge={`${reorderAttentionCount} ${reorderAttentionCount === 1 ? 'Item' : 'Items'}`}
+              badge="Reports"
+            />
+          )}
+          {canUsePurchases && (
+            <ModuleCard
+              icon={<Truck className="w-7 h-7" />}
+              title="Purchase Entry"
+              description="Record supplier deliveries and add received stock."
+              onClick={() => onNavigate('purchases')}
+              gradient="from-green-600 to-green-700"
+              badge={purchasesToday.length > 0 ? `${purchasesToday.length} Today` : 'Supplier'}
             />
           )}
           {canUseReports && (
@@ -717,6 +729,29 @@ export function Dashboard({
               </div>
             </CardContent>
           </Card>
+          {canUsePurchases && (
+            <Card className="dashboard-sales-card overflow-hidden border-2 border-green-200 bg-white shadow-md">
+              <CardHeader className="rounded-t-xl bg-green-50 pb-3" data-card-header>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Truck className="w-5 h-5 text-green-700" />
+                  Today's Purchases
+                </CardTitle>
+                <CardDescription>Supplier deliveries recorded for this branch</CardDescription>
+              </CardHeader>
+              <CardContent className="bg-white pt-2 pb-4" data-card-content>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="rounded-lg border border-green-100 bg-green-50 px-3 py-2.5">
+                    <p className="text-xs font-semibold uppercase text-green-700">Entries</p>
+                    <p className="mt-1 text-lg font-bold text-slate-900">{purchasesToday.length}</p>
+                  </div>
+                  <div className="rounded-lg border border-green-100 bg-green-50 px-3 py-2.5">
+                    <p className="text-xs font-semibold uppercase text-green-700">Purchase Amount</p>
+                    <p className="mt-1 break-words text-lg font-bold text-slate-900">{formatCurrency(purchasesTodayAmount)}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
           {stockAlertPanel}
           {adminPanel}
         </div>

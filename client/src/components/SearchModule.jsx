@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Filter, Package, Search } from "lucide-react";
+import { ArrowRight, Box, BriefcaseBusiness, CalendarDays, ExternalLink, Filter, Package, Search, UserRound } from "lucide-react";
 import { linearSearchAll, sortByNameAsc, sortByNameDesc } from "../utils/algorithms";
 import { formatDateTime } from "../utils/format";
 import { getStockStatusBadgeClass } from "../utils/statusStyles";
@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { useData } from "./DataContext";
 import { PageHeader } from "./PageHeader";
 
-export function SearchModule() {
+export function SearchModule({ onNavigate }) {
   const { inventory } = useData();
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -73,6 +73,17 @@ export function SearchModule() {
   }, [searchQuery, categoryFilter, statusFilter, inventory, sortBy, sortOrder]);
 
   const hasActiveFilters = searchQuery !== "" || categoryFilter !== "all" || statusFilter !== "all";
+  const openInventoryRecord = product => {
+    if (!product?.id) return;
+    const focusId = String(product.id);
+    localStorage.setItem("inventoryFocusItemId", focusId);
+    onNavigate?.("inventory");
+    window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("inventory-focus-item", {
+        detail: { id: focusId }
+      }));
+    }, 80);
+  };
 
   return (
     <div className="search-products-page min-h-screen bg-gray-50 p-4 md:p-8">
@@ -148,46 +159,205 @@ export function SearchModule() {
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
           gap: 1rem;
+          align-items: stretch;
+          justify-items: stretch;
         }
 
         .search-result-card {
+          position: relative;
+          display: flex;
+          flex-direction: column;
+          width: 100%;
+          max-width: none;
           min-width: 0;
+          height: 100%;
           border-color: #dbe3ee;
-          transition: transform 160ms ease, box-shadow 160ms ease;
+          border-radius: 1rem;
+          cursor: pointer;
+          overflow: hidden;
+          transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background-color 160ms ease;
         }
 
-        .search-result-card:hover {
+        .search-result-card:hover,
+        .search-result-card:focus-visible {
           transform: translateY(-2px);
           box-shadow: 0 18px 32px rgba(15, 23, 42, 0.1);
+          border-color: #facc15;
+          outline: none;
+        }
+
+        .search-result-card:active {
+          transform: translateY(0);
+          box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
         }
 
         .search-result-header {
           display: flex;
-          align-items: flex-start;
+          align-items: center;
           justify-content: space-between;
           gap: 0.75rem;
-          margin-bottom: 0.75rem;
+          margin-bottom: 0.85rem;
+        }
+
+        .search-result-card [data-slot="card-header"] {
+          flex: 0 0 auto;
+        }
+
+        .search-result-card [data-slot="card-content"] {
+          display: flex;
+          flex: 1 1 auto;
+          flex-direction: column;
         }
 
         .search-result-name {
-          overflow-wrap: anywhere;
+          display: -webkit-box;
+          min-height: 3.35rem;
+          overflow: hidden;
+          overflow-wrap: break-word;
+          word-break: normal;
+          color: #0f172a;
+          font-size: clamp(1.05rem, 1.35vw, 1.35rem);
+          font-weight: 750;
+          letter-spacing: 0;
           line-height: 1.25;
+          -webkit-box-orient: vertical;
+          -webkit-line-clamp: 3;
         }
 
-        .search-result-detail {
-          display: flex;
+        .search-result-action {
+          display: inline-flex;
           align-items: center;
           justify-content: space-between;
           gap: 0.85rem;
+          width: 100%;
+          min-height: 2.5rem;
+          border: 1px solid #bfdbfe;
+          border-radius: 0.75rem;
+          background: #eff6ff;
+          color: #1d4ed8;
+          padding: 0 0.85rem;
+          font-size: 0.9rem;
+          font-weight: 700;
+          line-height: 1.2;
+          margin-top: auto;
+          transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+        }
+
+        .search-result-action svg {
+          width: 1rem;
+          height: 1rem;
+          flex-shrink: 0;
+          transition: transform 160ms ease;
+        }
+
+        .search-result-card:hover .search-result-action,
+        .search-result-card:focus-visible .search-result-action {
+          border-color: #2563eb;
+          background: #dbeafe;
+          color: #1e3a8a;
+        }
+
+        .search-result-card:hover .search-result-action svg,
+        .search-result-card:focus-visible .search-result-action svg {
+          transform: translateX(2px);
+        }
+
+        .search-result-code-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.5rem;
+          max-width: 100%;
+          border: 1px solid #dbe3ee;
+          border-radius: 0.7rem;
+          background: #f8fafc;
+          padding: 0.4rem 0.65rem;
+          color: #0f172a;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+          font-size: 0.82rem;
+          font-weight: 800;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .search-result-code-bars {
+          color: #475569;
+          font-size: 1rem;
+          line-height: 1;
+          letter-spacing: -0.08em;
+        }
+
+        .search-result-divider {
+          height: 1px;
+          width: 100%;
+          background: #e2e8f0;
+          margin: 1.1rem 0;
+        }
+
+        .search-result-detail-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0;
+          border-top: 1px solid #e2e8f0;
+          border-bottom: 1px solid #e2e8f0;
+          margin-bottom: 0.8rem;
+          min-height: 8.55rem;
+        }
+
+        .search-result-detail {
+          display: grid;
+          grid-template-columns: 1.75rem minmax(0, 1fr);
+          gap: 0.55rem;
+          align-items: center;
           min-width: 0;
           color: #0f172a;
-          font-size: 0.9rem;
+          padding: 0.65rem 0.6rem;
+          font-size: 0.85rem;
+        }
+
+        .search-result-detail:nth-child(odd) {
+          border-right: 1px solid #e2e8f0;
+        }
+
+        .search-result-detail:nth-child(n + 3) {
+          border-top: 1px solid #e2e8f0;
+        }
+
+        .search-result-detail-icon {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #475569;
+        }
+
+        .search-result-detail-icon svg {
+          width: 1.1rem;
+          height: 1.1rem;
+          stroke-width: 2;
+        }
+
+        .search-result-detail-label {
+          color: #64748b;
+          display: block;
+          font-size: 0.76rem;
+          font-weight: 600;
+          line-height: 1.2;
+          white-space: nowrap;
+        }
+
+        .search-result-detail-value {
+          display: block;
+          margin-top: 0.12rem;
+          color: #0f172a;
+          font-size: 0.88rem;
+          font-weight: 700;
+          line-height: 1.25;
+          overflow-wrap: break-word;
+          word-break: normal;
         }
 
         .search-result-detail span:last-child {
-          min-width: 0;
-          text-align: right;
-          overflow-wrap: anywhere;
+          text-align: left;
         }
 
         @media (max-width: 980px) {
@@ -249,9 +419,12 @@ export function SearchModule() {
           }
 
           .search-controls-card [data-slot="card-content"],
-          .search-results-card [data-slot="card-content"],
           .search-empty-card [data-slot="card-content"] {
             padding: 1.25rem;
+          }
+
+          .search-results-card [data-slot="card-content"] {
+            padding: 1rem;
           }
 
           .search-controls-grid {
@@ -283,21 +456,117 @@ export function SearchModule() {
 
           .search-results-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 0.875rem;
+            justify-items: stretch;
+            gap: 0.7rem;
+          }
+
+          .search-result-card {
+            width: 100%;
+            max-width: none;
+            border-radius: 0.9rem;
           }
 
           .search-result-card [data-slot="card-header"] {
-            padding: 1rem 1rem 0.6rem;
+            padding: 0.75rem 0.75rem 0.45rem;
           }
 
           .search-result-card [data-slot="card-content"] {
-            padding: 0 1rem 1rem;
+            padding: 0 0.75rem 0.75rem;
           }
 
-          .search-result-detail {
-            border-radius: 0.75rem;
+          .search-result-header {
+            align-items: flex-start;
+            gap: 0.45rem;
+            margin-bottom: 0.6rem;
+          }
+
+          .search-result-name {
+            display: -webkit-box;
+            min-height: 2.7rem;
+            overflow: hidden;
+            font-size: 0.9rem;
+            line-height: 1.22;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 3;
+          }
+
+          .search-result-status-badge {
+            flex-shrink: 0;
+            padding: 0.18rem 0.45rem;
+            font-size: 0.68rem;
+            line-height: 1.15;
+            white-space: nowrap;
+          }
+
+          .search-result-code-badge {
+            min-width: 0;
+            max-width: 100%;
+            gap: 0.35rem;
+            padding: 0.32rem 0.46rem;
+            border-radius: 0.6rem;
+            font-size: 0.68rem;
+          }
+
+          .search-result-code-bars {
+            display: none;
+          }
+
+          .search-result-detail-grid {
+            grid-template-columns: 1fr;
+            gap: 0.35rem;
+            border-top: 0;
+            border-bottom: 0;
+            margin: 0.6rem 0 0.65rem;
+            min-height: 5rem;
+          }
+
+          .search-result-detail,
+          .search-result-detail:nth-child(odd),
+          .search-result-detail:nth-child(n + 3) {
+            grid-template-columns: 1.15rem minmax(0, 1fr);
+            gap: 0.35rem;
+            border: 0;
+            border-radius: 0.65rem;
             background: #f8fafc;
-            padding: 0.7rem 0.75rem;
+            padding: 0.45rem 0.5rem;
+          }
+
+          .search-result-detail-icon svg {
+            width: 0.92rem;
+            height: 0.92rem;
+          }
+
+          .search-result-detail-label {
+            font-size: 0.66rem;
+            line-height: 1.05;
+          }
+
+          .search-result-detail-value {
+            display: -webkit-box;
+            margin-top: 0.04rem;
+            font-size: 0.78rem;
+            line-height: 1.12;
+            overflow: hidden;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+          }
+
+          .search-result-action {
+            min-height: 2.2rem;
+            border-radius: 0.65rem;
+            padding: 0 0.55rem;
+            font-size: 0.76rem;
+            gap: 0.45rem;
+          }
+
+          .search-result-action .inline-flex {
+            min-width: 0;
+            gap: 0.35rem;
+          }
+
+          .search-result-action svg {
+            width: 0.9rem;
+            height: 0.9rem;
           }
 
           .search-empty-state {
@@ -328,8 +597,7 @@ export function SearchModule() {
             font-size: 1.65rem;
           }
 
-          .search-controls-grid,
-          .search-results-grid {
+          .search-controls-grid {
             grid-template-columns: 1fr;
           }
 
@@ -338,21 +606,81 @@ export function SearchModule() {
           }
 
           .search-result-header {
-            flex-direction: column;
-          }
-
-          .search-result-header > .inline-flex {
-            align-self: flex-start;
-          }
-
-          .search-result-detail {
             align-items: flex-start;
-            flex-direction: column;
-            gap: 0.2rem;
+            flex-direction: row;
+            gap: 0.4rem;
           }
 
-          .search-result-detail span:last-child {
-            text-align: left;
+          .search-result-code-badge {
+            max-width: calc(100% - 76px);
+            padding: 0.28rem 0.38rem;
+            font-size: 0.62rem;
+          }
+
+          .search-result-detail-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .search-result-detail,
+          .search-result-detail:nth-child(odd),
+          .search-result-detail:nth-child(n + 3) {
+            border: 0;
+            grid-template-columns: 1rem minmax(0, 1fr);
+            padding: 0.4rem 0.45rem;
+          }
+
+          .search-result-name {
+            min-height: 2.5rem;
+            font-size: 0.84rem;
+          }
+
+          .search-result-detail-label {
+            font-size: 0.62rem;
+          }
+
+          .search-result-detail-value {
+            font-size: 0.72rem;
+          }
+
+          .search-result-action {
+            min-height: 2.1rem;
+            font-size: 0.7rem;
+          }
+        }
+
+        @media (max-width: 360px) {
+          .search-products-page {
+            padding: 0.75rem;
+          }
+
+          .search-results-card [data-slot="card-content"] {
+            padding: 0.75rem;
+          }
+
+          .search-results-grid {
+            gap: 0.55rem;
+          }
+
+          .search-result-card [data-slot="card-header"] {
+            padding: 0.65rem 0.6rem 0.4rem;
+          }
+
+          .search-result-card [data-slot="card-content"] {
+            padding: 0 0.6rem 0.65rem;
+          }
+
+          .search-result-status-badge {
+            padding: 0.16rem 0.35rem;
+            font-size: 0.6rem;
+          }
+
+          .search-result-code-badge {
+            max-width: calc(100% - 64px);
+            font-size: 0.56rem;
+          }
+
+          .search-result-name {
+            font-size: 0.78rem;
           }
         }
       `}</style>
@@ -450,12 +778,26 @@ export function SearchModule() {
               ) : (
                 <div className="search-results-grid">
                   {searchResults.map(product => (
-                    <Card key={product.id} className="search-result-card hover:shadow-lg">
+                    <Card
+                      key={product.id}
+                      className="search-result-card hover:shadow-lg"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`View ${product.name} in Inventory`}
+                      onClick={() => openInventoryRecord(product)}
+                      onKeyDown={event => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          openInventoryRecord(product);
+                        }
+                      }}
+                    >
                       <CardHeader>
                         <div className="search-result-header">
-                          <Badge variant="outline" className="font-mono text-xs">
+                          <span className="search-result-code-badge">
+                            <span className="search-result-code-bars" aria-hidden="true">||||</span>
                             {product.itemCode || product.id}
-                          </Badge>
+                          </span>
                           <Badge
                             variant={
                               product.status === "In Stock"
@@ -464,33 +806,48 @@ export function SearchModule() {
                                   ? "secondary"
                                   : "destructive"
                             }
-                            className={getStockStatusBadgeClass(product.status)}
+                            className={`${getStockStatusBadgeClass(product.status)} search-result-status-badge`}
                           >
                             {product.status}
                           </Badge>
                         </div>
-                        <CardTitle className="search-result-name text-lg">{product.name}</CardTitle>
-                        <CardDescription>Item Code: {product.itemCode || product.id}</CardDescription>
+                        <CardTitle className="search-result-name">{product.name}</CardTitle>
                       </CardHeader>
                       <CardContent>
-                        <div className="space-y-2">
-                          <div className="search-result-detail">
-                            <span className="text-slate-600">Category</span>
-                            <span>{product.category}</span>
+                        <div className="search-result-detail-grid">
+                          <div className="search-result-detail search-result-detail-category">
+                            <span className="search-result-detail-icon" aria-hidden="true"><BriefcaseBusiness /></span>
+                            <span>
+                              <span className="search-result-detail-label">Category</span>
+                              <span className="search-result-detail-value">{product.category}</span>
+                            </span>
                           </div>
-                          <div className="search-result-detail">
-                            <span className="text-slate-600">Supplier</span>
-                            <span>{product.supplierName || "Unassigned"}</span>
+                          <div className="search-result-detail search-result-detail-quantity">
+                            <span className="search-result-detail-icon" aria-hidden="true"><Box /></span>
+                            <span>
+                              <span className="search-result-detail-label">Quantity</span>
+                              <span className="search-result-detail-value">{product.quantity}</span>
+                            </span>
                           </div>
-                          <div className="search-result-detail">
-                            <span className="text-slate-600">Quantity</span>
-                            <span>{product.quantity}</span>
+                          <div className="search-result-detail search-result-detail-supplier">
+                            <span className="search-result-detail-icon" aria-hidden="true"><UserRound /></span>
+                            <span>
+                              <span className="search-result-detail-label">Supplier</span>
+                              <span className="search-result-detail-value">{product.supplierName || "Unassigned"}</span>
+                            </span>
                           </div>
-                          <div className="search-result-detail">
-                            <span className="text-slate-600">Last Updated</span>
-                            <span>{formatDateTime(product.lastUpdated)}</span>
+                          <div className="search-result-detail search-result-detail-updated">
+                            <span className="search-result-detail-icon" aria-hidden="true"><CalendarDays /></span>
+                            <span>
+                              <span className="search-result-detail-label">Last Updated</span>
+                              <span className="search-result-detail-value">{formatDateTime(product.lastUpdated)}</span>
+                            </span>
                           </div>
                         </div>
+                        <span className="search-result-action">
+                          <span className="inline-flex items-center gap-2"><ExternalLink aria-hidden="true" /> View in Inventory</span>
+                          <ArrowRight aria-hidden="true" />
+                        </span>
                       </CardContent>
                     </Card>
                   ))}

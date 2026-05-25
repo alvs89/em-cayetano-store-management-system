@@ -40,7 +40,7 @@ const faqs = [
   {
     id: 'add-inventory-item',
     question: 'How do I add a new inventory item?',
-    answer: 'Go to the Inventory page and select Add New Item. Enter the item name, choose the category, supplier if known, initial stock quantity, manual low-stock threshold, and optional reorder planning details. Use "Other" only if the item does not fit any available category.',
+    answer: 'Go to the Inventory page and select Add New Item. Enter the item name, choose the category, supplier if known, initial stock quantity, selling price, and manual low-stock threshold. Use "Other" only if the item does not fit any available category.',
   },
   {
     id: 'stock-records',
@@ -71,7 +71,7 @@ const faqs = [
   {
     id: 'low-stock',
     question: 'Why is an item marked as low stock?',
-    answer: 'An item is marked as low stock when its quantity reaches the system recommended reorder point, or the manual low-stock threshold if no planning value is set. Review low-stock alerts and supplier reorder reports regularly.',
+    answer: 'An item is marked as low stock when its quantity reaches the manual low-stock threshold set for that item. Review low-stock alerts regularly.',
   },
   {
     id: 'duplicate-archive',
@@ -92,7 +92,6 @@ const guides = [
       'Select the category that best describes the item.',
       'Enter the initial stock quantity.',
       'Set the manual low-stock threshold.',
-      'Enter supplier lead time, safety stock, and average daily sales if available.',
       'Review the details.',
       'Click Add Item.',
     ],
@@ -167,7 +166,7 @@ const guidelines = [
   { id: 'check-records', text: 'Check existing active and archived records before adding new items.' },
   { id: 'other-category', text: 'Use "Other" only when no category fits.' },
   { id: 'credentials', text: 'Do not share account credentials.' },
-  { id: 'low-stock-alerts', text: 'Review low-stock alerts and supplier reorder reports regularly.' },
+  { id: 'low-stock-alerts', text: 'Review low-stock alerts regularly.' },
   { id: 'transactions', text: 'Record stock-in and stock-out quantities with the correct movement reason.' },
   { id: 'backups', text: 'Create backups before performing restore actions.', adminRelated: true },
   { id: 'admin-features', text: 'Admin-only features should be used only by authorized users.', adminRelated: true },
@@ -201,8 +200,8 @@ const troubleshooting = [
   {
     id: 'low-stock-missing',
     title: 'Low-stock alert not showing',
-    cause: 'The reorder point or manual low-stock threshold may not be set correctly, or the item quantity is still above the threshold.',
-    solution: 'Check the item current quantity, manual low-stock threshold, supplier lead time, safety stock, and average daily sales from the Inventory page.',
+    cause: 'The manual low-stock threshold may not be set correctly, or the item quantity is still above the threshold.',
+    solution: 'Check the item current quantity and manual low-stock threshold from the Inventory page.',
   },
   {
     id: 'admin-access',

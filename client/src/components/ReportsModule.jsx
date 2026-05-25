@@ -16,6 +16,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { PageHeader } from './PageHeader';
 import { formatDateTime } from '../utils/format';
+import { canAccessReportType, getDefaultReportTypeForRole, getReportTypeOptionsForRole } from '../utils/roles';
 export function ReportsModule({
   user
 }) {
@@ -23,6 +24,7 @@ export function ReportsModule({
     inventory,
     stockMovements,
     salesTransactions,
+    purchaseTransactions,
     auditAction
   } = useData();
   const [reportType, setReportType] = useState('summary');
@@ -35,6 +37,8 @@ export function ReportsModule({
   const [isAdjustingFinalOrders, setIsAdjustingFinalOrders] = useState(false);
   const [showResetFinalOrdersDialog, setShowResetFinalOrdersDialog] = useState(false);
   const reportDateInputRef = useRef(null);
+  const allowedReportTypes = React.useMemo(() => getReportTypeOptionsForRole(user?.role), [user?.role]);
+  const defaultReportType = React.useMemo(() => getDefaultReportTypeForRole(user?.role), [user?.role]);
 
   // Handle period change with refresh animation
   useEffect(() => {
@@ -46,9 +50,23 @@ export function ReportsModule({
   }, [reportPeriod, selectedReportDate]);
 
   useEffect(() => {
+    if (!canAccessReportType(user?.role, reportType)) {
+      setReportType(defaultReportType);
+      setSelectedCategory('all');
+    }
+  }, [defaultReportType, reportType, user?.role]);
+
+  useEffect(() => {
     const applyTargetReport = ({ reportType: nextReportType, category = 'all' } = {}) => {
       if (!nextReportType) return;
-      setReportType(nextReportType);
+      const requestedReportType = nextReportType === 'supplier-reorder' ? 'low-stock' : nextReportType;
+      const safeReportType = canAccessReportType(user?.role, requestedReportType)
+        ? requestedReportType
+        : defaultReportType;
+      if (safeReportType !== requestedReportType) {
+        toast.info('That report is not available for your current role.');
+      }
+      setReportType(safeReportType);
       setSelectedCategory(category || 'all');
     };
 
@@ -68,7 +86,7 @@ export function ReportsModule({
 
     window.addEventListener('reports-target-view', handleTargetReport);
     return () => window.removeEventListener('reports-target-view', handleTargetReport);
-  }, []);
+  }, [defaultReportType, user?.role]);
 
   const getSelectedDate = () => {
     const [year, month, day] = selectedReportDate.split('-').map(Number);
@@ -167,6 +185,12 @@ export function ReportsModule({
   const reportInventory = inventory.filter(isItemInReportPeriod);
   const reportMovements = (stockMovements || []).filter(isMovementInReportPeriod);
   const reportSalesTransactions = (salesTransactions || []).filter(isSaleInReportPeriod);
+  const reportPurchaseTransactions = (purchaseTransactions || []).filter(purchase => {
+    const purchaseDate = new Date(purchase.createdAt);
+    if (Number.isNaN(purchaseDate.getTime())) return false;
+    const { start, end } = getReportPeriodBounds();
+    return purchaseDate >= start && purchaseDate <= end;
+  });
 
   const normalizeMovementName = value => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
@@ -313,6 +337,21 @@ export function ReportsModule({
       nonCashTransactions: 0
     });
   };
+
+  const getFilteredPurchaseTransactions = () =>
+    reportPurchaseTransactions.filter(purchase => purchase.status !== 'cancelled');
+
+  const getPurchaseSummary = () =>
+    getFilteredPurchaseTransactions().reduce((summary, purchase) => {
+      summary.entryCount += 1;
+      summary.totalAmount += Number(purchase.subtotalAmount || 0);
+      summary.totalQuantity += Number(purchase.totalQuantity || 0);
+      return summary;
+    }, {
+      entryCount: 0,
+      totalAmount: 0,
+      totalQuantity: 0
+    });
 
   const getSalesDemandForItem = item => reportSalesTransactions
     .filter(sale => sale.status !== 'cancelled')
@@ -486,6 +525,10 @@ export function ReportsModule({
 
   // Generate PDF Report
   const generatePDF = () => {
+    if (!canAccessReportType(user?.role, reportType)) {
+      toast.error('This report is not available for your current role.');
+      return;
+    }
     const doc = new jsPDF();
     const currentDate = new Date().toLocaleDateString();
     const currentTime = new Date().toLocaleTimeString();
@@ -788,6 +831,39 @@ export function ReportsModule({
           currentY = doc.lastAutoTable.finalY + 12;
         });
       }
+    } else if (reportType === 'purchases') {
+      const purchases = getFilteredPurchaseTransactions();
+      const purchaseSummary = getPurchaseSummary();
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text('PURCHASE REPORT', 20, startY);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Purchase Entries: ${purchaseSummary.entryCount}`, 20, startY + 8);
+      doc.text(`Quantity Received: ${purchaseSummary.totalQuantity}`, 20, startY + 14);
+      doc.text(`Total Purchases: ${formatCurrency(purchaseSummary.totalAmount)}`, 20, startY + 20);
+
+      if (purchases.length === 0) {
+        doc.text('No purchase entries found for this report period.', 20, startY + 34);
+      } else {
+        autoTable(doc, {
+          startY: startY + 32,
+          head: [['Purchase No.', 'Date', 'Supplier', 'Doc', 'Terms', 'Qty', 'Total']],
+          body: purchases.map(purchase => [
+            purchase.purchaseNumber,
+            formatDateTime(purchase.createdAt),
+            purchase.supplierName,
+            `${purchase.documentType}${purchase.documentNumber ? ` ${purchase.documentNumber}` : ''}`,
+            purchase.paymentTerms,
+            String(purchase.totalQuantity),
+            formatCurrency(purchase.subtotalAmount)
+          ]),
+          theme: 'striped',
+          headStyles: { fillColor: [22, 101, 52], textColor: 255, fontStyle: 'bold' },
+          styles: { fontSize: 8, cellPadding: 2 },
+          alternateRowStyles: { fillColor: [248, 250, 252] }
+        });
+      }
     } else if (reportType === 'movements' || reportType === 'sales-movements') {
       const isSalesMovementReport = reportType === 'sales-movements';
       const movements = isSalesMovementReport ? getSalesMovementRows() : getFilteredMovements({ salesOnly: false });
@@ -881,6 +957,7 @@ export function ReportsModule({
   const getMovementReasonLabel = reason => {
     const labels = {
       delivery_received: 'Delivery Received',
+      purchase_received: 'Purchase Received',
       returned_item: 'Returned Item',
       beginning_balance: 'Beginning Balance',
       sales: 'Sales',
@@ -1774,17 +1851,17 @@ export function ReportsModule({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="summary">Summary</SelectItem>
-                    <SelectItem value="detailed">Detailed Inventory</SelectItem>
-                    <SelectItem value="low-stock">Low Stock Alert</SelectItem>
-                    <SelectItem value="category">Category Analysis</SelectItem>
-                    <SelectItem value="supplier-reorder">Supplier Reorder</SelectItem>
-                    <SelectItem value="movements">Stock Movement History</SelectItem>
-                    <SelectItem value="sales-movements">Sales-Based Stock Movement</SelectItem>
+                    {allowedReportTypes
+                      .filter(option => option.value !== 'supplier-reorder')
+                      .map(option => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>
-              {(reportType === 'detailed' || reportType === 'movements' || reportType === 'sales-movements' || reportType === 'supplier-reorder') && (
+              {(reportType === 'detailed' || reportType === 'movements' || reportType === 'sales-movements') && (
                 <div className="flex-1">
                   <label className="text-sm font-medium mb-2 block text-gray-700">Filter by Category</label>
                   <Select value={selectedCategory} onValueChange={setSelectedCategory}>
@@ -1811,11 +1888,11 @@ export function ReportsModule({
           { label: reportType === 'sales-movements' ? 'Quantity Sold' : 'Stock In Units', value: reportType === 'sales-movements' ? getSalesMovementUnits() : stockInUnits, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
           { label: reportType === 'sales-movements' ? 'Amount Due' : 'Stock Out Units', value: reportType === 'sales-movements' ? formatCurrency(getSalesFinancialSummary().amountDue) : stockOutUnits, icon: reportType === 'sales-movements' ? <Wallet className="w-8 h-8 text-amber-500" /> : <AlertTriangle className="w-8 h-8 text-red-500" />, color: reportType === 'sales-movements' ? 'border-l-amber-500' : stockOutUnits > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
           { label: reportType === 'sales-movements' ? 'Discounts' : 'Categories', value: reportType === 'sales-movements' ? formatCurrency(getSalesFinancialSummary().discount) : new Set(getFilteredMovements({ salesOnly: false }).map(movement => movement.category)).size, icon: reportType === 'sales-movements' ? <Tag className="w-8 h-8 text-violet-500" /> : <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
-        ] : reportType === 'supplier-reorder' ? [
-          { label: 'Supplier Groups', value: getSupplierReorderGroups().length, icon: <Package className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
-          { label: 'Reorder Items', value: getSupplierReorderGroups().reduce((sum, group) => sum + group.itemCount, 0), icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: 'border-l-red-500' },
-          { label: 'Out of Stock', value: getSupplierReorderGroups().reduce((sum, group) => sum + group.outOfStock, 0), icon: <AlertTriangle className="w-8 h-8 text-orange-500" />, color: 'border-l-orange-500' },
-          { label: 'Suggested Units', value: getSupplierReorderGroups().reduce((sum, group) => sum + group.suggestedUnits, 0), icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
+        ] : reportType === 'purchases' ? [
+          { label: 'Purchase Entries', value: getPurchaseSummary().entryCount, icon: <FileText className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
+          { label: 'Quantity Received', value: getPurchaseSummary().totalQuantity, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
+          { label: 'Total Purchases', value: formatCurrency(getPurchaseSummary().totalAmount), icon: <Wallet className="w-8 h-8 text-amber-500" />, color: 'border-l-amber-500' },
+          { label: 'Suppliers', value: new Set(getFilteredPurchaseTransactions().map(purchase => purchase.supplierName)).size, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
         ] : [
           { label: 'Total Items', value: totalItems, icon: <Package className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
           { label: 'Total Units', value: totalQuantity, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
@@ -2044,6 +2121,70 @@ export function ReportsModule({
                 </div>
                 <div className="reports-mobile-record-list">
                   {getLowStockItems().map(item => renderInventoryMobileCard(item))}
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {reportType === 'purchases' && (
+        <Card className={`reports-data-card transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
+          <CardHeader>
+            <CardTitle>Purchase Report</CardTitle>
+            <CardDescription>{getFilteredPurchaseTransactions().length} purchase entries for the selected period</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {getFilteredPurchaseTransactions().length === 0 ? (
+              renderReportsEmptyState({
+                icon: FileText,
+                title: 'No purchases found',
+                message: `No purchase entries match the selected ${reportPeriod} period.`
+              })
+            ) : (
+              <>
+                <div className="reports-desktop-table">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Purchase No.</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Supplier</TableHead>
+                        <TableHead>Document</TableHead>
+                        <TableHead>Terms</TableHead>
+                        <TableHead>Quantity</TableHead>
+                        <TableHead className="text-right">Total</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {getFilteredPurchaseTransactions().map(purchase => (
+                        <TableRow key={purchase.id}>
+                          <TableCell className="font-semibold">{purchase.purchaseNumber}</TableCell>
+                          <TableCell>{formatDateTime(purchase.createdAt)}</TableCell>
+                          <TableCell>{purchase.supplierName}</TableCell>
+                          <TableCell>{purchase.documentType}{purchase.documentNumber ? ` ${purchase.documentNumber}` : ''}</TableCell>
+                          <TableCell>{purchase.paymentTerms}</TableCell>
+                          <TableCell>{purchase.totalQuantity}</TableCell>
+                          <TableCell className="text-right font-semibold">{formatCurrency(purchase.subtotalAmount)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="reports-mobile-record-list">
+                  {getFilteredPurchaseTransactions().map(purchase => (
+                    <article key={purchase.id} className="reports-mobile-record-card">
+                      <div className="reports-mobile-record-top">
+                        <h4>{purchase.purchaseNumber}</h4>
+                        <Badge variant="outline">{purchase.documentType}</Badge>
+                      </div>
+                      <div className="reports-mobile-record-stats">
+                        <div><span>Supplier</span><strong>{purchase.supplierName}</strong></div>
+                        <div><span>Quantity</span><strong>{purchase.totalQuantity}</strong></div>
+                        <div><span>Total</span><strong>{formatCurrency(purchase.subtotalAmount)}</strong></div>
+                      </div>
+                    </article>
+                  ))}
                 </div>
               </>
             )}
