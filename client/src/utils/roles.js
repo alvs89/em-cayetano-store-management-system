@@ -27,11 +27,12 @@ export const REPORT_TYPE_OPTIONS = [
   { value: "summary", label: "Summary", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
   { value: "detailed", label: "Detailed Inventory", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
   { value: "low-stock", label: "Low Stock Alert", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
+  { value: "supplier-reorder", label: "Supplier Reorder Report", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
+  { value: "untracked-sales", label: "Untracked Sales Items", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
   { value: "category", label: "Category Analysis", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
   { value: "purchases", label: "Purchases", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
   { value: "movements", label: "Stock Movement History", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
   { value: "sales-movements", label: "Sales-Based Stock Movement", roles: [ROLE_VALUES.ADMIN] },
-  { value: "supplier-reorder", label: "Supplier Reorder Review", roles: [ROLE_VALUES.ADMIN] },
 ];
 
 export function normalizeRole(role) {

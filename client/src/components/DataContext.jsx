@@ -8,6 +8,13 @@ const DataContext = createContext(undefined);
 
 const formatUnitQuantity = quantity => `${quantity} ${Number(quantity) === 1 ? "unit" : "units"}`;
 
+const computeStockStatusFromLevels = (quantity, reorderLevel) => {
+  const stockLevel = Number(quantity || 0);
+  const threshold = Number(reorderLevel || 0);
+  if (stockLevel <= 0) return "Out of Stock";
+  return stockLevel <= threshold ? "Low Stock" : "In Stock";
+};
+
 const getStockAlertEventId = (prefix, item) => {
   const quantity = Number(item.quantity);
   const quantityKey = Number.isFinite(quantity) ? quantity : "unknown";
@@ -247,16 +254,7 @@ export function DataProvider({ children }) {
           costPrice: p.cost_price === null || p.cost_price === undefined ? '' : Number(p.cost_price),
           quantity: p.stock_level,
           reorderLevel: p.min_stock_level,
-          leadTimeDays: p.lead_time_days === null || p.lead_time_days === undefined ? null : Number(p.lead_time_days),
-          safetyStock: p.safety_stock === null || p.safety_stock === undefined ? null : Number(p.safety_stock),
-          averageDailySales: p.average_daily_sales === null || p.average_daily_sales === undefined ? null : Number(p.average_daily_sales),
-          averageDailySalesMode: p.average_daily_sales_mode || 'auto',
-          manualAverageDailySales: p.manual_average_daily_sales === null || p.manual_average_daily_sales === undefined ? null : Number(p.manual_average_daily_sales),
-          averageDailySalesOverrideReason: p.average_daily_sales_override_reason || '',
-          recommendedReorderPoint: p.recommended_reorder_point === null || p.recommended_reorder_point === undefined ? null : Number(p.recommended_reorder_point),
-          activeLowStockThreshold: Number(p.active_low_stock_threshold ?? p.min_stock_level ?? 0),
-          suggestedOrderQuantity: Number(p.suggested_order_quantity ?? 0),
-          status: p.status,
+          status: computeStockStatusFromLevels(p.stock_level, p.min_stock_level),
           branch: p.branch,
           // preserve full ISO timestamp so the UI can display accurate relative times
           lastUpdated: p.last_updated ? new Date(p.last_updated).toISOString() : '',
@@ -298,16 +296,7 @@ export function DataProvider({ children }) {
           costPrice: p.cost_price === null || p.cost_price === undefined ? '' : Number(p.cost_price),
           quantity: p.stock_level,
           reorderLevel: p.min_stock_level,
-          leadTimeDays: p.lead_time_days === null || p.lead_time_days === undefined ? null : Number(p.lead_time_days),
-          safetyStock: p.safety_stock === null || p.safety_stock === undefined ? null : Number(p.safety_stock),
-          averageDailySales: p.average_daily_sales === null || p.average_daily_sales === undefined ? null : Number(p.average_daily_sales),
-          averageDailySalesMode: p.average_daily_sales_mode || 'auto',
-          manualAverageDailySales: p.manual_average_daily_sales === null || p.manual_average_daily_sales === undefined ? null : Number(p.manual_average_daily_sales),
-          averageDailySalesOverrideReason: p.average_daily_sales_override_reason || '',
-          recommendedReorderPoint: p.recommended_reorder_point === null || p.recommended_reorder_point === undefined ? null : Number(p.recommended_reorder_point),
-          activeLowStockThreshold: Number(p.active_low_stock_threshold ?? p.min_stock_level ?? 0),
-          suggestedOrderQuantity: Number(p.suggested_order_quantity ?? 0),
-          status: p.status,
+          status: computeStockStatusFromLevels(p.stock_level, p.min_stock_level),
           branch: p.branch,
           // preserve full ISO timestamps for accuracy in alerts and history
           lastUpdated: p.last_updated ? new Date(p.last_updated).toISOString() : '',
@@ -390,6 +379,7 @@ export function DataProvider({ children }) {
     cancelReason: sale.cancel_reason || '',
     items: (sale.items || []).map((item) => ({
       id: item.sales_item_id?.toString() ?? '',
+      itemType: item.item_type || (item.is_inventory_item === false ? 'non_inventory' : 'inventory'),
       inventoryId: item.inventory_id?.toString() ?? '',
       productId: item.product_id?.toString() ?? '',
       isInventoryItem: item.is_inventory_item !== false,
@@ -399,8 +389,8 @@ export function DataProvider({ children }) {
       quantitySold: Number(item.quantity_sold || 0),
       unitPrice: Number(item.unit_price || 0),
       subtotal: Number(item.subtotal || 0),
-      previousQuantity: Number(item.previous_quantity || 0),
-      newQuantity: Number(item.new_quantity || 0),
+      previousQuantity: item.previous_quantity === null || item.previous_quantity === undefined ? null : Number(item.previous_quantity || 0),
+      newQuantity: item.new_quantity === null || item.new_quantity === undefined ? null : Number(item.new_quantity || 0),
       createdAt: item.created_at ? new Date(item.created_at).toISOString() : '',
     })),
   });
@@ -632,6 +622,9 @@ export function DataProvider({ children }) {
           action,
           target_id: target.targetId,
           target_name: target.targetName,
+          target_type: target.targetType,
+          reason: target.reason,
+          details: target.details,
         },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -689,12 +682,6 @@ export function DataProvider({ children }) {
         cost_price: item.costPrice,
         stock_level: item.quantity,
         min_stock_level: item.reorderLevel,
-        lead_time_days: item.leadTimeDays,
-        safety_stock: item.safetyStock,
-        average_daily_sales: item.averageDailySales,
-        average_daily_sales_mode: item.averageDailySalesMode,
-        manual_average_daily_sales: item.manualAverageDailySales,
-        average_daily_sales_override_reason: item.averageDailySalesOverrideReason,
         allow_similar_duplicate: Boolean(item.allowSimilarDuplicate),
       },
       { headers: token ? { Authorization: `Bearer ${token}` } : {} }
@@ -715,6 +702,7 @@ export function DataProvider({ children }) {
         it.id === id
           ? (() => {
               const nextQuantity = typeof updates.quantity === 'number' ? updates.quantity : it.quantity;
+              const nextReorderLevel = updates.reorderLevel ?? it.reorderLevel;
               const quantityChanged = nextQuantity !== it.quantity;
               return {
                 ...it,
@@ -725,13 +713,8 @@ export function DataProvider({ children }) {
                 wspCode: updates.wspCode ?? it.wspCode,
                 costPrice: updates.costPrice ?? it.costPrice,
                 quantity: nextQuantity,
-                reorderLevel: updates.reorderLevel ?? it.reorderLevel,
-                leadTimeDays: updates.leadTimeDays ?? it.leadTimeDays,
-                safetyStock: updates.safetyStock ?? it.safetyStock,
-                averageDailySales: updates.averageDailySales ?? it.averageDailySales,
-                averageDailySalesMode: updates.averageDailySalesMode ?? it.averageDailySalesMode,
-                manualAverageDailySales: updates.manualAverageDailySales ?? it.manualAverageDailySales,
-                averageDailySalesOverrideReason: updates.averageDailySalesOverrideReason ?? it.averageDailySalesOverrideReason,
+                reorderLevel: nextReorderLevel,
+                status: computeStockStatusFromLevels(nextQuantity, nextReorderLevel),
                 lastUpdated: quantityChanged ? new Date().toISOString() : it.lastUpdated,
               };
             })()
@@ -751,12 +734,6 @@ export function DataProvider({ children }) {
           cost_price: updates.costPrice,
           stock_level: updates.quantity,
           min_stock_level: updates.reorderLevel,
-          lead_time_days: updates.leadTimeDays,
-          safety_stock: updates.safetyStock,
-          average_daily_sales: updates.averageDailySales,
-          average_daily_sales_mode: updates.averageDailySalesMode,
-          manual_average_daily_sales: updates.manualAverageDailySales,
-          average_daily_sales_override_reason: updates.averageDailySalesOverrideReason,
           movement_action: updates.movementAction,
           movement_quantity: updates.movementQuantity,
           movement_reason: updates.movementReason,
@@ -824,6 +801,7 @@ export function DataProvider({ children }) {
           payment_confirmed: paymentConfirmed,
           items: items.map(item => ({
             inventory_id: item.inventoryId,
+            item_type: item.isManual ? 'non_inventory' : 'inventory',
             is_manual: Boolean(item.isManual),
             item_name: item.itemName,
             category: item.category,

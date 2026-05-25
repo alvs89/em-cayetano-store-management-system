@@ -259,11 +259,29 @@ export function PurchasesModule({ user }) {
   const selectedLines = lineDetails.filter(line => line.inventoryId && line.item);
   const totalQuantity = lineDetails.reduce((sum, line) => sum + (Number.isFinite(line.quantity) ? line.quantity : 0), 0);
   const subtotalAmount = lineDetails.reduce((sum, line) => sum + (Number.isFinite(line.subtotal) ? line.subtotal : 0), 0);
+  const isInventorySelectedInOtherLine = (inventoryId, currentIndex) =>
+    purchaseLines.some((line, lineIndex) =>
+      lineIndex !== currentIndex && String(line.inventoryId) === String(inventoryId)
+    );
 
   const updateLine = (index, key, value) => {
     setPurchaseLines(prev => prev.map((line, lineIndex) => (
       lineIndex === index ? { ...line, [key]: value } : line
     )));
+  };
+
+  const updateLineInventoryItem = (index, inventoryId) => {
+    if (inventoryId && isInventorySelectedInOtherLine(inventoryId, index)) {
+      const duplicateItem = getInventoryById(inventoryId);
+      toast.warning('Item already selected', {
+        description: duplicateItem
+          ? `${duplicateItem.name} is already in the current purchase. Update the existing row quantity instead.`
+          : 'This item is already in the current purchase. Update the existing row quantity instead.'
+      });
+      return;
+    }
+
+    updateLine(index, 'inventoryId', inventoryId);
   };
 
   const updateLineQuantity = (index, rawValue) => {
@@ -343,6 +361,7 @@ export function PurchasesModule({ user }) {
     setPurchaseLines(prev => {
       const existingIndex = prev.findIndex(line => String(line.inventoryId) === String(item.id));
       if (existingIndex >= 0) {
+        setHighlightedLineIndex(existingIndex);
         return prev.map((line, lineIndex) => lineIndex === existingIndex
           ? { ...line, quantity: String(Number(line.quantity || 0) + 1) }
           : line);
@@ -350,10 +369,13 @@ export function PurchasesModule({ user }) {
 
       const emptyIndex = prev.findIndex(line => !line.inventoryId && !line.quantity && !line.unitCost);
       if (emptyIndex >= 0) {
+        setHighlightedLineIndex(emptyIndex);
         return prev.map((line, lineIndex) => lineIndex === emptyIndex ? preparedLine : line);
       }
+      setHighlightedLineIndex(prev.length);
       return [...prev, preparedLine];
     });
+    toast.success(`${item.name} added to the current purchase.`);
   };
 
   const resetForm = () => {
@@ -699,13 +721,12 @@ export function PurchasesModule({ user }) {
           transition: background 140ms ease;
         }
 
-        .purchase-inventory-row:hover,
-        .purchase-inventory-row:focus-visible {
+        .purchase-inventory-row:hover {
           background: #f8fafc;
-          outline: none;
         }
 
         .purchase-add-btn {
+          appearance: none;
           display: inline-flex;
           height: 1.9rem;
           width: 1.9rem;
@@ -713,7 +734,30 @@ export function PurchasesModule({ user }) {
           justify-content: center;
           border: 1px solid #86efac;
           border-radius: 0.5rem;
+          background: #ffffff;
           color: #15803d;
+          transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+        }
+
+        .purchase-add-btn:hover,
+        .purchase-add-btn:focus-visible {
+          border-color: #22c55e;
+          background: #dcfce7;
+          color: #166534;
+          box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.14);
+          outline: none;
+        }
+
+        .purchase-add-btn:disabled {
+          cursor: not-allowed;
+          opacity: 0.55;
+        }
+
+        .purchase-inventory-row:hover .purchase-add-btn:not(:disabled) {
+          border-color: #22c55e;
+          background: #dcfce7;
+          color: #166534;
+          box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.14);
         }
 
         .purchase-pagination {
@@ -1532,7 +1576,7 @@ export function PurchasesModule({ user }) {
                   {paginatedInventory.length === 0 ? (
                     <p className="px-4 py-8 text-center text-sm text-slate-600">No inventory items found.</p>
                   ) : paginatedInventory.map(item => (
-                    <button key={item.id} type="button" className="purchase-inventory-row" onClick={() => addInventoryItemToPurchase(item)} disabled={isSaving}>
+                    <div key={item.id} className="purchase-inventory-row">
                       <span className="min-w-0">
                         <span className="block truncate text-sm font-semibold text-slate-900">{item.name}</span>
                         <span className="block truncate text-xs text-slate-500">{item.itemCode || 'No item code'}</span>
@@ -1541,8 +1585,19 @@ export function PurchasesModule({ user }) {
                       <span className="purchase-inventory-stock text-center">
                         <Badge className="bg-green-50 text-green-700 hover:bg-green-50">{item.quantity}</Badge>
                       </span>
-                      <span className="flex justify-end"><span className="purchase-add-btn"><Plus className="h-4 w-4" /></span></span>
-                    </button>
+                      <span className="flex justify-end">
+                        <button
+                          type="button"
+                          className="purchase-add-btn"
+                          onClick={() => addInventoryItemToPurchase(item)}
+                          disabled={isSaving}
+                          aria-label={`Add ${item.name} to current purchase`}
+                          title={`Add ${item.name}`}
+                        >
+                          <Plus className="h-4 w-4" />
+                        </button>
+                      </span>
+                    </div>
                   ))}
                 </div>
                 <div className="purchase-pagination">
@@ -1641,14 +1696,19 @@ export function PurchasesModule({ user }) {
                                 }
                               }}
                               value={line.inventoryId}
-                              onChange={event => updateLine(index, 'inventoryId', event.target.value)}
+                              onChange={event => updateLineInventoryItem(index, event.target.value)}
                               disabled={isSaving}
                               className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
                             >
                               <option value="">Select item</option>
-                              {sortedInventory.map(item => (
-                                <option key={item.id} value={item.id}>{item.itemCode ? `${item.itemCode} - ` : ''}{item.name}</option>
-                              ))}
+                              {sortedInventory.map(item => {
+                                const isAlreadySelected = isInventorySelectedInOtherLine(item.id, index);
+                                return (
+                                  <option key={item.id} value={item.id} disabled={isAlreadySelected}>
+                                    {item.itemCode ? `${item.itemCode} - ` : ''}{item.name}{isAlreadySelected ? ' (already selected)' : ''}
+                                  </option>
+                                );
+                              })}
                             </select>
                             {selectedItem && <p className="mt-1 truncate text-xs text-slate-500">{selectedItem.category}</p>}
                           </TableCell>

@@ -410,7 +410,7 @@ Generate comprehensive reports with advanced data analysis and efficient searchi
 - Status distribution (Available/Low/Out of Stock)
 
 #### 2. **Stock Level Report**
-- Products below reorder point
+- Products below the low-stock threshold
 - Overstocked items
 - Trending items
 

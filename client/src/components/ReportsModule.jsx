@@ -1,6 +1,6 @@
 import React from 'react';
 import { useState, useEffect, useRef } from 'react';
-import { Download, Calendar, TrendingUp, Package, AlertTriangle, RefreshCw, FileText, Info, Wallet, Tag } from 'lucide-react';
+import { Download, Calendar, TrendingUp, Package, AlertTriangle, RefreshCw, FileText, Info, Wallet, Tag, PackagePlus, ShieldCheck } from 'lucide-react';
 import { sortByNameAsc, sortByQuantityAsc, linearSearchAll } from '../utils/algorithms';
 import { getStockStatusBadgeClass } from '../utils/statusStyles';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -9,14 +9,16 @@ import { Badge } from './ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
-import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from './ui/alert-dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
 import { toast } from 'sonner';
 import { useData } from './DataContext';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { PageHeader } from './PageHeader';
 import { formatDateTime } from '../utils/format';
-import { canAccessReportType, getDefaultReportTypeForRole, getReportTypeOptionsForRole } from '../utils/roles';
+import { canAccessReportType, getDefaultReportTypeForRole, getReportTypeOptionsForRole, isAdminRole } from '../utils/roles';
 export function ReportsModule({
   user
 }) {
@@ -25,6 +27,7 @@ export function ReportsModule({
     stockMovements,
     salesTransactions,
     purchaseTransactions,
+    addInventoryItem,
     auditAction
   } = useData();
   const [reportType, setReportType] = useState('summary');
@@ -32,13 +35,24 @@ export function ReportsModule({
   const [reportPeriod, setReportPeriod] = useState('daily');
   const [selectedReportDate, setSelectedReportDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [finalOrderQuantities, setFinalOrderQuantities] = useState({});
-  const [draftFinalOrderQuantities, setDraftFinalOrderQuantities] = useState({});
-  const [isAdjustingFinalOrders, setIsAdjustingFinalOrders] = useState(false);
-  const [showResetFinalOrdersDialog, setShowResetFinalOrdersDialog] = useState(false);
+  const [reviewItem, setReviewItem] = useState(null);
+  const [conversionDraft, setConversionDraft] = useState({
+    name: '',
+    category: 'Other',
+    supplierName: '',
+    defaultSellingPrice: '',
+    quantity: '',
+    reorderLevel: '5'
+  });
+  const [acknowledgeSimilarItem, setAcknowledgeSimilarItem] = useState(false);
+  const [isConvertingItem, setIsConvertingItem] = useState(false);
   const reportDateInputRef = useRef(null);
   const allowedReportTypes = React.useMemo(() => getReportTypeOptionsForRole(user?.role), [user?.role]);
   const defaultReportType = React.useMemo(() => getDefaultReportTypeForRole(user?.role), [user?.role]);
+  const inventorySnapshotReportTypes = ['summary', 'detailed', 'low-stock', 'supplier-reorder', 'category'];
+  const categoryFilterReportTypes = ['detailed', 'low-stock', 'movements', 'sales-movements', 'supplier-reorder'];
+  const isInventorySnapshotReport = inventorySnapshotReportTypes.includes(reportType);
+  const reportUsesCategoryFilter = categoryFilterReportTypes.includes(reportType);
 
   // Handle period change with refresh animation
   useEffect(() => {
@@ -56,32 +70,52 @@ export function ReportsModule({
     }
   }, [defaultReportType, reportType, user?.role]);
 
+  const handleReportTypeChange = value => {
+    setReportType(value);
+    if (!categoryFilterReportTypes.includes(value)) {
+      setSelectedCategory('all');
+    }
+  };
+
   useEffect(() => {
-    const applyTargetReport = ({ reportType: nextReportType, category = 'all' } = {}) => {
+    const applyTargetReport = ({ reportType: nextReportType, category = 'all', period, date } = {}) => {
       if (!nextReportType) return;
-      const requestedReportType = nextReportType === 'supplier-reorder' ? 'low-stock' : nextReportType;
-      const safeReportType = canAccessReportType(user?.role, requestedReportType)
-        ? requestedReportType
+      const safeReportType = canAccessReportType(user?.role, nextReportType)
+        ? nextReportType
         : defaultReportType;
-      if (safeReportType !== requestedReportType) {
+      if (safeReportType !== nextReportType) {
         toast.info('That report is not available for your current role.');
       }
       setReportType(safeReportType);
-      setSelectedCategory(category || 'all');
+      setSelectedCategory(categoryFilterReportTypes.includes(safeReportType) ? (category || 'all') : 'all');
+      if (['daily', 'weekly', 'monthly'].includes(period)) {
+        setReportPeriod(period);
+      }
+      if (date && /^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+        setSelectedReportDate(date);
+      }
     };
 
     const storedReportType = localStorage.getItem('reports_target_type');
     if (storedReportType) {
       applyTargetReport({
         reportType: storedReportType,
-        category: localStorage.getItem('reports_target_category') || 'all'
+        category: localStorage.getItem('reports_target_category') || 'all',
+        period: localStorage.getItem('reports_target_period') || undefined,
+        date: localStorage.getItem('reports_target_date') || undefined
       });
       localStorage.removeItem('reports_target_type');
       localStorage.removeItem('reports_target_category');
+      localStorage.removeItem('reports_target_period');
+      localStorage.removeItem('reports_target_date');
     }
 
     const handleTargetReport = event => {
       applyTargetReport(event.detail || {});
+      localStorage.removeItem('reports_target_type');
+      localStorage.removeItem('reports_target_category');
+      localStorage.removeItem('reports_target_period');
+      localStorage.removeItem('reports_target_date');
     };
 
     window.addEventListener('reports-target-view', handleTargetReport);
@@ -113,13 +147,6 @@ export function ReportsModule({
     }
 
     return { start, end };
-  };
-
-  const isItemInReportPeriod = item => {
-    const itemDate = new Date(item.lastUpdated);
-    if (Number.isNaN(itemDate.getTime())) return false;
-    const { start, end } = getReportPeriodBounds();
-    return itemDate >= start && itemDate <= end;
   };
 
   const isMovementInReportPeriod = movement => {
@@ -182,7 +209,6 @@ export function ReportsModule({
 
   // 🔍 Filter inventory by category using Linear Search Algorithm
   // Linear Search: O(n) - efficient for filtering with conditions
-  const reportInventory = inventory.filter(isItemInReportPeriod);
   const reportMovements = (stockMovements || []).filter(isMovementInReportPeriod);
   const reportSalesTransactions = (salesTransactions || []).filter(isSaleInReportPeriod);
   const reportPurchaseTransactions = (purchaseTransactions || []).filter(purchase => {
@@ -216,31 +242,47 @@ export function ReportsModule({
     return currentName ? `${historicalName} (Current name: ${currentName})` : historicalName;
   };
 
-  // Calculate statistics from inventory records inside the selected report period
-  const totalItems = reportInventory.length;
-  const totalQuantity = reportInventory.reduce((sum, item) => sum + item.quantity, 0);
-  const inStockItems = reportInventory.filter(item => item.status === 'In Stock').length;
-  const lowStockItems = reportInventory.filter(item => item.status === 'Low Stock').length;
-  const outOfStockItems = reportInventory.filter(item => item.status === 'Out of Stock').length;
+  const getReportLowStockThreshold = item =>
+    Number(item?.activeLowStockThreshold ?? item?.reorderLevel ?? item?.lowStockThreshold ?? 0);
+
+  const getComputedReportStockStatus = item => {
+    const quantity = Number(item?.quantity || 0);
+    const threshold = getReportLowStockThreshold(item);
+    if (quantity <= 0) return 'Out of Stock';
+    return quantity <= threshold ? 'Low Stock' : 'In Stock';
+  };
+
+  const withComputedReportStockStatus = item => ({
+    ...item,
+    status: getComputedReportStockStatus(item),
+    lowStockThreshold: getReportLowStockThreshold(item)
+  });
+
+  // Calculate current inventory snapshot statistics. Activity reports use the selected period separately.
+  const computedReportInventory = inventory.map(withComputedReportStockStatus);
+  const totalItems = computedReportInventory.length;
+  const totalQuantity = computedReportInventory.reduce((sum, item) => sum + item.quantity, 0);
+  const inStockItems = computedReportInventory.filter(item => item.status === 'In Stock').length;
+  const lowStockItems = computedReportInventory.filter(item => item.status === 'Low Stock').length;
+  const outOfStockItems = computedReportInventory.filter(item => item.status === 'Out of Stock').length;
   const attentionItems = lowStockItems + outOfStockItems;
-  const stockInUnits = reportMovements
-    .filter(movement => movement.action === 'stock_in' || movement.action === 'initial_stock')
-    .reduce((sum, movement) => sum + movement.quantityChanged, 0);
-  const stockOutUnits = reportMovements
-    .filter(movement => movement.action === 'stock_out')
-    .reduce((sum, movement) => sum + movement.quantityChanged, 0);
-  // Get unique categories from the selected report period
-  const categories = Array.from(new Set(reportInventory.map(item => item.category)));
+  // Get unique categories from the current inventory snapshot.
+  const categories = Array.from(new Set(computedReportInventory.map(item => item.category)));
 
   const getFilteredInventory = () => {
-    if (selectedCategory === 'all') return sortByNameAsc(reportInventory);
-    return sortByNameAsc(linearSearchAll(reportInventory, item => item.category === selectedCategory));
+    if (selectedCategory === 'all') return sortByNameAsc(computedReportInventory);
+    return sortByNameAsc(linearSearchAll(computedReportInventory, item => item.category === selectedCategory));
   };
 
   // 🔍 Get low stock items using Linear Search Algorithm
   // Finds items that need restocking attention, with out-of-stock first.
   const getLowStockItems = () => {
-    const restockItems = linearSearchAll(reportInventory, item => item.status === 'Out of Stock' || item.status === 'Low Stock');
+    const restockItems = linearSearchAll(
+      computedReportInventory,
+      item =>
+        (item.status === 'Out of Stock' || item.status === 'Low Stock') &&
+        (selectedCategory === 'all' || item.category === selectedCategory)
+    );
     return sortByQuantityAsc(restockItems).sort((a, b) => {
       const priority = {
         'Out of Stock': 0,
@@ -261,11 +303,199 @@ export function ReportsModule({
       minimumFractionDigits: 2
     }).format(Number(value || 0));
 
-  const getSaleSubtotalForCategory = sale => {
-    if (selectedCategory === 'all') {
-      return Number(sale.subtotalAmount ?? sale.totalAmount ?? 0);
+  const getReportScopeLabel = () =>
+    isInventorySnapshotReport
+      ? 'Current inventory snapshot'
+      : `${reportPeriod.toUpperCase()} (${getDateRange()})`;
+
+  const getReportTypeLabel = () =>
+    (allowedReportTypes.find(option => option.value === reportType)?.label || reportType)
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const normalizeReviewText = value =>
+    String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}#./-]+/gu, ' ')
+      .replace(/\s+/g, ' ');
+
+  const getReviewTokens = value => normalizeReviewText(value).split(' ').filter(Boolean);
+
+  const getBasicSimilarityScore = (left, right) => {
+    const leftText = normalizeReviewText(left);
+    const rightText = normalizeReviewText(right);
+    if (!leftText || !rightText) return 0;
+    if (leftText === rightText) return 1;
+    if (leftText.includes(rightText) || rightText.includes(leftText)) return 0.86;
+
+    const leftTokens = new Set(getReviewTokens(leftText));
+    const rightTokens = new Set(getReviewTokens(rightText));
+    if (!leftTokens.size || !rightTokens.size) return 0;
+
+    const overlap = [...leftTokens].filter(token => rightTokens.has(token)).length;
+    return overlap / Math.max(leftTokens.size, rightTokens.size);
+  };
+
+  const getPossibleInventoryMatches = (name, category) => {
+    const normalizedName = normalizeReviewText(name);
+    const normalizedCategory = normalizeReviewText(category || 'Other');
+    if (!normalizedName) return { exact: [], similar: [] };
+
+    return inventory.reduce((matches, item) => {
+      const sameCategory = normalizeReviewText(item.category || 'Other') === normalizedCategory;
+      const score = getBasicSimilarityScore(name, item.name);
+      if (sameCategory && normalizeReviewText(item.name) === normalizedName) {
+        matches.exact.push({ ...item, matchScore: 1 });
+      } else if (sameCategory && score >= 0.58) {
+        matches.similar.push({ ...item, matchScore: score });
+      }
+      return matches;
+    }, { exact: [], similar: [] });
+  };
+
+  const conversionMatches = React.useMemo(
+    () => getPossibleInventoryMatches(conversionDraft.name, conversionDraft.category),
+    [conversionDraft.name, conversionDraft.category, inventory]
+  );
+
+  const openConvertUntrackedItemDialog = item => {
+    if (!isAdminRole(user?.role)) {
+      toast.info('Only Admin / Manager accounts can add reviewed manual items to Inventory.');
+      return;
     }
-    return (sale.items || [])
+
+    const suggestedPrice = item.totalQuantity > 0
+      ? Number(item.totalSalesAmount / item.totalQuantity).toFixed(2)
+      : '';
+
+    setReviewItem(item);
+    setConversionDraft({
+      name: item.itemName || '',
+      category: item.category || 'Other',
+      supplierName: '',
+      defaultSellingPrice: suggestedPrice,
+      quantity: '',
+      reorderLevel: '5'
+    });
+    setAcknowledgeSimilarItem(false);
+  };
+
+  const closeConvertUntrackedItemDialog = () => {
+    if (isConvertingItem) return;
+    setReviewItem(null);
+    setAcknowledgeSimilarItem(false);
+  };
+
+  const updateConversionDraft = (field, value) => {
+    setConversionDraft(prev => ({ ...prev, [field]: value }));
+    if (field === 'name' || field === 'category') {
+      setAcknowledgeSimilarItem(false);
+    }
+  };
+
+  const parseWholeNumber = value => {
+    const normalized = String(value || '').trim();
+    if (!/^\d+$/.test(normalized)) return null;
+    return Number(normalized);
+  };
+
+  const convertUntrackedItemToInventory = async () => {
+    const cleanName = conversionDraft.name.trim().replace(/\s+/g, ' ');
+    const cleanSupplier = conversionDraft.supplierName.trim().replace(/\s+/g, ' ');
+    const quantity = parseWholeNumber(conversionDraft.quantity);
+    const reorderLevel = parseWholeNumber(conversionDraft.reorderLevel);
+    const price = Number(conversionDraft.defaultSellingPrice);
+
+    if (!cleanName) {
+      toast.error('Enter the item name before adding it to Inventory.');
+      return;
+    }
+    if (!conversionDraft.category) {
+      toast.error('Select a category for the inventory item.');
+      return;
+    }
+    if (quantity === null || quantity < 0) {
+      toast.error('Enter a valid beginning quantity.');
+      return;
+    }
+    if (reorderLevel === null || reorderLevel < 0) {
+      toast.error('Enter a valid low-stock threshold.');
+      return;
+    }
+    if (!Number.isFinite(price) || price <= 0) {
+      toast.error('Enter a valid selling price greater than zero.');
+      return;
+    }
+
+    if (conversionMatches.exact.length > 0) {
+      toast.error('This item already exists in Inventory. Use the existing inventory record instead of creating a duplicate.');
+      return;
+    }
+
+    if (conversionMatches.similar.length > 0 && !acknowledgeSimilarItem) {
+      toast.warning('Review the similar inventory item first, then confirm only if this is a separate item.');
+      return;
+    }
+
+    setIsConvertingItem(true);
+    try {
+      const addedItem = await addInventoryItem({
+        name: cleanName,
+        category: conversionDraft.category,
+        supplierName: cleanSupplier,
+        defaultSellingPrice: price,
+        quantity,
+        reorderLevel,
+        allowSimilarDuplicate: acknowledgeSimilarItem
+      });
+
+      auditAction?.('CONVERT_NON_INVENTORY_ITEM', {
+        targetName: cleanName,
+        targetType: 'inventory_item',
+        targetId: addedItem?.inventory_id || addedItem?.id,
+        reason: 'Reviewed untracked sales item and added it to inventory.',
+        details: {
+          source: 'Untracked Sales Items report',
+          originalName: reviewItem?.itemName,
+          category: conversionDraft.category,
+          totalQuantitySold: reviewItem?.totalQuantity,
+          totalSalesAmount: reviewItem?.totalSalesAmount,
+          timesSold: reviewItem?.timesSold,
+          beginningQuantity: quantity,
+          defaultSellingPrice: price,
+          lowStockThreshold: reorderLevel
+        }
+      });
+
+      toast.success('Non-inventory item added to Inventory for future tracking.');
+      setReviewItem(null);
+      setAcknowledgeSimilarItem(false);
+    } catch (err) {
+      const message = err?.response?.data?.error || err.message || 'Failed to add item to Inventory.';
+      toast.error(message);
+    } finally {
+      setIsConvertingItem(false);
+    }
+  };
+
+  const isTrackedSalesItem = item =>
+    item?.isInventoryItem !== false &&
+    item?.itemType !== 'non_inventory' &&
+    (item?.inventoryId || item?.productId);
+
+  const getTrackedSaleItemsForReport = sale =>
+    (sale.items || []).filter(item =>
+      isTrackedSalesItem(item) &&
+      (selectedCategory === 'all' || item.category === selectedCategory)
+    );
+
+  const getSaleSubtotalForCategory = (sale, { trackedOnly = false } = {}) => {
+    const items = trackedOnly ? getTrackedSaleItemsForReport(sale) : (sale.items || []);
+    if (selectedCategory === 'all') {
+      return items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+    }
+    return items
       .filter(item => item.category === selectedCategory)
       .reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
   };
@@ -279,8 +509,7 @@ export function ReportsModule({
 
   const getSalesMovementRows = () =>
     getFilteredSalesTransactions().flatMap(sale =>
-      (sale.items || [])
-        .filter(item => selectedCategory === 'all' || item.category === selectedCategory)
+      getTrackedSaleItemsForReport(sale)
         .map(item => ({
           id: `${sale.id}-${item.id}`,
           salesNumber: sale.salesNumber,
@@ -305,16 +534,16 @@ export function ReportsModule({
     getSalesMovementRows().reduce((sum, movement) => sum + Number(movement.quantityChanged || 0), 0);
 
   const getSalesFinancialSummary = () => {
-    const sales = getFilteredSalesTransactions();
+    const sales = getFilteredSalesTransactions().filter(sale => getTrackedSaleItemsForReport(sale).length > 0);
 
     return sales.reduce((summary, sale) => {
       const saleSubtotal = Number(sale.subtotalAmount ?? sale.totalAmount ?? 0);
-      const includedSubtotal = getSaleSubtotalForCategory(sale);
+      const includedSubtotal = getSaleSubtotalForCategory(sale, { trackedOnly: true });
       if (includedSubtotal <= 0) return summary;
 
       const discountAmount = Number(sale.discountAmount || 0);
-      const discountShare = selectedCategory === 'all' || saleSubtotal <= 0
-        ? discountAmount
+      const discountShare = saleSubtotal <= 0
+        ? 0
         : Number(((includedSubtotal / saleSubtotal) * discountAmount).toFixed(2));
       const amountDue = Math.max(includedSubtotal - discountShare, 0);
 
@@ -353,21 +582,17 @@ export function ReportsModule({
       totalQuantity: 0
     });
 
-  const getSalesDemandForItem = item => reportSalesTransactions
-    .filter(sale => sale.status !== 'cancelled')
-    .flatMap(sale => sale.items || [])
-    .filter(saleItem =>
-      String(saleItem.inventoryId || '') === String(item.id || '') ||
-      String(saleItem.productId || '') === String(item.productId || '')
-    )
-    .reduce((sum, saleItem) => sum + Number(saleItem.quantitySold || 0), 0);
+  const getSupplierReorderItems = () =>
+    sortByQuantityAsc(inventory.map(withComputedReportStockStatus).filter(item => item.status === 'Out of Stock' || item.status === 'Low Stock'))
+      .filter(item => selectedCategory === 'all' || item.category === selectedCategory)
+      .map(item => ({
+        ...item,
+        lowStockThreshold: getReportLowStockThreshold(item),
+        neededQuantity: Math.max(getReportLowStockThreshold(item) - Number(item.quantity || 0), 0)
+      }));
 
   const getSupplierReorderGroups = () => {
-    const reorderItems = getLowStockItems();
-    const filteredItems = selectedCategory === 'all'
-      ? reorderItems
-      : reorderItems.filter(item => item.category === selectedCategory);
-    const groups = filteredItems.reduce((acc, item) => {
+    const groups = getSupplierReorderItems().reduce((acc, item) => {
       const supplier = item.supplierName?.trim() || 'Unassigned Supplier';
       if (!acc[supplier]) {
         acc[supplier] = {
@@ -375,25 +600,16 @@ export function ReportsModule({
           itemCount: 0,
           outOfStock: 0,
           lowStock: 0,
-          suggestedUnits: 0,
+          neededQuantity: 0,
           items: []
         };
       }
-      const reorderPoint = Number(item.activeLowStockThreshold ?? item.recommendedReorderPoint ?? item.reorderLevel ?? 0);
-      const reorderGap = Math.max(0, reorderPoint - Number(item.quantity || 0));
-      const recentSalesDemand = getSalesDemandForItem(item);
-      const suggestedQuantity = Math.max(reorderGap, recentSalesDemand);
+
       acc[supplier].itemCount += 1;
       acc[supplier].outOfStock += item.status === 'Out of Stock' ? 1 : 0;
       acc[supplier].lowStock += item.status === 'Low Stock' ? 1 : 0;
-      acc[supplier].suggestedUnits += suggestedQuantity;
-      acc[supplier].items.push({
-        ...item,
-        reorderPoint,
-        reorderGap,
-        recentSalesDemand,
-        suggestedQuantity
-      });
+      acc[supplier].neededQuantity += item.neededQuantity;
+      acc[supplier].items.push(item);
       return acc;
     }, {});
 
@@ -403,111 +619,126 @@ export function ReportsModule({
     });
   };
 
-  const getFinalOrderQuantity = item => {
-    const savedValue = finalOrderQuantities[item.id];
-    if (savedValue === undefined || savedValue === null || savedValue === '') {
-      return Number(item.suggestedQuantity || 0);
-    }
-    const parsedValue = Number(savedValue);
-    return Number.isFinite(parsedValue) ? parsedValue : Number(item.suggestedQuantity || 0);
+  const getActiveInventoryMatchForManualItem = (itemName, category) => {
+    const normalizedName = normalizeReviewText(itemName);
+    const normalizedCategory = normalizeReviewText(category || 'Other');
+    if (!normalizedName) return null;
+    return inventory.find(item =>
+      normalizeReviewText(item.name) === normalizedName &&
+      normalizeReviewText(item.category || 'Other') === normalizedCategory
+    ) || null;
   };
 
-  const getSupplierFinalOrderTotal = group =>
-    group.items.reduce((sum, item) => sum + getFinalOrderQuantity(item), 0);
+  const getUntrackedSalesItems = () => {
+    const grouped = getFilteredSalesTransactions()
+      .flatMap(sale => (sale.items || []).map(item => ({ ...item, sale })))
+      .filter(item => item.isInventoryItem === false || item.itemType === 'non_inventory')
+      .reduce((acc, item) => {
+        const key = `${String(item.itemName || '').trim().toLowerCase()}|${String(item.category || 'Other').trim().toLowerCase()}`;
+        if (!acc[key]) {
+          acc[key] = {
+            itemName: item.itemName || 'Non-inventory item',
+            category: item.category || 'Other',
+            totalQuantity: 0,
+            totalSalesAmount: 0,
+            timesSold: 0,
+            lastSoldAt: item.sale.createdAt
+          };
+        }
 
-  const hasFinalOrderAdjustments = Object.values(finalOrderQuantities).some(value => String(value || '').trim() !== '');
-  const showFinalOrderColumn = isAdjustingFinalOrders || hasFinalOrderAdjustments;
+        acc[key].totalQuantity += Number(item.quantitySold || 0);
+        acc[key].totalSalesAmount += Number(item.subtotal || 0);
+        acc[key].timesSold += 1;
+        if (new Date(item.sale.createdAt || 0) > new Date(acc[key].lastSoldAt || 0)) {
+          acc[key].lastSoldAt = item.sale.createdAt;
+        }
+        return acc;
+      }, {});
 
-  const startFinalOrderAdjustments = () => {
-    setDraftFinalOrderQuantities(finalOrderQuantities);
-    setIsAdjustingFinalOrders(true);
-    toast.info('Enter final order quantities only for items you want to change.');
+    return Object.values(grouped)
+      .map(item => {
+        const activeInventoryMatch = getActiveInventoryMatchForManualItem(item.itemName, item.category);
+        return {
+          ...item,
+          activeInventoryMatch,
+          reviewStatus: activeInventoryMatch ? 'tracked' : 'needs_review'
+        };
+      })
+      .sort((a, b) => b.totalSalesAmount - a.totalSalesAmount || a.itemName.localeCompare(b.itemName));
   };
 
-  const handleFinalOrderQuantityChange = (item, value) => {
-    const rawValue = String(value || '');
-    if (/[^0-9]/.test(rawValue)) {
-      toast.warning('Final order quantity must contain numbers only.', {
-        id: 'final-order-numbers-only'
-      });
-    }
-    if (rawValue.replace(/\D/g, '').length > 6) {
-      toast.warning('Final order quantity cannot exceed 999999 units.', {
-        id: 'final-order-maximum'
-      });
-    }
-    const cleanValue = rawValue.replace(/\D/g, '').slice(0, 6);
-    setDraftFinalOrderQuantities(prev => {
-      const next = { ...prev };
-      if (cleanValue === '') {
-        delete next[item.id];
-      } else {
-        next[item.id] = cleanValue;
-      }
-      return next;
-    });
-  };
-
-  const applyFinalOrderAdjustments = () => {
-    const supplierGroups = getSupplierReorderGroups();
-    const itemsById = new Map(supplierGroups.flatMap(group => group.items.map(item => [String(item.id), item])));
-    const nextFinalOrderQuantities = {};
-    let unchangedCount = 0;
-    let skippedCount = 0;
-
-    Object.entries(draftFinalOrderQuantities).forEach(([itemId, rawValue]) => {
-      const item = itemsById.get(String(itemId));
-      if (!item) return;
-
-      const cleanValue = String(rawValue || '').replace(/\D/g, '').slice(0, 6);
-      if (cleanValue === '') return;
-
-      const finalQuantity = Number(cleanValue);
-      const suggestedQuantity = Number(item.suggestedQuantity || 0);
-      if (!Number.isInteger(finalQuantity) || finalQuantity < 0) return;
-
-      if (finalQuantity === suggestedQuantity) {
-        unchangedCount += 1;
-        return;
-      }
-
-      if (finalQuantity === 0) skippedCount += 1;
-      nextFinalOrderQuantities[item.id] = String(finalQuantity);
-    });
-
-    setFinalOrderQuantities(nextFinalOrderQuantities);
-    setDraftFinalOrderQuantities({});
-    setIsAdjustingFinalOrders(false);
-
-    const adjustmentCount = Object.keys(nextFinalOrderQuantities).length;
-    if (adjustmentCount === 0) {
-      toast.info(unchangedCount > 0
-        ? 'No final order changes were saved because the entered quantities matched the suggestions.'
-        : 'No final order changes were saved. The report will use system suggestions.');
-      return;
+  const getReportMetrics = () => {
+    if (reportType === 'movements' || reportType === 'sales-movements') {
+      const movementSummary = getStockMovementSummary();
+      return [
+        { label: reportType === 'sales-movements' ? 'Sales Transactions' : 'Movements', value: reportType === 'sales-movements' ? getSalesFinancialSummary().transactionCount : getFilteredMovements({ salesOnly: false }).length, icon: <RefreshCw className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
+        { label: reportType === 'sales-movements' ? 'Quantity Sold' : 'Stock In Units', value: reportType === 'sales-movements' ? getSalesMovementUnits() : movementSummary.stockInUnits, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
+        { label: reportType === 'sales-movements' ? 'Amount Due' : 'Stock Out Units', value: reportType === 'sales-movements' ? formatCurrency(getSalesFinancialSummary().amountDue) : movementSummary.stockOutUnits, icon: reportType === 'sales-movements' ? <Wallet className="w-8 h-8 text-amber-500" /> : <AlertTriangle className="w-8 h-8 text-red-500" />, color: reportType === 'sales-movements' ? 'border-l-amber-500' : movementSummary.stockOutUnits > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
+        { label: reportType === 'sales-movements' ? 'Discounts' : 'Categories', value: reportType === 'sales-movements' ? formatCurrency(getSalesFinancialSummary().discount) : new Set(getFilteredMovements({ salesOnly: false }).map(movement => movement.category)).size, icon: reportType === 'sales-movements' ? <Tag className="w-8 h-8 text-violet-500" /> : <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
+      ];
     }
 
-    toast.success(`${adjustmentCount} final order ${adjustmentCount === 1 ? 'change was' : 'changes were'} applied${skippedCount > 0 ? `, including ${skippedCount} skipped reorder ${skippedCount === 1 ? 'item' : 'items'}` : ''}.`);
-  };
+    if (reportType === 'purchases') {
+      return [
+        { label: 'Purchase Entries', value: getPurchaseSummary().entryCount, icon: <FileText className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
+        { label: 'Quantity Received', value: getPurchaseSummary().totalQuantity, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
+        { label: 'Total Purchases', value: formatCurrency(getPurchaseSummary().totalAmount), icon: <Wallet className="w-8 h-8 text-amber-500" />, color: 'border-l-amber-500' },
+        { label: 'Suppliers', value: new Set(getFilteredPurchaseTransactions().map(purchase => purchase.supplierName)).size, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
+      ];
+    }
 
-  const cancelFinalOrderAdjustments = () => {
-    setDraftFinalOrderQuantities({});
-    setIsAdjustingFinalOrders(false);
-    toast.info('Final order editing cancelled. No changes were applied.');
-  };
+    if (reportType === 'supplier-reorder') {
+      const reorderItems = getSupplierReorderItems();
+      return [
+        { label: 'Items to Reorder', value: reorderItems.length, icon: <Package className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
+        { label: 'Qty Needed', value: reorderItems.reduce((sum, item) => sum + Number(item.neededQuantity || 0), 0), icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
+        { label: 'Suppliers', value: getSupplierReorderGroups().length, icon: <PackagePlus className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
+        { label: 'Out of Stock', value: reorderItems.filter(item => item.status === 'Out of Stock').length, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: reorderItems.some(item => item.status === 'Out of Stock') ? 'border-l-red-500' : 'border-l-slate-300' },
+      ];
+    }
 
-  const resetFinalOrderQuantities = () => {
-    setFinalOrderQuantities({});
-    setDraftFinalOrderQuantities({});
-    setIsAdjustingFinalOrders(false);
-    setShowResetFinalOrdersDialog(false);
-    toast.success('Reorder suggestions restored. Manual final order changes were cleared.');
+    if (reportType === 'untracked-sales') {
+      const untrackedItems = getUntrackedSalesItems();
+      return [
+        { label: 'Manual Item Groups', value: untrackedItems.length, icon: <FileText className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
+        { label: 'Qty Sold', value: untrackedItems.reduce((sum, item) => sum + Number(item.totalQuantity || 0), 0), icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
+        { label: 'Manual Sales', value: formatCurrency(untrackedItems.reduce((sum, item) => sum + Number(item.totalSalesAmount || 0), 0)), icon: <Wallet className="w-8 h-8 text-amber-500" />, color: 'border-l-amber-500' },
+        { label: 'Repeat Items', value: untrackedItems.filter(item => Number(item.timesSold || 0) > 1).length, icon: <PackagePlus className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
+      ];
+    }
+
+    if (reportType === 'low-stock') {
+      const lowStockRows = getLowStockItems();
+      return [
+        { label: 'Attention Items', value: lowStockRows.length, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: lowStockRows.length > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
+        { label: 'Out of Stock', value: lowStockRows.filter(item => item.status === 'Out of Stock').length, icon: <Package className="w-8 h-8 text-rose-500" />, color: 'border-l-rose-500' },
+        { label: 'Low Stock', value: lowStockRows.filter(item => item.status === 'Low Stock').length, icon: <TrendingUp className="w-8 h-8 text-amber-500" />, color: 'border-l-amber-500' },
+        { label: 'Categories', value: new Set(lowStockRows.map(item => item.category)).size, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
+      ];
+    }
+
+    if (reportType === 'detailed') {
+      const filtered = getFilteredInventory();
+      return [
+        { label: 'Displayed Items', value: filtered.length, icon: <Package className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
+        { label: 'Displayed Units', value: filtered.reduce((sum, item) => sum + Number(item.quantity || 0), 0), icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
+        { label: 'Categories', value: new Set(filtered.map(item => item.category)).size, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
+        { label: 'Needs Attention', value: filtered.filter(item => item.status === 'Low Stock' || item.status === 'Out of Stock').length, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: filtered.some(item => item.status === 'Low Stock' || item.status === 'Out of Stock') ? 'border-l-red-500' : 'border-l-slate-300' },
+      ];
+    }
+
+    return [
+      { label: 'Total Items', value: totalItems, icon: <Package className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
+      { label: 'Total Units', value: totalQuantity, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
+      { label: 'Categories', value: categories.length, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
+      { label: 'Stock Needs Attention', value: attentionItems, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: attentionItems > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
+    ];
   };
 
   // Get category summary
   const getCategorySummary = () => {
     const summary = categories.map(category => {
-      const categoryItems = reportInventory.filter(item => item.category === category);
+      const categoryItems = computedReportInventory.filter(item => item.category === category);
       const totalQty = categoryItems.reduce((sum, item) => sum + item.quantity, 0);
       const itemCount = categoryItems.length;
       const lowStock = categoryItems.filter(item => item.status === 'Low Stock').length;
@@ -559,8 +790,8 @@ export function ReportsModule({
 
     // Report Info
     doc.setFontSize(10);
-    doc.text(`Report Type: ${reportType.toUpperCase().replace('-', ' ')}`, 20, 40);
-    doc.text(`Report Period: ${reportPeriod.toUpperCase()} (${getDateRange()})`, 20, 46);
+    doc.text(`Report Type: ${getReportTypeLabel()}`, 20, 40);
+    doc.text(`Report Scope: ${getReportScopeLabel()}`, 20, 46);
     doc.text(`Generated: ${currentDate} ${currentTime}`, 20, 52);
     doc.text(`Branch: ${user.branch}`, 20, 58);
     doc.text(`Generated by: ${user.fullName}`, 20, 64);
@@ -706,6 +937,84 @@ export function ReportsModule({
           }
         });
       }
+    } else if (reportType === 'supplier-reorder') {
+      const supplierGroups = getSupplierReorderGroups();
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text('SUPPLIER REORDER REPORT', 20, startY);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Category Filter: ${selectedCategory === 'all' ? 'All Categories' : selectedCategory}`, 20, startY + 8);
+      doc.text(`Supplier Groups: ${supplierGroups.length}`, 20, startY + 14);
+
+      if (supplierGroups.length === 0) {
+        doc.text('No low-stock or out-of-stock items require supplier reorder review.', 20, startY + 28);
+      } else {
+        let currentY = startY + 24;
+        supplierGroups.forEach(group => {
+          if (currentY > 245) {
+            doc.addPage();
+            currentY = 20;
+          }
+          doc.setFontSize(11);
+          doc.setFont('helvetica', 'bold');
+          doc.text(`SUPPLIER: ${group.supplier}`, 20, currentY);
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'normal');
+          doc.text(
+            `Items: ${group.itemCount} | Out of Stock: ${group.outOfStock} | Low Stock: ${group.lowStock} | Qty Needed to Threshold: ${formatUnitCount(group.neededQuantity)}`,
+            20,
+            currentY + 6
+          );
+          autoTable(doc, {
+            startY: currentY + 12,
+            head: [['Item Code', 'Item', 'Category', 'Current', 'Threshold', 'Qty Needed', 'Status']],
+            body: group.items.map(item => [
+              getDisplayItemCode(item),
+              item.name,
+              item.category,
+              String(item.quantity),
+              String(item.lowStockThreshold),
+              String(item.neededQuantity),
+              item.status
+            ]),
+            theme: 'striped',
+            headStyles: { fillColor: [71, 85, 105], textColor: 255, fontStyle: 'bold' },
+            styles: { fontSize: 8, cellPadding: 2 },
+            alternateRowStyles: { fillColor: [248, 250, 252] }
+          });
+          currentY = doc.lastAutoTable.finalY + 12;
+        });
+      }
+    } else if (reportType === 'untracked-sales') {
+      const untrackedItems = getUntrackedSalesItems();
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text('UNTRACKED SALES ITEMS REPORT', 20, startY);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Non-inventory item groups: ${untrackedItems.length}`, 20, startY + 8);
+      if (untrackedItems.length === 0) {
+        doc.text('No non-inventory sales items found for this report period.', 20, startY + 22);
+      } else {
+        autoTable(doc, {
+          startY: startY + 16,
+          head: [['Item Description', 'Category', 'Qty Sold', 'Sales Amount', 'Times Sold', 'Last Sold', 'Status']],
+          body: untrackedItems.map(item => [
+            item.itemName,
+            item.category,
+            String(item.totalQuantity),
+            formatCurrency(item.totalSalesAmount),
+            String(item.timesSold),
+            formatDateTime(item.lastSoldAt),
+            item.reviewStatus === 'tracked' ? 'Now Tracked in Inventory' : 'Needs Review'
+          ]),
+          theme: 'striped',
+          headStyles: { fillColor: [71, 85, 105], textColor: 255, fontStyle: 'bold' },
+          styles: { fontSize: 8, cellPadding: 2 },
+          alternateRowStyles: { fillColor: [248, 250, 252] }
+        });
+      }
     } else if (reportType === 'category') {
       doc.setFontSize(12);
       doc.setFont('helvetica', 'bold');
@@ -722,7 +1031,7 @@ export function ReportsModule({
         doc.setFontSize(9);
         doc.setFont('helvetica', 'normal');
         doc.text(`Total Items: ${cat.itemCount} | Total Units: ${cat.totalQty} | Low Stock: ${cat.lowStock} | Out of Stock: ${cat.outOfStock}`, 20, currentY + 6);
-        const categoryItems = reportInventory.filter(item => item.category === cat.category);
+        const categoryItems = computedReportInventory.filter(item => item.category === cat.category);
         const itemData = categoryItems.map(item => [getDisplayItemCode(item), item.name, item.supplierName || 'Unassigned', item.quantity.toString(), item.status, formatDateTime(item.lastUpdated)]);
         autoTable(doc, {
           startY: currentY + 12,
@@ -761,76 +1070,6 @@ export function ReportsModule({
         });
         currentY = doc.lastAutoTable.finalY + 10;
       });
-    } else if (reportType === 'supplier-reorder') {
-      const supplierGroups = getSupplierReorderGroups();
-      doc.setFontSize(12);
-      doc.setFont('helvetica', 'bold');
-      doc.text('SUPPLIER-BASED REORDER REPORT', 20, startY);
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'normal');
-      doc.text(`Category Filter: ${selectedCategory === 'all' ? 'All Categories' : selectedCategory}`, 20, startY + 8);
-      doc.text(`Supplier Groups: ${supplierGroups.length}`, 20, startY + 14);
-
-      if (supplierGroups.length === 0) {
-        doc.text('No low-stock or out-of-stock items require supplier-based reordering for this report period.', 20, startY + 28);
-      } else {
-        let currentY = startY + 24;
-        supplierGroups.forEach(group => {
-          if (currentY > 245) {
-            doc.addPage();
-            currentY = 20;
-          }
-          doc.setFontSize(11);
-          doc.setFont('helvetica', 'bold');
-          doc.text(`SUPPLIER: ${group.supplier}`, 20, currentY);
-          doc.setFontSize(9);
-          doc.setFont('helvetica', 'normal');
-          doc.text(
-            `Items: ${group.itemCount} | Out of Stock: ${group.outOfStock} | Low Stock: ${group.lowStock} | Suggested Units: ${formatUnitCount(group.suggestedUnits)}${hasFinalOrderAdjustments ? ` | Final Order Units: ${formatUnitCount(getSupplierFinalOrderTotal(group))}` : ''}`,
-            20,
-            currentY + 6
-          );
-          autoTable(doc, {
-            startY: currentY + 12,
-            head: [[
-              'Item Code',
-              'Item',
-              'Category',
-              'Current',
-              'Reorder Point',
-              'Sales Demand',
-              'Suggested Order',
-              ...(hasFinalOrderAdjustments ? ['Final Order'] : []),
-              'Status'
-            ]],
-            body: group.items.map(item => [
-              getDisplayItemCode(item),
-              item.name,
-              item.category,
-              String(item.quantity),
-              String(item.reorderPoint),
-              String(item.recentSalesDemand),
-              String(item.suggestedQuantity),
-              ...(hasFinalOrderAdjustments ? [String(getFinalOrderQuantity(item))] : []),
-              item.status
-            ]),
-            theme: 'striped',
-            headStyles: {
-              fillColor: [71, 85, 105],
-              textColor: 255,
-              fontStyle: 'bold'
-            },
-            styles: {
-              fontSize: 8,
-              cellPadding: 2
-            },
-            alternateRowStyles: {
-              fillColor: [248, 250, 252]
-            }
-          });
-          currentY = doc.lastAutoTable.finalY + 12;
-        });
-      }
     } else if (reportType === 'purchases') {
       const purchases = getFilteredPurchaseTransactions();
       const purchaseSummary = getPurchaseSummary();
@@ -868,6 +1107,7 @@ export function ReportsModule({
       const isSalesMovementReport = reportType === 'sales-movements';
       const movements = isSalesMovementReport ? getSalesMovementRows() : getFilteredMovements({ salesOnly: false });
       const salesSummary = getSalesFinancialSummary();
+      const movementSummary = getStockMovementSummary();
       doc.setFontSize(12);
       doc.setFont('helvetica', 'bold');
       doc.text(isSalesMovementReport ? 'SALES-BASED STOCK MOVEMENT REPORT' : 'STOCK MOVEMENT HISTORY', 20, startY);
@@ -880,8 +1120,8 @@ export function ReportsModule({
         doc.text(`Sales Transactions: ${salesSummary.transactionCount}`, 20, startY + 26);
         doc.text(`Subtotal: ${formatCurrency(salesSummary.subtotal)} | Discount: ${formatCurrency(salesSummary.discount)} | Amount Due: ${formatCurrency(salesSummary.amountDue)}`, 20, startY + 32);
       } else {
-        doc.text(`Stock In Units: ${stockInUnits}`, 20, startY + 20);
-        doc.text(`Stock Out Units: ${stockOutUnits}`, 20, startY + 26);
+        doc.text(`Stock In Units: ${movementSummary.stockInUnits}`, 20, startY + 20);
+        doc.text(`Stock Out Units: ${movementSummary.stockOutUnits}`, 20, startY + 26);
       }
 
       if (movements.length === 0) {
@@ -899,14 +1139,14 @@ export function ReportsModule({
           formatMovementItemNameForExport(movement),
           movement.category,
           getMovementLabel(movement.action),
-          getMovementReasonLabel(movement.reason),
+          isSalesMovementReport ? getPaymentMethodLabel(movement.paymentMethod) : getMovementReasonLabel(movement.reason),
           movement.quantityChanged.toString(),
           `${movement.previousQuantity} -> ${movement.newQuantity}`,
           movement.actorName || 'System'
         ]);
         autoTable(doc, {
           startY: isSalesMovementReport ? startY + 42 : startY + 34,
-          head: [[isSalesMovementReport ? 'Sale No.' : 'Movement ID', 'Date', 'Item', 'Category', 'Action', 'Reason', isSalesMovementReport ? 'Qty Sold' : 'Qty', 'Before -> After', 'Handled By']],
+          head: [[isSalesMovementReport ? 'Sale No.' : 'Movement ID', 'Date', 'Item', 'Category', 'Action', isSalesMovementReport ? 'Payment' : 'Reason', isSalesMovementReport ? 'Qty Sold' : 'Qty', 'Before -> After', 'Handled By']],
           body: movementData,
           theme: 'striped',
           headStyles: {
@@ -942,7 +1182,7 @@ export function ReportsModule({
     // Save PDF
     doc.save(`EMC_${reportType}_report_${new Date().toISOString().split('T')[0]}.pdf`);
     auditAction?.('EXPORT_REPORT', {
-      targetName: `${reportType.toUpperCase().replace('-', ' ')} report - ${reportPeriod.toUpperCase()} (${getDateRange()})`
+      targetName: `${getReportTypeLabel()} report - ${getReportScopeLabel()}`
     });
     toast.success('Report downloaded successfully!');
   };
@@ -971,6 +1211,19 @@ export function ReportsModule({
     return labels[reason] || '-';
   };
 
+  const getPaymentMethodLabel = method => {
+    const labels = {
+      cash: 'Cash',
+      gcash: 'GCash',
+      bank_transfer: 'Bank Transfer',
+      bank: 'Bank Transfer',
+      card: 'Card',
+      credit: 'Credit'
+    };
+    const key = String(method || '').trim().toLowerCase();
+    return labels[key] || (key ? key.replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase()) : '-');
+  };
+
   const getMovementBadgeClass = action => {
     if (action === 'stock_out') return 'bg-red-100 text-red-700 hover:bg-red-100';
     if (action === 'initial_stock') return 'bg-blue-100 text-blue-700 hover:bg-blue-100';
@@ -985,6 +1238,22 @@ export function ReportsModule({
       ? categoryFiltered.filter(movement => movement.action === 'stock_out' && movement.reason === 'sales')
       : categoryFiltered;
     return [...filtered].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  };
+
+  const getStockMovementSummary = () => {
+    const rows = getFilteredMovements({ salesOnly: false });
+    return rows.reduce((summary, movement) => {
+      const quantity = Number(movement.quantityChanged || 0);
+      if (movement.action === 'stock_in' || movement.action === 'initial_stock') {
+        summary.stockInUnits += quantity;
+      } else if (movement.action === 'stock_out') {
+        summary.stockOutUnits += quantity;
+      }
+      return summary;
+    }, {
+      stockInUnits: 0,
+      stockOutUnits: 0
+    });
   };
 
   const getUniqueMovementItemCount = ({ salesOnly = false } = {}) =>
@@ -1066,56 +1335,6 @@ export function ReportsModule({
     </article>
   );
 
-  const renderSupplierReorderMobileCard = item => (
-    <article key={item.id} className="reports-record-card">
-      <div className="reports-record-top">
-        <div className="min-w-0">
-          <p className="reports-record-code">{getDisplayItemCode(item)}</p>
-          <h4 className="reports-record-name">{item.name}</h4>
-          <p className="reports-record-meta">{item.category}</p>
-        </div>
-        <Badge className={`shrink-0 ${getStockStatusBadgeClass(item.status)}`}>
-          {item.status}
-        </Badge>
-      </div>
-      <div className="reports-record-grid reports-record-grid-four">
-        <div className="reports-record-stat">
-          <span>Current Stock</span>
-          <strong>{item.quantity}</strong>
-        </div>
-        <div className="reports-record-stat">
-          <span>Reorder Point</span>
-          <strong>{item.reorderPoint}</strong>
-        </div>
-        <div className="reports-record-stat">
-          <span>Sales Demand</span>
-          <strong>{item.recentSalesDemand}</strong>
-        </div>
-        <div className="reports-record-stat">
-          <span>Suggested Order</span>
-          <strong>{item.suggestedQuantity}</strong>
-        </div>
-        {showFinalOrderColumn && (
-          <div className="reports-record-stat reports-final-order-stat">
-            <span>Final Order</span>
-            <input
-              className="reports-final-order-input"
-              value={isAdjustingFinalOrders
-                ? (draftFinalOrderQuantities[item.id] ?? '')
-                : (finalOrderQuantities[item.id] ?? String(item.suggestedQuantity))}
-              placeholder="0"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              aria-label={`Final order quantity for ${item.name}`}
-              readOnly={!isAdjustingFinalOrders}
-              onChange={event => handleFinalOrderQuantityChange(item, event.target.value)}
-            />
-          </div>
-        )}
-      </div>
-    </article>
-  );
-
   return (
     <div className="reports-page min-h-screen bg-gray-50 p-4 md:p-8">
       <style>{`
@@ -1124,61 +1343,152 @@ export function ReportsModule({
         .reports-mobile-record-list { display: none; }
         .reports-desktop-table { display: block; }
 
+        .reports-scroll-area {
+          max-height: clamp(360px, 52vh, 620px);
+          overflow: auto;
+          overscroll-behavior: contain;
+          scrollbar-gutter: stable;
+          border-radius: 14px;
+        }
+
+        .reports-scroll-area::-webkit-scrollbar {
+          width: 10px;
+          height: 10px;
+        }
+
+        .reports-scroll-area::-webkit-scrollbar-track {
+          background: #f8fafc;
+          border-radius: 999px;
+        }
+
+        .reports-scroll-area::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border: 2px solid #f8fafc;
+          border-radius: 999px;
+        }
+
+        .reports-scroll-area::-webkit-scrollbar-thumb:hover {
+          background: #94a3b8;
+        }
+
         .reports-pos-summary {
           display: grid;
-          grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
-          gap: 1rem;
+          grid-template-columns: 1fr;
+          gap: 0.55rem;
           margin-bottom: 1rem;
           border: 1px solid #e2e8f0;
-          border-radius: 0.9rem;
-          background: #f8fafc;
-          padding: 1rem;
+          border-radius: 1rem;
+          background: #ffffff;
+          padding: 0.75rem 0.85rem;
+          box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+        }
+
+        .reports-pos-summary-copy {
+          display: flex;
+          min-width: 0;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 1rem;
+          border-bottom: 1px solid #e2e8f0;
+          padding: 0.05rem 0.25rem 0.55rem;
         }
 
         .reports-pos-summary-copy h3 {
-          font-size: 1rem;
-          line-height: 1.35;
-          font-weight: 750;
+          flex: 0 0 auto;
+          font-size: 1.02rem;
+          line-height: 1.25;
+          font-weight: 800;
           color: #0f172a;
         }
 
         .reports-pos-summary-copy p {
-          margin-top: 0.35rem;
-          font-size: 0.875rem;
-          line-height: 1.5;
+          max-width: 720px;
+          text-align: right;
+          font-size: 0.84rem;
+          line-height: 1.45;
           color: #64748b;
         }
 
         .reports-pos-summary-grid {
           display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 0.65rem;
+          grid-template-columns: minmax(150px, 0.9fr) minmax(150px, 0.9fr) minmax(260px, 1.25fr);
+          gap: 0;
+          overflow: hidden;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.9rem;
+          background: #f8fafc;
+          align-items: stretch;
         }
 
         .reports-pos-summary-item {
+          position: relative;
+          display: flex;
+          min-height: 72px;
+          flex-direction: column;
+          justify-content: center;
           min-width: 0;
-          border: 1px solid #e2e8f0;
-          border-radius: 0.75rem;
+          border: 0;
+          border-right: 1px solid #e2e8f0;
+          border-radius: 0;
           background: #ffffff;
-          padding: 0.8rem;
+          padding: 0.65rem 1rem;
+        }
+
+        .reports-pos-summary-item:last-child {
+          border-right: 0;
         }
 
         .reports-pos-summary-item span {
           display: block;
-          font-size: 0.72rem;
+          font-size: 0.7rem;
           line-height: 1.2;
           font-weight: 800;
           color: #64748b;
+          letter-spacing: 0;
           text-transform: uppercase;
         }
 
         .reports-pos-summary-item strong {
           display: block;
-          margin-top: 0.3rem;
+          margin-top: 0.25rem;
           color: #0f172a;
-          font-size: 0.95rem;
+          font-size: clamp(1.05rem, 1.25vw, 1.25rem);
+          font-weight: 850;
           line-height: 1.25;
           overflow-wrap: anywhere;
+        }
+
+        .reports-pos-summary-item-due {
+          background: linear-gradient(180deg, #f0fdf4 0%, #ecfdf5 100%);
+          box-shadow: inset 3px 0 0 #22c55e;
+        }
+
+        .reports-pos-summary-item-due strong {
+          font-size: clamp(1.15rem, 1.45vw, 1.4rem);
+          color: #166534;
+        }
+
+        .reports-pos-payment-counts {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0;
+          margin-top: 0.35rem;
+        }
+
+        .reports-pos-payment-count {
+          min-width: 0;
+          border-left: 2px solid #cbd5e1;
+          padding: 0.1rem 0.65rem;
+        }
+
+        .reports-pos-payment-count span {
+          color: #64748b;
+          font-size: 0.64rem;
+        }
+
+        .reports-pos-payment-count strong {
+          margin-top: 0.15rem;
+          font-size: 1.08rem;
         }
 
         .reports-help-label {
@@ -1314,6 +1624,55 @@ export function ReportsModule({
           line-height: 1.55;
         }
 
+        .reports-data-card {
+          overflow: hidden;
+          border-color: #e2e8f0;
+          background: #ffffff;
+        }
+
+        .reports-data-card [data-slot='card-header'] {
+          gap: 0.35rem;
+        }
+
+        .reports-data-card [data-slot='card-content'] {
+          min-width: 0;
+        }
+
+        .reports-desktop-table,
+        .reports-movement-desktop-table,
+        .reports-category-table {
+          max-width: 100%;
+          max-height: clamp(360px, 52vh, 620px);
+          overflow-x: auto;
+          overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
+          overscroll-behavior: contain;
+          scrollbar-gutter: stable;
+          border-radius: 14px;
+        }
+
+        .reports-desktop-table table,
+        .reports-movement-desktop-table table,
+        .reports-category-table table {
+          min-width: 720px;
+        }
+
+        .reports-desktop-table thead,
+        .reports-movement-desktop-table thead,
+        .reports-category-table thead {
+          position: sticky;
+          top: 0;
+          z-index: 5;
+          background: #f8fafc;
+          box-shadow: 0 1px 0 #e2e8f0;
+        }
+
+        .reports-desktop-table th,
+        .reports-movement-desktop-table th,
+        .reports-category-table th {
+          background: #f8fafc;
+        }
+
         .reports-record-card {
           min-width: 0;
           border: 1px solid #e2e8f0;
@@ -1321,6 +1680,12 @@ export function ReportsModule({
           background: #ffffff;
           padding: 12px;
           box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05);
+          transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+        }
+
+        .reports-record-card:hover {
+          border-color: #cbd5e1;
+          box-shadow: 0 10px 20px rgba(15, 23, 42, 0.07);
         }
 
         .reports-record-top {
@@ -1362,6 +1727,10 @@ export function ReportsModule({
           gap: 8px;
         }
 
+        .reports-record-grid-four {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
         .reports-record-stat {
           min-width: 0;
           border-radius: 12px;
@@ -1385,138 +1754,6 @@ export function ReportsModule({
           font-size: 14px;
           line-height: 1.25;
           overflow-wrap: anywhere;
-        }
-
-        .reports-final-order-input {
-          width: 6.5rem;
-          max-width: 100%;
-          min-height: 2.25rem;
-          border: 1px solid #cbd5e1;
-          border-radius: 0.625rem;
-          background: #ffffff;
-          padding: 0.45rem 0.65rem;
-          color: #0f172a;
-          font-size: 0.875rem;
-          font-weight: 700;
-          line-height: 1.2;
-          outline: none;
-          transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
-        }
-
-        .reports-final-order-input:focus {
-          border-color: #2563eb;
-          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
-        }
-
-        .reports-final-order-note {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 1rem;
-          border: 1px solid #dbe3ef;
-          border-radius: 0.875rem;
-          background: #f8fafc;
-          padding: 0.85rem 1rem;
-          color: #475569;
-          font-size: 0.875rem;
-          line-height: 1.45;
-        }
-
-        .reports-final-order-note strong {
-          color: #0f172a;
-          font-weight: 750;
-          white-space: nowrap;
-        }
-
-        .reports-final-order-note-text {
-          display: flex;
-          gap: 0.35rem;
-          min-height: 2.5rem;
-          flex: 1 1 auto;
-          align-items: center;
-          min-width: 0;
-        }
-
-        .reports-final-order-actions {
-          display: flex;
-          flex: 0 0 auto;
-          justify-content: flex-end;
-          margin-left: auto;
-        }
-
-        .reports-reset-confirm-dialog {
-          width: min(100% - 2rem, 30rem);
-          max-width: min(100% - 2rem, 30rem) !important;
-          gap: 0.85rem;
-          border: 2px solid #FFFF00;
-          border-radius: 1rem;
-          box-shadow: 0 18px 38px rgba(15, 23, 42, 0.18), 0 0 0 4px rgba(255, 255, 0, 0.16);
-        }
-
-        .reports-reset-confirm-dialog [data-slot="alert-dialog-header"] {
-          gap: 0.5rem;
-          padding: 1.25rem 1.25rem 0;
-        }
-
-        .reports-reset-confirm-dialog [data-slot="alert-dialog-title"] {
-          color: #0f172a;
-          font-size: 1.15rem;
-          line-height: 1.2;
-        }
-
-        .reports-reset-confirm-dialog [data-slot="alert-dialog-description"] {
-          color: #475569;
-          font-size: 0.9rem;
-          line-height: 1.45;
-        }
-
-        .reports-reset-confirm-dialog [data-slot="alert-dialog-footer"] {
-          display: flex;
-          flex-direction: row;
-          gap: 0.6rem;
-          justify-content: flex-end;
-          padding: 0 1.25rem 1.25rem;
-        }
-
-        .reports-reset-confirm-dialog [data-slot="alert-dialog-footer"] > button {
-          min-height: 2.5rem;
-          min-width: 7.25rem;
-        }
-
-        .reports-reset-confirm-dialog [data-slot="alert-dialog-footer"] > button:hover,
-        .reports-reset-confirm-dialog [data-slot="alert-dialog-footer"] > button:focus-visible {
-          transform: none !important;
-        }
-
-        .reports-reset-confirm-submit {
-          border: 1px solid #0f172a !important;
-          background: #0f172a !important;
-          color: #ffffff !important;
-        }
-
-        .reports-reset-confirm-submit:hover,
-        .reports-reset-confirm-submit:focus-visible {
-          border-color: #334155 !important;
-          background: #334155 !important;
-          color: #ffffff !important;
-        }
-
-        .reports-reset-confirm-icon {
-          display: flex;
-          height: 2.75rem;
-          width: 2.75rem;
-          flex: 0 0 auto;
-          align-items: center;
-          justify-content: center;
-          border-radius: 0.9rem;
-          background: #f1f5f9;
-          color: #334155;
-        }
-
-        .reports-final-order-button-row {
-          display: flex;
-          gap: 0.5rem;
-          justify-content: flex-end;
         }
 
         .reports-count-badge {
@@ -1544,6 +1781,307 @@ export function ReportsModule({
           border-color: #e2e8f0;
           background: #f1f5f9;
           color: #334155;
+        }
+
+        .reports-purchase-total-stat {
+          background: #f0fdf4;
+        }
+
+        .reports-purchase-total-stat strong {
+          color: #166534;
+        }
+
+        .reports-purchase-note {
+          margin-top: 0.75rem;
+          border-top: 1px solid #e2e8f0;
+          padding-top: 0.7rem;
+          color: #64748b;
+          font-size: 0.78rem;
+          line-height: 1.45;
+          overflow-wrap: anywhere;
+        }
+
+        .reports-mobile-category-card,
+        .reports-movement-card {
+          min-width: 0;
+          border: 1px solid #e2e8f0;
+          border-radius: 14px;
+          background: #ffffff;
+          padding: 12px;
+          box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05);
+          transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+        }
+
+        .reports-mobile-category-card:hover,
+        .reports-movement-card:hover {
+          border-color: #cbd5e1;
+          box-shadow: 0 10px 20px rgba(15, 23, 42, 0.07);
+        }
+
+        .reports-mobile-category-top,
+        .reports-movement-top {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 10px;
+          margin-bottom: 10px;
+        }
+
+        .reports-mobile-category-name {
+          min-width: 0;
+          overflow-wrap: anywhere;
+          color: #0f172a;
+          font-size: 15px;
+          font-weight: 800;
+          line-height: 1.25;
+        }
+
+        .reports-mobile-category-stats {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 8px;
+        }
+
+        .reports-mobile-category-stat,
+        .reports-movement-stat {
+          min-width: 0;
+          border-radius: 12px;
+          background: #f8fafc;
+          padding: 9px;
+        }
+
+        .reports-mobile-category-stat span,
+        .reports-movement-stat span {
+          display: block;
+          margin-bottom: 4px;
+          color: #64748b;
+          font-size: 10px;
+          font-weight: 800;
+          line-height: 1.2;
+          text-transform: uppercase;
+        }
+
+        .reports-mobile-category-stat strong,
+        .reports-movement-stat strong {
+          display: block;
+          color: #0f172a;
+          font-size: 15px;
+          line-height: 1.15;
+          overflow-wrap: anywhere;
+        }
+
+        .reports-movement-name {
+          min-width: 0;
+          overflow-wrap: anywhere;
+          color: #0f172a;
+          font-size: 15px;
+          font-weight: 750;
+          line-height: 1.25;
+        }
+
+        .reports-movement-meta {
+          margin-top: 3px;
+          color: #64748b;
+          font-size: 12px;
+          line-height: 1.35;
+        }
+
+        .reports-movement-stats {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 8px;
+        }
+
+        .reports-mobile-category-list,
+        .reports-mobile-record-list,
+        .reports-movement-mobile-list {
+          max-height: min(62vh, 560px);
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          scrollbar-gutter: stable;
+          padding-right: 4px;
+        }
+
+        .reports-review-button {
+          border-color: #bfdbfe;
+          background: #ffffff;
+          color: #1d4ed8;
+          font-weight: 700;
+          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+        }
+
+        .reports-review-button:hover,
+        .reports-review-button:focus-visible {
+          border-color: #60a5fa;
+          background: #eff6ff;
+          color: #1e40af;
+        }
+
+        .reports-convert-dialog {
+          width: min(620px, calc(100vw - 2rem));
+          max-width: min(620px, calc(100vw - 2rem)) !important;
+          border-radius: 1rem;
+          overflow: hidden;
+        }
+
+        .reports-convert-content {
+          display: grid;
+          gap: 1rem;
+        }
+
+        .reports-convert-header {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr);
+          gap: 1rem;
+          align-items: start;
+          padding: 1.35rem 1.5rem 0;
+        }
+
+        .reports-convert-icon {
+          display: flex;
+          width: 3.25rem;
+          height: 3.25rem;
+          align-items: center;
+          justify-content: center;
+          border-radius: 0.95rem;
+          background: #eff6ff;
+          color: #2563eb;
+        }
+
+        .reports-convert-form {
+          display: grid;
+          gap: 0.9rem;
+          padding: 0 1.5rem 1.15rem;
+        }
+
+        .reports-convert-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.8rem;
+        }
+
+        .reports-convert-field {
+          display: grid;
+          gap: 0.45rem;
+          min-width: 0;
+        }
+
+        .reports-convert-control {
+          min-height: 2.75rem;
+          border-color: #dbe3ee;
+          border-radius: 0.65rem;
+          background: #ffffff;
+        }
+
+        .reports-convert-summary,
+        .reports-convert-warning {
+          display: flex;
+          align-items: flex-start;
+          gap: 0.65rem;
+          border-radius: 0.75rem;
+          padding: 0.75rem 0.85rem;
+          font-size: 0.82rem;
+          line-height: 1.4;
+        }
+
+        .reports-convert-summary {
+          border: 1px solid #bbf7d0;
+          background: #f0fdf4;
+          color: #14532d;
+        }
+
+        .reports-convert-warning {
+          border: 1px solid #fde68a;
+          background: #fffbeb;
+          color: #713f12;
+        }
+
+        .reports-convert-match-list {
+          margin-top: 0.45rem;
+          display: grid;
+          gap: 0.35rem;
+        }
+
+        .reports-convert-match {
+          border-radius: 0.55rem;
+          background: rgba(255, 255, 255, 0.65);
+          padding: 0.45rem 0.55rem;
+          color: #334155;
+        }
+
+        .reports-convert-check {
+          display: flex;
+          align-items: flex-start;
+          gap: 0.55rem;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.7rem;
+          background: #ffffff;
+          padding: 0.65rem 0.75rem;
+          color: #334155;
+          font-size: 0.82rem;
+          line-height: 1.4;
+        }
+
+        .reports-convert-check input {
+          margin-top: 0.15rem;
+        }
+
+        .reports-convert-footer {
+          display: flex;
+          justify-content: flex-end;
+          gap: 0.65rem;
+          border-top: 1px solid #e2e8f0;
+          background: #ffffff;
+          padding: 1rem 1.5rem;
+        }
+
+        @media (max-width: 1024px) {
+          .reports-data-card {
+            border-radius: 18px;
+          }
+
+          .reports-data-card [data-slot='card-header'] {
+            padding: 18px 16px 8px;
+          }
+
+          .reports-data-card [data-slot='card-content'] {
+            padding: 0 16px 16px;
+          }
+
+          .reports-category-table,
+          .reports-desktop-table,
+          .reports-movement-desktop-table {
+            display: none;
+          }
+
+          .reports-mobile-category-list,
+          .reports-mobile-record-list,
+          .reports-movement-mobile-list {
+            display: grid;
+            gap: 12px;
+          }
+
+          .reports-record-card,
+          .reports-mobile-category-card,
+          .reports-movement-card {
+            border-radius: 15px;
+            padding: 13px;
+          }
+
+          .reports-desktop-table,
+          .reports-movement-desktop-table,
+          .reports-category-table {
+            max-height: min(56vh, 560px);
+          }
+
+          .reports-pos-summary-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            justify-content: stretch;
+          }
+
+          .reports-pos-summary-item {
+            min-width: 0;
+          }
         }
 
         @media (max-width: 767px) {
@@ -1657,48 +2195,16 @@ export function ReportsModule({
           .reports-category-title { margin-bottom: 10px; font-size: 18px; }
           .reports-category-table { display: none; }
           .reports-mobile-category-list { display: grid; gap: 10px; }
+          .reports-mobile-category-list,
+          .reports-mobile-record-list,
+          .reports-movement-mobile-list {
+            max-height: min(58vh, 500px);
+          }
           .reports-empty-state { min-height: 190px; padding: 26px 16px; }
           .reports-empty-icon { height: 48px; width: 48px; border-radius: 14px; }
           .reports-empty-state h3 { font-size: 16px; }
           .reports-empty-state p { font-size: 13px; }
-          .reports-mobile-category-card { min-width: 0; border: 1px solid #e2e8f0; border-radius: 14px; background: #ffffff; padding: 12px; box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05); }
-          .reports-mobile-category-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
-          .reports-mobile-category-name { min-width: 0; overflow-wrap: anywhere; font-size: 15px; line-height: 1.25; font-weight: 800; color: #0f172a; }
           .reports-mobile-category-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-          .reports-mobile-category-stat { min-width: 0; border-radius: 12px; background: #f8fafc; padding: 10px; }
-          .reports-mobile-category-stat span { display: block; margin-bottom: 4px; font-size: 11px; font-weight: 800; color: #64748b; text-transform: uppercase; }
-          .reports-mobile-category-stat strong { display: block; font-size: 17px; line-height: 1.1; color: #0f172a; }
-          .reports-final-order-input { width: 100%; min-height: 38px; }
-          .reports-final-order-note {
-            align-items: stretch;
-            padding: 12px;
-            font-size: 13px;
-          }
-          .reports-final-order-note-text {
-            min-height: 0;
-            align-items: flex-start;
-            gap: 8px;
-          }
-          .reports-final-order-actions {
-            width: 100%;
-            margin-left: 0;
-          }
-          .reports-final-order-actions button {
-            width: 100%;
-            min-height: 42px;
-          }
-          .reports-final-order-button-row {
-            width: 100%;
-            flex-direction: row;
-            gap: 8px;
-          }
-          .reports-final-order-button-row button {
-            flex: 1 1 0;
-            min-width: 0;
-            padding-left: 10px;
-            padding-right: 10px;
-            white-space: nowrap;
-          }
           .reports-data-card { gap: 0; }
           .reports-data-card [data-slot='card-header'] { padding-bottom: 8px; }
           .reports-data-card [data-slot='card-content'] { padding-top: 0; }
@@ -1707,33 +2213,91 @@ export function ReportsModule({
           .reports-data-card [data-card-content] { overflow-x: visible; }
           .reports-pos-summary {
             grid-template-columns: 1fr;
-            gap: 10px;
+            gap: 8px;
             margin-bottom: 12px;
             padding: 12px;
             border-radius: 14px;
           }
+          .reports-pos-summary-copy {
+            flex-direction: column;
+            gap: 6px;
+            padding-bottom: 10px;
+          }
           .reports-pos-summary-copy h3 { font-size: 15px; }
-          .reports-pos-summary-copy p { font-size: 12px; line-height: 1.45; }
+          .reports-pos-summary-copy p {
+            max-width: none;
+            text-align: left;
+            font-size: 12px;
+            line-height: 1.45;
+          }
           .reports-pos-summary-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 8px;
+            gap: 0;
           }
           .reports-pos-summary-item {
-            padding: 10px;
-            border-radius: 12px;
+            border-right: 1px solid #e2e8f0;
+            border-bottom: 1px solid #e2e8f0;
+            min-height: 64px;
+            padding: 9px 12px;
           }
+          .reports-pos-summary-item:nth-child(2n) { border-right: 0; }
+          .reports-pos-summary-item:nth-child(3) {
+            grid-column: 1 / -1;
+            border-right: 0;
+            border-bottom: 0;
+          }
+          .reports-pos-summary-item-due { box-shadow: inset 3px 0 0 #22c55e; }
           .reports-pos-summary-item span { font-size: 10px; }
           .reports-pos-summary-item strong { font-size: 14px; }
+          .reports-pos-payment-counts {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0;
+          }
+          .reports-pos-payment-count {
+            padding-top: 0.1rem;
+            padding-bottom: 0.1rem;
+          }
           .reports-movement-desktop-table { display: none; }
           .reports-movement-mobile-list { display: grid; gap: 10px; }
-          .reports-movement-card { min-width: 0; border: 1px solid #e2e8f0; border-radius: 14px; background: #ffffff; padding: 12px; box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05); }
-          .reports-movement-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
-          .reports-movement-name { min-width: 0; overflow-wrap: anywhere; font-size: 15px; line-height: 1.25; font-weight: 700; color: #0f172a; }
-          .reports-movement-meta { margin-top: 3px; font-size: 12px; color: #64748b; }
           .reports-movement-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-          .reports-movement-stat { min-width: 0; border-radius: 12px; background: #f8fafc; padding: 9px; }
-          .reports-movement-stat span { display: block; margin-bottom: 4px; font-size: 10px; font-weight: 800; color: #64748b; text-transform: uppercase; }
-          .reports-movement-stat strong { display: block; font-size: 15px; line-height: 1.1; color: #0f172a; overflow-wrap: anywhere; }
+
+          .reports-convert-dialog {
+            width: min(420px, calc(100vw - 1rem));
+            max-width: min(420px, calc(100vw - 1rem)) !important;
+            max-height: 90vh;
+            overflow-y: auto;
+          }
+
+          .reports-convert-header {
+            gap: 0.75rem;
+            padding: 1rem 1rem 0;
+          }
+
+          .reports-convert-icon {
+            width: 2.85rem;
+            height: 2.85rem;
+            border-radius: 0.85rem;
+          }
+
+          .reports-convert-form {
+            gap: 0.8rem;
+            padding: 0 1rem 1rem;
+          }
+
+          .reports-convert-grid {
+            grid-template-columns: 1fr;
+            gap: 0.75rem;
+          }
+
+          .reports-convert-footer {
+            flex-direction: column-reverse;
+            gap: 0.65rem;
+            padding: 0.9rem 1rem;
+          }
+
+          .reports-convert-footer button {
+            width: 100%;
+          }
         }
 
         @media (max-width: 420px) {
@@ -1758,8 +2322,35 @@ export function ReportsModule({
           .reports-summary-mini-grid p:first-child { font-size: 11px; }
           .reports-summary-mini-grid p:last-child { font-size: 21px; }
           .reports-summary-mini-grid > div:last-child { grid-column: auto; }
-          .reports-final-order-button-row button {
-            font-size: 13px;
+          .reports-record-grid,
+          .reports-record-grid-four,
+          .reports-mobile-category-stats,
+          .reports-movement-stats {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+          .reports-pos-summary-grid {
+            grid-template-columns: 1fr;
+          }
+          .reports-pos-summary-item {
+            border-right: 0;
+            border-bottom: 1px solid #e2e8f0;
+            min-height: 58px;
+            padding: 8px 12px;
+          }
+          .reports-pos-summary-item:nth-child(3) { grid-column: auto; }
+          .reports-pos-summary-item:nth-last-child(-n + 2) { border-bottom: 1px solid #e2e8f0; }
+          .reports-pos-summary-item:last-child { border-bottom: 0; }
+          .reports-pos-payment-counts {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+        }
+
+        @media (max-width: 360px) {
+          .reports-record-grid,
+          .reports-record-grid-four,
+          .reports-mobile-category-stats,
+          .reports-movement-stats {
+            grid-template-columns: 1fr;
           }
         }
       `}</style>
@@ -1775,7 +2366,11 @@ export function ReportsModule({
           <div className="reports-config-header flex items-center justify-between">
             <div className="reports-config-title">
               <CardTitle>Report Configuration</CardTitle>
-              <CardDescription>Select time period, report type and filters</CardDescription>
+              <CardDescription>
+                {isInventorySnapshotReport
+                  ? 'Inventory reports show the current stock snapshot. Activity reports use the selected period.'
+                  : 'Select time period, report type and filters'}
+              </CardDescription>
             </div>
             <Button
               onClick={generatePDF}
@@ -1788,80 +2383,90 @@ export function ReportsModule({
         </CardHeader>
         <CardContent data-reports-config-content>
           <div className="reports-config-stack space-y-6">
-            <div className="reports-period-panel bg-gradient-to-br from-yellow-50 to-orange-50 p-6 rounded-xl border-2 border-[#FFFF00]/30 shadow-sm">
-              <div className="reports-period-label flex items-center gap-3 mb-3">
-                <Calendar className="w-5 h-5 text-[#FF0000]" />
-                <label className="font-semibold text-gray-900">Report Period:</label>
-              </div>
-              <div className="reports-filter-row flex flex-col md:flex-row gap-4">
-                <div className="flex-1">
-                  <Select value={reportPeriod} onValueChange={value => setReportPeriod(value)}>
-                    <SelectTrigger data-reports-control className="bg-white border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="daily">Daily</SelectItem>
-                      <SelectItem value="weekly">Weekly</SelectItem>
-                      <SelectItem value="monthly">Monthly</SelectItem>
-                    </SelectContent>
-                  </Select>
+            {isInventorySnapshotReport ? (
+              <div className="reports-period-panel reports-scope-panel bg-gradient-to-br from-yellow-50 to-orange-50 p-6 rounded-xl border-2 border-[#FFFF00]/30 shadow-sm">
+                <div className="reports-period-label flex items-center gap-3 mb-3">
+                  <Package className="w-5 h-5 text-[#FF0000]" />
+                  <span className="font-semibold text-gray-900">Current Inventory Snapshot</span>
                 </div>
-                <div
-                  data-reports-date-pill
-                  className="reports-date-picker-pill flex-1 flex bg-white px-4 py-2 rounded-lg border border-gray-300 shadow-sm"
-                  role="button"
-                  tabIndex={0}
-                  onClick={openReportDatePicker}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      openReportDatePicker();
-                    }
-                  }}
-                  aria-label={`Open date picker for ${reportPeriod} report date`}
-                >
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
-                    {isRefreshing ? (
-                      <RefreshCw className="w-4 h-4 shrink-0 text-[#FF0000] animate-spin" />
-                    ) : (
-                      <Calendar className="w-4 h-4 shrink-0 text-gray-600" />
-                    )}
-                    <span className={`reports-date-range-text text-sm text-gray-700 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
-                      {getDateRange()}
-                    </span>
+                <p className="reports-scope-copy text-sm leading-6 text-slate-700">
+                  This report uses the latest inventory quantities and low-stock thresholds. Date filters are only used for sales, purchases, and stock movement activity reports.
+                </p>
+              </div>
+            ) : (
+              <div className="reports-period-panel bg-gradient-to-br from-yellow-50 to-orange-50 p-6 rounded-xl border-2 border-[#FFFF00]/30 shadow-sm">
+                <div className="reports-period-label flex items-center gap-3 mb-3">
+                  <Calendar className="w-5 h-5 text-[#FF0000]" />
+                  <label className="font-semibold text-gray-900">Report Period:</label>
+                </div>
+                <div className="reports-filter-row flex flex-col md:flex-row gap-4">
+                  <div className="flex-1">
+                    <Select value={reportPeriod} onValueChange={value => setReportPeriod(value)}>
+                      <SelectTrigger data-reports-control className="bg-white border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="daily">Daily</SelectItem>
+                        <SelectItem value="weekly">Weekly</SelectItem>
+                        <SelectItem value="monthly">Monthly</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
-                  <input
-                    ref={reportDateInputRef}
-                    className="reports-date-picker-input"
-                    type="date"
-                    value={selectedReportDate}
-                    onClick={event => event.stopPropagation()}
-                    onChange={event => setSelectedReportDate(event.target.value)}
-                    aria-label={`Select ${reportPeriod} report date`}
-                  />
+                  <div
+                    data-reports-date-pill
+                    className="reports-date-picker-pill flex-1 flex bg-white px-4 py-2 rounded-lg border border-gray-300 shadow-sm"
+                    role="button"
+                    tabIndex={0}
+                    onClick={openReportDatePicker}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        openReportDatePicker();
+                      }
+                    }}
+                    aria-label={`Open date picker for ${reportPeriod} report date`}
+                  >
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      {isRefreshing ? (
+                        <RefreshCw className="w-4 h-4 shrink-0 text-[#FF0000] animate-spin" />
+                      ) : (
+                        <Calendar className="w-4 h-4 shrink-0 text-gray-600" />
+                      )}
+                      <span className={`reports-date-range-text text-sm text-gray-700 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
+                        {getDateRange()}
+                      </span>
+                    </div>
+                    <input
+                      ref={reportDateInputRef}
+                      className="reports-date-picker-input"
+                      type="date"
+                      value={selectedReportDate}
+                      onClick={event => event.stopPropagation()}
+                      onChange={event => setSelectedReportDate(event.target.value)}
+                      aria-label={`Select ${reportPeriod} report date`}
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             <div className="reports-filter-row flex flex-col md:flex-row gap-4">
               <div className="flex-1">
                 <label className="text-sm font-medium mb-2 block text-gray-700">Report Type</label>
-                <Select value={reportType} onValueChange={value => setReportType(value)}>
+                <Select value={reportType} onValueChange={handleReportTypeChange}>
                   <SelectTrigger data-reports-control className="border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {allowedReportTypes
-                      .filter(option => option.value !== 'supplier-reorder')
-                      .map(option => (
+                    {allowedReportTypes.map(option => (
                         <SelectItem key={option.value} value={option.value}>
                           {option.label}
                         </SelectItem>
-                      ))}
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
-              {(reportType === 'detailed' || reportType === 'movements' || reportType === 'sales-movements') && (
+              {reportUsesCategoryFilter && (
                 <div className="flex-1">
                   <label className="text-sm font-medium mb-2 block text-gray-700">Filter by Category</label>
                   <Select value={selectedCategory} onValueChange={setSelectedCategory}>
@@ -1883,22 +2488,7 @@ export function ReportsModule({
       </Card>
 
       <div className={`reports-metric-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
-        {(reportType === 'movements' || reportType === 'sales-movements' ? [
-          { label: reportType === 'sales-movements' ? 'Sales Transactions' : 'Movements', value: reportType === 'sales-movements' ? getSalesFinancialSummary().transactionCount : getFilteredMovements({ salesOnly: false }).length, icon: <RefreshCw className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
-          { label: reportType === 'sales-movements' ? 'Quantity Sold' : 'Stock In Units', value: reportType === 'sales-movements' ? getSalesMovementUnits() : stockInUnits, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
-          { label: reportType === 'sales-movements' ? 'Amount Due' : 'Stock Out Units', value: reportType === 'sales-movements' ? formatCurrency(getSalesFinancialSummary().amountDue) : stockOutUnits, icon: reportType === 'sales-movements' ? <Wallet className="w-8 h-8 text-amber-500" /> : <AlertTriangle className="w-8 h-8 text-red-500" />, color: reportType === 'sales-movements' ? 'border-l-amber-500' : stockOutUnits > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
-          { label: reportType === 'sales-movements' ? 'Discounts' : 'Categories', value: reportType === 'sales-movements' ? formatCurrency(getSalesFinancialSummary().discount) : new Set(getFilteredMovements({ salesOnly: false }).map(movement => movement.category)).size, icon: reportType === 'sales-movements' ? <Tag className="w-8 h-8 text-violet-500" /> : <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
-        ] : reportType === 'purchases' ? [
-          { label: 'Purchase Entries', value: getPurchaseSummary().entryCount, icon: <FileText className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
-          { label: 'Quantity Received', value: getPurchaseSummary().totalQuantity, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
-          { label: 'Total Purchases', value: formatCurrency(getPurchaseSummary().totalAmount), icon: <Wallet className="w-8 h-8 text-amber-500" />, color: 'border-l-amber-500' },
-          { label: 'Suppliers', value: new Set(getFilteredPurchaseTransactions().map(purchase => purchase.supplierName)).size, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
-        ] : [
-          { label: 'Total Items', value: totalItems, icon: <Package className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
-          { label: 'Total Units', value: totalQuantity, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
-          { label: 'Categories', value: categories.length, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
-          { label: 'Stock Needs Attention', value: attentionItems, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: attentionItems > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
-        ]).map(metric => (
+        {getReportMetrics().map(metric => (
           <Card key={metric.label} className={`reports-metric-card border-l-4 ${metric.color}`}>
             <CardContent className="pt-6" data-reports-metric-content>
               <div className="flex items-center justify-between" data-reports-metric-row>
@@ -1942,7 +2532,7 @@ export function ReportsModule({
                   renderReportsEmptyState({
                     icon: Package,
                     title: 'No category breakdown available',
-                    message: `No inventory items are available for the selected ${reportPeriod} period. Try another date range or add inventory records first.`
+                    message: 'No current inventory items are available yet. Add inventory records first.'
                   })
                 ) : (
                   <>
@@ -2020,14 +2610,14 @@ export function ReportsModule({
         <Card className={`reports-data-card transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
           <CardHeader>
             <CardTitle>Detailed Inventory</CardTitle>
-            <CardDescription>{selectedCategory === 'all' ? 'All items' : `${selectedCategory} category`} - {getFilteredInventory().length} items</CardDescription>
+            <CardDescription>Current inventory snapshot - {selectedCategory === 'all' ? 'all categories' : `${selectedCategory} category`} - {getFilteredInventory().length} items</CardDescription>
           </CardHeader>
           <CardContent>
             {getFilteredInventory().length === 0 ? (
               renderReportsEmptyState({
                 icon: Package,
                 title: 'No inventory items found',
-                message: `No active inventory records match the selected ${reportPeriod} period${selectedCategory === 'all' ? '' : ` and ${selectedCategory} category`}. Try changing the date range, report period, or category filter.`
+                message: `No active inventory records match${selectedCategory === 'all' ? '' : ` the ${selectedCategory} category`}.`
               })
             ) : (
               <>
@@ -2076,14 +2666,16 @@ export function ReportsModule({
         <Card className={`reports-data-card transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
           <CardHeader>
             <CardTitle>Low Stock Alert</CardTitle>
-            <CardDescription>Restocking attention: out of stock first, then low stock - {getLowStockItems().length} items</CardDescription>
+            <CardDescription>
+              Current restocking attention{selectedCategory === 'all' ? '' : ` for ${selectedCategory}`} - out of stock first, then low stock - {getLowStockItems().length} items
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {getLowStockItems().length === 0 ? (
               renderReportsEmptyState({
                 icon: AlertTriangle,
                 title: 'No low-stock items found',
-                message: `No low-stock or out-of-stock items match the selected ${reportPeriod} period${selectedCategory === 'all' ? '' : ` and ${selectedCategory} category`}. Try another date range or category if you expected restocking items.`
+                message: `No current low-stock or out-of-stock items require attention${selectedCategory === 'all' ? '' : ` in ${selectedCategory}`}.`
               })
             ) : (
               <>
@@ -2121,6 +2713,203 @@ export function ReportsModule({
                 </div>
                 <div className="reports-mobile-record-list">
                   {getLowStockItems().map(item => renderInventoryMobileCard(item))}
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {reportType === 'supplier-reorder' && (
+        <div className={`space-y-4 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
+          {getSupplierReorderGroups().length === 0 ? (
+            <Card className="reports-data-card">
+              <CardContent>
+                {renderReportsEmptyState({
+                  icon: Package,
+                  title: 'No reorder items found',
+                  message: `No current low-stock or out-of-stock items match${selectedCategory === 'all' ? '' : ` the ${selectedCategory} category`}.`
+                })}
+              </CardContent>
+            </Card>
+          ) : getSupplierReorderGroups().map(group => (
+            <Card key={group.supplier} className="reports-data-card">
+              <CardHeader>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <CardTitle>{group.supplier}</CardTitle>
+                    <CardDescription>
+                      {formatItemCount(group.itemCount)} needing reorder review - Qty needed to threshold: {formatUnitCount(group.neededQuantity)}
+                    </CardDescription>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                    {group.outOfStock > 0 && <Badge className={getStatusCountBadgeClass('Out of Stock')}>{group.outOfStock} Out of Stock</Badge>}
+                    {group.lowStock > 0 && <Badge className={getStatusCountBadgeClass('Low Stock')}>{group.lowStock} Low Stock</Badge>}
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="reports-desktop-table">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead>Item Name</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Current Stock</TableHead>
+                        <TableHead>Low-Stock Threshold</TableHead>
+                        <TableHead>Qty Needed</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {group.items.map(item => (
+                        <TableRow key={item.id}>
+                          <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
+                          <TableCell>{item.name}</TableCell>
+                          <TableCell>{item.category}</TableCell>
+                          <TableCell className="font-semibold">{item.quantity}</TableCell>
+                          <TableCell>{item.lowStockThreshold}</TableCell>
+                          <TableCell className="font-semibold">{item.neededQuantity}</TableCell>
+                          <TableCell>
+                            <Badge className={getStockStatusBadgeClass(item.status)}>
+                              {item.status}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="reports-mobile-record-list">
+                  {group.items.map(item => (
+                    <article key={item.id} className="reports-record-card">
+                      <div className="reports-record-top">
+                        <div className="min-w-0">
+                          <p className="reports-record-code">{getDisplayItemCode(item)}</p>
+                          <h4 className="reports-record-name">{item.name}</h4>
+                          <p className="reports-record-meta">{item.category}</p>
+                        </div>
+                        <Badge className={`shrink-0 ${getStockStatusBadgeClass(item.status)}`}>{item.status}</Badge>
+                      </div>
+                      <div className="reports-record-grid reports-record-grid-four">
+                        <div className="reports-record-stat"><span>Current</span><strong>{item.quantity}</strong></div>
+                        <div className="reports-record-stat"><span>Threshold</span><strong>{item.lowStockThreshold}</strong></div>
+                        <div className="reports-record-stat"><span>Qty Needed</span><strong>{item.neededQuantity}</strong></div>
+                        <div className="reports-record-stat"><span>Supplier</span><strong>{group.supplier}</strong></div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {reportType === 'untracked-sales' && (
+        <Card className={`reports-data-card transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
+          <CardHeader>
+            <CardTitle>Untracked Sales Items</CardTitle>
+            <CardDescription>Non-inventory items recorded in sales only - {getUntrackedSalesItems().length} item groups</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {getUntrackedSalesItems().length === 0 ? (
+              renderReportsEmptyState({
+                icon: FileText,
+                title: 'No untracked sales items found',
+                message: `No non-inventory sale items match the selected ${reportPeriod} period.`
+              })
+            ) : (
+              <>
+                <div className="reports-desktop-table">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Item Description</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Total Qty Sold</TableHead>
+                        <TableHead>Total Sales</TableHead>
+                        <TableHead>Times Sold</TableHead>
+                        <TableHead>Last Sold</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Review</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {getUntrackedSalesItems().map(item => (
+                        <TableRow key={`${item.itemName}-${item.category}`}>
+                          <TableCell className="font-semibold">{item.itemName}</TableCell>
+                          <TableCell>{item.category}</TableCell>
+                          <TableCell>{item.totalQuantity}</TableCell>
+                          <TableCell>{formatCurrency(item.totalSalesAmount)}</TableCell>
+                          <TableCell>{item.timesSold}</TableCell>
+                          <TableCell>{formatDateTime(item.lastSoldAt)}</TableCell>
+                          <TableCell>
+                            {item.reviewStatus === 'tracked' ? (
+                              <Badge className="border-green-200 bg-green-50 text-green-700 hover:bg-green-50">Now Tracked</Badge>
+                            ) : (
+                              <Badge variant="outline">Non-Inventory</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="reports-review-button"
+                              onClick={() => openConvertUntrackedItemDialog(item)}
+                              disabled={!isAdminRole(user?.role) || item.reviewStatus === 'tracked'}
+                              title={
+                                item.reviewStatus === 'tracked'
+                                  ? `Already tracked as ${item.activeInventoryMatch?.name || 'an inventory item'}`
+                                  : isAdminRole(user?.role)
+                                    ? 'Review and add this manual item to Inventory'
+                                    : 'Only Admin / Manager can add items to Inventory'
+                              }
+                            >
+                              <PackagePlus className="mr-2 h-4 w-4" />
+                              {item.reviewStatus === 'tracked' ? 'Tracked' : 'Review'}
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="reports-mobile-record-list">
+                  {getUntrackedSalesItems().map(item => (
+                    <article key={`${item.itemName}-${item.category}`} className="reports-record-card">
+                      <div className="reports-record-top">
+                        <div className="min-w-0">
+                          <h4 className="reports-record-name">{item.itemName}</h4>
+                          <p className="reports-record-meta">{item.category}</p>
+                        </div>
+                        {item.reviewStatus === 'tracked' ? (
+                          <Badge className="shrink-0 border-green-200 bg-green-50 text-green-700 hover:bg-green-50">Now Tracked</Badge>
+                        ) : (
+                          <Badge className="shrink-0" variant="outline">Non-Inventory</Badge>
+                        )}
+                      </div>
+                      <div className="reports-record-grid reports-record-grid-four">
+                        <div className="reports-record-stat"><span>Qty Sold</span><strong>{item.totalQuantity}</strong></div>
+                        <div className="reports-record-stat"><span>Total Sales</span><strong>{formatCurrency(item.totalSalesAmount)}</strong></div>
+                        <div className="reports-record-stat"><span>Times Sold</span><strong>{item.timesSold}</strong></div>
+                        <div className="reports-record-stat"><span>Last Sold</span><strong>{formatDateTime(item.lastSoldAt)}</strong></div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="reports-review-button mt-3 w-full justify-center"
+                        onClick={() => openConvertUntrackedItemDialog(item)}
+                        disabled={!isAdminRole(user?.role) || item.reviewStatus === 'tracked'}
+                      >
+                        <PackagePlus className="mr-2 h-4 w-4" />
+                        {item.reviewStatus === 'tracked' ? 'Already in Inventory' : 'Review for Inventory'}
+                      </Button>
+                    </article>
+                  ))}
                 </div>
               </>
             )}
@@ -2173,16 +2962,37 @@ export function ReportsModule({
                 </div>
                 <div className="reports-mobile-record-list">
                   {getFilteredPurchaseTransactions().map(purchase => (
-                    <article key={purchase.id} className="reports-mobile-record-card">
-                      <div className="reports-mobile-record-top">
-                        <h4>{purchase.purchaseNumber}</h4>
-                        <Badge variant="outline">{purchase.documentType}</Badge>
+                    <article key={purchase.id} className="reports-record-card reports-purchase-record-card">
+                      <div className="reports-record-top">
+                        <div className="min-w-0">
+                          <p className="reports-record-code">{formatDateTime(purchase.createdAt)}</p>
+                          <h4 className="reports-record-name">{purchase.purchaseNumber}</h4>
+                          <p className="reports-record-meta">
+                            {purchase.supplierName || 'Unassigned supplier'}
+                          </p>
+                        </div>
                       </div>
-                      <div className="reports-mobile-record-stats">
-                        <div><span>Supplier</span><strong>{purchase.supplierName}</strong></div>
-                        <div><span>Quantity</span><strong>{purchase.totalQuantity}</strong></div>
-                        <div><span>Total</span><strong>{formatCurrency(purchase.subtotalAmount)}</strong></div>
+                      <div className="reports-record-grid reports-record-grid-four">
+                        <div className="reports-record-stat">
+                          <span>Document</span>
+                          <strong>{purchase.documentType}{purchase.documentNumber ? ` ${purchase.documentNumber}` : ''}</strong>
+                        </div>
+                        <div className="reports-record-stat">
+                          <span>Terms</span>
+                          <strong>{String(purchase.paymentTerms || 'cash').replace(/_/g, ' ').toUpperCase()}</strong>
+                        </div>
+                        <div className="reports-record-stat">
+                          <span>Quantity</span>
+                          <strong>{formatUnitCount(purchase.totalQuantity)}</strong>
+                        </div>
+                        <div className="reports-record-stat reports-purchase-total-stat">
+                          <span>Total</span>
+                          <strong>{formatCurrency(purchase.subtotalAmount)}</strong>
+                        </div>
                       </div>
+                      {purchase.remarks && (
+                        <p className="reports-purchase-note">{purchase.remarks}</p>
+                      )}
                     </article>
                   ))}
                 </div>
@@ -2190,134 +3000,6 @@ export function ReportsModule({
             )}
           </CardContent>
         </Card>
-      )}
-
-      {reportType === 'supplier-reorder' && (
-        <div className={`space-y-4 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
-          {getSupplierReorderGroups().length === 0 ? (
-            <Card className="reports-data-card">
-              <CardContent>
-                {renderReportsEmptyState({
-                  icon: Package,
-                  title: 'No supplier reorder items found',
-                  message: `No low-stock or out-of-stock items require supplier-based reordering for the selected ${reportPeriod} period${selectedCategory === 'all' ? '' : ` and ${selectedCategory} category`}. Try another date range or review current inventory levels.`
-                })}
-              </CardContent>
-            </Card>
-          ) : (
-            <>
-              <div className="reports-final-order-note flex-col md:flex-row">
-                <span className="reports-final-order-note-text">
-                  <strong>Reorder review:</strong> Suggested Order is calculated by the system. Use Final Order only when the manager needs to adjust quantities before export.
-                </span>
-                <div className="reports-final-order-actions">
-                  {!showFinalOrderColumn ? (
-                    <Button type="button" variant="outline" onClick={startFinalOrderAdjustments}>
-                      Adjust Final Orders
-                    </Button>
-                  ) : isAdjustingFinalOrders ? (
-                    <div className="reports-final-order-button-row">
-                      <Button type="button" variant="outline" onClick={cancelFinalOrderAdjustments}>
-                        Cancel
-                      </Button>
-                      <Button type="button" onClick={applyFinalOrderAdjustments}>
-                        Apply Final Orders
-                      </Button>
-                    </div>
-                  ) : (
-                    <Button type="button" variant="outline" onClick={() => setShowResetFinalOrdersDialog(true)}>
-                      Reset to Suggestions
-                    </Button>
-                  )}
-                </div>
-              </div>
-              {getSupplierReorderGroups().map(group => (
-              <Card key={group.supplier} className="reports-data-card">
-                <CardHeader>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <CardTitle>{group.supplier}</CardTitle>
-                      <CardDescription>
-                        {formatItemCount(group.itemCount)} needing reorder attention • Suggested total order: {formatUnitCount(group.suggestedUnits)}{hasFinalOrderAdjustments ? ` • Final order: ${formatUnitCount(getSupplierFinalOrderTotal(group))}` : ''}
-                      </CardDescription>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap justify-end gap-2">
-                      {group.outOfStock > 0 && <Badge className={getStatusCountBadgeClass('Out of Stock')}>{group.outOfStock} Out of Stock</Badge>}
-                      {group.lowStock > 0 && <Badge className={getStatusCountBadgeClass('Low Stock')}>{group.lowStock} Low Stock</Badge>}
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="reports-desktop-table">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Item Code</TableHead>
-                          <TableHead>Item Name</TableHead>
-                          <TableHead>Category</TableHead>
-                          <TableHead>Current Stock</TableHead>
-                          <TableHead>Reorder Point</TableHead>
-                          <TableHead>
-                            {renderReportHeaderTooltip(
-                              'Sales Demand',
-                              'Units sold during the selected report period. This helps estimate how much stock may be needed soon.'
-                            )}
-                          </TableHead>
-                          <TableHead>
-                            {renderReportHeaderTooltip(
-                              'Suggested Order',
-                              'Recommended quantity to order. It covers the stock shortage and recent sales demand.'
-                            )}
-                          </TableHead>
-                          {showFinalOrderColumn && <TableHead>Final Order</TableHead>}
-                          <TableHead>Status</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {group.items.map(item => (
-                          <TableRow key={item.id}>
-                            <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
-                            <TableCell>{item.name}</TableCell>
-                            <TableCell>{item.category}</TableCell>
-                            <TableCell className="font-semibold">{item.quantity}</TableCell>
-                            <TableCell>{item.reorderPoint}</TableCell>
-                            <TableCell>{item.recentSalesDemand}</TableCell>
-                            <TableCell className="font-semibold text-slate-950">{item.suggestedQuantity}</TableCell>
-                            {showFinalOrderColumn && (
-                              <TableCell>
-                                <input
-                                  className="reports-final-order-input"
-                                  value={isAdjustingFinalOrders
-                                    ? (draftFinalOrderQuantities[item.id] ?? '')
-                                    : (finalOrderQuantities[item.id] ?? String(item.suggestedQuantity))}
-                                  placeholder="0"
-                                  inputMode="numeric"
-                                  pattern="[0-9]*"
-                                  aria-label={`Final order quantity for ${item.name}`}
-                                  readOnly={!isAdjustingFinalOrders}
-                                  onChange={event => handleFinalOrderQuantityChange(item, event.target.value)}
-                                />
-                              </TableCell>
-                            )}
-                            <TableCell>
-                              <Badge className={getStockStatusBadgeClass(item.status)}>
-                                {item.status}
-                              </Badge>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                  <div className="reports-mobile-record-list">
-                    {group.items.map(item => renderSupplierReorderMobileCard(item))}
-                  </div>
-                </CardContent>
-              </Card>
-              ))}
-            </>
-          )}
-        </div>
       )}
 
       {reportType === 'category' && (
@@ -2328,12 +3010,12 @@ export function ReportsModule({
                 {renderReportsEmptyState({
                   icon: Package,
                   title: 'No category data found',
-                  message: `No inventory items are available for category analysis in the selected ${reportPeriod} period. Try another date range or add inventory records first.`
+                  message: 'No current inventory items are available for category analysis. Add inventory records first.'
                 })}
               </CardContent>
             </Card>
           ) : categories.map(category => {
-            const categoryItems = reportInventory.filter(item => item.category === category);
+            const categoryItems = computedReportInventory.filter(item => item.category === category);
             const categoryQty = categoryItems.reduce((sum, item) => sum + item.quantity, 0);
             const categoryLowStock = categoryItems.filter(item => item.status === 'Low Stock').length;
             const categoryOutOfStock = categoryItems.filter(item => item.status === 'Out of Stock').length;
@@ -2417,8 +3099,8 @@ export function ReportsModule({
                       <h3>Sales Payment Summary</h3>
                       <p>
                         {selectedCategory === 'all'
-                          ? 'Totals from completed sales in the selected report period.'
-                          : 'Category totals use matching sold item lines. Transaction discounts are shared proportionally for clearer reporting.'}
+                          ? 'Tracked inventory sales for the selected period. Subtotal is before discounts; Amount Due is shown above after discounts.'
+                          : 'Tracked sales in this category only. Discounts are shared proportionally; Amount Due is shown above after discounts.'}
                       </p>
                     </div>
                     <div className="reports-pos-summary-grid">
@@ -2431,12 +3113,17 @@ export function ReportsModule({
                         <strong>{formatCurrency(getSalesFinancialSummary().discount)}</strong>
                       </div>
                       <div className="reports-pos-summary-item">
-                        <span>Amount Due</span>
-                        <strong>{formatCurrency(getSalesFinancialSummary().amountDue)}</strong>
-                      </div>
-                      <div className="reports-pos-summary-item">
-                        <span>Payment Mix</span>
-                        <strong>{getSalesFinancialSummary().cashTransactions} cash, {getSalesFinancialSummary().nonCashTransactions} non-cash</strong>
+                        <span>Payment Mix (Transactions)</span>
+                        <div className="reports-pos-payment-counts">
+                          <div className="reports-pos-payment-count">
+                            <span>Cash</span>
+                            <strong>{getSalesFinancialSummary().cashTransactions}</strong>
+                          </div>
+                          <div className="reports-pos-payment-count">
+                            <span>Non-cash</span>
+                            <strong>{getSalesFinancialSummary().nonCashTransactions}</strong>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2449,7 +3136,7 @@ export function ReportsModule({
                         <TableHead>Item</TableHead>
                         <TableHead>Category</TableHead>
                         <TableHead>Action</TableHead>
-                        <TableHead>Reason</TableHead>
+                        <TableHead>{reportType === 'sales-movements' ? 'Payment' : 'Reason'}</TableHead>
                         <TableHead>{reportType === 'sales-movements' ? 'Qty Sold' : 'Qty'}</TableHead>
                         <TableHead>Before</TableHead>
                         <TableHead>After</TableHead>
@@ -2476,7 +3163,7 @@ export function ReportsModule({
                               {getMovementLabel(movement.action)}
                             </Badge>
                           </TableCell>
-                          <TableCell>{getMovementReasonLabel(movement.reason)}</TableCell>
+                          <TableCell>{reportType === 'sales-movements' ? getPaymentMethodLabel(movement.paymentMethod) : getMovementReasonLabel(movement.reason)}</TableCell>
                           <TableCell className="font-semibold">{movement.quantityChanged}</TableCell>
                           <TableCell>{movement.previousQuantity}</TableCell>
                           <TableCell>{movement.newQuantity}</TableCell>
@@ -2506,8 +3193,8 @@ export function ReportsModule({
                       </div>
                       <div className="reports-movement-stats">
                         <div className="reports-movement-stat">
-                          <span>Reason</span>
-                          <strong>{getMovementReasonLabel(movement.reason)}</strong>
+                          <span>{reportType === 'sales-movements' ? 'Payment' : 'Reason'}</span>
+                          <strong>{reportType === 'sales-movements' ? getPaymentMethodLabel(movement.paymentMethod) : getMovementReasonLabel(movement.reason)}</strong>
                         </div>
                         <div className="reports-movement-stat">
                           <span>{reportType === 'sales-movements' ? 'Qty Sold' : 'Qty'}</span>
@@ -2543,29 +3230,175 @@ export function ReportsModule({
           </CardContent>
         </Card>
       )}
-      <AlertDialog open={showResetFinalOrdersDialog} onOpenChange={setShowResetFinalOrdersDialog}>
-        <AlertDialogContent className="reports-reset-confirm-dialog bg-white p-0 shadow-lg">
-          <AlertDialogHeader showBrand={false}>
-            <div className="flex items-start gap-4">
-              <div className="reports-reset-confirm-icon">
-                <RefreshCw className="h-5 w-5" />
+
+      <Dialog open={Boolean(reviewItem)} onOpenChange={open => {
+        if (!open) closeConvertUntrackedItemDialog();
+      }}>
+        <DialogContent className="reports-convert-dialog border border-slate-200 bg-white p-0 shadow-2xl">
+          <div className="reports-convert-content">
+            <DialogHeader className="reports-convert-header text-left">
+              <span className="reports-convert-icon" aria-hidden="true">
+                <PackagePlus className="h-6 w-6" />
+              </span>
+              <div className="min-w-0 pt-1">
+                <DialogTitle className="text-xl font-bold leading-tight text-slate-950">
+                  Review Non-Inventory Item
+                </DialogTitle>
+                <DialogDescription className="mt-2 text-sm leading-6 text-slate-600">
+                  Add this frequently sold manual item to Inventory only after checking for duplicates and entering its beginning stock.
+                </DialogDescription>
               </div>
-              <div className="min-w-0">
-                <AlertDialogTitle>Reset reorder suggestions?</AlertDialogTitle>
-                <AlertDialogDescription className="mt-2">
-                  This will clear all manual Final Order changes and return the Supplier Reorder report to the system suggested quantities. Inventory records and saved sales data will not change.
-                </AlertDialogDescription>
+            </DialogHeader>
+
+            <div className="reports-convert-form">
+              {reviewItem && (
+                <div className="reports-convert-summary">
+                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    <strong>{reviewItem.itemName}</strong> was sold {reviewItem.timesSold} time{reviewItem.timesSold === 1 ? '' : 's'} with {formatUnitCount(reviewItem.totalQuantity)} recorded and {formatCurrency(reviewItem.totalSalesAmount)} in sales.
+                  </span>
+                </div>
+              )}
+
+              {(conversionMatches.exact.length > 0 || conversionMatches.similar.length > 0) && (
+                <div className="reports-convert-warning">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div className="min-w-0">
+                    <strong>
+                      {conversionMatches.exact.length > 0 ? 'Existing inventory item found' : 'Possible similar inventory item'}
+                    </strong>
+                    <p className="mt-1">
+                      Review these matches before converting. Exact matches are blocked to prevent duplicate inventory records.
+                    </p>
+                    <div className="reports-convert-match-list">
+                      {[...conversionMatches.exact, ...conversionMatches.similar].slice(0, 3).map(match => (
+                        <div key={match.id} className="reports-convert-match">
+                          {match.name} • {match.category} • {formatUnitCount(match.quantity)}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="reports-convert-field">
+                <Label htmlFor="convert-item-name">Item Name <span className="text-red-600">*</span></Label>
+                <Input
+                  id="convert-item-name"
+                  className="reports-convert-control"
+                  value={conversionDraft.name}
+                  maxLength={150}
+                  disabled={isConvertingItem}
+                  onChange={event => updateConversionDraft('name', event.target.value.slice(0, 150))}
+                />
               </div>
+
+              <div className="reports-convert-grid">
+                <div className="reports-convert-field">
+                  <Label>Category <span className="text-red-600">*</span></Label>
+                  <Select
+                    value={conversionDraft.category}
+                    onValueChange={value => updateConversionDraft('category', value)}
+                    disabled={isConvertingItem}
+                  >
+                    <SelectTrigger className="reports-convert-control">
+                      <SelectValue placeholder="Select category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from(new Set([...inventory.map(item => item.category).filter(Boolean), reviewItem?.category || 'Other', 'Other'])).sort().map(category => (
+                        <SelectItem key={category} value={category}>{category}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="reports-convert-field">
+                  <Label htmlFor="convert-supplier">Supplier, optional</Label>
+                  <Input
+                    id="convert-supplier"
+                    className="reports-convert-control"
+                    value={conversionDraft.supplierName}
+                    maxLength={120}
+                    placeholder="e.g., Susi, One Samix"
+                    disabled={isConvertingItem}
+                    onChange={event => updateConversionDraft('supplierName', event.target.value.slice(0, 120))}
+                  />
+                </div>
+                <div className="reports-convert-field">
+                  <Label htmlFor="convert-quantity">Beginning Quantity <span className="text-red-600">*</span></Label>
+                  <Input
+                    id="convert-quantity"
+                    className="reports-convert-control"
+                    type="text"
+                    inputMode="numeric"
+                    value={conversionDraft.quantity}
+                    placeholder="0"
+                    disabled={isConvertingItem}
+                    onChange={event => updateConversionDraft('quantity', event.target.value.replace(/\D/g, '').slice(0, 6))}
+                  />
+                </div>
+                <div className="reports-convert-field">
+                  <Label htmlFor="convert-price">Selling Price / SRP <span className="text-red-600">*</span></Label>
+                  <Input
+                    id="convert-price"
+                    className="reports-convert-control"
+                    type="text"
+                    inputMode="decimal"
+                    value={conversionDraft.defaultSellingPrice}
+                    placeholder="0.00"
+                    disabled={isConvertingItem}
+                    onChange={event => updateConversionDraft('defaultSellingPrice', event.target.value.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1').slice(0, 12))}
+                  />
+                </div>
+                <div className="reports-convert-field">
+                  <Label htmlFor="convert-threshold">Low-Stock Threshold <span className="text-red-600">*</span></Label>
+                  <Input
+                    id="convert-threshold"
+                    className="reports-convert-control"
+                    type="text"
+                    inputMode="numeric"
+                    value={conversionDraft.reorderLevel}
+                    placeholder="5"
+                    disabled={isConvertingItem}
+                    onChange={event => updateConversionDraft('reorderLevel', event.target.value.replace(/\D/g, '').slice(0, 6))}
+                  />
+                </div>
+              </div>
+
+              {conversionMatches.similar.length > 0 && conversionMatches.exact.length === 0 && (
+                <label className="reports-convert-check">
+                  <input
+                    type="checkbox"
+                    checked={acknowledgeSimilarItem}
+                    disabled={isConvertingItem}
+                    onChange={event => setAcknowledgeSimilarItem(event.target.checked)}
+                  />
+                  <span>I reviewed the similar item above and confirm this should be a separate inventory record.</span>
+                </label>
+              )}
             </div>
-          </AlertDialogHeader>
-          <AlertDialogFooter className="mt-6">
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <Button type="button" onClick={resetFinalOrderQuantities} className="reports-reset-confirm-submit">
-              Reset Suggestions
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+
+            <DialogFooter className="reports-convert-footer">
+              <Button
+                type="button"
+                variant="outline"
+                className="hover:bg-slate-100"
+                onClick={closeConvertUntrackedItemDialog}
+                disabled={isConvertingItem}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                className="bg-[#FF0000] text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={convertUntrackedItemToInventory}
+                disabled={isConvertingItem || conversionMatches.exact.length > 0}
+              >
+                {isConvertingItem ? 'Adding...' : 'Add to Inventory'}
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
   return /*#__PURE__*/React.createElement("div", {

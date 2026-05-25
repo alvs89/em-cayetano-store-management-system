@@ -246,13 +246,37 @@ function AppContent() {
     }
   };
 
+  const hasPendingDashboardInventoryIntent = () =>
+    Boolean(
+      localStorage.getItem("dashboardInventoryStatusFilter") ||
+      localStorage.getItem("dashboardInventoryAction") ||
+      localStorage.getItem("dashboardInventoryItemId")
+    );
+
+  const resetInventoryNavigationState = () => {
+    localStorage.removeItem("dashboardInventoryStatusFilter");
+    localStorage.removeItem("dashboardInventoryAction");
+    localStorage.removeItem("dashboardInventoryItemId");
+    localStorage.removeItem("dashboardSearchStatusFilter");
+    localStorage.setItem("dashboardInventoryReset", "true");
+    window.dispatchEvent(new CustomEvent("dashboard-inventory-reset"));
+  };
+
   // Sidebar navigation handler
-  const navigateTo = (screen) => {
+  const navigateTo = (screen, options = {}) => {
     if (currentUser && !canAccessScreen(currentUser.role, screen)) {
       toast.info("This action is not available for your current role.");
       setCurrentScreen("dashboard");
       setIsMobileSidebarOpen(false);
       return;
+    }
+
+    if (
+      screen === "inventory" &&
+      !options?.preserveInventoryNavigationState &&
+      !hasPendingDashboardInventoryIntent()
+    ) {
+      resetInventoryNavigationState();
     }
 
     setCurrentScreen(screen);

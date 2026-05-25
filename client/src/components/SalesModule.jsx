@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Minus, ReceiptText, Trash2, ShoppingCart, History, CheckCircle, Info, PackageCheck, AlertTriangle, TrendingUp, User, Coins, ClipboardList, Search, CalendarDays, Tag, Wallet, MessageSquareText, X, ChevronLeft, ChevronRight, ChevronDown, Download } from 'lucide-react';
+import { Plus, Minus, ReceiptText, Trash2, ShoppingCart, History, CheckCircle, Info, PackageCheck, AlertTriangle, TrendingUp, User, Coins, ClipboardList, Search, CalendarDays, Tag, Wallet, MessageSquareText, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import jsPDF from 'jspdf';
 import { PageHeader } from './PageHeader';
@@ -26,6 +26,13 @@ const emptySaleLine = () => ({
 
 const SALES_REMARKS_MAX_LENGTH = 500;
 const PRODUCT_PAGE_SIZE = 10;
+const DEFAULT_NON_INVENTORY_DRAFT = {
+  itemName: '',
+  category: 'Other',
+  quantity: '1',
+  unitPrice: ''
+};
+const VAGUE_NON_INVENTORY_NAMES = new Set(['other', 'others', 'misc', 'miscellaneous']);
 
 const customerTypeLabels = {
   walk_in: 'Walk-in Customer',
@@ -49,6 +56,9 @@ const discountOptions = {
 
 const getDiscountLabel = sale =>
   sale?.discountLabel || discountOptions[sale?.discountType]?.label || (Number(sale?.discountAmount || 0) > 0 ? 'Manual Discount' : 'No Discount');
+
+const isNonInventorySaleItem = item =>
+  item?.isInventoryItem === false || item?.itemType === 'non_inventory' || item?.item_type === 'non_inventory';
 
 const requiresPaymentConfirmation = paymentMethod => ['gcash', 'bank_transfer'].includes(paymentMethod);
 const VAT_RATE = 0.12;
@@ -253,7 +263,8 @@ const downloadSaleTransactionSummary = sale => {
   doc.setFontSize(8);
   items.forEach((item, index) => {
     const rowTop = y + headerHeight + (index * rowHeight);
-    const nameLines = doc.splitTextToSize(item.itemName || 'Inventory item', colWidths[0] - 5).slice(0, 2);
+    const itemDescription = `${item.itemName || 'Inventory item'}${isNonInventorySaleItem(item) ? ' (Non-Inventory)' : ''}`;
+    const nameLines = doc.splitTextToSize(itemDescription, colWidths[0] - 5).slice(0, 2);
     drawText(nameLines[0] || 'Inventory item', tableX + 2, rowTop + 3.4);
     if (nameLines[1]) drawText(nameLines[1], tableX + 2, rowTop + 6.6);
     drawText(String(item.quantitySold || 0), tableX + colWidths[0] + colWidths[1] / 2, rowTop + 5.2, { align: 'center' });
@@ -369,7 +380,10 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
   const itemRows = [
     ...items.map(item => `
       <tr>
-        <td>${escapeReceiptText(item.itemName || 'Inventory item')}</td>
+        <td>
+          ${escapeReceiptText(item.itemName || 'Inventory item')}
+          ${isNonInventorySaleItem(item) ? '<br><small class="item-note">Non-Inventory</small>' : ''}
+        </td>
         <td class="center-cell">${escapeReceiptText(item.quantitySold || 0)}</td>
         <td class="amount-cell">${escapeReceiptText(formatCurrency(item.unitPrice))}</td>
         <td class="amount-cell">${escapeReceiptText(formatCurrency(item.subtotal))}</td>
@@ -550,6 +564,11 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
           th {
             background: #e5e7eb;
             text-align: center;
+            font-weight: 700;
+          }
+          .item-note {
+            color: #64748b;
+            font-size: 10px;
             font-weight: 700;
           }
           tbody tr { height: 29px; }
@@ -769,6 +788,10 @@ export function SalesModule({ user }) {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isSaveConfirmOpen, setIsSaveConfirmOpen] = useState(false);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
+  const [isNonInventoryDialogOpen, setIsNonInventoryDialogOpen] = useState(false);
+  const [nonInventoryDraft, setNonInventoryDraft] = useState(DEFAULT_NON_INVENTORY_DRAFT);
+  const [nonInventorySessionCount, setNonInventorySessionCount] = useState(0);
+  const [editingNonInventoryLineIndex, setEditingNonInventoryLineIndex] = useState(null);
   const [saleToCancel, setSaleToCancel] = useState(null);
   const [completedSale, setCompletedSale] = useState(null);
   const [cancelReason, setCancelReason] = useState('');
@@ -782,6 +805,30 @@ export function SalesModule({ user }) {
   const [selectedHistorySaleId, setSelectedHistorySaleId] = useState('');
   const [isClearItemsConfirmOpen, setIsClearItemsConfirmOpen] = useState(false);
   const canCancelSales = isAdminRole(user?.role);
+
+  useEffect(() => {
+    const applyHistoryTarget = ({ period } = {}) => {
+      const safePeriod = ['all', 'today', 'week', 'month'].includes(period) ? period : 'all';
+      setHistoryPeriod(safePeriod);
+      setHistorySearch('');
+      setSelectedHistorySaleId('');
+      setIsHistoryOpen(true);
+    };
+
+    const storedPeriod = localStorage.getItem('sales_history_target_period');
+    if (storedPeriod) {
+      applyHistoryTarget({ period: storedPeriod });
+      localStorage.removeItem('sales_history_target_period');
+    }
+
+    const handleHistoryTarget = event => {
+      applyHistoryTarget(event.detail || {});
+      localStorage.removeItem('sales_history_target_period');
+    };
+
+    window.addEventListener('sales-history-target-view', handleHistoryTarget);
+    return () => window.removeEventListener('sales-history-target-view', handleHistoryTarget);
+  }, []);
 
   const activeInventory = useMemo(
     () => mergeSort(
@@ -887,6 +934,8 @@ export function SalesModule({ user }) {
     };
   });
   const cartLines = selectedLineDetails.filter(line => line.isManual ? line.itemName : (line.inventoryId && line.item));
+  const hasSelectedTrackedItems = cartLines.some(line => !line.isManual);
+  const hasSelectedNonInventoryItems = cartLines.some(line => line.isManual);
 
   const totalQuantity = selectedLineDetails.reduce((sum, line) => sum + (Number.isFinite(line.quantity) ? line.quantity : 0), 0);
   const subtotalAmount = selectedLineDetails.reduce((sum, line) => sum + (Number.isFinite(line.subtotal) ? line.subtotal : 0), 0);
@@ -1077,7 +1126,122 @@ export function SalesModule({ user }) {
     setSaleLines(prev => [...prev, emptySaleLine()]);
   };
 
+  const getNonInventoryCategories = () => (
+    productCategories
+      .filter(category => category !== 'all')
+      .concat(productCategories.includes('Other') ? [] : ['Other'])
+  );
+
+  const openNonInventoryDialog = () => {
+    const typedSearch = productSearch.trim().replace(/\s+/g, ' ').slice(0, 150);
+    setNonInventoryDraft({
+      ...DEFAULT_NON_INVENTORY_DRAFT,
+      itemName: typedSearch,
+      category: productCategory !== 'all' ? productCategory : 'Other'
+    });
+    setNonInventorySessionCount(0);
+    setEditingNonInventoryLineIndex(null);
+    setIsNonInventoryDialogOpen(true);
+  };
+
   const addManualLine = () => {
+    openNonInventoryDialog();
+  };
+
+  const closeNonInventoryDialog = () => {
+    setIsNonInventoryDialogOpen(false);
+    setNonInventoryDraft(DEFAULT_NON_INVENTORY_DRAFT);
+    setNonInventorySessionCount(0);
+    setEditingNonInventoryLineIndex(null);
+  };
+
+  const handleNonInventoryDialogOpenChange = open => {
+    if (open) {
+      setIsNonInventoryDialogOpen(true);
+      return;
+    }
+    closeNonInventoryDialog();
+  };
+
+  const openEditNonInventoryLine = index => {
+    const line = saleLines[index];
+    if (!line?.isManual || isSaving) return;
+
+    setNonInventoryDraft({
+      itemName: String(line.itemName || '').trim(),
+      category: line.category || 'Other',
+      quantity: String(line.quantity || '1'),
+      unitPrice: String(line.unitPrice || '')
+    });
+    setNonInventorySessionCount(0);
+    setEditingNonInventoryLineIndex(index);
+    setIsNonInventoryDialogOpen(true);
+  };
+
+  const updateNonInventoryDraft = (key, value) => {
+    setNonInventoryDraft(prev => ({
+      ...prev,
+      [key]: value
+    }));
+  };
+
+  const confirmAddNonInventoryItem = ({ keepOpen = false } = {}) => {
+    const isEditingNonInventoryItem = editingNonInventoryLineIndex !== null;
+    const itemName = nonInventoryDraft.itemName.trim().replace(/\s+/g, ' ');
+    const normalizedName = itemName.toLowerCase();
+    const quantity = Number(nonInventoryDraft.quantity);
+    const unitPrice = Number(nonInventoryDraft.unitPrice);
+
+    if (!itemName) {
+      toast.error('Enter the non-inventory item description.');
+      return;
+    }
+
+    if (itemName.length > 150) {
+      toast.error('Item description must be 150 characters or fewer.');
+      return;
+    }
+
+    if (VAGUE_NON_INVENTORY_NAMES.has(normalizedName)) {
+      toast.error('Use the specific item name, not only "Other".');
+      return;
+    }
+
+    if (!/[A-Za-z0-9]/.test(itemName)) {
+      toast.error('Item description must include letters or numbers.');
+      return;
+    }
+
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      toast.error('Quantity must be a whole number greater than zero.');
+      return;
+    }
+
+    if (!isValidMoneyText(nonInventoryDraft.unitPrice) || !Number.isFinite(unitPrice) || unitPrice <= 0) {
+      toast.error('Unit price must be a valid amount greater than zero.');
+      return;
+    }
+
+    const preparedLine = {
+      ...emptySaleLine(),
+      isManual: true,
+      itemName,
+      category: nonInventoryDraft.category || 'Other',
+      quantity: String(quantity),
+      unitPrice: unitPrice.toFixed(2)
+    };
+
+    if (isEditingNonInventoryItem) {
+      setSaleLines(prev => prev.map((line, lineIndex) => (
+        lineIndex === editingNonInventoryLineIndex ? preparedLine : line
+      )));
+      closeNonInventoryDialog();
+      toast.success('Non-inventory item updated.', {
+        description: 'The selected item was corrected without re-entering the sale.'
+      });
+      return;
+    }
+
     setSaleLines(prev => {
       const emptyIndex = prev.findIndex(line => (
         !String(line.inventoryId || '').trim() &&
@@ -1085,17 +1249,29 @@ export function SalesModule({ user }) {
         !String(line.quantity || '').trim() &&
         !String(line.unitPrice || '').trim()
       ));
-      const preparedLine = {
-        ...emptySaleLine(),
-        isManual: true,
-        category: 'Other'
-      };
+
       if (emptyIndex >= 0) {
         return prev.map((line, lineIndex) => lineIndex === emptyIndex ? preparedLine : line);
       }
       return [...prev, preparedLine];
     });
-    toast.info('Manual item line added. It will appear in sales and receipt without changing inventory.');
+
+    if (keepOpen) {
+      setNonInventorySessionCount(count => count + 1);
+      setNonInventoryDraft({
+        ...DEFAULT_NON_INVENTORY_DRAFT,
+        category: nonInventoryDraft.category || 'Other'
+      });
+      toast.success('Non-inventory item added.', {
+        description: 'Enter the next manual item or tap Done when finished.'
+      });
+      return;
+    }
+
+    closeNonInventoryDialog();
+    toast.success('Non-inventory item added to selected items.', {
+      description: 'It will be counted in sales without deducting inventory stock.'
+    });
   };
 
   const addInventoryItemToSale = item => {
@@ -1197,6 +1373,10 @@ export function SalesModule({ user }) {
     setPaymentConfirmedAmount(null);
     setRemarks('');
     setSaleLines([emptySaleLine()]);
+    setIsNonInventoryDialogOpen(false);
+    setNonInventoryDraft(DEFAULT_NON_INVENTORY_DRAFT);
+    setNonInventorySessionCount(0);
+    setEditingNonInventoryLineIndex(null);
   };
 
   const handlePaymentMethodChange = value => {
@@ -1255,7 +1435,15 @@ export function SalesModule({ user }) {
 
       if (line.isManual) {
         if (!line.itemName || line.itemName.length > 150) {
-          toast.error(`${lineLabel}: enter an item description for the manual item.`);
+          toast.error(`${lineLabel}: enter an item description for the non-inventory item.`);
+          return false;
+        }
+        if (VAGUE_NON_INVENTORY_NAMES.has(line.itemName.trim().toLowerCase())) {
+          toast.error(`${lineLabel}: use the specific item name, not only "Other".`);
+          return false;
+        }
+        if (!/[A-Za-z0-9]/.test(line.itemName)) {
+          toast.error(`${lineLabel}: item description must include letters or numbers.`);
           return false;
         }
         if (!Number.isInteger(line.quantity) || line.quantity <= 0) {
@@ -2296,6 +2484,197 @@ export function SalesModule({ user }) {
           margin-top: 1.25rem;
         }
 
+        .sales-non-inventory-dialog {
+          width: min(760px, calc(100vw - 2rem));
+          max-width: min(760px, calc(100vw - 2rem)) !important;
+          border-radius: 1rem;
+          overflow: hidden;
+        }
+
+        .sales-non-inventory-content {
+          display: grid;
+          gap: 1.15rem;
+        }
+
+        .sales-non-inventory-header {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr);
+          gap: 1rem;
+          align-items: start;
+          padding: 1.45rem 1.65rem 0;
+        }
+
+        .sales-non-inventory-icon {
+          display: flex;
+          width: 3.45rem;
+          height: 3.45rem;
+          align-items: center;
+          justify-content: center;
+          border-radius: 1rem;
+          background: #fff1f2;
+          color: #ef0000;
+        }
+
+        .sales-non-inventory-alert {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          margin: 0 1.65rem;
+          border: 1px solid #bfdbfe;
+          border-radius: 0.55rem;
+          background: #eff6ff;
+          color: #1e3a8a;
+          padding: 0.8rem 0.95rem;
+          font-size: 0.9rem;
+          line-height: 1.45rem;
+        }
+
+        .sales-non-inventory-form {
+          display: grid;
+          gap: 1.15rem;
+          padding: 0 1.65rem 1.25rem;
+        }
+
+        .sales-non-inventory-grid {
+          display: grid;
+          grid-template-columns: 1fr 0.9fr 1.15fr;
+          gap: 1.1rem;
+          align-items: end;
+        }
+
+        .sales-non-inventory-quantity-control {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 2.35rem;
+          overflow: hidden;
+          border: 1px solid #dbe3ee;
+          border-radius: 0.55rem;
+          background: #ffffff;
+          box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03);
+          transition: border-color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .sales-non-inventory-quantity-control:focus-within {
+          border-color: #ef0000;
+          box-shadow: 0 0 0 3px rgba(239, 0, 0, 0.12);
+        }
+
+        .sales-non-inventory-quantity-control .sales-non-inventory-control {
+          border: 0;
+          border-radius: 0;
+          box-shadow: none;
+          text-align: center;
+          font-weight: 800;
+        }
+
+        .sales-non-inventory-quantity-buttons {
+          display: grid;
+          grid-template-rows: 1fr 1fr;
+          border-left: 1px solid #e2e8f0;
+          background: #f8fafc;
+        }
+
+        .sales-non-inventory-quantity-button {
+          display: inline-flex;
+          min-height: 1.375rem;
+          align-items: center;
+          justify-content: center;
+          color: #334155;
+          transition: background-color 160ms ease, color 160ms ease;
+        }
+
+        .sales-non-inventory-quantity-button:first-child {
+          border-bottom: 1px solid #e2e8f0;
+        }
+
+        .sales-non-inventory-quantity-button:hover,
+        .sales-non-inventory-quantity-button:focus-visible {
+          background: #eef2ff;
+          color: #dc2626;
+          outline: none;
+        }
+
+        .sales-non-inventory-quantity-button:disabled {
+          cursor: not-allowed;
+          color: #cbd5e1;
+          background: #f8fafc;
+        }
+
+        .sales-non-inventory-total {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 1rem;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.75rem;
+          background: #f8fafc;
+          padding: 0.8rem 0.95rem;
+        }
+
+        .sales-non-inventory-total span {
+          color: #64748b;
+          font-size: 0.82rem;
+          font-weight: 700;
+        }
+
+        .sales-non-inventory-total strong {
+          color: #0f172a;
+          font-size: 1rem;
+          font-weight: 850;
+        }
+
+        .sales-non-inventory-session-summary {
+          display: flex;
+          align-items: center;
+          gap: 0.6rem;
+          border: 1px solid #bbf7d0;
+          border-radius: 0.75rem;
+          background: #f0fdf4;
+          color: #14532d;
+          padding: 0.7rem 0.85rem;
+          font-size: 0.82rem;
+          line-height: 1.35rem;
+        }
+
+        .sales-non-inventory-session-summary strong {
+          color: #14532d;
+          font-weight: 850;
+        }
+
+        .sales-non-inventory-field {
+          display: grid;
+          gap: 0.5rem;
+          min-width: 0;
+        }
+
+        .sales-non-inventory-field label {
+          color: #0f172a;
+          font-size: 0.92rem;
+          font-weight: 750;
+        }
+
+        .sales-non-inventory-control {
+          min-height: 3rem;
+          border-color: #dbe3ee;
+          border-radius: 0.55rem;
+          background: #ffffff;
+          font-size: 0.95rem;
+          box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03);
+        }
+
+        .sales-non-inventory-control:focus-visible {
+          border-color: #ef0000;
+          box-shadow: 0 0 0 3px rgba(239, 0, 0, 0.12);
+        }
+
+        .sales-non-inventory-footer {
+          display: flex;
+          justify-content: flex-end;
+          gap: 0.75rem;
+          border-top: 1px solid #e2e8f0;
+          background: #ffffff;
+          padding: 1.2rem 1.65rem;
+        }
+
         .sales-confirm-clear-cancel:hover,
         .sales-confirm-clear-cancel:focus-visible {
           background: #f8fafc;
@@ -2337,6 +2716,44 @@ export function SalesModule({ user }) {
           padding: 1rem 1rem 0.15rem;
         }
 
+        .sales-product-header-row,
+        .sales-sold-items-toolbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 1rem;
+        }
+
+        .sales-context-action-button {
+          min-height: 2.75rem;
+          border-color: #e2e8f0;
+          border-radius: 0.75rem;
+          background: #ffffff;
+          color: #334155;
+          font-weight: 700;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+        }
+
+        .sales-context-action-button:hover,
+        .sales-context-action-button:focus-visible {
+          border-color: #cbd5e1;
+          background: #f8fafc;
+          color: #0f172a;
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+        }
+
+        .sales-context-action-button:active {
+          transform: translateY(1px);
+        }
+
+        .sales-context-action-button:disabled {
+          cursor: not-allowed;
+          opacity: 0.55;
+          box-shadow: none;
+          transform: none;
+        }
+
         .sales-product-panel .sales-record-content {
           min-height: 0;
           flex: 1;
@@ -2349,6 +2766,13 @@ export function SalesModule({ user }) {
           grid-template-columns: minmax(0, 1fr) minmax(160px, 0.28fr) minmax(175px, 0.3fr);
           gap: 0.75rem;
           align-items: center;
+        }
+
+        .sales-sold-items-actions {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          gap: 0.55rem;
         }
 
         .sales-product-list {
@@ -2697,11 +3121,44 @@ export function SalesModule({ user }) {
 
         .sales-cart-controls {
           display: grid;
-          grid-template-columns: auto minmax(7.25rem, 1fr) auto;
+          grid-template-columns: auto minmax(0, 1fr);
           grid-column: 1 / -1;
           gap: 0.6rem;
           align-items: center;
           margin-top: 0.55rem;
+        }
+
+        .sales-cart-secondary-controls {
+          display: inline-grid;
+          grid-template-columns: minmax(7.25rem, 8.5rem) auto;
+          align-items: center;
+          justify-self: start;
+          gap: 0.6rem;
+          min-width: 0;
+        }
+
+        .sales-cart-row-actions {
+          display: inline-flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 0.5rem;
+          white-space: nowrap;
+        }
+
+        .sales-cart-row-actions .sales-action-button {
+          flex: 0 0 auto;
+        }
+
+        .sales-cart-quantity-field {
+          min-width: 0;
+        }
+
+        .sales-cart-price-field {
+          min-width: 0;
+        }
+
+        .sales-cart-control-label {
+          display: none;
         }
 
         .sales-qty-stepper {
@@ -2748,6 +3205,7 @@ export function SalesModule({ user }) {
 
         .sales-qty-stepper input {
           width: 2.35rem;
+          height: 100%;
           border: 0;
           background: transparent;
           text-align: center;
@@ -2758,8 +3216,9 @@ export function SalesModule({ user }) {
 
         .sales-cart-price-input {
           height: 2.45rem;
-          min-width: 7.25rem;
-          max-width: 8.5rem;
+          width: 100%;
+          min-width: 0;
+          max-width: none;
           border: 1px solid #cbd5e1;
           border-radius: 0.7rem;
           background: #ffffff;
@@ -2779,6 +3238,15 @@ export function SalesModule({ user }) {
           border-color: #f4f400;
           background: #ffffff;
           box-shadow: 0 0 0 3px rgba(244, 244, 0, 0.28);
+        }
+
+        .sales-cart-edit-button:not(:disabled):hover,
+        .sales-cart-edit-button:not(:disabled):focus-visible {
+          background: #eff6ff !important;
+          border-color: #bfdbfe !important;
+          color: #1d4ed8 !important;
+          box-shadow: none;
+          transform: none;
         }
 
         .sales-cart-subtotal {
@@ -2927,6 +3395,94 @@ export function SalesModule({ user }) {
           }
         }
 
+        @media (max-width: 860px) {
+          .sales-non-inventory-dialog {
+            width: min(420px, calc(100vw - 1rem));
+            max-width: min(420px, calc(100vw - 1rem)) !important;
+            max-height: 90vh;
+            overflow-y: auto;
+          }
+
+          .sales-non-inventory-content {
+            gap: 0.8rem;
+          }
+
+          .sales-non-inventory-header {
+            gap: 0.75rem;
+            padding: 1rem 1rem 0;
+          }
+
+          .sales-non-inventory-icon {
+            width: 2.85rem;
+            height: 2.85rem;
+            border-radius: 0.85rem;
+          }
+
+          .sales-non-inventory-header svg {
+            width: 1.35rem;
+            height: 1.35rem;
+          }
+
+          .sales-non-inventory-alert {
+            margin: 0 1rem;
+            align-items: flex-start;
+            padding: 0.65rem 0.75rem;
+            font-size: 0.82rem;
+            line-height: 1.35rem;
+          }
+
+          .sales-non-inventory-form {
+            gap: 0.8rem;
+            padding: 0 1rem 1rem;
+          }
+
+          .sales-non-inventory-grid {
+            grid-template-columns: minmax(7.25rem, 0.48fr) minmax(0, 1fr);
+            gap: 0.75rem;
+            align-items: end;
+          }
+
+          .sales-non-inventory-grid .sales-non-inventory-field:nth-child(3) {
+            grid-column: 1 / -1;
+          }
+
+          .sales-non-inventory-quantity-control {
+            grid-template-columns: minmax(3.75rem, 1fr) 2.65rem;
+            max-width: 10rem;
+          }
+
+          .sales-non-inventory-control {
+            min-height: 2.75rem;
+          }
+
+          .sales-non-inventory-quantity-control .sales-non-inventory-control {
+            min-height: 2.75rem;
+            padding: 0 0.55rem;
+          }
+
+          .sales-non-inventory-quantity-buttons {
+            width: 2.65rem;
+          }
+
+          .sales-non-inventory-quantity-button {
+            min-height: 1.375rem;
+          }
+
+          .sales-non-inventory-total {
+            padding: 0.7rem 0.8rem;
+          }
+
+          .sales-non-inventory-footer {
+            flex-direction: column-reverse;
+            gap: 0.65rem;
+            padding: 0.9rem 1rem;
+          }
+
+          .sales-non-inventory-footer button {
+            width: 100%;
+          }
+        }
+
         @media (max-width: 760px) {
           .sales-page {
             padding: 10px;
@@ -2941,6 +3497,25 @@ export function SalesModule({ user }) {
           .sales-pos-customer-bar,
           .sales-pos-search-row {
             grid-template-columns: 1fr;
+          }
+
+          .sales-product-header-row,
+          .sales-sold-items-toolbar {
+            align-items: stretch;
+            flex-direction: column;
+          }
+
+          .sales-sold-items-toolbar .sales-section-heading {
+            width: 100%;
+          }
+
+          .sales-sold-items-actions {
+            width: 100%;
+          }
+
+          .sales-sold-items-actions .sales-context-action-button,
+          .sales-product-header-row .sales-context-action-button {
+            width: 100%;
           }
 
           .sales-product-footer {
@@ -2959,12 +3534,81 @@ export function SalesModule({ user }) {
           }
 
           .sales-cart-controls {
-            grid-template-columns: 1fr;
+            grid-template-columns: minmax(7.75rem, 0.85fr) minmax(0, 1.15fr);
+            gap: 0.65rem;
+            align-items: end;
+            border-radius: 0.85rem;
+            background: #f8fafc;
+            padding: 0.65rem;
+          }
+
+          .sales-cart-quantity-field {
+            display: grid;
+            gap: 0.3rem;
+            min-width: 0;
+          }
+
+          .sales-cart-controls .sales-qty-stepper {
+            width: 100%;
+            min-height: 2.7rem;
+            grid-template-columns: 2.35rem minmax(2.75rem, 1fr) 2.35rem;
+            background: #ffffff;
+            border-radius: 0.8rem;
+          }
+
+          .sales-cart-controls .sales-qty-stepper input {
+            width: 100%;
+            min-width: 0;
+            padding: 0;
+            justify-self: stretch;
+            text-align: center;
+          }
+
+          .sales-cart-secondary-controls {
+            width: 100%;
+            grid-template-columns: minmax(0, 1fr) auto;
+            justify-self: stretch;
+            gap: 0.55rem;
+          }
+
+          .sales-cart-price-field {
+            display: grid;
+            gap: 0.3rem;
+          }
+
+          .sales-cart-control-label {
+            display: block;
+            color: #64748b;
+            font-size: 0.72rem;
+            font-weight: 750;
+            line-height: 1rem;
+            text-align: left;
           }
 
           .sales-cart-price-input {
-            max-width: none;
-            width: 100%;
+            height: 2.7rem;
+            border-radius: 0.75rem;
+          }
+
+          .sales-cart-row-actions {
+            align-self: stretch;
+            align-items: end;
+            gap: 0.45rem;
+          }
+
+          .sales-cart-row-actions .sales-action-button {
+            height: 2.7rem;
+            width: 2.7rem;
+          }
+
+          @media (max-width: 430px) {
+            .sales-cart-controls {
+              grid-template-columns: 1fr;
+            }
+
+            .sales-cart-secondary-controls {
+              grid-template-columns: minmax(0, 1fr) auto;
+            }
           }
 
           .sales-customer-grid,
@@ -3082,8 +3726,79 @@ export function SalesModule({ user }) {
           }
 
           .sales-confirm-clear-actions button,
+          .sales-non-inventory-footer button,
           .sales-receipt-actions button {
             width: 100%;
+          }
+
+          .sales-non-inventory-dialog {
+            width: min(420px, calc(100vw - 1rem));
+            max-width: min(420px, calc(100vw - 1rem)) !important;
+            max-height: 90vh;
+            overflow-y: auto;
+          }
+
+          .sales-non-inventory-header {
+            grid-template-columns: auto minmax(0, 1fr);
+            gap: 0.75rem;
+            padding: 1rem 1rem 0;
+          }
+
+          .sales-non-inventory-icon {
+            width: 2.85rem;
+            height: 2.85rem;
+            border-radius: 0.85rem;
+          }
+
+          .sales-non-inventory-alert {
+            margin: 0 1rem;
+            align-items: flex-start;
+            padding: 0.65rem 0.75rem;
+            font-size: 0.82rem;
+            line-height: 1.35rem;
+          }
+
+          .sales-non-inventory-form {
+            gap: 0.85rem;
+            padding: 0 1rem 1rem;
+          }
+
+          .sales-non-inventory-grid {
+            grid-template-columns: minmax(7.25rem, 0.48fr) minmax(0, 1fr);
+            gap: 0.75rem;
+            align-items: end;
+          }
+
+          .sales-non-inventory-grid .sales-non-inventory-field:nth-child(3) {
+            grid-column: 1 / -1;
+          }
+
+          .sales-non-inventory-quantity-control {
+            grid-template-columns: minmax(3.75rem, 1fr) 2.65rem;
+            max-width: 10rem;
+          }
+
+          .sales-non-inventory-control {
+            min-height: 2.75rem;
+          }
+
+          .sales-non-inventory-quantity-control .sales-non-inventory-control {
+            min-height: 2.75rem;
+            padding: 0 0.55rem;
+          }
+
+          .sales-non-inventory-quantity-buttons {
+            width: 2.65rem;
+          }
+
+          .sales-non-inventory-quantity-button {
+            min-height: 1.375rem;
+          }
+
+          .sales-non-inventory-footer {
+            flex-direction: column-reverse;
+            gap: 0.65rem;
+            padding: 0.9rem 1rem;
           }
 
           .sales-receipt-actions {
@@ -3118,12 +3833,24 @@ export function SalesModule({ user }) {
         <div className="sales-grid">
           <Card className="sales-record-card sales-product-panel overflow-hidden bg-white">
             <CardHeader className="sales-record-header">
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
-                  <PackageCheck className="h-5 w-5" />
-                </span>
-                Select Items
-              </CardTitle>
+              <div className="sales-product-header-row">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
+                    <PackageCheck className="h-5 w-5" />
+                  </span>
+                  Select Items
+                </CardTitle>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="sales-action-button sales-context-action-button"
+                  onClick={addManualLine}
+                  disabled={isSaving}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Non-Inventory
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="sales-record-content min-h-0">
               <div className="sales-product-toolbar">
@@ -3166,7 +3893,17 @@ export function SalesModule({ user }) {
               <div className="sales-product-list">
                 {filteredSaleInventory.length === 0 ? (
                   <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-600">
-                    No available items match the selected filters.
+                    <p>No available inventory items match the selected filters.</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="sales-action-button mt-3 border-slate-200 text-slate-700 hover:border-slate-500 hover:bg-white hover:text-slate-900"
+                      onClick={addManualLine}
+                      disabled={isSaving}
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Non-Inventory Item
+                    </Button>
                   </div>
                 ) : paginatedSaleInventory.map(item => {
                   const defaultPrice = Number(item.defaultSellingPrice || 0);
@@ -3294,16 +4031,40 @@ export function SalesModule({ user }) {
               </div>
 
               <div className="sales-form-section">
-                <div className="sales-section-heading">
-                  <span className="sales-section-icon sales-section-icon-accent">
-                    <PackageCheck className="h-5 w-5" />
-                  </span>
-                  <div>
-                    <h3 className="sales-section-title">Sold Items</h3>
+                <div className="sales-sold-items-toolbar">
+                  <div className="sales-section-heading mb-0">
+                    <span className="sales-section-icon sales-section-icon-accent">
+                      <PackageCheck className="h-5 w-5" />
+                    </span>
+                    <div>
+                      <h3 className="sales-section-title">Sold Items</h3>
+                    </div>
+                  </div>
+                  <div className="sales-sold-items-actions">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="sales-action-button sales-context-action-button"
+                      onClick={addLine}
+                      disabled={isSaving}
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Another Item
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="sales-action-button sales-context-action-button"
+                      onClick={addManualLine}
+                      disabled={isSaving}
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Non-Inventory
+                    </Button>
                   </div>
                 </div>
 
-                <div className="space-y-3">
+                <div className="mt-4 space-y-3">
                   {saleLines.map((line, index) => {
                     const selectedItem = getInventoryById(line.inventoryId);
                     const usedByOtherLine = new Set(
@@ -3333,7 +4094,7 @@ export function SalesModule({ user }) {
                         {line.isManual ? (
                           <>
                             <div className="space-y-2">
-                              <Label>Manual Item Description <span className="text-red-600">*</span></Label>
+                              <Label>Non-Inventory Item Description <span className="text-red-600">*</span></Label>
                               <Input
                                 value={line.itemName}
                                 maxLength={150}
@@ -3353,7 +4114,7 @@ export function SalesModule({ user }) {
                                   <SelectValue placeholder="Category" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {productCategories.filter(category => category !== 'all').concat(productCategories.includes('Other') ? [] : ['Other']).map(category => (
+                                  {getNonInventoryCategories().map(category => (
                                     <SelectItem key={category} value={category}>{category}</SelectItem>
                                   ))}
                                 </SelectContent>
@@ -3422,7 +4183,7 @@ export function SalesModule({ user }) {
                               <Info className="h-5 w-5" />
                             </span>
                             <div className="min-w-0">
-                              <span className="sales-stock-preview-label">Manual Sale Item</span>
+                              <span className="sales-stock-preview-label">Non-Inventory Item</span>
                               <strong className="sales-stock-preview-value">Recorded in sales only</strong>
                             </div>
                           </div>
@@ -3443,7 +4204,7 @@ export function SalesModule({ user }) {
                           </span>
                           <div className="min-w-0">
                             <span className="sales-stock-preview-label">Low-Stock Threshold</span>
-                            <strong className="sales-stock-preview-value">{selectedItem ? `${selectedItem.activeLowStockThreshold} unit${Number(selectedItem.activeLowStockThreshold) === 1 ? '' : 's'}` : 'Select item'}</strong>
+                            <strong className="sales-stock-preview-value">{selectedItem ? `${selectedItem.reorderLevel} unit${Number(selectedItem.reorderLevel) === 1 ? '' : 's'}` : 'Select item'}</strong>
                           </div>
                         </div>
                         <div className={`sales-stock-preview-item ${
@@ -3473,29 +4234,6 @@ export function SalesModule({ user }) {
                       </div>
                     );
                   })}
-                </div>
-
-                <div className="flex justify-end border-t border-slate-100 pt-4">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="sales-action-button border-green-200 text-green-700 hover:border-green-500 hover:bg-green-50 hover:text-green-800"
-                    onClick={addLine}
-                    disabled={isSaving}
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add Another Item
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="sales-action-button ml-2 border-slate-200 text-slate-700 hover:border-slate-500 hover:bg-slate-50 hover:text-slate-900"
-                    onClick={addManualLine}
-                    disabled={isSaving}
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add Other Item
-                  </Button>
                 </div>
               </div>
 
@@ -3608,9 +4346,9 @@ export function SalesModule({ user }) {
                       return (
                         <div key={`cart-line-${index}`} className="sales-cart-row">
                           <div className="sales-cart-main">
-                            <p className="sales-cart-title">{displayName || 'Manual item'}</p>
+                            <p className="sales-cart-title">{displayName || 'Non-inventory item'}</p>
                             <div className="sales-cart-meta">
-                              <span>{line.isManual ? 'Other item' : selectedItem.itemCode || 'No item code'}</span>
+                              <span>{line.isManual ? 'Non-Inventory' : selectedItem.itemCode || 'No item code'}</span>
                               <span>&middot;</span>
                               <span>{displayCategory || 'Uncategorized'}</span>
                               {!line.isManual && (
@@ -3625,59 +4363,83 @@ export function SalesModule({ user }) {
                             {formatCurrency(detail.subtotal)}
                           </div>
                           <div className="sales-cart-controls">
-                            <div className="sales-qty-stepper" aria-label={`Quantity for ${displayName || 'manual item'}`}>
-                              <button
-                                type="button"
-                                className="sales-qty-button-decrease"
-                                onClick={() => adjustLineQuantity(index, -1)}
-                                disabled={isSaving || Number(line.quantity || 0) <= 1}
-                                aria-label={`Decrease quantity for ${displayName || 'manual item'}`}
-                              >
-                                <Minus className="h-4 w-4" />
-                              </button>
-                              <input
-                                type="text"
-                                inputMode="numeric"
-                                value={line.quantity}
-                                disabled={isSaving}
-                                onChange={event => updateLineQuantity(
-                                  index,
-                                  sanitizeWholeNumberInput(event.target.value, 'Quantity sold', 'sales-quantity-numbers-only')
-                                )}
-                                aria-label={`Quantity sold for ${displayName || 'manual item'}`}
-                              />
-                              <button
-                                type="button"
-                                className="sales-qty-button-increase"
-                                onClick={() => adjustLineQuantity(index, 1)}
-                                disabled={isSaving}
-                                aria-label={`Increase quantity for ${displayName || 'manual item'}`}
-                              >
-                                <Plus className="h-4 w-4" />
-                              </button>
+                            <div className="sales-cart-quantity-field">
+                              <span className="sales-cart-control-label">Quantity</span>
+                              <div className="sales-qty-stepper" aria-label={`Quantity for ${displayName || 'non-inventory item'}`}>
+                                <button
+                                  type="button"
+                                  className="sales-qty-button-decrease"
+                                  onClick={() => adjustLineQuantity(index, -1)}
+                                  disabled={isSaving || Number(line.quantity || 0) <= 1}
+                                  aria-label={`Decrease quantity for ${displayName || 'non-inventory item'}`}
+                                >
+                                  <Minus className="h-4 w-4" />
+                                </button>
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={line.quantity}
+                                  disabled={isSaving}
+                                  onChange={event => updateLineQuantity(
+                                    index,
+                                    sanitizeWholeNumberInput(event.target.value, 'Quantity sold', 'sales-quantity-numbers-only')
+                                  )}
+                                  aria-label={`Quantity sold for ${displayName || 'non-inventory item'}`}
+                                />
+                                <button
+                                  type="button"
+                                  className="sales-qty-button-increase"
+                                  onClick={() => adjustLineQuantity(index, 1)}
+                                  disabled={isSaving}
+                                  aria-label={`Increase quantity for ${displayName || 'non-inventory item'}`}
+                                >
+                                  <Plus className="h-4 w-4" />
+                                </button>
+                              </div>
                             </div>
-                            <Input
-                              type="text"
-                              inputMode="decimal"
-                              pattern="^\\d*(\\.\\d{0,2})?$"
-                              className="sales-cart-price-input"
-                              value={line.unitPrice}
-                              placeholder="0.00"
-                              disabled={isSaving}
-                              onChange={event => updateLine(index, 'unitPrice', sanitizePriceInput(event.target.value))}
-                              aria-label={`Unit price for ${displayName || 'manual item'}`}
-                            />
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="icon"
-                              className="sales-action-button h-9 w-9 border-red-200 text-red-600 hover:border-red-500 hover:bg-red-50 hover:text-red-700"
-                              onClick={() => removeLine(index)}
-                              disabled={isSaving}
-                              aria-label={`Remove ${displayName || 'manual item'}`}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            <div className="sales-cart-secondary-controls">
+                              <div className="sales-cart-price-field">
+                                <span className="sales-cart-control-label">Unit Price</span>
+                                <Input
+                                  type="text"
+                                  inputMode="decimal"
+                                  pattern="^\\d*(\\.\\d{0,2})?$"
+                                  className="sales-cart-price-input"
+                                  value={line.unitPrice}
+                                  placeholder="0.00"
+                                  disabled={isSaving}
+                                  onChange={event => updateLine(index, 'unitPrice', sanitizePriceInput(event.target.value))}
+                                  aria-label={`Unit price for ${displayName || 'non-inventory item'}`}
+                                />
+                              </div>
+                              <div className="sales-cart-row-actions">
+                                {line.isManual && (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="icon"
+                                    className="sales-action-button sales-cart-edit-button h-9 w-9 border-blue-200 text-blue-600"
+                                    onClick={() => openEditNonInventoryLine(index)}
+                                    disabled={isSaving}
+                                    title="Edit non-inventory item"
+                                    aria-label={`Edit ${displayName || 'non-inventory item'}`}
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  className="sales-action-button h-9 w-9 border-red-200 text-red-600 hover:border-red-500 hover:bg-red-50 hover:text-red-700"
+                                  onClick={() => removeLine(index)}
+                                  disabled={isSaving}
+                                  aria-label={`Remove ${displayName || 'non-inventory item'}`}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       );
@@ -3870,7 +4632,7 @@ export function SalesModule({ user }) {
                       ? 'Saving Sale...'
                       : needsPaymentConfirmation
                         ? 'Confirm Payment and Complete Sale'
-                        : 'Save Sale and Deduct Stock'}
+                        : 'Save Sale'}
                   </Button>
                 </div>
               </CardContent>
@@ -3879,6 +4641,18 @@ export function SalesModule({ user }) {
           </div>
         </div>
       </div>
+      <NonInventoryItemDialog
+        open={isNonInventoryDialogOpen}
+        onOpenChange={handleNonInventoryDialogOpenChange}
+        draft={nonInventoryDraft}
+        sessionCount={nonInventorySessionCount}
+        isEditing={editingNonInventoryLineIndex !== null}
+        categories={getNonInventoryCategories()}
+        onDraftChange={updateNonInventoryDraft}
+        onConfirm={confirmAddNonInventoryItem}
+        onAddAnother={() => confirmAddNonInventoryItem({ keepOpen: true })}
+        isSaving={isSaving}
+      />
       <SalesHistoryDialog
         open={isHistoryOpen}
         onOpenChange={setIsHistoryOpen}
@@ -3910,6 +4684,8 @@ export function SalesModule({ user }) {
         totalQuantity={totalQuantity}
         totalAmount={totalAmount}
         paymentMethod={paymentMethod}
+        hasTrackedItems={hasSelectedTrackedItems}
+        hasNonInventoryItems={hasSelectedNonInventoryItems}
       />
 
       <ClearSalesFormDialog
@@ -3958,9 +4734,197 @@ export function SalesModule({ user }) {
   );
 }
 
+function NonInventoryItemDialog({
+  open,
+  onOpenChange,
+  draft,
+  sessionCount,
+  isEditing,
+  categories,
+  onDraftChange,
+  onConfirm,
+  onAddAnother,
+  isSaving
+}) {
+  const parsedQuantity = Number(draft.quantity);
+  const safeQuantity = Number.isInteger(parsedQuantity) && parsedQuantity > 0 ? parsedQuantity : 0;
+  const parsedUnitPrice = Number(draft.unitPrice);
+  const safeUnitPrice = Number.isFinite(parsedUnitPrice) && parsedUnitPrice > 0 ? parsedUnitPrice : 0;
+  const lineTotal = safeQuantity * safeUnitPrice;
+  const adjustQuantity = change => {
+    const currentQuantity = Number.isInteger(parsedQuantity) && parsedQuantity > 0 ? parsedQuantity : 1;
+    onDraftChange('quantity', String(Math.max(1, currentQuantity + change)));
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sales-non-inventory-dialog border border-slate-200 bg-white p-0 shadow-2xl">
+        <div className="sales-non-inventory-content">
+          <DialogHeader className="sales-non-inventory-header text-left">
+            <span className="sales-non-inventory-icon" aria-hidden="true">
+              <ReceiptText className="h-7 w-7" />
+            </span>
+            <div className="min-w-0 pt-1">
+              <DialogTitle className="text-xl font-bold leading-tight text-slate-950">
+                {isEditing ? 'Edit Non-Inventory Item' : 'Add Non-Inventory Item'}
+              </DialogTitle>
+              <DialogDescription className="mt-2 text-sm leading-6 text-slate-600">
+                {isEditing
+                  ? 'Correct the manual item details before completing the sale.'
+                  : 'Use this for sold items that are not yet tracked in inventory.'}
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+
+          <div className="sales-non-inventory-alert">
+            <Info className="h-5 w-5 shrink-0 text-blue-600" />
+            <span>
+              This item will appear in sales history, reports, and receipts without deducting inventory stock.
+            </span>
+          </div>
+
+          <div className="sales-non-inventory-form">
+            <div className="sales-non-inventory-field">
+              <Label htmlFor="non-inventory-name">Item Description <span className="text-red-600">*</span></Label>
+              <Input
+                id="non-inventory-name"
+                className="sales-non-inventory-control"
+                value={draft.itemName}
+                maxLength={150}
+                placeholder="e.g., hinges, catches, washers"
+                disabled={isSaving}
+                onChange={event => onDraftChange('itemName', event.target.value.slice(0, 150))}
+              />
+            </div>
+
+            <div className="sales-non-inventory-grid">
+              <div className="sales-non-inventory-field">
+                <Label htmlFor="non-inventory-quantity">Quantity <span className="text-red-600">*</span></Label>
+                <div className="sales-non-inventory-quantity-control">
+                  <Input
+                    id="non-inventory-quantity"
+                    className="sales-non-inventory-control"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={draft.quantity}
+                    placeholder="1"
+                    disabled={isSaving}
+                    onChange={event => onDraftChange(
+                      'quantity',
+                      sanitizeWholeNumberInput(event.target.value, 'Quantity', 'sales-manual-dialog-quantity-numbers-only')
+                    )}
+                  />
+                  <div className="sales-non-inventory-quantity-buttons" aria-label="Quantity controls">
+                    <button
+                      type="button"
+                      className="sales-non-inventory-quantity-button"
+                      onClick={() => adjustQuantity(1)}
+                      disabled={isSaving}
+                      aria-label="Increase quantity"
+                    >
+                      <ChevronUp className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      className="sales-non-inventory-quantity-button"
+                      onClick={() => adjustQuantity(-1)}
+                      disabled={isSaving || safeQuantity <= 1}
+                      aria-label="Decrease quantity"
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className="sales-non-inventory-field">
+                <Label htmlFor="non-inventory-unit-price">Unit Price <span className="text-red-600">*</span></Label>
+                <Input
+                  id="non-inventory-unit-price"
+                  className="sales-non-inventory-control"
+                  type="text"
+                  inputMode="decimal"
+                  pattern="^\\d*(\\.\\d{0,2})?$"
+                  value={draft.unitPrice}
+                  placeholder="0.00"
+                  disabled={isSaving}
+                  onChange={event => onDraftChange('unitPrice', sanitizePriceInput(event.target.value))}
+                />
+              </div>
+              <div className="sales-non-inventory-field">
+                <Label>Category, optional</Label>
+                <Select
+                  value={draft.category || 'Other'}
+                  onValueChange={value => onDraftChange('category', value)}
+                  disabled={isSaving}
+                >
+                  <SelectTrigger className="sales-non-inventory-control">
+                    <SelectValue placeholder="Category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {categories.map(category => (
+                      <SelectItem key={category} value={category}>{category}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="sales-non-inventory-total" aria-live="polite">
+              <span>Line Total</span>
+              <strong>{formatCurrency(lineTotal)}</strong>
+            </div>
+            {!isEditing && sessionCount > 0 && (
+              <div className="sales-non-inventory-session-summary" aria-live="polite">
+                <CheckCircle className="h-4 w-4 shrink-0" />
+                <span>
+                  <strong>{sessionCount}</strong> non-inventory item{sessionCount === 1 ? '' : 's'} already added to this sale.
+                </span>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="sales-non-inventory-footer">
+            <Button
+              type="button"
+              variant="outline"
+              className="sales-action-button h-11 min-w-[120px] hover:bg-slate-100"
+              onClick={() => onOpenChange(false)}
+              disabled={isSaving}
+            >
+              {sessionCount > 0 ? 'Done' : 'Cancel'}
+            </Button>
+            {!isEditing && (
+              <Button
+                type="button"
+                variant="outline"
+                className="sales-action-button h-11 min-w-[140px] border-slate-200 text-slate-700 hover:border-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                onClick={onAddAnother}
+                disabled={isSaving}
+              >
+                <Plus className="h-4 w-4" />
+                Add Another
+              </Button>
+            )}
+            <Button
+              type="button"
+              className="sales-action-button h-11 min-w-[140px] bg-[#FF0000] text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={onConfirm}
+              disabled={isSaving}
+            >
+              {isEditing ? 'Update Item' : 'Add to Sale'}
+            </Button>
+          </DialogFooter>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownload, onStartNewSale }) {
   const items = sale?.items || [];
   const receiptVat = getReceiptVatBreakdown(sale);
+  const hasTrackedItems = items.some(item => !isNonInventorySaleItem(item));
+  const hasNonInventoryItems = items.some(isNonInventorySaleItem);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -3984,7 +4948,9 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
                   Transaction completed
                 </DialogTitle>
                 <DialogDescription className="mt-2 text-sm leading-6 text-slate-600">
-                  The sale was saved and inventory was deducted. Printing is optional.
+                  {hasTrackedItems
+                    ? `The sale was saved${hasNonInventoryItems ? ', tracked items were deducted, and non-inventory items were recorded for sales only.' : ' and inventory was deducted.'}`
+                    : 'The sale was saved as non-inventory sales only. Printing is optional.'}
                 </DialogDescription>
               </div>
             </div>
@@ -4014,7 +4980,7 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
                     <span>{formatCurrency(item.subtotal)}</span>
                   </div>
                   <p className="text-xs text-slate-500">
-                    {item.quantitySold || 0} x {formatCurrency(item.unitPrice)} &middot; {item.category || 'Item'}
+                    {item.quantitySold || 0} x {formatCurrency(item.unitPrice)} &middot; {isNonInventorySaleItem(item) ? 'Non-Inventory' : item.category || 'Item'}
                   </p>
                 </div>
               ))}
@@ -4140,7 +5106,9 @@ function ConfirmSaveSaleDialog({
   itemCount,
   totalQuantity,
   totalAmount,
-  paymentMethod
+  paymentMethod,
+  hasTrackedItems,
+  hasNonInventoryItems
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -4159,7 +5127,7 @@ function ConfirmSaveSaleDialog({
             </div>
           </DialogHeader>
           <DialogDescription className="sales-confirm-clear-message">
-            Are you sure you want to save this sale? This will record the transaction and deduct the selected items from inventory.
+            Are you sure you want to save this sale? This will record the transaction, deduct tracked inventory items, and keep non-inventory items in sales records only.
           </DialogDescription>
           <div className="sales-confirm-sale-summary" aria-label="Sale summary">
             <div className="sales-confirm-sale-summary-item">
@@ -4186,7 +5154,9 @@ function ConfirmSaveSaleDialog({
           <div className="sales-confirm-clear-info">
             <Info className="h-4 w-4 shrink-0 text-blue-600" />
             <span>
-              Inventory stock will be updated after you confirm.
+              {hasTrackedItems
+                ? `Inventory stock will be updated after you confirm${hasNonInventoryItems ? '; non-inventory items stay sales-only.' : '.'}`
+                : 'This sale will be recorded without changing inventory stock.'}
             </span>
           </div>
           <div className="sales-confirm-clear-actions">
@@ -4229,7 +5199,7 @@ function CancelSaleDialog({ open, sale, reason, onReasonChange, onOpenChange, on
                   Cancel this sale?
                 </DialogTitle>
                 <DialogDescription className="mt-2 text-sm leading-6 text-slate-600">
-                  This will mark {sale?.salesNumber || 'this sales record'} as cancelled and restore the sold quantities to inventory. This action will be recorded in the audit trail.
+                  This will mark {sale?.salesNumber || 'this sales record'} as cancelled and restore any tracked inventory quantities. This action will be recorded in the audit trail.
                 </DialogDescription>
               </div>
             </div>
@@ -4301,7 +5271,7 @@ function SalesHistoryDialog({
                   Sales History
                 </DialogTitle>
                 <DialogDescription className="mt-2 text-sm leading-6 text-slate-600">
-                  Review sales records that automatically deducted inventory for this branch.
+                  Review sales records, including tracked inventory items and non-inventory manual items.
                 </DialogDescription>
               </div>
             </div>
@@ -4536,7 +5506,12 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
           {(sale.items || []).map(item => (
             <div key={item.id} className="sales-history-items-table sales-history-item-row rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
               <div className="min-w-0">
-                <p className="break-words font-semibold leading-5 text-slate-900">{item.itemName}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="break-words font-semibold leading-5 text-slate-900">{item.itemName}</p>
+                  {isNonInventorySaleItem(item) && (
+                    <Badge variant="outline" className="bg-white text-slate-700">Non-Inventory</Badge>
+                  )}
+                </div>
                 <p className="mt-1 break-words text-xs leading-5 text-slate-500">
                   Category: {item.category || 'Uncategorized'}
                 </p>

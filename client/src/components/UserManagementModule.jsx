@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowUpDown, Copy, Edit, KeyRound, MapPin, Plus, Search, UserCheck, UserX, Users } from "lucide-react";
+import { ArrowUpDown, Copy, Edit, Info, KeyRound, Mail, MapPin, Plus, Search, User, UserCheck, UserX, Users } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -23,6 +23,21 @@ const isValidPersonName = value => /^[A-Za-zÀ-ÖØ-öø-ÿÑñ]+(?:[ .'-][A-Za-
 const isValidUsername = value => /^[A-Za-z0-9._-]{3,30}$/.test(String(value ?? "").trim());
 const isValidEmailAddress = value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value ?? "").trim());
 
+const SETUP_ACCOUNT_CREDENTIALS_KEY = "setup_account_credentials";
+
+const credentialOwnerKey = credentials =>
+  String(credentials?.userId || credentials?.email || credentials?.username || "").trim().toLowerCase();
+
+const loadSetupAccountCredentials = () => {
+  try {
+    const saved = sessionStorage.getItem(SETUP_ACCOUNT_CREDENTIALS_KEY);
+    const parsed = saved ? JSON.parse(saved) : [];
+    return Array.isArray(parsed) ? parsed.filter(item => item?.temporaryPassword) : [];
+  } catch {
+    return [];
+  }
+};
+
 export function UserManagementModule() {
   const { users, setUsers, refreshSystemSummary } = useData();
   const API_BASE = API_BASE_URL;
@@ -45,6 +60,7 @@ export function UserManagementModule() {
   const [showDeactivateDialog, setShowDeactivateDialog] = useState(false);
   const [showReactivateDialog, setShowReactivateDialog] = useState(false);
   const [isCreateUserDialogOpen, setIsCreateUserDialogOpen] = useState(false);
+  const [isSetupCredentialsDialogOpen, setIsSetupCredentialsDialogOpen] = useState(false);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [newRole, setNewRole] = useState("");
   const [newBranch, setNewBranch] = useState("");
@@ -56,6 +72,7 @@ export function UserManagementModule() {
     branch: sessionUser?.branch || "Manggahan"
   });
   const [createdAccountCredentials, setCreatedAccountCredentials] = useState(null);
+  const [setupAccountCredentials, setSetupAccountCredentials] = useState(loadSetupAccountCredentials);
   const [searchQuery, setSearchQuery] = useState("");
   const [inactiveSearchQuery, setInactiveSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState(() => {
@@ -137,6 +154,30 @@ export function UserManagementModule() {
 
   const activeUsers = users.filter(u => u.status === "Active");
   const inactiveUsers = users.filter(u => u.status !== "Active");
+  const setupRequiredUsers = activeUsers.filter(user => user.mustChangePassword);
+  const findSetupCredentialsForUser = user => setupAccountCredentials.find(credentials => {
+    const userKeys = [
+      user?.id,
+      user?.email,
+      user?.username
+    ].map(value => String(value || "").trim().toLowerCase()).filter(Boolean);
+    return userKeys.includes(credentialOwnerKey(credentials));
+  });
+
+  const saveSetupCredentials = credentials => {
+    const credentialRecord = {
+      ...credentials,
+      savedAt: new Date().toISOString()
+    };
+    setSetupAccountCredentials(prev => {
+      const next = [
+        credentialRecord,
+        ...prev.filter(item => credentialOwnerKey(item) !== credentialOwnerKey(credentialRecord))
+      ];
+      sessionStorage.setItem(SETUP_ACCOUNT_CREDENTIALS_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
 
   const makeComparator = sortCfg => (a, b) => {
     const key = sortCfg.key;
@@ -468,18 +509,21 @@ export function UserManagementModule() {
       upsertUser(createdUser);
       refreshSystemSummary();
       setActiveTab("active");
-      setCreatedAccountCredentials({
+      const generatedCredentials = {
+        userId: createdUser.id,
         fullName: createdUser.fullName,
         username: createdUser.username,
         email: createdUser.email,
         temporaryPassword: data.temporaryPassword,
         emailDeliveryStatus: data.emailDeliveryStatus || "unknown"
-      });
+      };
+      setCreatedAccountCredentials(generatedCredentials);
+      saveSetupCredentials(generatedCredentials);
       setIsCreateUserDialogOpen(false);
       toast.success("User account created", {
         description: data.emailDeliveryStatus === "sent"
-          ? "The notification email was sent. Temporary credentials are also ready to copy."
-          : "Temporary credentials are ready to copy and share with the account owner."
+          ? "Tell the employee to check their email for the temporary credentials."
+          : "Tell the employee to check their email. The temporary credentials are also ready to copy if needed."
       });
     } catch (err) {
       console.error(err);
@@ -489,9 +533,9 @@ export function UserManagementModule() {
     }
   };
 
-  const copyTemporaryCredentials = async () => {
-    if (!createdAccountCredentials) return;
-    const credentialText = `Username: ${createdAccountCredentials.username}\nTemporary Password: ${createdAccountCredentials.temporaryPassword}`;
+  const copyTemporaryCredentials = async (credentials = createdAccountCredentials) => {
+    if (!credentials) return;
+    const credentialText = `Username: ${credentials.username}\nTemporary Password: ${credentials.temporaryPassword}`;
     try {
       await navigator.clipboard.writeText(credentialText);
       toast.success("Temporary credentials copied.");
@@ -503,10 +547,18 @@ export function UserManagementModule() {
   const getCreatedAccountEmailMessage = () => {
     if (!createdAccountCredentials) return "";
     if (createdAccountCredentials.emailDeliveryStatus === "sent") {
-      return `Notification email sent to ${createdAccountCredentials.email}. Keep the credentials visible here in case the user needs help signing in.`;
+      return (
+        <>
+          Tell <strong>{createdAccountCredentials.fullName}</strong> to check <strong>{createdAccountCredentials.email}</strong> for the temporary credentials. You can also copy them here if needed.
+        </>
+      );
     }
     if (createdAccountCredentials.emailDeliveryStatus === "failed") {
-      return `Email sending failed. Copy and share these temporary credentials directly with ${createdAccountCredentials.fullName}.`;
+      return (
+        <>
+          Tell <strong>{createdAccountCredentials.fullName}</strong> to check <strong>{createdAccountCredentials.email}</strong>. If the email is not visible, copy and share these temporary credentials directly.
+        </>
+      );
     }
     if (createdAccountCredentials.emailDeliveryStatus === "local_preview") {
       return "Email service is not configured for live delivery. Copy and share these temporary credentials directly with the assigned user.";
@@ -835,6 +887,189 @@ export function UserManagementModule() {
           white-space: nowrap;
         }
 
+        .user-setup-credentials-button {
+          min-height: 3rem;
+          width: auto;
+          border: 1px solid #bfdbfe;
+          border-radius: 0.75rem;
+          background: #ffffff;
+          color: #1d4ed8;
+          padding-inline: 1rem;
+          font-weight: 700;
+          white-space: nowrap;
+          box-shadow: 0 8px 18px rgba(37, 99, 235, 0.08);
+          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .user-setup-credentials-button:hover {
+          border-color: #93c5fd;
+          background: #eff6ff;
+          color: #1e40af;
+          box-shadow: 0 12px 24px rgba(37, 99, 235, 0.14);
+        }
+
+        .user-setup-credentials-button:active {
+          background: #dbeafe;
+          border-color: #60a5fa;
+          box-shadow: 0 6px 14px rgba(37, 99, 235, 0.12);
+        }
+
+        .user-setup-credentials-button svg {
+          color: #2563eb;
+        }
+
+        .user-setup-credentials-dialog {
+          width: min(100% - 2rem, 34rem);
+          max-width: min(100% - 2rem, 34rem) !important;
+          border-radius: 1rem;
+          padding: 1.35rem;
+        }
+
+        .user-setup-dialog-header {
+          display: grid;
+          grid-template-columns: 3.25rem minmax(0, 1fr);
+          gap: 1rem;
+          align-items: start;
+        }
+
+        .user-setup-dialog-icon {
+          display: inline-flex;
+          width: 3.25rem;
+          height: 3.25rem;
+          align-items: center;
+          justify-content: center;
+          border-radius: 999px;
+          background: #eff6ff;
+          color: #2563eb;
+        }
+
+        .user-setup-divider {
+          height: 1px;
+          background: #dbe3ef;
+          margin: 0.25rem 0 0.1rem;
+        }
+
+        .user-setup-list {
+          display: grid;
+          gap: 0.75rem;
+          max-height: min(58vh, 26rem);
+          overflow-y: auto;
+          padding-right: 0.15rem;
+        }
+
+        .user-setup-item {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr);
+          gap: 0.75rem;
+          align-items: start;
+          border: 1px solid #dbe3ef;
+          border-radius: 0.9rem;
+          background: #ffffff;
+          padding: 1rem;
+        }
+
+        .user-setup-item-main {
+          display: grid;
+          grid-template-columns: 2.75rem minmax(0, 1fr);
+          gap: 0.85rem;
+          align-items: start;
+        }
+
+        .user-setup-avatar {
+          display: inline-flex;
+          width: 2.75rem;
+          height: 2.75rem;
+          align-items: center;
+          justify-content: center;
+          border-radius: 999px;
+          background: #eff6ff;
+          color: #2563eb;
+        }
+
+        .user-setup-name {
+          color: #111827;
+          font-size: 1.05rem;
+          font-weight: 800;
+          line-height: 1.25;
+        }
+
+        .user-setup-identity-row {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 0.35rem;
+          margin-top: 0.35rem;
+          color: #64748b;
+          font-size: 0.85rem;
+          line-height: 1.35;
+        }
+
+        .user-setup-identity-row span {
+          display: inline-flex;
+          min-width: 0;
+          align-items: center;
+          gap: 0.35rem;
+        }
+
+        .user-setup-identity-row strong {
+          color: #334155;
+          overflow-wrap: anywhere;
+        }
+
+        .user-setup-meta {
+          display: none;
+          margin-top: 0.2rem;
+          color: #64748b;
+          font-size: 0.85rem;
+          line-height: 1.35;
+          overflow-wrap: anywhere;
+        }
+
+        .user-setup-info-box {
+          display: flex;
+          gap: 0.65rem;
+          align-items: flex-start;
+          border: 1px solid #bfdbfe;
+          border-radius: 0.75rem;
+          background: #eff6ff;
+          padding: 0.8rem;
+          color: #1e3a8a;
+          font-size: 0.9rem;
+          line-height: 1.45;
+        }
+
+        .user-setup-info-box svg {
+          margin-top: 0.1rem;
+          color: #2563eb;
+          flex-shrink: 0;
+        }
+
+        .user-setup-actions {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          gap: 0.5rem;
+        }
+
+        .user-setup-view-button {
+          border-color: #bfdbfe;
+          color: #1d4ed8;
+          background: #ffffff;
+          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .user-setup-view-button:hover {
+          border-color: #93c5fd;
+          background: #eff6ff;
+          color: #1e40af;
+          box-shadow: 0 8px 18px rgba(37, 99, 235, 0.12);
+        }
+
+        .user-setup-view-button:active {
+          background: #dbeafe;
+          border-color: #60a5fa;
+        }
+
         .user-tabs-list {
           width: fit-content;
           max-width: 100%;
@@ -1116,6 +1351,13 @@ export function UserManagementModule() {
             display: none;
           }
 
+          .user-setup-credentials-button {
+            min-width: 0;
+            max-width: 100%;
+            padding-inline: 0.95rem;
+            font-size: 0.9rem;
+          }
+
           @media (max-width: 420px) {
             .user-accounts-header {
               align-items: center;
@@ -1128,6 +1370,23 @@ export function UserManagementModule() {
               padding: 0;
               border-radius: 0.75rem;
             }
+
+            .user-setup-credentials-button {
+              min-height: 2.75rem;
+              padding-inline: 0.8rem;
+            }
+          }
+
+          .user-setup-item {
+            grid-template-columns: 1fr;
+          }
+
+          .user-setup-actions {
+            justify-content: stretch;
+          }
+
+          .user-setup-actions button {
+            flex: 1 1 9rem;
           }
 
           .user-tabs-list {
@@ -1432,17 +1691,30 @@ export function UserManagementModule() {
               <CardTitle>User Accounts</CardTitle>
               <CardDescription>View and manage all user accounts</CardDescription>
             </div>
-            <Button
-              type="button"
-              onClick={() => {
-                resetCreateUserForm();
-                setIsCreateUserDialogOpen(true);
-              }}
-              className="user-create-account-button bg-[#FF0000] text-white hover:bg-[#cc0000]"
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              <span>Create User Account</span>
-            </Button>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {setupRequiredUsers.length > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsSetupCredentialsDialogOpen(true)}
+                  className="user-setup-credentials-button"
+                >
+                  <KeyRound className="mr-2 h-4 w-4" />
+                  <span>Accounts Requiring Setup ({setupRequiredUsers.length})</span>
+                </Button>
+              )}
+              <Button
+                type="button"
+                onClick={() => {
+                  resetCreateUserForm();
+                  setIsCreateUserDialogOpen(true);
+                }}
+                className="user-create-account-button bg-[#FF0000] text-white hover:bg-[#cc0000]"
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                <span>Create User Account</span>
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
@@ -1746,22 +2018,23 @@ export function UserManagementModule() {
               <div>
                 <DialogTitle>Temporary password generated</DialogTitle>
                 <DialogDescription className="mt-2 text-sm leading-6 text-slate-600">
-                    The account is active because it was created by an Admin / Manager, but the user must change this password after first login.
+                    The account is active. Ask the employee to check their email and change this password after first login.
                 </DialogDescription>
               </div>
             </div>
           </DialogHeader>
             <div className={`rounded-xl border p-3 text-sm leading-6 ${
-              createdAccountCredentials?.emailDeliveryStatus === "sent"
+              createdAccountCredentials?.emailDeliveryStatus === "sent" || createdAccountCredentials?.emailDeliveryStatus === "failed"
                 ? "border-green-200 bg-green-50 text-green-900"
-                : createdAccountCredentials?.emailDeliveryStatus === "failed"
-                  ? "border-red-200 bg-red-50 text-red-900"
-                  : "border-amber-200 bg-amber-50 text-amber-900"
+                : "border-amber-200 bg-amber-50 text-amber-900"
             }`}>
               {getCreatedAccountEmailMessage()}
             </div>
             <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-900">
               <p className="font-semibold">Account created for {createdAccountCredentials?.fullName}</p>
+              <p className="mt-1 text-xs leading-5 text-green-800">
+                These credentials remain available from Accounts Requiring Setup during this browser session.
+              </p>
               <div className="mt-3 rounded-lg bg-white p-3 font-mono text-slate-900">
                 <p>Username: {createdAccountCredentials?.username}</p>
                 <p>Temporary Password: {createdAccountCredentials?.temporaryPassword}</p>
@@ -1769,11 +2042,112 @@ export function UserManagementModule() {
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setCreatedAccountCredentials(null)}>
-                Close
+                Done
               </Button>
               <Button type="button" onClick={copyTemporaryCredentials} className="bg-[#FF0000] text-white hover:bg-[#cc0000]">
                 <Copy className="mr-2 h-4 w-4" />
                 Copy Credentials
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isSetupCredentialsDialogOpen} onOpenChange={setIsSetupCredentialsDialogOpen}>
+          <DialogContent className="user-setup-credentials-dialog border border-slate-200 bg-white shadow-2xl">
+            <DialogHeader>
+              <div className="user-setup-dialog-header">
+                <div className="user-setup-dialog-icon">
+                  <KeyRound className="h-7 w-7" />
+                </div>
+                <div className="min-w-0">
+                  <DialogTitle>Accounts Requiring Setup</DialogTitle>
+                  <DialogDescription className="mt-2 text-sm leading-6 text-slate-600">
+                    Active users listed here still need to sign in with their temporary password and create their own password.
+                  </DialogDescription>
+                </div>
+              </div>
+            </DialogHeader>
+            <div className="user-setup-divider" />
+
+            {setupRequiredUsers.length > 0 ? (
+              <div className="user-setup-list">
+                {setupRequiredUsers.map(setupUser => {
+                  const setupCredentials = findSetupCredentialsForUser(setupUser);
+                  return (
+                    <div className="user-setup-item" key={setupUser.id}>
+                      <div className="user-setup-item-main">
+                        <span className="user-setup-avatar">
+                          <User className="h-5 w-5" />
+                        </span>
+                        <div className="min-w-0">
+                        <p className="user-setup-name">{setupUser.fullName}</p>
+                        <div className="user-setup-identity-row">
+                          <span>
+                            <User className="h-4 w-4" />
+                            Username: <strong>{setupUser.username}</strong>
+                          </span>
+                          <span>
+                            <Mail className="h-4 w-4" />
+                            Email: <strong>{setupUser.email}</strong>
+                          </span>
+                        </div>
+                        <p className="user-setup-meta">
+                          Username: <strong>{setupUser.username}</strong> · Email: <strong>{setupUser.email}</strong>
+                        </p>
+                        <p className="user-setup-meta">
+                          {setupCredentials
+                            ? "Temporary credentials are available from this browser session."
+                            : "Temporary password is not visible here after creation. Tell the employee to check their email."}
+                        </p>
+                      </div>
+                      </div>
+                      <div className="user-setup-info-box">
+                        <Info className="h-5 w-5" />
+                        <span>
+                          {setupCredentials
+                            ? "Temporary credentials are available from this browser session."
+                            : "Temporary password is not visible here after creation. Tell the employee to check their email."}
+                        </span>
+                      </div>
+                      <div className="user-setup-actions">
+                        {setupCredentials ? (
+                          <>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => {
+                                setIsSetupCredentialsDialogOpen(false);
+                                setCreatedAccountCredentials(setupCredentials);
+                              }}
+                              className="user-setup-view-button"
+                            >
+                              <KeyRound className="mr-2 h-4 w-4" />
+                              View
+                            </Button>
+                            <Button
+                              type="button"
+                              className="bg-[#FF0000] text-white hover:bg-[#cc0000]"
+                              onClick={() => copyTemporaryCredentials(setupCredentials)}
+                            >
+                              <Copy className="mr-2 h-4 w-4" />
+                              Copy
+                            </Button>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-sm leading-6 text-green-900">
+                All active users have completed first-login setup.
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsSetupCredentialsDialogOpen(false)}>
+                Close
               </Button>
             </DialogFooter>
           </DialogContent>

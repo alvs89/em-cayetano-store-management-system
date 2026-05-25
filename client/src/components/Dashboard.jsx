@@ -1,6 +1,18 @@
 import React from 'react';
-import { Home, Package, PackagePlus, TrendingUp, AlertTriangle, CheckCircle, ArrowUpRight, ArrowRight, Activity, Zap, ReceiptText, Users, ClipboardCheck, Truck, FileText } from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import {
+  Activity,
+  AlertTriangle,
+  ArrowRight,
+  ClipboardCheck,
+  FileText,
+  Home,
+  Package,
+  PackagePlus,
+  ReceiptText,
+  Search,
+  Truck,
+  Users
+} from 'lucide-react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
@@ -10,14 +22,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { toast } from 'sonner';
 import { useData } from './DataContext';
 import { PageHeader } from './PageHeader';
-import { getStockStatusBadgeClass } from '../utils/statusStyles';
-import { canAccessScreen, canPerformInventoryMovement, canRecordSales, isAdminRole } from '../utils/roles';
+import { canAccessScreen, canPerformInventoryMovement, canRecordSales, isAdminRole, normalizeRole, ROLE_VALUES } from '../utils/roles';
+
 const formatCurrency = value =>
   new Intl.NumberFormat(undefined, {
     style: 'currency',
     currency: 'PHP',
     minimumFractionDigits: 2
   }).format(Number(value || 0));
+
 const sanitizeWholeNumberInput = (value, fieldName, toastId) => {
   const rawValue = String(value || '');
   const cleaned = rawValue.replace(/\D/g, '');
@@ -29,6 +42,55 @@ const sanitizeWholeNumberInput = (value, fieldName, toastId) => {
   }
   return cleaned;
 };
+
+const isToday = value => {
+  if (!value) return false;
+  return new Date(value).toDateString() === new Date().toDateString();
+};
+
+const isThisMonth = value => {
+  if (!value) return false;
+  const date = new Date(value);
+  const now = new Date();
+  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
+};
+
+const isNonInventorySaleItem = item =>
+  item?.isInventoryItem === false || item?.itemType === 'non_inventory' || item?.item_type === 'non_inventory';
+
+const manualItemKey = item => {
+  const name = String(item?.itemName || item?.manualDescription || item?.name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const category = String(item?.category || 'Other').trim().replace(/\s+/g, ' ').toLowerCase();
+  return name ? `${name}|${category}` : '';
+};
+
+const getTopSellingItem = sales => {
+  const grouped = new Map();
+  (sales || []).forEach(sale => {
+    (sale.items || []).forEach(item => {
+      const name = String(item.itemName || item.manualDescription || item.name || '').trim();
+      const quantity = Number(item.quantitySold || item.quantity || 0);
+      if (!name || quantity <= 0) return;
+
+      const isManual = isNonInventorySaleItem(item);
+      const key = item.inventoryId
+        ? `inventory:${item.inventoryId}`
+        : `manual:${manualItemKey(item) || name.toLowerCase()}`;
+      const existing = grouped.get(key) || {
+        itemName: name,
+        category: item.category || 'Other',
+        quantity: 0,
+        isManual
+      };
+      existing.quantity += quantity;
+      existing.isManual = existing.isManual || isManual;
+      grouped.set(key, existing);
+    });
+  });
+
+  return Array.from(grouped.values()).sort((a, b) => b.quantity - a.quantity || a.itemName.localeCompare(b.itemName))[0] || null;
+};
+
 export function Dashboard({
   onNavigate,
   user,
@@ -39,7 +101,7 @@ export function Dashboard({
     itemId: '',
     physicalCount: ''
   });
-  // Pull inventory sources from context so cards and lists stay live.
+
   const {
     inventory,
     unreadAlertCount,
@@ -48,714 +110,1008 @@ export function Dashboard({
     purchaseTransactions,
     users
   } = useData();
-  const canUseSales = canRecordSales(user?.role);
-  const canUseInventoryMovement = canPerformInventoryMovement(user?.role);
-  const canUseReports = canAccessScreen(user?.role, 'reports');
-  const canUsePurchases = canAccessScreen(user?.role, 'purchases');
-  const canAddInventoryItem = isAdminRole(user?.role);
 
-  // Calculate headline inventory stats for the metric cards.
-  const totalItems = inventory.length;
-  const lowStockItems = inventory.filter(item => item.status === 'Low Stock').length;
-  const activeProducts = inventory.filter(item => item.status === 'In Stock').length;
-  const outOfStock = inventory.filter(item => item.status === 'Out of Stock').length;
-  const stockAlertPriority = {
-    'Out of Stock': 1,
-    'Low Stock': 2
-  };
+  const role = normalizeRole(user?.role);
+  const isAdmin = isAdminRole(role);
+  const isCashier = role === ROLE_VALUES.CASHIER;
+  const isInventoryStaff = role === ROLE_VALUES.INVENTORY_STAFF;
+  const canUseSales = canRecordSales(role);
+  const canUseInventoryMovement = canPerformInventoryMovement(role);
+  const canUseReports = canAccessScreen(role, 'reports');
+  const canUsePurchases = canAccessScreen(role, 'purchases');
 
-  // Surface the most urgent stock signals first.
-  const stockAlerts = inventory.filter(item => item.status === 'Low Stock' || item.status === 'Out of Stock').sort((a, b) => {
-    const priorityDifference = (stockAlertPriority[a.status] ?? 999) - (stockAlertPriority[b.status] ?? 999);
-    if (priorityDifference !== 0) return priorityDifference;
-    return new Date(b.lastUpdated || 0).getTime() - new Date(a.lastUpdated || 0).getTime();
-  }).slice(0, 3);
-  const recentStockMovements = (stockMovements || [])
-    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
-    .slice(0, 3);
-  const stockMovementsToday = (stockMovements || []).filter(movement => {
-    if (!movement.createdAt) return false;
-    const movementDate = new Date(movement.createdAt);
-    const today = new Date();
-    return movementDate.toDateString() === today.toDateString();
-  }).length;
-  const salesToday = (salesTransactions || []).filter(sale => {
-    if (!sale.createdAt) return false;
-    return sale.status !== 'cancelled' && new Date(sale.createdAt).toDateString() === new Date().toDateString();
-  });
-  const salesTodayCount = salesToday.length;
-  const salesTodayAmountDue = salesToday.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0);
-  const salesTodayDiscount = salesToday.reduce((sum, sale) => sum + Number(sale.discountAmount || 0), 0);
-  const purchasesToday = (purchaseTransactions || []).filter(purchase => {
-    if (!purchase.createdAt) return false;
-    return purchase.status !== 'cancelled' && new Date(purchase.createdAt).toDateString() === new Date().toDateString();
-  });
+  const lowStockItems = inventory.filter(item => item.status === 'Low Stock');
+  const outOfStockItems = inventory.filter(item => item.status === 'Out of Stock');
+  const inStockItems = inventory.filter(item => item.status === 'In Stock');
+  const missingSupplierItems = inventory.filter(item => !String(item.supplierName || '').trim());
+  const missingPriceItems = inventory.filter(item => Number(item.defaultSellingPrice || 0) <= 0);
+  const missingItemDetailKeys = new Set([
+    ...missingSupplierItems.map(item => String(item.id)),
+    ...missingPriceItems.map(item => String(item.id))
+  ]);
+  const missingItemDetailParts = [
+    missingSupplierItems.length > 0 ? `${missingSupplierItems.length} missing supplier` : '',
+    missingPriceItems.length > 0 ? `${missingPriceItems.length} missing SRP` : ''
+  ].filter(Boolean);
+  const salesToday = (salesTransactions || []).filter(sale => sale.status !== 'cancelled' && isToday(sale.createdAt));
+  const purchasesToday = (purchaseTransactions || []).filter(purchase => purchase.status !== 'cancelled' && isToday(purchase.createdAt));
+  const stockMovementsToday = (stockMovements || []).filter(movement => isToday(movement.createdAt));
+  const completedSales = (salesTransactions || []).filter(sale => sale.status !== 'cancelled');
+  const completedSalesThisMonth = completedSales.filter(sale => isThisMonth(sale.createdAt));
+  const topSellingToday = getTopSellingItem(salesToday);
+  const topSellingThisMonth = getTopSellingItem(completedSalesThisMonth);
+  const overallSalesAmount = completedSales.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0);
+  const salesTodayAmount = salesToday.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0);
+  const salesTodayQuantity = salesToday.reduce((sum, sale) => (
+    sum + (sale.items || []).reduce((itemSum, item) => itemSum + Number(item.quantitySold || item.quantity || 0), 0)
+  ), 0);
   const purchasesTodayAmount = purchasesToday.reduce((sum, purchase) => sum + Number(purchase.subtotalAmount || 0), 0);
-  const reorderAttentionCount = lowStockItems + outOfStock;
-  const selectedCountItem = inventory.find(item => item.id === stockCountForm.itemId);
+  const stockInTodayCount = stockMovementsToday.filter(movement => String(movement.action || '').toLowerCase() === 'stock in').length;
+  const stockOutTodayCount = stockMovementsToday.filter(movement => String(movement.action || '').toLowerCase() === 'stock out').length;
+  const unitsMovedToday = stockMovementsToday.reduce((sum, movement) => sum + Number(movement.quantityChanged || 0), 0);
+  const pendingUserCount = isAdmin ? (users || []).filter(account => account.status === 'Pending').length : 0;
+  const manualReviewCount = new Set(
+    (salesTransactions || [])
+      .filter(sale => sale.status !== 'cancelled')
+      .flatMap(sale => sale.items || [])
+      .filter(isNonInventorySaleItem)
+      .map(manualItemKey)
+      .filter(Boolean)
+  ).size;
+  const selectedCountItem = inventory.find(item => String(item.id) === String(stockCountForm.itemId));
   const physicalCountValue = stockCountForm.physicalCount === '' ? null : Number(stockCountForm.physicalCount);
   const hasPhysicalCountEntry = stockCountForm.physicalCount !== '';
   const hasValidPhysicalCount = Number.isInteger(physicalCountValue) && physicalCountValue >= 0;
   const stockCountVariance = selectedCountItem && hasValidPhysicalCount
     ? physicalCountValue - Number(selectedCountItem.quantity || 0)
     : null;
+
   const formatUnitLabel = value => Number(value) === 1 ? 'unit' : 'units';
+
   const resetStockCountForm = () => {
     setStockCountForm({
       itemId: '',
       physicalCount: ''
     });
   };
+
+  const openInventoryStatus = status => {
+    localStorage.removeItem('dashboardSearchStatusFilter');
+    localStorage.setItem('dashboardInventoryStatusFilter', status || 'all');
+    window.dispatchEvent(new CustomEvent('dashboard-inventory-status-filter', {
+      detail: { status: status || 'all' }
+    }));
+    onNavigate('inventory', { preserveInventoryNavigationState: true });
+  };
+
+  const openInventoryAction = (action, itemId = '') => {
+    if ((action === 'stock-in' || action === 'stock-out') && !canUseInventoryMovement) return;
+    if (action === 'add-item' && !isAdmin) return;
+
+    localStorage.setItem('dashboardInventoryAction', action);
+    if (itemId) localStorage.setItem('dashboardInventoryItemId', String(itemId));
+    else localStorage.removeItem('dashboardInventoryItemId');
+    window.dispatchEvent(new CustomEvent('dashboard-inventory-action', {
+      detail: { action, itemId }
+    }));
+    onNavigate('inventory', { preserveInventoryNavigationState: true });
+  };
+
+  const getTodayDateKey = () => new Date().toISOString().slice(0, 10);
+
+  const openTargetReport = (reportType, options = {}) => {
+    if (!canUseReports) return;
+    const { period, date = getTodayDateKey(), category = 'all' } = options;
+    localStorage.setItem('reports_target_type', reportType);
+    localStorage.setItem('reports_target_category', category);
+    if (period) {
+      localStorage.setItem('reports_target_period', period);
+      localStorage.setItem('reports_target_date', date);
+    } else {
+      localStorage.removeItem('reports_target_period');
+      localStorage.removeItem('reports_target_date');
+    }
+    window.dispatchEvent(new CustomEvent('reports-target-view', {
+      detail: { reportType, category, period, date }
+    }));
+    onNavigate('reports');
+  };
+
+  const openSalesHistory = (period = 'all') => {
+    if (!canUseSales) return;
+    localStorage.setItem('sales_history_target_period', period);
+    window.dispatchEvent(new CustomEvent('sales-history-target-view', {
+      detail: { period }
+    }));
+    onNavigate('sales');
+  };
+
+  const openAlertsTab = tab => {
+    localStorage.setItem('alerts_target_tab', tab);
+    localStorage.setItem('alerts_scroll_to_top', 'true');
+    window.dispatchEvent(new CustomEvent('alerts-target-tab', {
+      detail: { tab }
+    }));
+    onNavigate('alerts');
+  };
+
+  const openUserManagementTab = tab => {
+    if (!isAdmin) return;
+    localStorage.setItem('user_management_target_tab', tab);
+    window.dispatchEvent(new CustomEvent('user-management-target-tab', {
+      detail: { tab }
+    }));
+    onNavigate('user-management');
+  };
+
   const openStockCountAdjustment = action => {
     const selectedItemId = selectedCountItem?.id;
     setIsStockCountDialogOpen(false);
     resetStockCountForm();
     openInventoryAction(action, selectedItemId);
   };
-  const pendingUserCount = isAdminRole(user?.role)
-    ? (users || []).filter(account => account.status === 'Pending').length
-    : 0;
-  const adminAttentionItems = isAdminRole(user?.role)
-    ? [
-        {
-          label: 'Pending user requests',
-          value: pendingUserCount,
-          action: () => openUserManagementTab('pending'),
-          tone: pendingUserCount > 0 ? 'orange' : 'slate'
-        },
-        {
-          label: 'Stock alerts',
-          value: reorderAttentionCount,
-          action: () => openInventoryStatus('Low Stock'),
-          tone: reorderAttentionCount > 0 ? 'red' : 'slate'
-        },
-        {
-          label: 'Unread alerts',
-          value: unreadAlertCount,
-          action: () => openAlertsTab('unread'),
-          tone: unreadAlertCount > 0 ? 'red' : 'slate'
-        }
-      ]
-    : [];
-  const getMovementLabel = movement => {
-    if (movement?.action === 'stock_in') return 'Stock In';
-    if (movement?.action === 'stock_out') return 'Stock Out';
-    return 'Movement';
-  };
-  const getMovementReason = movement => {
-    const reasonLabels = {
-      sales: 'Sales',
-      damaged: 'Damaged',
-      expired: 'Expired',
-      lost_missing: 'Lost/Missing',
-      manual_adjustment: 'Manual Adjustment',
-      branch_transfer: 'Branch Transfer',
-      correction: 'Correction',
-      delivery_received: 'Delivery',
-      returned_item: 'Returned Item',
-      beginning_balance: 'Beginning Balance'
-    };
-    return reasonLabels[movement?.reason] || 'Recorded';
-  };
-  const getMovementQuantityText = movement => {
-    const value = Number(movement?.quantityChanged || 0);
-    if (movement?.action === 'stock_in') return `+${Math.abs(value)}`;
-    if (movement?.action === 'stock_out') return `-${Math.abs(value)}`;
-    return String(value);
-  };
-  const getAttentionToneClass = tone => {
-    if (tone === 'red') return 'border-red-200 bg-red-50 text-red-700 hover:border-red-500 hover:bg-red-200 active:bg-red-100';
-    if (tone === 'orange') return 'border-orange-200 bg-orange-50 text-orange-700 hover:border-orange-500 hover:bg-orange-200 active:bg-orange-100';
-    return 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-500 hover:bg-slate-200 active:bg-slate-100';
-  };
-  const openInventoryStatus = status => {
-    const targetStatus = status || 'all';
-    localStorage.removeItem("dashboardSearchStatusFilter");
-    localStorage.setItem("dashboardInventoryStatusFilter", targetStatus);
-    window.dispatchEvent(new CustomEvent("dashboard-inventory-status-filter", {
-      detail: { status: targetStatus }
-    }));
-    onNavigate('inventory');
-  };
-  const openInventoryAction = (action, itemId = "") => {
-    if ((action === 'stock-in' || action === 'stock-out') && !canUseInventoryMovement) return;
-    if (action === 'add-item' && !canAddInventoryItem) return;
 
-    localStorage.setItem("dashboardInventoryAction", action);
-    if (itemId) {
-      localStorage.setItem("dashboardInventoryItemId", String(itemId));
-    } else {
-      localStorage.removeItem("dashboardInventoryItemId");
+  const stockStatusCards = [
+    {
+      label: 'Out of Stock',
+      value: outOfStockItems.length,
+      detail: outOfStockItems.length > 0 ? 'Needs immediate restock' : 'No depleted items',
+      icon: AlertTriangle,
+      tone: outOfStockItems.length > 0 ? 'red' : 'green',
+      action: () => openInventoryStatus('Out of Stock')
+    },
+    {
+      label: 'Low Stock',
+      value: lowStockItems.length,
+      detail: lowStockItems.length > 0 ? 'Below manual threshold' : 'Stock levels are safe',
+      icon: Package,
+      tone: lowStockItems.length > 0 ? 'amber' : 'green',
+      action: () => openInventoryStatus('Low Stock')
     }
-    window.dispatchEvent(new CustomEvent("dashboard-inventory-action", {
-      detail: { action, itemId }
-    }));
-    onNavigate('inventory');
-  };
-  const openTargetReport = reportType => {
-    if (!canUseReports) return;
+  ];
 
-    localStorage.setItem('reports_target_type', reportType);
-    localStorage.setItem('reports_target_category', 'all');
-    window.dispatchEvent(new CustomEvent('reports-target-view', {
-      detail: { reportType, category: 'all' }
-    }));
-    onNavigate('reports');
-  };
-  const openSales = () => {
-    if (!canUseSales) return;
-    onNavigate('sales');
-  };
-  const openUserManagementTab = tab => {
-    localStorage.setItem("user_management_target_tab", tab);
-    window.dispatchEvent(new CustomEvent("user-management-target-tab", {
-      detail: { tab }
-    }));
-    onNavigate('user-management');
-  };
-  const openAlertsTab = tab => {
-    localStorage.setItem("alerts_target_tab", tab);
-    localStorage.setItem("alerts_scroll_to_top", "true");
-    window.dispatchEvent(new CustomEvent("alerts-target-tab", {
-      detail: { tab }
-    }));
-    onNavigate('alerts');
-  };
-  const movementPanel = recentStockMovements.length > 0 ? (
-    <Card className="dashboard-movement-card overflow-hidden border-2 border-orange-200 bg-white shadow-md">
-      <CardHeader className="rounded-t-xl bg-orange-50 pb-3" data-card-header>
-        <CardTitle className="text-lg flex items-center gap-2">
-          <ReceiptText className="w-5 h-5 text-orange-600" />
-          Recent Stock Movements
-        </CardTitle>
-        <CardDescription>Latest inventory changes</CardDescription>
-      </CardHeader>
-      <CardContent className="bg-white pt-2 pb-4" data-card-content>
-        <div className="space-y-2">
-          {recentStockMovements.map(movement => (
-            <div key={movement.id} className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-2.5">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-slate-900">{movement.itemName || "Inventory item"}</p>
-                  <p className="text-xs text-slate-500">
-                    {getMovementLabel(movement)} - {getMovementReason(movement)} - {movement.actorName || "System"} - {new Date(movement.createdAt).toLocaleString()}
-                  </p>
-                </div>
-                <Badge className={movement.action === 'stock_in' ? "inline-flex h-7 min-w-9 shrink-0 items-center justify-center rounded-full bg-green-100 px-2 text-center font-semibold leading-none text-green-700 hover:bg-green-100" : "inline-flex h-7 min-w-9 shrink-0 items-center justify-center rounded-full bg-orange-100 px-2 text-center font-semibold leading-none text-orange-700 hover:bg-orange-100"}>
-                  {getMovementQuantityText(movement)}
-                </Badge>
-              </div>
-            </div>
-          ))}
+  const primaryCards = isInventoryStaff ? [
+    {
+      label: 'Active Inventory Items',
+      value: inventory.length,
+      detail: `${inStockItems.length} currently in stock`,
+      icon: Package,
+      tone: 'blue',
+      action: () => onNavigate('inventory')
+    },
+    ...stockStatusCards,
+    {
+      label: 'In Stock Items',
+      value: inStockItems.length,
+      detail: 'Available for store use',
+      icon: Package,
+      tone: 'green',
+      action: () => openInventoryStatus('In Stock')
+    }
+  ] : [
+    {
+      label: 'Overall Sales',
+      value: formatCurrency(overallSalesAmount),
+      detail: `${completedSales.length} completed transaction${completedSales.length === 1 ? '' : 's'}`,
+      icon: ReceiptText,
+      tone: 'blue',
+      action: canUseSales ? () => openSalesHistory('all') : undefined
+    },
+    isAdmin && {
+      label: 'Top Item This Month',
+      value: topSellingThisMonth ? topSellingThisMonth.quantity : 0,
+      detail: topSellingThisMonth
+        ? `${topSellingThisMonth.itemName}${topSellingThisMonth.isManual ? ' (Non-inventory)' : ''}`
+        : 'No sales recorded yet',
+      icon: Package,
+      tone: 'green',
+      action: canUseReports ? () => openTargetReport('sales-movements', { period: 'monthly' }) : undefined
+    },
+    ...stockStatusCards
+  ].filter(Boolean);
+
+  const operationsCards = isInventoryStaff ? [
+    {
+      label: 'Purchases Today',
+      value: purchasesToday.length,
+      detail: `${purchasesToday.length} purchase entr${purchasesToday.length === 1 ? 'y' : 'ies'}`,
+      icon: Truck,
+      tone: 'green',
+      action: canUseReports ? () => openTargetReport('purchases', { period: 'daily' }) : canUsePurchases ? () => onNavigate('purchases') : undefined
+    },
+    {
+      label: 'Stock In Today',
+      value: stockInTodayCount,
+      detail: 'Received stock records',
+      icon: PackagePlus,
+      tone: 'green',
+      action: canUseReports ? () => openTargetReport('movements', { period: 'daily' }) : undefined
+    },
+    {
+      label: 'Stock Out Today',
+      value: stockOutTodayCount,
+      detail: 'Manual deduction records',
+      icon: Activity,
+      tone: 'red',
+      action: canUseReports ? () => openTargetReport('movements', { period: 'daily' }) : undefined
+    },
+    {
+      label: 'Units Moved Today',
+      value: unitsMovedToday,
+      detail: 'Total units adjusted',
+      icon: Package,
+      tone: 'blue',
+      action: canUseReports ? () => openTargetReport('movements', { period: 'daily' }) : undefined
+    }
+  ] : [
+    {
+      label: "Today's Sales",
+      value: formatCurrency(salesTodayAmount),
+      detail: `${salesToday.length} transaction${salesToday.length === 1 ? '' : 's'} today`,
+      icon: ReceiptText,
+      tone: 'blue',
+      action: canUseReports
+        ? () => openTargetReport('sales-movements', { period: 'daily' })
+        : canUseSales
+          ? () => openSalesHistory('today')
+          : undefined
+    },
+    isCashier && {
+      label: 'Top Item Today',
+      value: topSellingToday ? topSellingToday.quantity : 0,
+      detail: topSellingToday
+        ? `${topSellingToday.itemName}${topSellingToday.isManual ? ' (Non-inventory)' : ''}`
+        : 'No sales recorded yet',
+      icon: Package,
+      tone: 'green',
+      action: canUseSales ? () => openSalesHistory('today') : undefined
+    },
+    canUsePurchases && {
+      label: 'Purchases Today',
+      value: formatCurrency(purchasesTodayAmount),
+      detail: `${purchasesToday.length} purchase entr${purchasesToday.length === 1 ? 'y' : 'ies'}`,
+      icon: Truck,
+      tone: 'green',
+      action: canUseReports ? () => openTargetReport('purchases', { period: 'daily' }) : () => onNavigate('purchases')
+    },
+    (isAdmin || isInventoryStaff) && {
+      label: 'Stock Movements',
+      value: stockMovementsToday.length,
+      detail: 'Stock in/out records today',
+      icon: Activity,
+      tone: 'blue',
+      action: canUseReports ? () => openTargetReport('movements', { period: 'daily' }) : undefined
+    },
+    (isAdmin || isInventoryStaff) && {
+      label: 'Items Sold Today',
+      value: salesTodayQuantity,
+      detail: `${formatUnitLabel(salesTodayQuantity)} from completed sales`,
+      icon: Package,
+      tone: 'purple',
+      action: canUseReports ? () => openTargetReport('sales-movements', { period: 'daily' }) : undefined
+    }
+  ].filter(Boolean);
+
+  const quickActions = [
+    canUseSales && {
+      label: 'Record Sale',
+      detail: 'Sales/Data Entry',
+      icon: ReceiptText,
+      tone: 'blue',
+      action: () => onNavigate('sales')
+    },
+    canUsePurchases && {
+      label: 'Purchase Entry',
+      detail: 'Supplier delivery',
+      icon: Truck,
+      tone: 'green',
+      action: () => onNavigate('purchases')
+    },
+    canUseInventoryMovement && {
+      label: 'Stock In',
+      detail: 'Receive stock',
+      icon: PackagePlus,
+      tone: 'green',
+      action: () => openInventoryAction('stock-in')
+    },
+    canUseInventoryMovement && {
+      label: 'Stock Out',
+      detail: 'Non-sales deduction',
+      icon: Activity,
+      tone: 'red',
+      action: () => openInventoryAction('stock-out')
+    },
+    canUseInventoryMovement && {
+      label: 'Verify Stock',
+      detail: 'Count checking',
+      icon: ClipboardCheck,
+      tone: 'amber',
+      action: () => setIsStockCountDialogOpen(true)
+    },
+    isAdmin && {
+      label: 'Add Item',
+      detail: 'New inventory record',
+      icon: Package,
+      tone: 'purple',
+      action: () => openInventoryAction('add-item')
+    },
+    canUseReports && {
+      label: isInventoryStaff ? 'Reorder Report' : 'Reports',
+      detail: isInventoryStaff ? 'Supplier needs' : 'Business records',
+      icon: FileText,
+      tone: 'emerald',
+      action: () => openTargetReport(isInventoryStaff ? 'supplier-reorder' : 'summary')
+    },
+    canAccessScreen(role, 'inventory') && {
+      label: 'Inventory',
+      detail: 'Stock list',
+      icon: Search,
+      tone: 'blue',
+      action: () => onNavigate('inventory')
+    }
+  ].filter(Boolean);
+
+  const attentionItems = [
+    isInventoryStaff && missingItemDetailKeys.size > 0 && {
+      label: 'Complete item details',
+      detail: missingItemDetailParts.join(', '),
+      value: missingItemDetailKeys.size,
+      icon: ClipboardCheck,
+      tone: 'amber',
+      action: () => onNavigate('inventory')
+    },
+    unreadAlertCount > 0 && {
+      label: 'Unread alerts',
+      detail: 'System notifications',
+      value: unreadAlertCount,
+      icon: AlertTriangle,
+      tone: 'blue',
+      action: () => openAlertsTab('unread')
+    },
+    isAdmin && pendingUserCount > 0 && {
+      label: 'Pending user requests',
+      detail: 'Review employee access',
+      value: pendingUserCount,
+      icon: Users,
+      tone: 'red',
+      action: () => openUserManagementTab('pending')
+    },
+    (isAdmin || isInventoryStaff) && manualReviewCount > 0 && {
+      label: 'Manual items for review',
+      detail: 'Non-inventory sales',
+      value: manualReviewCount,
+      icon: ClipboardCheck,
+      tone: 'amber',
+      action: () => openTargetReport('untracked-sales')
+    }
+  ].filter(Boolean);
+
+  const quickActionsSection = (
+    <section className={`dashboard-panel ${isInventoryStaff ? 'dashboard-inventory-actions-panel' : ''} ${isCashier ? 'dashboard-cashier-actions-panel' : ''}`} aria-label="Quick actions">
+      <div className="dashboard-panel-header">
+        <div className="min-w-0">
+          <h2 className="dashboard-panel-title">Quick Actions</h2>
+          <p className="dashboard-panel-subtitle">Only actions available to this role are shown.</p>
         </div>
-      </CardContent>
-    </Card>
-  ) : (
-    <Card className="dashboard-movement-card overflow-hidden border-2 border-slate-200 bg-white shadow-md">
-      <CardHeader className="rounded-t-xl bg-slate-50 pb-3" data-card-header>
-        <CardTitle className="text-lg flex items-center gap-2">
-          <ReceiptText className="w-5 h-5 text-slate-600" />
-          Recent Stock Movements
-        </CardTitle>
-        <CardDescription>Latest inventory changes</CardDescription>
-      </CardHeader>
-      <CardContent className="bg-white pt-2 pb-4" data-card-content>
-        <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">No stock movements recorded yet.</p>
-      </CardContent>
-    </Card>
+      </div>
+      <div className="dashboard-action-grid">
+        {quickActions.map(action => (
+          <ActionButton key={action.label} {...action} />
+        ))}
+      </div>
+    </section>
   );
 
-  const stockAlertPanel = stockAlerts.length > 0 ? (
-    <Card className="dashboard-alert-card overflow-hidden border-2 border-red-200 shadow-md">
-      <CardHeader className="rounded-t-xl bg-red-50 pb-3" data-card-header>
-        <CardTitle className="text-lg flex items-center gap-2">
-          <AlertTriangle className="w-5 h-5 text-[#FF0000]" />
-          Stock Alerts
-        </CardTitle>
-        <CardDescription>Urgent stock signals</CardDescription>
-      </CardHeader>
-      <CardContent className="pt-2 pb-4" data-card-content>
-        <div className="space-y-3">
-          {stockAlerts.map(item => (
-            <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5">
-              <div className="min-w-0">
-                <p className="min-w-0 truncate text-sm font-semibold text-gray-900">{item.name}</p>
-                <p className={item.quantity === 0 ? "text-xs font-semibold text-red-700" : "text-xs font-semibold text-slate-700"}>
-                  {item.quantity} {item.quantity === 1 ? "unit" : "units"} left - {item.category}
-                </p>
-              </div>
-              <Badge className={`inline-flex h-7 min-w-[104px] shrink-0 items-center justify-center self-center px-3 py-0 text-center leading-[1] ${getStockStatusBadgeClass(item.status)}`}>
-                {item.status}
-              </Badge>
-            </div>
-          ))}
+  const attentionSection = (
+    <section className={`dashboard-panel ${isCashier ? 'dashboard-cashier-attention-panel' : ''}`} aria-label="Needs attention">
+      <div className="dashboard-panel-header">
+        <div className="min-w-0">
+          <h2 className="dashboard-panel-title">Needs Attention</h2>
+          <p className="dashboard-panel-subtitle">Short alerts only. Open the module for details.</p>
         </div>
-      </CardContent>
-    </Card>
-  ) : (
-    <Card className="dashboard-alert-card border-2 border-green-200 shadow-md">
-      <CardHeader className="pb-3 bg-green-50" data-card-header>
-        <CardTitle className="text-lg flex items-center gap-2">
-          <CheckCircle className="w-5 h-5 text-green-600" />
-          All Good!
-        </CardTitle>
-        <CardDescription>No critical alerts</CardDescription>
-      </CardHeader>
-      <CardContent className="pt-4 pb-4" data-card-content>
-        <p className="text-sm text-gray-600 text-center">No stock alerts. All inventory levels are adequate.</p>
-      </CardContent>
-    </Card>
-  );
-
-  const adminPanel = isAdminRole(user?.role) ? (
-    <Card className="dashboard-admin-card overflow-hidden border-2 border-slate-200 bg-white shadow-md">
-      <CardHeader className="rounded-t-xl bg-slate-50 pb-3" data-card-header>
-        <CardTitle className="text-lg flex items-center gap-2">
-          <Users className="w-5 h-5 text-slate-700" />
-          Admin Attention
-        </CardTitle>
-        <CardDescription>Admin tasks and stock items that may need review</CardDescription>
-      </CardHeader>
-      <CardContent className="bg-white pt-2 pb-4" data-card-content>
-        <div className="space-y-2">
-          {adminAttentionItems.map(item => (
-            <button
-              key={item.label}
-              type="button"
-              className={`dashboard-admin-action dashboard-admin-action-${item.tone} group flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left shadow-sm focus:outline-none focus:ring-2 focus:ring-red-200 ${getAttentionToneClass(item.tone)}`}
-              onClick={item.action}
-            >
-              <span className="min-w-0 truncate text-sm font-semibold">{item.label}</span>
-              <span className="flex shrink-0 items-center gap-2">
-                <Badge className="inline-flex h-7 min-w-9 shrink-0 items-center justify-center rounded-full bg-white px-2 text-center font-semibold leading-none text-slate-800 hover:bg-white">
-                  {item.value}
-                </Badge>
-                <ArrowRight className="h-4 w-4 text-slate-500 opacity-70 transition-opacity duration-200 group-hover:opacity-100" />
+      </div>
+      {attentionItems.length > 0 ? (
+        <div className="dashboard-attention-list">
+          {attentionItems.map(item => (
+            <button key={item.label} type="button" className={`dashboard-attention-button attention-${item.tone || 'slate'}`} onClick={item.action}>
+              <span className="dashboard-attention-left">
+                <span className="dashboard-attention-icon">
+                  <item.icon className="h-4 w-4" />
+                </span>
+                <span className="min-w-0">
+                  <span className="dashboard-attention-title block">{item.label}</span>
+                  <span className="dashboard-attention-detail block">{item.detail}</span>
+                </span>
               </span>
+              <span className="dashboard-attention-value">{item.value}</span>
             </button>
           ))}
         </div>
-      </CardContent>
-    </Card>
-  ) : null;
+      ) : (
+        <div className="dashboard-empty-state">No urgent items right now.</div>
+      )}
+    </section>
+  );
+
+  const operationsSection = (
+    <section className="dashboard-panel dashboard-operations-panel" aria-label="Today's operations">
+      <div className="dashboard-panel-header">
+        <div className="min-w-0">
+          <h2 className="dashboard-panel-title">Today&apos;s Operations</h2>
+          <p className="dashboard-panel-subtitle">Same-day activity recorded in the system.</p>
+        </div>
+      </div>
+      <div className="dashboard-summary-grid dashboard-operations-grid" style={{ '--dashboard-operation-count': operationsCards.length }}>
+        {operationsCards.map(card => (
+          <SummaryCard key={card.label} {...card} />
+        ))}
+      </div>
+    </section>
+  );
 
   return (
     <div className="dashboard-page min-h-screen bg-gray-50 p-4 md:p-8">
       <style>{`
-        .dashboard-stat-grid,
-        .dashboard-module-grid,
-        .dashboard-monitoring-grid {
+        .dashboard-page {
+          color: #111827;
+        }
+
+        .dashboard-page > .mb-8 {
+          margin-bottom: 16px !important;
+        }
+
+        .dashboard-content {
+          display: grid;
+          gap: 14px;
+        }
+
+        .dashboard-panel {
+          border: 1px solid #dbe3ef;
+          border-radius: 12px;
+          background: #ffffff;
+          box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+          overflow: hidden;
+        }
+
+        .dashboard-panel-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 15px 16px;
+          border-bottom: 1px solid #e5edf6;
+          background: #ffffff;
+        }
+
+        .dashboard-panel-title {
+          margin: 0;
+          color: #111827;
+          font-size: 17px;
+          font-weight: 800;
+          line-height: 1.2;
+        }
+
+        .dashboard-panel-subtitle {
+          margin-top: 3px;
+          color: #64748b;
+          font-size: 13px;
+          font-weight: 500;
+          line-height: 1.35;
+        }
+
+        .dashboard-summary-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+          padding: 12px;
+        }
+
+        .dashboard-admin-summary-grid {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .dashboard-operations-grid {
+          grid-template-columns: repeat(var(--dashboard-operation-count, 3), minmax(0, 1fr));
+        }
+
+        .dashboard-summary-card {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 46px;
+          gap: 14px;
+          align-items: center;
+          min-height: 96px;
+          border: 1px solid #dbe3ef;
+          border-left-width: 5px;
+          border-radius: 10px;
+          background: #ffffff;
+          padding: 12px 14px;
+          text-align: left;
+          transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .dashboard-summary-card:hover {
+          background: #f8fafc;
+          border-color: #cbd5e1;
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.07);
+        }
+
+        .summary-blue {
+          border-left-color: #2563eb;
+        }
+
+        .summary-red {
+          border-left-color: #dc2626;
+        }
+
+        .summary-amber {
+          border-left-color: #f59e0b;
+        }
+
+        .summary-green {
+          border-left-color: #16a34a;
+        }
+
+        .dashboard-summary-label {
+          color: #475569;
+          font-size: 13px;
+          font-weight: 700;
+        }
+
+        .dashboard-summary-value {
+          margin-top: 6px;
+          color: #0f172a;
+          font-size: clamp(25px, 2.6vw, 34px);
+          line-height: 1;
+          font-weight: 900;
+          letter-spacing: 0;
+          overflow-wrap: anywhere;
+        }
+
+        .dashboard-summary-detail {
+          margin-top: 6px;
+          color: #64748b;
+          font-size: 12px;
+          font-weight: 600;
+          line-height: 1.3;
+          display: -webkit-box;
+          overflow: hidden;
+          -webkit-box-orient: vertical;
+          -webkit-line-clamp: 2;
+          overflow-wrap: anywhere;
+        }
+
+        .dashboard-summary-icon {
+          display: inline-flex;
+          width: 46px;
+          height: 46px;
+          align-items: center;
+          justify-content: center;
+          border-radius: 10px;
+          background: #f8fafc;
+          color: #475569;
+        }
+
+        .summary-blue .dashboard-summary-icon {
+          background: #eff6ff;
+          color: #2563eb;
+        }
+
+        .summary-red .dashboard-summary-icon {
+          background: #fef2f2;
+          color: #dc2626;
+        }
+
+        .summary-amber .dashboard-summary-icon {
+          background: #fffbeb;
+          color: #d97706;
+        }
+
+        .summary-green .dashboard-summary-icon {
+          background: #ecfdf5;
+          color: #16a34a;
+        }
+
+        .dashboard-main-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.75fr);
+          gap: 14px;
+          align-items: stretch;
+        }
+
+        .dashboard-main-grid > .dashboard-panel {
+          display: flex;
+          height: 100%;
+          flex-direction: column;
+        }
+
+        .dashboard-main-grid .dashboard-action-grid,
+        .dashboard-main-grid .dashboard-attention-list {
+          flex: 1;
+        }
+
+        .dashboard-cashier-work-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+          grid-template-areas:
+            "actions operations"
+            "attention operations";
+          gap: 14px;
+          align-items: stretch;
+        }
+
+        .dashboard-cashier-actions-panel {
+          grid-area: actions;
+        }
+
+        .dashboard-cashier-attention-panel {
+          grid-area: attention;
+        }
+
+        .dashboard-cashier-work-grid .dashboard-action-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .dashboard-cashier-work-grid .dashboard-operations-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .dashboard-cashier-work-grid .dashboard-operations-panel {
+          grid-area: operations;
+        }
+
+        .dashboard-cashier-work-grid .dashboard-panel {
+          height: 100%;
+        }
+
+        .dashboard-action-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 10px;
+          padding: 12px;
+          align-items: stretch;
+          grid-auto-rows: 92px;
+        }
+
+        .dashboard-inventory-summary-panel .dashboard-summary-grid,
+        .dashboard-inventory-actions-panel .dashboard-action-grid {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .dashboard-inventory-summary-panel .dashboard-summary-grid {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .dashboard-action-button,
+        .dashboard-attention-button {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          border: 1px solid #dbe3ef;
+          border-radius: 10px;
+          background: #ffffff;
+          width: 100%;
+          height: 100%;
+          min-height: 92px;
+          padding: 11px;
+          text-align: left;
+          transition: background-color 160ms ease, border-color 160ms ease;
+        }
+
+        .dashboard-action-button:hover,
+        .dashboard-attention-button:hover {
+          border-color: #fca5a5;
+          background: #fff7f7;
+        }
+
+        .dashboard-action-left {
+          display: flex;
+          align-items: center;
+          gap: 11px;
           min-width: 0;
         }
 
-        .dashboard-module-card {
-          min-height: 168px;
+        .dashboard-action-icon {
+          display: inline-flex;
+          width: 36px;
+          height: 36px;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          border-radius: 10px;
+          background: #f1f5f9;
+          color: #334155;
         }
 
-        .dashboard-stock-count-dialog {
-          width: min(100% - 2rem, 34rem);
-          max-width: min(100% - 2rem, 34rem) !important;
-          border-radius: 1rem;
+        .dashboard-action-title,
+        .dashboard-attention-title {
+          color: #111827;
+          font-size: 14px;
+          font-weight: 800;
+          line-height: 1.2;
+        }
+
+        .dashboard-action-detail {
+          margin-top: 3px;
+          color: #64748b;
+          font-size: 12px;
+          font-weight: 600;
+          line-height: 1.25;
+        }
+
+        .dashboard-attention-list {
+          display: grid;
+          gap: 8px;
+          padding: 12px;
+        }
+
+        .dashboard-attention-button {
+          min-height: 58px;
+        }
+
+        .dashboard-attention-left {
+          display: flex;
+          min-width: 0;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .dashboard-attention-icon {
+          display: inline-flex;
+          width: 34px;
+          height: 34px;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          border-radius: 10px;
+          background: #f1f5f9;
+          color: #334155;
+        }
+
+        .dashboard-action-button.action-blue .dashboard-action-icon {
+          background: #eff6ff;
+          color: #2563eb;
+        }
+
+        .dashboard-action-button.action-green .dashboard-action-icon {
+          background: #ecfdf5;
+          color: #16a34a;
+        }
+
+        .dashboard-action-button.action-red .dashboard-action-icon {
+          background: #fef2f2;
+          color: #dc2626;
+        }
+
+        .dashboard-action-button.action-amber .dashboard-action-icon {
+          background: #fffbeb;
+          color: #d97706;
+        }
+
+        .dashboard-action-button.action-purple .dashboard-action-icon {
+          background: #f5f3ff;
+          color: #7c3aed;
+        }
+
+        .dashboard-action-button.action-emerald .dashboard-action-icon {
+          background: #ecfdf5;
+          color: #059669;
+        }
+
+        .attention-amber .dashboard-attention-icon {
+          background: #fffbeb;
+          color: #d97706;
+        }
+
+        .attention-blue .dashboard-attention-icon {
+          background: #eff6ff;
+          color: #2563eb;
+        }
+
+        .attention-red .dashboard-attention-icon {
+          background: #fef2f2;
+          color: #dc2626;
+        }
+
+        .dashboard-attention-detail {
+          margin-top: 2px;
+          color: #64748b;
+          font-size: 11px;
+          font-weight: 600;
+          line-height: 1.2;
+        }
+
+        .dashboard-attention-value {
+          display: inline-flex;
+          min-width: 34px;
+          height: 30px;
+          align-items: center;
+          justify-content: center;
+          border-radius: 999px;
+          border: 1px solid #dbe3ef;
+          background: #f8fafc;
+          color: #111827;
+          padding: 0 9px;
+          font-size: 13px;
+          font-weight: 900;
+        }
+
+        .dashboard-empty-state {
+          margin: 14px;
+          border: 1px dashed #cbd5e1;
+          border-radius: 10px;
+          background: #f8fafc;
+          padding: 16px;
+          color: #64748b;
+          font-size: 14px;
+          font-weight: 600;
+          text-align: center;
         }
 
         .dashboard-count-preview {
           border: 1px solid #dbeafe;
-          border-radius: 0.95rem;
+          border-radius: 12px;
           background: #eff6ff;
-          padding: 0.9rem;
+          padding: 12px;
         }
 
         .dashboard-count-preview-row {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 0.75rem;
-          border-radius: 0.75rem;
-          background: rgba(255, 255, 255, 0.74);
-          padding: 0.65rem 0.75rem;
+          gap: 12px;
+          border-radius: 10px;
+          background: rgba(255, 255, 255, 0.78);
+          padding: 10px 12px;
         }
 
         .dashboard-count-preview-row + .dashboard-count-preview-row {
-          margin-top: 0.5rem;
+          margin-top: 8px;
         }
 
-        .dashboard-admin-action {
-          transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+        .dashboard-stock-count-dialog {
+          width: min(100% - 2rem, 34rem);
+          max-width: min(100% - 2rem, 34rem) !important;
+          border-radius: 14px;
         }
 
-        .dashboard-admin-action-red:hover {
-          border-color: #f87171 !important;
-          background-color: #fecaca !important;
-          box-shadow: 0 8px 18px rgba(220, 38, 38, 0.18);
-        }
-
-        .dashboard-admin-action-orange:hover {
-          border-color: #fb923c !important;
-          background-color: #fed7aa !important;
-          box-shadow: 0 8px 18px rgba(234, 88, 12, 0.16);
-        }
-
-        .dashboard-admin-action-slate:hover {
-          border-color: #94a3b8 !important;
-          background-color: #e2e8f0 !important;
-          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
-        }
-
-        @media (min-width: 1280px) {
-          .dashboard-module-grid {
-            grid-template-columns: repeat(3, minmax(0, 1fr));
+        @media (max-width: 1120px) {
+          .dashboard-summary-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
-          .dashboard-monitoring-grid {
-            grid-template-columns: repeat(${isAdminRole(user?.role) ? 3 : 2}, minmax(0, 1fr));
+          .dashboard-operations-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .dashboard-main-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .dashboard-cashier-work-grid {
+            grid-template-columns: 1fr;
+            grid-template-areas: none;
+          }
+
+          .dashboard-cashier-actions-panel,
+          .dashboard-cashier-attention-panel,
+          .dashboard-cashier-work-grid .dashboard-operations-panel {
+            grid-area: auto;
+          }
+
+          .dashboard-cashier-work-grid .dashboard-operations-panel {
+            grid-column: auto;
+          }
+
+          .dashboard-cashier-work-grid .dashboard-operations-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .dashboard-action-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .dashboard-inventory-summary-panel .dashboard-summary-grid,
+          .dashboard-inventory-actions-panel .dashboard-action-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
           }
         }
 
-        @media (max-width: 760px) {
+        @media (max-width: 720px) {
           .dashboard-page {
             padding: 10px;
           }
 
-          .dashboard-stat-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 12px;
-            margin-bottom: 18px;
-          }
-
-          .dashboard-stat-card {
-            border-radius: 12px;
-            min-width: 0;
-          }
-
-          .dashboard-stat-content,
-          .dashboard-module-header {
-            padding: 12px;
-          }
-
-          .dashboard-stat-top,
-          .dashboard-module-top {
-            align-items: center;
-            margin-bottom: 10px;
-          }
-
-          .dashboard-stat-icon,
-          .dashboard-module-icon {
-            padding: 9px;
-            border-radius: 10px;
-          }
-
-          .dashboard-stat-icon svg,
-          .dashboard-module-icon svg {
-            width: 18px;
-            height: 18px;
-          }
-
-          .dashboard-stat-badge,
-          .dashboard-module-badge {
-            max-width: 86px;
-            padding: 3px 7px;
-            font-size: 11px;
-            line-height: 1.15;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-          }
-
-          .dashboard-stat-value {
-            font-size: 26px;
-            line-height: 1;
-          }
-
-          .dashboard-stat-title,
-          .dashboard-module-title {
-            font-size: 13px;
-            line-height: 1.25;
-          }
-
-          .dashboard-stat-change,
-          .dashboard-module-description {
-            font-size: 12px;
-            line-height: 1.35;
-          }
-
-          .dashboard-section-title {
-            margin: 4px 0 12px;
-            padding: 10px 12px;
-            border-left: 4px solid #ef0000;
-            border-radius: 12px;
-            background: #ffffff;
-            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
-          }
-
-          .dashboard-section-title h2 {
-            font-size: 19px;
-            line-height: 1.25;
-            font-weight: 850;
-          }
-
-          .dashboard-section-title svg {
-            box-sizing: content-box;
-            width: 20px;
-            height: 20px;
-            padding: 6px;
-            border-radius: 10px;
-            background: #fff7ed;
-          }
-
-          .dashboard-module-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 12px;
-          }
-
-          .dashboard-module-card {
-            min-height: 142px;
-            border-radius: 12px;
-          }
-
-          .dashboard-movement-card [data-card-header],
-          .dashboard-admin-card [data-card-header],
-          .dashboard-alert-card [data-card-header] {
-            padding: 14px 14px 8px;
-          }
-
-          .dashboard-movement-card [data-card-content],
-          .dashboard-admin-card [data-card-content],
-          .dashboard-alert-card [data-card-content] {
-            padding: 8px 14px 14px;
-          }
-        }
-
-        @media (max-width: 390px) {
-          .dashboard-page {
-            padding: 8px;
-          }
-
-          .dashboard-stat-grid,
-          .dashboard-module-grid,
-          .dashboard-monitoring-grid {
+          .dashboard-content {
             gap: 10px;
           }
 
-          .dashboard-stat-value {
-            font-size: 24px;
+          .dashboard-panel-header {
+            padding: 12px;
           }
 
-          .dashboard-section-title {
-            padding: 9px 10px;
+          .dashboard-summary-grid,
+          .dashboard-action-grid,
+          .dashboard-attention-list {
+            padding: 10px;
+          }
+
+          .dashboard-summary-card {
+            grid-template-columns: minmax(0, 1fr) 38px;
+            min-height: 88px;
+            padding: 10px;
+          }
+
+          .dashboard-summary-value {
+            font-size: clamp(21px, 6vw, 28px);
+          }
+
+          .dashboard-action-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-auto-rows: 86px;
+          }
+
+          .dashboard-operations-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+        }
+
+        @media (max-width: 430px) {
+          .dashboard-summary-grid,
+          .dashboard-action-grid,
+          .dashboard-operations-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .dashboard-action-grid {
+            grid-auto-rows: 78px;
           }
         }
       `}</style>
 
       <PageHeader
         title="Dashboard"
-        subtitle="Welcome back,"
+        subtitle="Simple daily overview for"
         icon={<Home className="h-8 w-8" />}
         userName={user.fullName}
         userBranch={activeBranch || user.branch}
         userRole={user.role}
         showUserContext
-        onNavigate={onNavigate}
-        showQuickActions
-        alertCount={unreadAlertCount}
       />
 
-      <div className="dashboard-stat-grid grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <StatCard
-          title="Today's Sales"
-          value={formatCurrency(salesTodayAmountDue)}
-          change={`${salesTodayCount} transaction${salesTodayCount === 1 ? '' : 's'}`}
-          icon={<ReceiptText className="w-6 h-6" />}
-          iconTileStyle={{ backgroundColor: '#2563eb' }}
-          bgOverlayStyle={{ background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 55%, #e2e8f0 100%)' }}
-          bgGradient="from-blue-50 to-indigo-50"
-          trend="up"
-          percentage="Sales"
-          onClick={openSales}
-          actionLabel="Record sale"
-        />
-        <StatCard
-          title="Out of Stock"
-          value={outOfStock.toString()}
-          change={outOfStock > 0 ? "Immediate restock needed" : "None depleted"}
-          icon={<AlertTriangle className="w-6 h-6" />}
-          iconTileStyle={{ backgroundColor: '#dc2626' }}
-          bgGradient="from-red-50 to-red-100"
-          trend={outOfStock > 0 ? "down" : "neutral"}
-          percentage={outOfStock > 0 ? "Critical" : "Clear"}
-          onClick={() => openInventoryStatus('Out of Stock')}
-          actionLabel="View urgent items"
-        />
-        <StatCard
-          title="Low Stock"
-          value={lowStockItems.toString()}
-          change={lowStockItems > 0 ? "Below reorder point" : "All levels safe"}
-          icon={<AlertTriangle className="w-6 h-6" />}
-          iconTileStyle={{ backgroundColor: '#f59e0b' }}
-          bgGradient="from-yellow-50 to-orange-50"
-          trend={lowStockItems > 0 ? "down" : "neutral"}
-          percentage={lowStockItems > 0 ? "Warning" : "Good"}
-          onClick={() => openInventoryStatus('Low Stock')}
-          actionLabel="View reorder items"
-        />
-        <StatCard
-          title="In Stock"
-          value={activeProducts.toString()}
-          change={`${totalItems} inventory records`}
-          icon={<CheckCircle className="w-6 h-6" />}
-          iconTileStyle={{ backgroundColor: '#16a34a' }}
-          bgOverlayStyle={{ background: 'linear-gradient(135deg, #ecfdf5 0%, #dcfce7 52%, #bbf7d0 100%)' }}
-          bgGradient="from-green-50 to-emerald-50"
-          trend="up"
-          percentage="Available"
-          onClick={() => openInventoryStatus('In Stock')}
-          actionLabel="View available items"
-        />
-      </div>
+      <div className={`dashboard-content ${isCashier ? 'dashboard-content-cashier' : ''}`}>
+        <section className={`dashboard-panel ${isInventoryStaff ? 'dashboard-inventory-summary-panel' : ''} ${isAdmin ? 'dashboard-admin-summary-panel' : ''}`} aria-label="Quick summary numbers">
+          <div className="dashboard-panel-header">
+            <div className="min-w-0">
+              <h2 className="dashboard-panel-title">Quick Summary</h2>
+              <p className="dashboard-panel-subtitle">
+                {isInventoryStaff ? 'Key stock condition indicators for the branch.' : 'Key sales and stock indicators for the branch.'}
+              </p>
+            </div>
+          </div>
+          <div className={`dashboard-summary-grid ${isAdmin ? 'dashboard-admin-summary-grid' : ''}`}>
+            {primaryCards.map(card => (
+              <SummaryCard key={card.label} {...card} />
+            ))}
+          </div>
+        </section>
 
-      <section className="mb-6">
-        <div className="dashboard-section-title flex items-center gap-2 mb-4">
-          <Activity className="w-6 h-6 text-[#FF0000]" />
-          <h2 className="text-2xl font-bold text-gray-900">Daily Operations</h2>
-        </div>
-        <div className="dashboard-module-grid grid grid-cols-2 md:grid-cols-2 gap-4">
-          {canUseInventoryMovement && (
-            <ModuleCard
-              icon={<PackagePlus className="w-7 h-7" />}
-              title="Record Stock In"
-              description="Receive deliveries and update stock quantities."
-              onClick={() => openInventoryAction('stock-in')}
-              gradient="from-green-600 to-green-700"
-              badge="Receiving"
-            />
-          )}
-          {canUseInventoryMovement && (
-            <ModuleCard
-              icon={<Activity className="w-7 h-7" />}
-              title="Record Stock Out"
-              description="Deduct damaged, expired, missing, transferred, or corrected stock."
-              onClick={() => openInventoryAction('stock-out')}
-              gradient="from-slate-700 to-slate-800"
-              badge="Movement"
-            />
-          )}
-          {canUseSales && (
-            <ModuleCard
-              icon={<ReceiptText className="w-7 h-7" />}
-              title="Record Sale"
-              description="Record customer purchases, payment, and automatic stock deduction."
-              onClick={openSales}
-              gradient="from-orange-500 to-orange-600"
-              badge={salesTodayCount > 0 ? `${salesTodayCount} Today` : "POS"}
-            />
-          )}
-          {canUseReports && (
-            <ModuleCard
-              icon={<FileText className="w-7 h-7" />}
-              title="Reports"
-              description="Review sales, purchases, stock movements, and inventory status."
-              onClick={() => openTargetReport('summary')}
-              gradient="from-red-600 to-red-700"
-              badge="Reports"
-            />
-          )}
-          {canUsePurchases && (
-            <ModuleCard
-              icon={<Truck className="w-7 h-7" />}
-              title="Purchase Entry"
-              description="Record supplier deliveries and add received stock."
-              onClick={() => onNavigate('purchases')}
-              gradient="from-green-600 to-green-700"
-              badge={purchasesToday.length > 0 ? `${purchasesToday.length} Today` : 'Supplier'}
-            />
-          )}
-          {canUseReports && (
-            <ModuleCard
-              icon={<Activity className="w-7 h-7" />}
-              title="Stock Movement History"
-              description="Review stock-in, stock-out, and sales movement records."
-              onClick={() => openTargetReport('movements')}
-              gradient="from-slate-700 to-slate-800"
-              badge={`${stockMovementsToday} Today`}
-            />
-          )}
-          {canAddInventoryItem && <ModuleCard
-            icon={<Package className="w-7 h-7" />}
-            title="Add New Item"
-            description="Admin-only action for registering a new inventory record."
-            onClick={() => openInventoryAction('add-item')}
-            gradient="from-red-500 to-red-600"
-            badge="Admin Only"
-          />}
-          {canUseInventoryMovement && <ModuleCard
-            icon={<ClipboardCheck className="w-7 h-7" />}
-            title="Verify Physical Stock"
-            description="Check counted shelf stock against the system quantity."
-            onClick={() => setIsStockCountDialogOpen(true)}
-            gradient="from-blue-600 to-blue-700"
-            badge="Stock Check"
-          />}
-        </div>
-      </section>
-
-      <section>
-        <div className="dashboard-section-title flex items-center gap-2 mb-4">
-          <Zap className="w-6 h-6 text-[#FFFF00]" />
-          <h2 className="text-2xl font-bold text-gray-900">Monitoring and Attention</h2>
-        </div>
-        <div className="dashboard-monitoring-grid grid grid-cols-1 gap-6">
-          {movementPanel}
-          <Card className="dashboard-sales-card overflow-hidden border-2 border-amber-200 bg-white shadow-md">
-            <CardHeader className="rounded-t-xl bg-amber-50 pb-3" data-card-header>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <ReceiptText className="w-5 h-5 text-amber-600" />
-                Today&apos;s Sales
-              </CardTitle>
-              <CardDescription>POS sales recorded for this branch</CardDescription>
-            </CardHeader>
-            <CardContent className="bg-white pt-2 pb-4" data-card-content>
-              <div className="grid gap-2 sm:grid-cols-3">
-                <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2.5">
-                  <p className="text-xs font-semibold uppercase text-amber-700">Transactions</p>
-                  <p className="mt-1 text-lg font-bold text-slate-900">{salesTodayCount}</p>
-                </div>
-                <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2.5">
-                  <p className="text-xs font-semibold uppercase text-amber-700">Amount Due</p>
-                  <p className="mt-1 break-words text-lg font-bold text-slate-900">{formatCurrency(salesTodayAmountDue)}</p>
-                </div>
-                <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2.5">
-                  <p className="text-xs font-semibold uppercase text-amber-700">Discounts</p>
-                  <p className="mt-1 break-words text-lg font-bold text-slate-900">{formatCurrency(salesTodayDiscount)}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          {canUsePurchases && (
-            <Card className="dashboard-sales-card overflow-hidden border-2 border-green-200 bg-white shadow-md">
-              <CardHeader className="rounded-t-xl bg-green-50 pb-3" data-card-header>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Truck className="w-5 h-5 text-green-700" />
-                  Today's Purchases
-                </CardTitle>
-                <CardDescription>Supplier deliveries recorded for this branch</CardDescription>
-              </CardHeader>
-              <CardContent className="bg-white pt-2 pb-4" data-card-content>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <div className="rounded-lg border border-green-100 bg-green-50 px-3 py-2.5">
-                    <p className="text-xs font-semibold uppercase text-green-700">Entries</p>
-                    <p className="mt-1 text-lg font-bold text-slate-900">{purchasesToday.length}</p>
-                  </div>
-                  <div className="rounded-lg border border-green-100 bg-green-50 px-3 py-2.5">
-                    <p className="text-xs font-semibold uppercase text-green-700">Purchase Amount</p>
-                    <p className="mt-1 break-words text-lg font-bold text-slate-900">{formatCurrency(purchasesTodayAmount)}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-          {stockAlertPanel}
-          {adminPanel}
-        </div>
-      </section>
+        {isCashier ? (
+          <div className="dashboard-cashier-work-grid">
+            {quickActionsSection}
+            {attentionSection}
+            {operationsSection}
+          </div>
+        ) : (
+          <>
+            <div className="dashboard-main-grid">
+              {quickActionsSection}
+              {attentionSection}
+            </div>
+            {operationsSection}
+          </>
+        )}
+          </div>
 
       <Dialog open={isStockCountDialogOpen} onOpenChange={open => {
         setIsStockCountDialogOpen(open);
@@ -768,15 +1124,11 @@ export function Dashboard({
               Verify Physical Stock
             </DialogTitle>
             <DialogDescription className="text-sm leading-6 text-slate-600">
-              Use this when you count an item on the shelf or in the stockroom and need to check if it matches the system record.
+              Compare the actual counted quantity with the system quantity, then continue to the proper stock adjustment if needed.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
-            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-slate-700">
-              Select the item, enter the actual counted quantity, then review the difference. If the count does not match, continue to the correct stock adjustment.
-            </div>
-
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="stock-count-item">Item Counted</Label>
@@ -786,7 +1138,7 @@ export function Dashboard({
                   </SelectTrigger>
                   <SelectContent>
                     {inventory.map(item => (
-                      <SelectItem key={item.id} value={item.id}>
+                      <SelectItem key={item.id} value={String(item.id)}>
                         {item.name}
                       </SelectItem>
                     ))}
@@ -804,7 +1156,7 @@ export function Dashboard({
                     ...prev,
                     physicalCount: sanitizeWholeNumberInput(event.target.value, 'Actual counted quantity', 'dashboard-physical-count-numbers-only')
                   }))}
-                  placeholder="Type the actual units counted"
+                  placeholder="Type actual units counted"
                 />
               </div>
             </div>
@@ -842,14 +1194,6 @@ export function Dashboard({
               </div>
             )}
 
-            {selectedCountItem && hasValidPhysicalCount && (
-              <div className={`rounded-xl border px-4 py-3 text-sm leading-6 ${stockCountVariance > 0 ? 'border-green-200 bg-green-50 text-green-800' : stockCountVariance < 0 ? 'border-red-200 bg-red-50 text-red-800' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
-                {stockCountVariance > 0 && `Physical count is higher than the system stock. If verified, record a Stock In correction for ${Math.abs(stockCountVariance)} unit${Math.abs(stockCountVariance) === 1 ? '' : 's'}.`}
-                {stockCountVariance < 0 && `Physical count is lower than the system stock. If verified, record a Stock Out correction for ${Math.abs(stockCountVariance)} unit${Math.abs(stockCountVariance) === 1 ? '' : 's'}.`}
-                {stockCountVariance === 0 && 'Counts match. No stock correction is needed.'}
-              </div>
-            )}
-
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setIsStockCountDialogOpen(false)}>
                 Cancel
@@ -871,114 +1215,58 @@ export function Dashboard({
     </div>
   );
 }
-function StatCard({
-  title,
+
+function SummaryCard({
+  label,
   value,
-  change,
-  icon,
-  iconTileStyle,
-  bgOverlayClassName,
-  bgOverlayStyle,
-  bgGradient,
-  trend,
-  percentage,
-  onClick,
-  actionLabel
+  detail,
+  icon: Icon,
+  tone,
+  action
+}) {
+  const content = (
+    <>
+      <span className="min-w-0">
+        <span className="dashboard-summary-label block">{label}</span>
+        <span className="dashboard-summary-value block">{value}</span>
+        <span className="dashboard-summary-detail block">{detail}</span>
+      </span>
+      <span className="dashboard-summary-icon">
+        <Icon className="h-5 w-5" />
+      </span>
+    </>
+  );
+
+  if (action) {
+    return (
+      <button type="button" className={`dashboard-summary-card summary-${tone}`} onClick={action}>
+        {content}
+      </button>
+    );
+  }
+
+  return <div className={`dashboard-summary-card summary-${tone}`}>{content}</div>;
+}
+
+function ActionButton({
+  label,
+  detail,
+  icon: Icon,
+  tone = 'slate',
+  action
 }) {
   return (
-    <Card
-      className={`dashboard-stat-card relative overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1 ${onClick ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-red-200' : ''}`}
-      role={onClick ? "button" : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      onClick={onClick}
-      onKeyDown={event => {
-      if (!onClick) return;
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        onClick();
-      }
-      }}
-    >
-      <div
-        className={`absolute inset-0 ${bgOverlayStyle ? '' : bgOverlayClassName || `bg-gradient-to-br ${bgGradient}`} opacity-80`}
-        style={bgOverlayStyle}
-      />
-      <CardContent className="dashboard-stat-content relative pt-6">
-        <div className="dashboard-stat-top flex items-start justify-between mb-4">
-          <div className="dashboard-stat-icon p-3 rounded-xl shadow-md" style={iconTileStyle}>
-            <div className="text-white">{icon}</div>
-          </div>
-          <Badge variant="outline" className="dashboard-stat-badge inline-flex h-6 items-center justify-center rounded-full bg-white/90 text-center leading-none backdrop-blur-sm border-gray-300 text-gray-700">
-            {percentage}
-          </Badge>
-        </div>
-        <div>
-          <h3 className="dashboard-stat-value text-4xl font-bold text-gray-900 mb-1">{value}</h3>
-          <p className="dashboard-stat-title text-sm font-semibold text-gray-800 mb-1">{title}</p>
-          <div className="dashboard-stat-change flex items-center gap-1 text-xs text-gray-700">
-            {trend === 'up' && <TrendingUp className="w-3 h-3 text-green-600" />}
-            {trend === 'down' && <AlertTriangle className="w-3 h-3 text-[#FF0000]" />}
-            <span>{change}</span>
-          </div>
-          {actionLabel && (
-            <p className="mt-3 flex items-center gap-1 text-xs font-semibold text-slate-800">
-              {actionLabel}
-              <ArrowRight className="h-3 w-3" />
-            </p>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+    <button type="button" className={`dashboard-action-button action-${tone}`} onClick={action}>
+      <span className="dashboard-action-left">
+        <span className="dashboard-action-icon">
+          <Icon className="h-5 w-5" />
+        </span>
+        <span className="min-w-0">
+          <span className="dashboard-action-title block">{label}</span>
+          <span className="dashboard-action-detail block">{detail}</span>
+        </span>
+      </span>
+      <ArrowRight className="h-4 w-4 shrink-0 text-slate-400" />
+    </button>
   );
-}
-function ModuleCard({
-  icon,
-  title,
-  description,
-  onClick,
-  gradient,
-  badge
-}) {
-  const iconTileBackground = {
-    "from-green-600 to-green-700": "linear-gradient(135deg, #16A34A 0%, #15803D 100%)",
-    "from-slate-700 to-slate-800": "linear-gradient(135deg, #334155 0%, #1E293B 100%)",
-    "from-orange-500 to-orange-600": "linear-gradient(135deg, #F97316 0%, #EA580C 100%)",
-    "from-red-600 to-red-700": "linear-gradient(135deg, #DC2626 0%, #B91C1C 100%)",
-    "from-red-500 to-red-600": "linear-gradient(135deg, #EF4444 0%, #DC2626 100%)",
-    "from-blue-600 to-blue-700": "linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%)"
-  }[gradient] || "linear-gradient(135deg, #334155 0%, #1E293B 100%)";
-
-  return /*#__PURE__*/React.createElement(Card, {
-    className: "dashboard-module-card group relative overflow-hidden border-2 border-gray-200 shadow-md transition-colors duration-200 cursor-pointer hover:border-red-200 hover:bg-slate-50 h-full",
-    role: "button",
-    tabIndex: 0,
-    onClick: onClick,
-    onKeyDown: event => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        onClick();
-      }
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "absolute inset-0 bg-gradient-to-br from-white/0 to-slate-50/0 group-hover:from-white/0 group-hover:to-slate-50/80 transition-colors duration-200"
-  }), /*#__PURE__*/React.createElement(CardHeader, {
-    className: "dashboard-module-header relative pb-4"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "dashboard-module-top flex items-start justify-between mb-3"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "dashboard-module-icon p-3 rounded-xl shadow-md",
-    style: {
-      background: iconTileBackground
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center justify-center text-white [&>svg]:text-white [&>svg]:stroke-white"
-  }, icon)), badge && /*#__PURE__*/React.createElement(Badge, {
-    className: "dashboard-module-badge inline-flex h-6 shrink-0 items-center justify-center rounded-full bg-gray-100 px-2 text-center leading-none text-gray-700 border border-gray-300"
-  }, badge)), /*#__PURE__*/React.createElement(CardTitle, {
-    className: "dashboard-module-title text-base group-hover:text-[#FF0000] transition-colors duration-200 flex items-center gap-2 mb-2"
-  }, title, /*#__PURE__*/React.createElement(ArrowUpRight, {
-    className: "w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-  })), /*#__PURE__*/React.createElement(CardDescription, {
-    className: "dashboard-module-description text-sm text-gray-600 leading-relaxed"
-  }, description)));
 }

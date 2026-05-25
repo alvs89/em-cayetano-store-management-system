@@ -330,6 +330,7 @@ async function ensureSchema() {
     CREATE TABLE IF NOT EXISTS sales_items (
       sales_item_id SERIAL PRIMARY KEY,
       sales_transaction_id INT NOT NULL REFERENCES sales_transactions(sales_transaction_id) ON DELETE CASCADE,
+      item_type VARCHAR(20) NOT NULL DEFAULT 'inventory' CHECK (item_type IN ('inventory', 'non_inventory')),
       inventory_id INT,
       product_id INT,
       is_inventory_item BOOLEAN NOT NULL DEFAULT true,
@@ -339,8 +340,8 @@ async function ensureSchema() {
       quantity_sold INTEGER NOT NULL,
       unit_price NUMERIC(12,2) NOT NULL DEFAULT 0,
       subtotal NUMERIC(12,2) NOT NULL DEFAULT 0,
-      previous_quantity INTEGER NOT NULL,
-      new_quantity INTEGER NOT NULL,
+      previous_quantity INTEGER,
+      new_quantity INTEGER,
       created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
     );
   `);
@@ -676,6 +677,33 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE sales_items
     ADD COLUMN IF NOT EXISTS is_inventory_item BOOLEAN NOT NULL DEFAULT true;
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_items
+    ADD COLUMN IF NOT EXISTS item_type VARCHAR(20) NOT NULL DEFAULT 'inventory';
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_items
+    DROP CONSTRAINT IF EXISTS sales_items_item_type_check;
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_items
+    ADD CONSTRAINT sales_items_item_type_check CHECK (item_type IN ('inventory', 'non_inventory'));
+  `);
+
+  await pool.query(`
+    UPDATE sales_items
+    SET item_type = CASE WHEN is_inventory_item = false OR inventory_id IS NULL THEN 'non_inventory' ELSE 'inventory' END
+    WHERE item_type IS NULL OR item_type = 'inventory';
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_items
+    ALTER COLUMN previous_quantity DROP NOT NULL,
+    ALTER COLUMN new_quantity DROP NOT NULL;
   `);
 
   await pool.query(`
@@ -1688,6 +1716,7 @@ function mapSalesItemRow(row) {
   return {
     sales_item_id: row.sales_item_id,
     sales_transaction_id: row.sales_transaction_id,
+    item_type: row.item_type || (row.is_inventory_item === false ? 'non_inventory' : 'inventory'),
     inventory_id: row.inventory_id,
     product_id: row.product_id,
     is_inventory_item: row.is_inventory_item,
@@ -1944,6 +1973,7 @@ const ALLOWED_CLIENT_AUDIT_ACTIONS = new Set([
   'MARK_ALERT_READ',
   'MARK_ALL_ALERTS_READ',
   'DISMISS_ALERT',
+  'CONVERT_NON_INVENTORY_ITEM',
   'CLEAR_LOGS',
   'OPTIMIZE_DATABASE',
   'CHECK_DATA_INTEGRITY'
@@ -3582,6 +3612,7 @@ app.get('/api/sales', authenticate, async (req, res) => {
            json_agg(
              json_build_object(
                'sales_item_id', si.sales_item_id,
+               'item_type', si.item_type,
                'inventory_id', si.inventory_id,
                'product_id', si.product_id,
                'is_inventory_item', si.is_inventory_item,
@@ -3670,7 +3701,11 @@ app.post('/api/sales', authenticate, async (req, res) => {
   const manualItems = [];
   try {
     for (const item of items) {
-      const isManualItem = item?.is_manual === true || item?.is_inventory_item === false || !item?.inventory_id;
+      const isManualItem =
+        item?.item_type === 'non_inventory' ||
+        item?.is_manual === true ||
+        item?.is_inventory_item === false ||
+        !item?.inventory_id;
       const quantity = parseNonNegativeInteger(item?.quantity, 'Quantity sold');
       const unitPrice = parseNonNegativeDecimal(item?.unit_price, 'Unit price', { max: 100000000 });
 
@@ -3684,7 +3719,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
 
       if (isManualItem) {
         const itemName = String(item?.item_name || '').trim().replace(/\s+/g, ' ');
-        const category = normalizeCategory(item?.category || 'Other') || 'Other';
+        const category = canonicalizeInventoryCategory(item?.category || 'Other') || 'Other';
         if (!itemName || itemName.length > 150) {
           return res.status(400).json({ error: 'Manual sale items must include an item description of 150 characters or less.' });
         }
@@ -3827,8 +3862,8 @@ app.post('/api/sales', authenticate, async (req, res) => {
         quantitySold: line.quantity,
         unitPrice: line.unitPrice,
         subtotal: line.subtotal,
-        previousQuantity: 0,
-        newQuantity: 0
+        previousQuantity: null,
+        newQuantity: null
       });
     });
 
@@ -3936,6 +3971,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
       const itemResult = await client.query(
         `INSERT INTO sales_items (
            sales_transaction_id,
+           item_type,
            inventory_id,
            product_id,
            is_inventory_item,
@@ -3948,10 +3984,11 @@ app.post('/api/sales', authenticate, async (req, res) => {
            previous_quantity,
            new_quantity
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          RETURNING *`,
         [
           salesTransaction.sales_transaction_id,
+          line.isInventoryItem ? 'inventory' : 'non_inventory',
           line.inventoryId,
           line.productId,
           line.isInventoryItem,

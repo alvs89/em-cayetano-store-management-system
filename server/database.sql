@@ -131,6 +131,7 @@ CREATE TABLE IF NOT EXISTS sales_transactions (
 CREATE TABLE IF NOT EXISTS sales_items (
     sales_item_id SERIAL PRIMARY KEY,
     sales_transaction_id INT NOT NULL REFERENCES sales_transactions(sales_transaction_id) ON DELETE CASCADE,
+    item_type VARCHAR(20) NOT NULL DEFAULT 'inventory' CHECK (item_type IN ('inventory', 'non_inventory')),
     inventory_id INT,
     product_id INT,
     is_inventory_item BOOLEAN NOT NULL DEFAULT true,
@@ -140,8 +141,8 @@ CREATE TABLE IF NOT EXISTS sales_items (
     quantity_sold INTEGER NOT NULL,
     unit_price NUMERIC(12,2) NOT NULL DEFAULT 0,
     subtotal NUMERIC(12,2) NOT NULL DEFAULT 0,
-    previous_quantity INTEGER NOT NULL,
-    new_quantity INTEGER NOT NULL,
+    previous_quantity INTEGER,
+    new_quantity INTEGER,
     created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')
 );
 
