@@ -13,3 +13,39 @@ export const formatDateTime = value => {
     hour12: true
   });
 };
+
+const titleCaseWords = value =>
+  String(value || "")
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, letter => letter.toUpperCase());
+
+export const formatPurchasePaymentTerms = value => {
+  const normalized = String(value || "cash").trim().toLowerCase();
+  const labels = {
+    cash: "Cash",
+    cod: "COD",
+    credit: "Credit",
+    branch_transfer: "Branch Transfer"
+  };
+  return labels[normalized] || titleCaseWords(normalized);
+};
+
+export const formatPurchaseDocumentType = value => {
+  const normalized = String(value || "DR").trim().toUpperCase();
+  const labels = {
+    DR: "DR",
+    SI: "SI",
+    OR: "OR",
+    OTHER: "Other"
+  };
+  return labels[normalized] || titleCaseWords(normalized);
+};
+
+export const formatPurchaseDocumentLabel = (documentType, documentNumber = "") => {
+  const typeLabel = formatPurchaseDocumentType(documentType);
+  const numberLabel = String(documentNumber || "").trim();
+  return numberLabel ? `${typeLabel} ${numberLabel}` : typeLabel;
+};

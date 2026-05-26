@@ -791,11 +791,14 @@ export function Dashboard({
           border-radius: 10px;
           background: #ffffff;
           width: 100%;
-          height: 100%;
           min-height: 92px;
           padding: 11px;
           text-align: left;
           transition: background-color 160ms ease, border-color 160ms ease;
+        }
+
+        .dashboard-action-button {
+          height: 100%;
         }
 
         .dashboard-action-button:hover,
@@ -843,9 +846,13 @@ export function Dashboard({
           display: grid;
           gap: 8px;
           padding: 12px;
+          align-content: start;
+          align-items: start;
+          grid-auto-rows: minmax(58px, auto);
         }
 
         .dashboard-attention-button {
+          height: auto;
           min-height: 58px;
         }
 
@@ -1123,7 +1130,7 @@ export function Dashboard({
               <ClipboardCheck className="h-5 w-5 text-blue-600" />
               Verify Physical Stock
             </DialogTitle>
-            <DialogDescription className="text-sm leading-6 text-slate-600">
+            <DialogDescription className="text-sm leading-6 text-slate-700">
               Compare the actual counted quantity with the system quantity, then continue to the proper stock adjustment if needed.
             </DialogDescription>
           </DialogHeader>

@@ -784,6 +784,33 @@ export function DataProvider({ children }) {
     }
   };
 
+  const batchStockAdjustment = async ({ items, movementReason, movementNote }) => {
+    const token = localStorage.getItem("token");
+    try {
+      const res = await axios.post(
+        apiUrl("/api/inventory/batch-stock-adjustment"),
+        {
+          items: items.map(item => ({
+            inventory_id: item.inventoryId,
+            quantity: item.quantity,
+          })),
+          movement_reason: movementReason,
+          movement_note: movementNote,
+        },
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      await fetchInventory();
+      await fetchArchivedInventory();
+      await fetchStockMovements();
+      return res.data.products || [];
+    } catch (err) {
+      await fetchInventory();
+      await fetchArchivedInventory();
+      await fetchStockMovements();
+      throw err;
+    }
+  };
+
   const recordSale = async ({ customerType, items, remarks, paymentMethod, discountType, discountAmount, deliveryCharge, amountReceived, paymentReference, paymentConfirmed }) => {
     const token = localStorage.getItem("token");
     try {
@@ -944,6 +971,7 @@ export function DataProvider({ children }) {
         fetchArchivedInventory,
         addInventoryItem,
         updateInventoryItem,
+        batchStockAdjustment,
         batchStockOut,
         recordSale,
         recordPurchase,

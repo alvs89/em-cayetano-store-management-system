@@ -17,35 +17,23 @@ import { toast } from "sonner";
 import { useData } from "./DataContext";
 import { PageHeader } from "./PageHeader";
 import { canManageInventory, canPerformInventoryMovement } from "../utils/roles";
+import {
+  HARDWARE_SUPPLIER_OPTIONS,
+  SUPPLIER_CUSTOM_VALUE,
+  getSupplierSelectValue,
+  isListedSupplier,
+  sanitizeSupplierInput,
+} from "../utils/suppliers";
 
 const OFFICIAL_INVENTORY_CATEGORIES = [
-  "Tools",
-  "Paint",
-  "Cement",
-  "Construction",
-  "Electrical",
-  "Plumbing",
-  "Hardware",
-  "Fasteners",
-  "Lumber",
-  "Safety",
+  "Roofing",
+  "PVC Pipe / Fittings",
+  "Steel",
+  "Kiln Dry",
+  "Plywood",
+  "Electricals",
+  "Paints",
   "Other"
-];
-
-const SUPPLIER_CUSTOM_VALUE = "__custom_supplier__";
-const HARDWARE_SUPPLIER_OPTIONS = [
-  "Rizal Industrial",
-  "Metro Hardware Supply",
-  "Cebu Atlantic Hardware",
-  "Wilcon Depot",
-  "Handyman",
-  "Ace Hardware",
-  "Davies Paints",
-  "Boysen Paints",
-  "Holcim Philippines",
-  "Republic Cement",
-  "Phelps Dodge Wires",
-  "Neltex Development"
 ];
 
 const STOCK_OUT_REASON_OPTIONS = [
@@ -53,8 +41,7 @@ const STOCK_OUT_REASON_OPTIONS = [
   { value: "expired", label: "Expired", description: "Items removed because they are past their usable date." },
   { value: "lost_missing", label: "Lost/Missing", description: "Items missing after checking actual stock." },
   { value: "manual_adjustment", label: "Manual Adjustment", description: "Stock corrected after a verified count." },
-  { value: "branch_transfer", label: "Branch Transfer", description: "Items moved to another branch." },
-  { value: "correction", label: "Correction", description: "Fixes an earlier stock movement entry." }
+  { value: "branch_transfer", label: "Branch Transfer", description: "Items moved to another branch." }
 ];
 
 const getStockOutReasonLabel = value =>
@@ -66,8 +53,12 @@ const STOCK_IN_REASON_OPTIONS = [
   { value: "returned_item", label: "Returned Item", description: "Returned items added back after checking their condition." },
   { value: "beginning_balance", label: "Beginning Balance", description: "Starting stock entered during setup or inventory reset." },
   { value: "manual_adjustment", label: "Manual Adjustment", description: "Stock corrected after a verified count." },
-  { value: "correction", label: "Correction", description: "Fixes an earlier stock movement entry." }
+  { value: "found_stock", label: "Found Stock", description: "Items found during checking that were not reflected in the system." }
 ];
+
+const MANUAL_STOCK_IN_REASON_OPTIONS = STOCK_IN_REASON_OPTIONS.filter(
+  option => option.value !== "delivery_received" && option.value !== "purchase_received"
+);
 
 const getStockInReasonLabel = value =>
   STOCK_IN_REASON_OPTIONS.find(option => option.value === value)?.label || "";
@@ -85,28 +76,44 @@ const getArchiveReasonLabel = value =>
   ARCHIVE_REASON_OPTIONS.find(option => option.value === value)?.label || "";
 
 const CATEGORY_ALIASES = {
-  tool: "Tools",
-  tools: "Tools",
-  tooling: "Tools",
-  paint: "Paint",
-  paints: "Paint",
-  cement: "Cement",
-  cements: "Cement",
-  construction: "Construction",
-  electrical: "Electrical",
-  electric: "Electrical",
-  plumbing: "Plumbing",
-  plumber: "Plumbing",
-  hardware: "Hardware",
-  fastener: "Fasteners",
-  fasteners: "Fasteners",
-  screw: "Fasteners",
-  screws: "Fasteners",
-  nail: "Fasteners",
-  nails: "Fasteners",
-  lumber: "Lumber",
-  wood: "Lumber",
-  safety: "Safety",
+  roofing: "Roofing",
+  roof: "Roofing",
+  yero: "Roofing",
+  pvc: "PVC Pipe / Fittings",
+  "pvc pipe / fittings": "PVC Pipe / Fittings",
+  "pvc pipes / fittings": "PVC Pipe / Fittings",
+  "pvc pipe": "PVC Pipe / Fittings",
+  "pvc pipes": "PVC Pipe / Fittings",
+  fittings: "PVC Pipe / Fittings",
+  fitting: "PVC Pipe / Fittings",
+  plumbing: "PVC Pipe / Fittings",
+  plumber: "PVC Pipe / Fittings",
+  steel: "Steel",
+  construction: "Steel",
+  metal: "Steel",
+  "kiln dry": "Kiln Dry",
+  kiln: "Kiln Dry",
+  lumber: "Kiln Dry",
+  wood: "Kiln Dry",
+  plywood: "Plywood",
+  electricals: "Electricals",
+  electrical: "Electricals",
+  electric: "Electricals",
+  paint: "Paints",
+  paints: "Paints",
+  tool: "Other",
+  tools: "Other",
+  tooling: "Other",
+  cement: "Other",
+  cements: "Other",
+  hardware: "Other",
+  fastener: "Other",
+  fasteners: "Other",
+  screw: "Other",
+  screws: "Other",
+  nail: "Other",
+  nails: "Other",
+  safety: "Other",
   misc: "Other",
   miscellaneous: "Other",
   other: "Other"
@@ -350,6 +357,7 @@ export function InventoryModule({
     inventory,
     addInventoryItem,
     updateInventoryItem,
+    batchStockAdjustment,
     batchStockOut,
     archiveInventoryItem,
     restoreArchivedInventoryItem,
@@ -362,6 +370,7 @@ export function InventoryModule({
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isStockInDialogOpen, setIsStockInDialogOpen] = useState(false);
   const [isStockOutDialogOpen, setIsStockOutDialogOpen] = useState(false);
+  const [isBatchStockAdjustmentDialogOpen, setIsBatchStockAdjustmentDialogOpen] = useState(false);
   const [isBatchStockOutDialogOpen, setIsBatchStockOutDialogOpen] = useState(false);
   const [isArchiveDialogOpen, setIsArchiveDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -369,6 +378,8 @@ export function InventoryModule({
   const [stockAmount, setStockAmount] = useState("");
   const [stockInReason, setStockInReason] = useState("");
   const [stockOutReason, setStockOutReason] = useState("");
+  const [batchStockAdjustmentReason, setBatchStockAdjustmentReason] = useState("");
+  const [batchStockAdjustmentRows, setBatchStockAdjustmentRows] = useState([{ inventoryId: "", quantity: "" }]);
   const [batchStockOutReason, setBatchStockOutReason] = useState("");
   const [batchStockOutRows, setBatchStockOutRows] = useState([{ inventoryId: "", quantity: "" }]);
   const [archiveReason, setArchiveReason] = useState("");
@@ -564,7 +575,7 @@ export function InventoryModule({
         minWidth: 0
       }
     }, /*#__PURE__*/React.createElement("p", {
-      className: "text-slate-600",
+      className: "text-slate-700",
       style: {
         fontSize: "12px",
         lineHeight: "1.2",
@@ -592,7 +603,7 @@ export function InventoryModule({
   // 🔍 Filtered inventory using Linear Search Algorithm
   // Linear Search: O(n) - iterates through each item sequentially
   // Used here because we're filtering with multiple criteria (search + category)
-  const filteredInventory = linearSearchAll(inventory, item => {
+  const inventoryFilterContext = linearSearchAll(inventory, item => {
     const query = searchQuery.trim().toLowerCase();
     const supplierName = item.supplierName?.trim() || "";
     const matchesSearch =
@@ -604,12 +615,15 @@ export function InventoryModule({
     const matchesCategory = categoryFilter === "all" || normalizeCategory(item.category) === categoryFilter;
     const matchesSupplier = supplierFilter === "all" ||
       (supplierFilter === "unassigned" ? !supplierName : supplierName === supplierFilter);
-    const matchesStatus = stockStatusFilter === "all" || getComputedStockStatus(item) === stockStatusFilter;
-    return matchesSearch && matchesCategory && matchesSupplier && matchesStatus;
+    return matchesSearch && matchesCategory && matchesSupplier;
   });
 
+  const filteredInventory = stockStatusFilter === "all"
+    ? inventoryFilterContext
+    : linearSearchAll(inventoryFilterContext, item => getComputedStockStatus(item) === stockStatusFilter);
+
   const inventoryStatusOverview = React.useMemo(() => {
-    return inventory.reduce((summary, item) => {
+    return inventoryFilterContext.reduce((summary, item) => {
       const status = getComputedStockStatus(item);
       return {
         ...summary,
@@ -620,13 +634,13 @@ export function InventoryModule({
       "Low Stock": 0,
       "In Stock": 0
     });
-  }, [inventory]);
+  }, [inventoryFilterContext]);
 
   const inventoryStatusOverviewItems = [
     {
       status: "all",
       label: "All Items",
-      count: inventory.length,
+      count: inventoryFilterContext.length,
       className: "inventory-overview-pill-all"
     },
     {
@@ -854,6 +868,11 @@ export function InventoryModule({
     setStockOutReason("");
   };
 
+  const resetBatchStockAdjustmentForm = () => {
+    setBatchStockAdjustmentReason("");
+    setBatchStockAdjustmentRows([{ inventoryId: "", quantity: "" }]);
+  };
+
   const resetBatchStockOutForm = () => {
     setBatchStockOutReason("");
     setBatchStockOutRows([{ inventoryId: "", quantity: "" }]);
@@ -1056,6 +1075,11 @@ export function InventoryModule({
     resetStockForm();
   };
 
+  const closeBatchStockAdjustmentDialog = () => {
+    setIsBatchStockAdjustmentDialogOpen(false);
+    resetBatchStockAdjustmentForm();
+  };
+
   const closeBatchStockOutDialog = () => {
     setIsBatchStockOutDialogOpen(false);
     resetBatchStockOutForm();
@@ -1079,44 +1103,26 @@ export function InventoryModule({
   };
 
   const requestCloseAddItemDialog = () => {
-    if (discardPrompt) return;
-    if (hasAddItemChanges()) {
-      setDiscardPrompt("addItem");
-      return;
-    }
     closeAddItemDialog();
   };
 
   const requestCloseStockInDialog = () => {
-    if (hasStockFormChanges()) {
-      setDiscardPrompt("stockIn");
-      return;
-    }
     closeStockInDialog();
   };
 
   const requestCloseStockOutDialog = () => {
-    if (hasStockFormChanges()) {
-      setDiscardPrompt("stockOut");
-      return;
-    }
     closeStockOutDialog();
   };
 
+  const requestCloseBatchStockAdjustmentDialog = () => {
+    closeBatchStockAdjustmentDialog();
+  };
+
   const requestCloseBatchStockOutDialog = () => {
-    if (hasBatchStockOutChanges()) {
-      setDiscardPrompt("batchStockOut");
-      return;
-    }
     closeBatchStockOutDialog();
   };
 
   const requestCloseEditDialog = () => {
-    if (discardPrompt) return;
-    if (hasEditItemChanges()) {
-      setDiscardPrompt("editItem");
-      return;
-    }
     closeEditDialog();
   };
 
@@ -1209,13 +1215,9 @@ export function InventoryModule({
     helperText
   }) => {
     const trimmedValue = String(value || "").trim();
-    const isListedSupplier = HARDWARE_SUPPLIER_OPTIONS.includes(trimmedValue);
-    const isCustomSupplier = mode === "custom" || (trimmedValue !== "" && !isListedSupplier);
-    const supplierSelectValue = isCustomSupplier
-      ? SUPPLIER_CUSTOM_VALUE
-      : isListedSupplier
-        ? trimmedValue
-        : "";
+    const listedSupplierSelected = isListedSupplier(trimmedValue);
+    const isCustomSupplier = mode === "custom" || (trimmedValue !== "" && !listedSupplierSelected);
+    const supplierSelectValue = getSupplierSelectValue(trimmedValue, mode);
 
     return (
       <div className="inventory-add-field space-y-1.5">
@@ -1232,7 +1234,7 @@ export function InventoryModule({
             onValueChange={selectedValue => {
               if (selectedValue === SUPPLIER_CUSTOM_VALUE) {
                 setMode("custom");
-                if (isListedSupplier) onSupplierChange("");
+                if (listedSupplierSelected) onSupplierChange("");
                 return;
               }
 
@@ -1258,14 +1260,23 @@ export function InventoryModule({
             <Input
               id={`${id}-custom`}
               value={value}
-              onChange={e => onSupplierChange(sanitizeInventoryTextInput(e.target.value, "Supplier", toastId))}
-            placeholder="Enter supplier name"
+              onChange={e => {
+                const cleaned = sanitizeSupplierInput(e.target.value);
+                if (cleaned !== e.target.value) {
+                  toast.warning("Supplier name accepts letters, numbers, and common business characters only.", {
+                    id: toastId,
+                    duration: 2600
+                  });
+                }
+                onSupplierChange(cleaned);
+              }}
+              placeholder="Enter supplier name"
               className="border-slate-300 bg-white text-slate-950"
               style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
             />
           )}
         </div>
-        <p className="text-slate-600" style={{ fontSize: "12px" }}>
+        <p className="text-slate-700" style={{ fontSize: "12px" }}>
           {helperText}
         </p>
       </div>
@@ -1302,7 +1313,7 @@ export function InventoryModule({
       costPrice: item.costPrice === null || item.costPrice === undefined || item.costPrice === "" ? "" : String(item.costPrice),
       reorderLevel: String(item.reorderLevel ?? 10)
     });
-    setEditItemSupplierMode(supplierName && !HARDWARE_SUPPLIER_OPTIONS.includes(supplierName.trim()) ? "custom" : "listed");
+    setEditItemSupplierMode(supplierName && !isListedSupplier(supplierName) ? "custom" : "listed");
     setIsEditDialogOpen(true);
   };
 
@@ -1539,6 +1550,94 @@ export function InventoryModule({
       setSelectedItem(null);
     } catch (err) {
       toast.error("Failed to stock out", { description: err?.response?.data?.error || err.message });
+    }
+  };
+
+  const updateBatchStockAdjustmentRow = (index, field, value) => {
+    if (field === "inventoryId" && value) {
+      const duplicateRow = batchStockAdjustmentRows.find((row, rowIndex) =>
+        rowIndex !== index && String(row.inventoryId) === String(value)
+      );
+      if (duplicateRow) {
+        const duplicateItem = getBatchAdjustmentRowItem(value);
+        toast.error("Item already added to adjustment", {
+          description: duplicateItem
+            ? `${duplicateItem.name} is already included. Update its quantity in the existing row instead.`
+            : "Please update the quantity in the existing row instead."
+        });
+        return;
+      }
+    }
+
+    setBatchStockAdjustmentRows(rows => rows.map((row, rowIndex) =>
+      rowIndex === index ? { ...row, [field]: value } : row
+    ));
+  };
+
+  const addBatchStockAdjustmentRow = () => {
+    setBatchStockAdjustmentRows(rows => [...rows, { inventoryId: "", quantity: "" }]);
+  };
+
+  const removeBatchStockAdjustmentRow = index => {
+    setBatchStockAdjustmentRows(rows => rows.length === 1 ? [{ inventoryId: "", quantity: "" }] : rows.filter((_, rowIndex) => rowIndex !== index));
+  };
+
+  const getBatchAdjustmentRowItem = inventoryId => inventory.find(item => String(item.id) === String(inventoryId));
+
+  const handleBatchStockAdjustment = async () => {
+    if (!batchStockAdjustmentReason) {
+      toast.error("Please select the stock-in reason for this adjustment.");
+      return;
+    }
+
+    const preparedRows = batchStockAdjustmentRows
+      .map(row => ({
+        inventoryId: row.inventoryId,
+        quantity: isWholeNumberText(row.quantity) ? Number(row.quantity) : NaN
+      }))
+      .filter(row => row.inventoryId || row.quantity);
+
+    if (preparedRows.length === 0) {
+      toast.error("Add at least one item to process the adjustment.");
+      return;
+    }
+
+    const selectedInventoryIds = preparedRows.map(row => String(row.inventoryId));
+    const duplicateInventoryId = selectedInventoryIds.find((inventoryId, index) =>
+      inventoryId && selectedInventoryIds.indexOf(inventoryId) !== index
+    );
+    if (duplicateInventoryId) {
+      const duplicateItem = getBatchAdjustmentRowItem(duplicateInventoryId);
+      toast.error("Duplicate item in adjustment", {
+        description: duplicateItem
+          ? `${duplicateItem.name} appears more than once. Keep one row and update its quantity.`
+          : "Each item should appear only once in a batch adjustment."
+      });
+      return;
+    }
+
+    for (const row of preparedRows) {
+      const item = getBatchAdjustmentRowItem(row.inventoryId);
+      if (!item || Number.isNaN(row.quantity) || row.quantity <= 0) {
+        toast.error("Each adjustment line must have a valid item and quantity.");
+        return;
+      }
+    }
+
+    try {
+      const reasonLabel = getStockInReasonLabel(batchStockAdjustmentReason);
+      const updatedItems = await batchStockAdjustment({
+        items: preparedRows,
+        movementReason: batchStockAdjustmentReason,
+        movementNote: `Batch stock adjustment recorded from inventory module. Reason: ${reasonLabel}.`
+      });
+      highlightInventoryRow(updatedItems?.[0]?.id);
+      closeBatchStockAdjustmentDialog();
+      toast.success("Batch stock adjustment completed successfully.", {
+        description: `${preparedRows.length} line${preparedRows.length === 1 ? "" : "s"} processed. Reason: ${reasonLabel}.`
+      });
+    } catch (err) {
+      toast.error("Failed to process adjustment", { description: err?.response?.data?.error || err.message });
     }
   };
 
@@ -1846,7 +1945,7 @@ export function InventoryModule({
               Edit Item Details
             </DialogTitle>
             <DialogDescription
-              className="mt-3 leading-relaxed text-slate-600"
+              className="mt-3 leading-relaxed text-slate-950"
               style={{ fontSize: "14px" }}
             >
               Update item identity details without changing stock quantity.
@@ -1954,7 +2053,7 @@ export function InventoryModule({
               className="border-slate-300 bg-white text-slate-950"
               style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
             />
-            <p className="text-slate-600" style={{ fontSize: "12px" }}>
+            <p className="text-slate-700" style={{ fontSize: "12px" }}>
               Optional. This price will automatically appear as the Unit Price when the item is selected in Sales Recording.
             </p>
           </div>
@@ -1980,7 +2079,7 @@ export function InventoryModule({
                 className="border-slate-300 bg-white text-slate-950"
                 style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
               />
-              <p className="text-slate-600" style={{ fontSize: "12px" }}>
+              <p className="text-slate-700" style={{ fontSize: "12px" }}>
                 Decoded Cost / Puhunan: {
                   decodeWspCode(editItem.wspCode).error
                     ? decodeWspCode(editItem.wspCode).error
@@ -2019,7 +2118,7 @@ export function InventoryModule({
               className="border-slate-300 bg-white text-slate-950"
               style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
             />
-            <p className="text-slate-600" style={{ fontSize: "12px" }}>
+            <p className="text-slate-700" style={{ fontSize: "12px" }}>
               The item will be marked Low Stock when its quantity is equal to or below this number.
             </p>
           </div>
@@ -2361,6 +2460,7 @@ export function InventoryModule({
       color: #0f172a;
     }
 
+    .inventory-batch-stock-adjustment-button,
     .inventory-batch-stock-out-button,
     .inventory-add-button {
       min-height: 46px;
@@ -2370,6 +2470,7 @@ export function InventoryModule({
       white-space: nowrap;
     }
 
+    .inventory-batch-stock-adjustment-button,
     .inventory-batch-stock-out-button {
       flex: 0 0 auto;
     }
@@ -2503,6 +2604,37 @@ export function InventoryModule({
       padding-top: 2px !important;
     }
 
+    .inventory-archive-general-warning {
+      align-items: flex-start;
+      margin-top: 2px;
+    }
+
+    .inventory-archive-general-warning svg,
+    .inventory-archive-stock-warning svg,
+    .inventory-archive-info-note svg {
+      margin-top: 1px;
+    }
+
+    .inventory-archive-item-card {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .inventory-archive-stock-warning {
+      align-items: flex-start;
+      margin-top: 2px;
+    }
+
+    .inventory-archive-reason-field {
+      margin-top: 2px;
+    }
+
+    .inventory-archive-info-note {
+      align-items: flex-start;
+      margin-top: 2px;
+    }
+
     @media (max-width: 760px) {
       .inventory-page {
         padding: 14px;
@@ -2592,6 +2724,7 @@ export function InventoryModule({
       .inventory-list-title [data-card-description] {
         display: block;
         margin-top: 4px;
+        color: #374151;
         font-size: 13px;
         line-height: 1.45;
       }
@@ -2599,6 +2732,7 @@ export function InventoryModule({
       .inventory-list-title [data-card-description] span {
         display: block;
         margin-left: 0;
+        color: #374151;
       }
 
       .inventory-add-button {
@@ -2607,6 +2741,7 @@ export function InventoryModule({
         border-radius: 12px;
       }
 
+      .inventory-batch-stock-adjustment-button,
       .inventory-batch-stock-out-button,
       .inventory-add-button {
         flex: 1 1 180px;
@@ -2744,7 +2879,7 @@ export function InventoryModule({
 
       .inventory-mobile-id {
         margin-top: 3px;
-        color: #64748b;
+        color: #374151;
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
         font-size: 11px;
       }
@@ -2774,7 +2909,7 @@ export function InventoryModule({
 
       .inventory-mobile-label {
         display: block;
-        color: #64748b;
+        color: #374151;
         font-size: 11px;
         font-weight: 700;
         text-transform: uppercase;
@@ -2792,7 +2927,7 @@ export function InventoryModule({
 
       .inventory-mobile-date {
         margin-top: 10px;
-        color: #64748b;
+        color: #374151;
         font-size: 12px;
         line-height: 1.4;
       }
@@ -2948,7 +3083,19 @@ export function InventoryModule({
       }
 
       .inventory-archive-item-card {
+        gap: 12px !important;
         padding: 12px !important;
+      }
+
+      .inventory-archive-stock-warning,
+      .inventory-archive-info-note,
+      .inventory-archive-general-warning {
+        gap: 10px !important;
+        padding: 10px 12px !important;
+      }
+
+      .inventory-archive-reason-field {
+        margin-top: 0;
       }
 
       .inventory-archive-item-card > div > div:first-child {
@@ -3019,6 +3166,7 @@ export function InventoryModule({
         width: 100%;
       }
 
+      .inventory-batch-stock-adjustment-button,
       .inventory-batch-stock-out-button {
         width: 100%;
       }
@@ -3104,8 +3252,14 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement("div", {
     className: "inventory-list-title"
   }, /*#__PURE__*/React.createElement(CardTitle, null, "Inventory Items"), /*#__PURE__*/React.createElement(CardDescription, null, sortedInventory.length, " items found", sortBy && /*#__PURE__*/React.createElement("span", {
-    className: "text-slate-500 ml-2"
+    className: "text-slate-700 ml-2"
   }, "\u2022 Sorted by ", sortLabel, " (", realtimeDisplayOrderLabel, ")")), renderInventoryStatusOverview()), canPerformInventoryMovement(user.role) && /*#__PURE__*/React.createElement(Button, {
+    type: "button",
+    className: "inventory-batch-stock-adjustment-button bg-green-600 text-white hover:bg-green-700 font-semibold shadow-md transition-all duration-300",
+    onClick: () => setIsBatchStockAdjustmentDialogOpen(true)
+  }, /*#__PURE__*/React.createElement(PackagePlus, {
+    className: "w-4 h-4 mr-2"
+  }), "Batch Stock Adjustment"), canPerformInventoryMovement(user.role) && /*#__PURE__*/React.createElement(Button, {
     type: "button",
     className: "inventory-batch-stock-out-button bg-red-600 text-white hover:bg-red-700 font-semibold shadow-md transition-all duration-300",
     onClick: () => setIsBatchStockOutDialogOpen(true)
@@ -3171,7 +3325,7 @@ export function InventoryModule({
       lineHeight: "1.1"
     }
   }, "Add New Item"), /*#__PURE__*/React.createElement(DialogDescription, {
-    className: "mt-3 leading-relaxed text-slate-600",
+    className: "mt-3 leading-relaxed text-slate-950",
     style: {
       fontSize: "14px"
     }
@@ -3236,7 +3390,7 @@ export function InventoryModule({
       padding: "0 14px"
     }
   }), /*#__PURE__*/React.createElement("p", {
-    className: "text-slate-600",
+    className: "text-slate-700",
     style: {
       fontSize: "12px"
     }
@@ -3276,7 +3430,7 @@ export function InventoryModule({
     key: category,
     value: category
   }, category)))), /*#__PURE__*/React.createElement("p", {
-    className: "text-slate-600",
+    className: "text-slate-700",
     style: {
       fontSize: "12px"
     }
@@ -3322,7 +3476,7 @@ export function InventoryModule({
       padding: "0 14px"
     }
   }), /*#__PURE__*/React.createElement("p", {
-    className: "text-slate-600",
+    className: "text-slate-700",
     style: {
       fontSize: "12px"
     }
@@ -3354,7 +3508,7 @@ export function InventoryModule({
       padding: "0 14px"
     }
   }), /*#__PURE__*/React.createElement("p", {
-    className: "text-slate-600",
+    className: "text-slate-700",
     style: {
       fontSize: "12px"
     }
@@ -3419,7 +3573,7 @@ export function InventoryModule({
       padding: "0 14px"
     }
   }), /*#__PURE__*/React.createElement("p", {
-    className: "text-slate-600",
+    className: "text-slate-700",
     style: {
       fontSize: "12px"
     }
@@ -3605,7 +3759,7 @@ export function InventoryModule({
   }), /*#__PURE__*/React.createElement("h3", {
     className: "mb-2 font-semibold text-slate-700"
   }, inventory.length === 0 ? "No Inventory Items" : "No Inventory Items Found"), /*#__PURE__*/React.createElement("p", {
-    className: "text-sm text-slate-500"
+    className: "text-sm text-slate-700"
   }, inventory.length === 0 ? "Items added to inventory will appear here." : "Try adjusting your search or category filter."))) : paginatedInventory.map(item => /*#__PURE__*/React.createElement(TableRow, {
     key: item.id,
     tabIndex: -1,
@@ -3622,7 +3776,7 @@ export function InventoryModule({
   }, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
     className: getStatusBadgeClass(getComputedStockStatus(item))
   }, getComputedStockStatus(item))), /*#__PURE__*/React.createElement(TableCell, {
-    className: "text-sm text-slate-600 text-right"
+    className: "text-sm text-slate-700 text-right"
   }, formatDateTime(item.lastUpdated)), canShowInventoryActions && /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement("div", {
     className: "flex items-center justify-end gap-2"
   }, canPerformInventoryMovement(user.role) && /*#__PURE__*/React.createElement(Button, {
@@ -3691,7 +3845,7 @@ export function InventoryModule({
   }), /*#__PURE__*/React.createElement("h3", {
     className: "mb-2 font-semibold text-slate-700"
   }, inventory.length === 0 ? "No Inventory Items" : "No Inventory Items Found"), /*#__PURE__*/React.createElement("p", {
-    className: "text-sm text-slate-500"
+    className: "text-sm text-slate-700"
   }, inventory.length === 0 ? "Items added to inventory will appear here." : "Try adjusting your search or category filter.")) : paginatedInventory.map(item => /*#__PURE__*/React.createElement("article", {
     key: item.id,
     tabIndex: -1,
@@ -3771,6 +3925,205 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement(Archive, {
     className: "mr-1 h-4 w-4"
   }), "Archive")))))), renderInventoryPagination(), renderEditDialog(), /*#__PURE__*/React.createElement(Dialog, {
+    open: isBatchStockAdjustmentDialogOpen,
+    onOpenChange: open => {
+      if (open) {
+        setIsBatchStockAdjustmentDialogOpen(true);
+      } else {
+        requestCloseBatchStockAdjustmentDialog();
+      }
+    }
+  }, /*#__PURE__*/React.createElement(DialogContent, {
+    className: "inventory-dialog-content border border-slate-200 bg-white shadow-2xl",
+    style: {
+      width: "min(720px, calc(100vw - 32px))",
+      maxWidth: "720px",
+      padding: "22px",
+      borderRadius: "14px",
+      gap: "16px"
+    }
+  }, /*#__PURE__*/React.createElement(DialogHeader, {
+    className: "inventory-dialog-header space-y-0 text-left",
+    style: {
+      display: "flex",
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: "16px",
+      paddingRight: "28px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "shrink-0",
+    style: {
+      width: "58px",
+      height: "58px",
+      borderRadius: "999px",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "linear-gradient(135deg, #ECFDF3 0%, #DCFCE7 100%)",
+      boxShadow: "inset 0 1px 8px rgba(22, 163, 74, 0.1)"
+    }
+  }, /*#__PURE__*/React.createElement(PackagePlus, {
+    className: "text-green-700",
+    style: {
+      width: "28px",
+      height: "28px"
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "pt-2"
+  }, /*#__PURE__*/React.createElement(DialogTitle, {
+    className: "font-bold tracking-tight text-slate-950",
+    style: {
+      fontSize: "26px",
+      lineHeight: "1.1"
+    }
+  }, "Batch Stock Adjustment"), /*#__PURE__*/React.createElement(DialogDescription, {
+    className: "mt-3 leading-relaxed text-slate-950",
+    style: {
+      fontSize: "14px"
+    }
+  }, "Add stock for multiple items when correcting inventory counts. Use Purchase Entry instead when the stock came from a supplier DR/SI."))), /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center text-green-950",
+    style: {
+      gap: "12px",
+      border: "1px solid #BBF7D0",
+      background: "#F0FDF4",
+      borderRadius: "10px",
+      padding: "10px 12px"
+    }
+  }, /*#__PURE__*/React.createElement(Info, {
+    className: "shrink-0 text-green-700",
+    style: {
+      width: "18px",
+      height: "18px"
+    }
+  }), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: "13px"
+    }
+  }, "This creates stock movement and audit records only. It does not create purchase records or supplier reports.")), /*#__PURE__*/React.createElement("div", {
+    className: "space-y-2"
+  }, /*#__PURE__*/React.createElement(Label, {
+    htmlFor: "batch-stock-adjustment-reason",
+    className: "font-semibold text-slate-950",
+    style: {
+      display: "block",
+      marginBottom: "8px",
+      fontSize: "14px",
+      lineHeight: "1.25"
+    }
+  }, "Adjustment Reason"), /*#__PURE__*/React.createElement(Select, {
+    value: batchStockAdjustmentReason,
+    onValueChange: setBatchStockAdjustmentReason
+  }, /*#__PURE__*/React.createElement(SelectTrigger, {
+    id: "batch-stock-adjustment-reason",
+    className: "border-slate-300 bg-white text-slate-950",
+    style: {
+      minHeight: "46px",
+      borderRadius: "10px",
+      fontSize: "14px",
+      padding: "0 14px"
+    }
+  }, /*#__PURE__*/React.createElement(SelectValue, {
+    placeholder: "Select why stock is being added"
+  })), /*#__PURE__*/React.createElement(SelectContent, null, MANUAL_STOCK_IN_REASON_OPTIONS.map(option => /*#__PURE__*/React.createElement(SelectItem, {
+    key: option.value,
+    value: option.value
+  }, option.label))))), /*#__PURE__*/React.createElement("div", {
+    className: "space-y-3"
+  }, batchStockAdjustmentRows.map((row, index) => /*#__PURE__*/React.createElement("div", {
+    key: index,
+    className: "grid gap-2 md:grid-cols-[1fr_120px_auto]",
+    style: {
+      alignItems: "end"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "space-y-1"
+  }, /*#__PURE__*/React.createElement(Label, {
+    className: "text-xs font-semibold text-slate-700"
+  }, "Item"), /*#__PURE__*/React.createElement(Select, {
+    value: row.inventoryId,
+    onValueChange: value => updateBatchStockAdjustmentRow(index, "inventoryId", value)
+  }, /*#__PURE__*/React.createElement(SelectTrigger, {
+    className: "border-slate-300 bg-white text-slate-950",
+    style: {
+      minHeight: "42px",
+      borderRadius: "10px"
+    }
+  }, /*#__PURE__*/React.createElement(SelectValue, {
+    placeholder: "Select inventory item"
+  })), /*#__PURE__*/React.createElement(SelectContent, null, inventory.map(item => /*#__PURE__*/React.createElement(SelectItem, {
+    key: item.id,
+    value: String(item.id),
+    disabled: batchStockAdjustmentRows.some((selectedRow, rowIndex) => rowIndex !== index && String(selectedRow.inventoryId) === String(item.id))
+  }, item.name, " - current stock ", item.quantity))))), /*#__PURE__*/React.createElement("div", {
+    className: "space-y-1"
+  }, /*#__PURE__*/React.createElement(Label, {
+    className: "text-xs font-semibold text-slate-700"
+  }, "Quantity to Add"), /*#__PURE__*/React.createElement(Input, {
+    type: "number",
+    min: "1",
+    value: row.quantity,
+    onChange: e => updateBatchStockAdjustmentRow(
+      index,
+      "quantity",
+      sanitizeWholeNumberInput(e.target.value, "Batch Stock Adjustment Quantity", "batch-stock-adjustment-quantity-numbers-only")
+    ),
+    placeholder: "0",
+    className: "border-slate-300 bg-white text-slate-950",
+    style: {
+      height: "42px",
+      borderRadius: "10px"
+    }
+  })), /*#__PURE__*/React.createElement(Button, {
+    type: "button",
+    variant: "outline",
+    className: "border-slate-200 text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:border-red-200 hover:bg-red-50 hover:text-red-700 hover:shadow-sm",
+    onClick: () => removeBatchStockAdjustmentRow(index),
+    style: {
+      height: "42px",
+      borderRadius: "10px"
+    }
+  }, "Remove"))), /*#__PURE__*/React.createElement(Button, {
+    type: "button",
+    variant: "outline",
+    className: "w-full border-slate-200 text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:border-green-200 hover:bg-green-50 hover:text-green-700 hover:shadow-sm",
+    onClick: addBatchStockAdjustmentRow
+  }, /*#__PURE__*/React.createElement(Plus, {
+    className: "mr-2 h-4 w-4"
+  }), "Add Another Item")), /*#__PURE__*/React.createElement(DialogFooter, {
+    className: "inventory-dialog-footer pt-2",
+    style: {
+      display: "flex",
+      flexDirection: "row",
+      justifyContent: "flex-end",
+      gap: "10px"
+    }
+  }, /*#__PURE__*/React.createElement(Button, {
+    variant: "outline",
+    className: "modal-button-cancel border-slate-200 bg-white text-slate-950 hover:bg-slate-50",
+    style: {
+      height: "38px",
+      minWidth: "88px",
+      borderRadius: "10px",
+      padding: "0 18px",
+      fontSize: "13px"
+    },
+    onClick: requestCloseBatchStockAdjustmentDialog
+  }, "Cancel"), /*#__PURE__*/React.createElement(Button, {
+    className: "modal-button-success font-semibold shadow-lg",
+    onClick: handleBatchStockAdjustment,
+    style: {
+      height: "38px",
+      minWidth: "170px",
+      borderRadius: "10px",
+      padding: "0 18px",
+      fontSize: "13px",
+      background: "#16A34A",
+      color: "#FFFFFF",
+      boxShadow: "0 14px 24px rgba(22, 163, 74, 0.18)"
+    }
+  }, "Confirm Adjustment")))), /*#__PURE__*/React.createElement(Dialog, {
     open: isBatchStockOutDialogOpen,
     onOpenChange: open => {
       if (open) {
@@ -3824,7 +4177,7 @@ export function InventoryModule({
       lineHeight: "1.1"
     }
   }, "Batch Non-Sales Stock Out"), /*#__PURE__*/React.createElement(DialogDescription, {
-    className: "mt-3 leading-relaxed text-slate-600",
+    className: "mt-3 leading-relaxed text-slate-950",
     style: {
       fontSize: "14px"
     }
@@ -3847,7 +4200,7 @@ export function InventoryModule({
     style: {
       fontSize: "13px"
     }
-  }, "Use this only for non-sales reductions such as verified damage, expiry, loss, transfer, adjustment, or correction. Customer purchases should be recorded in the Sales module.")), /*#__PURE__*/React.createElement("div", {
+  }, "Use this only for non-sales reductions such as verified damage, expiry, loss, transfer, or manual adjustment. Customer purchases should be recorded in the Sales module.")), /*#__PURE__*/React.createElement("div", {
     className: "space-y-2"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "batch-stock-out-reason",
@@ -3994,7 +4347,7 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement(DialogTitle, {
     className: "text-2xl font-bold tracking-tight text-slate-950"
   }, dashboardPickerAction === "stock-in" ? "Record Stock In" : "Record Stock Out"), /*#__PURE__*/React.createElement(DialogDescription, {
-    className: "text-slate-600"
+    className: "text-slate-950"
   }, dashboardPickerAction === "stock-in" ? "Choose the item that received new stock. The Stock In form will open next." : "Choose the item to deduct. The Stock Out form will open next.")), /*#__PURE__*/React.createElement("div", {
     className: "space-y-2"
   }, /*#__PURE__*/React.createElement(Label, {
@@ -4022,7 +4375,7 @@ export function InventoryModule({
     className: "whitespace-normal break-words py-2 leading-snug",
     textValue: `${item.itemCode || item.id} - ${item.name} (${item.quantity} ${Number(item.quantity) === 1 ? "unit" : "units"})`
   }, item.itemCode || item.id, " - ", item.name, " (", item.quantity, " ", Number(item.quantity) === 1 ? "unit" : "units", ")")))), dashboardPickerAction === "stock-out" && /*#__PURE__*/React.createElement("p", {
-    className: "text-xs leading-relaxed text-slate-500"
+    className: "text-xs leading-relaxed text-slate-700"
   }, "Items with zero stock are disabled because there is no available quantity to deduct."), /*#__PURE__*/React.createElement(DialogFooter, {
     className: "flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end"
   }, /*#__PURE__*/React.createElement(Button, {
@@ -4086,7 +4439,7 @@ export function InventoryModule({
       lineHeight: "1.1"
     }
   }, "Stock In"), /*#__PURE__*/React.createElement(DialogDescription, {
-    className: "mt-3 max-w-full break-words leading-relaxed text-slate-600",
+    className: "mt-3 max-w-full break-words leading-relaxed text-slate-950",
     style: {
       fontSize: "14px"
     }
@@ -4167,11 +4520,17 @@ export function InventoryModule({
     }
   }, /*#__PURE__*/React.createElement(SelectValue, {
     placeholder: "Select why this stock is being added"
-  })), /*#__PURE__*/React.createElement(SelectContent, null, STOCK_IN_REASON_OPTIONS.map(option => /*#__PURE__*/React.createElement(SelectItem, {
+  })), /*#__PURE__*/React.createElement(SelectContent, null, MANUAL_STOCK_IN_REASON_OPTIONS.map(option => /*#__PURE__*/React.createElement(SelectItem, {
     key: option.value,
     value: option.value
-  }, option.label)))), stockInReason && /*#__PURE__*/React.createElement("p", {
-    className: "text-slate-500",
+  }, option.label)))), /*#__PURE__*/React.createElement("p", {
+    className: "text-slate-700",
+    style: {
+      fontSize: "12px",
+      lineHeight: "1.45"
+    }
+  }, "For supplier deliveries, use Purchase Entry, so supplier and document details are recorded."), stockInReason && /*#__PURE__*/React.createElement("p", {
+    className: "text-slate-700",
     style: {
       fontSize: "12px",
       lineHeight: "1.35"
@@ -4262,7 +4621,7 @@ export function InventoryModule({
       lineHeight: "1.1"
     }
   }, "Stock Out"), /*#__PURE__*/React.createElement(DialogDescription, {
-    className: "mt-3 max-w-full break-words leading-relaxed text-slate-600",
+    className: "mt-3 max-w-full break-words leading-relaxed text-slate-950",
     style: {
       fontSize: "14px"
     }
@@ -4347,7 +4706,7 @@ export function InventoryModule({
     key: option.value,
     value: option.value
   }, option.label)))), stockOutReason && /*#__PURE__*/React.createElement("p", {
-    className: "text-slate-500",
+    className: "text-slate-700",
     style: {
       fontSize: "12px",
       lineHeight: "1.35"
@@ -4439,12 +4798,12 @@ export function InventoryModule({
       lineHeight: "1.1"
     }
   }, "Archive Item"), /*#__PURE__*/React.createElement(DialogDescription, {
-    className: "mt-3 leading-relaxed text-slate-600",
+    className: "mt-3 leading-relaxed text-slate-950",
     style: {
       fontSize: "14px"
     }
   }, "Move this item out of active inventory and into the archive."))), /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center text-slate-900",
+    className: "inventory-archive-general-warning flex items-center text-slate-900",
     style: {
       gap: "16px",
       border: "1px solid #FED7AA",
@@ -4522,11 +4881,11 @@ export function InventoryModule({
       rowGap: "10px"
     }
   }, /*#__PURE__*/React.createElement("span", {
-    className: "font-semibold text-slate-600"
+    className: "font-semibold text-slate-700"
   }, "Item Code:"), /*#__PURE__*/React.createElement("span", {
     className: "font-medium text-slate-950"
   }, selectedItem?.itemCode || selectedItem?.id), /*#__PURE__*/React.createElement("span", {
-    className: "font-semibold text-slate-600"
+    className: "font-semibold text-slate-700"
   }, "Category:"), /*#__PURE__*/React.createElement("span", {
     className: "font-medium text-slate-950"
   }, selectedItem?.category)), /*#__PURE__*/React.createElement("div", {
@@ -4545,21 +4904,21 @@ export function InventoryModule({
       rowGap: "10px"
     }
   }, /*#__PURE__*/React.createElement("span", {
-    className: "font-semibold text-slate-600"
+    className: "font-semibold text-slate-700"
   }, "Quantity:"), /*#__PURE__*/React.createElement("span", {
     className: "font-medium text-slate-950"
   }, selectedItem?.quantity ?? 0), /*#__PURE__*/React.createElement("span", {
-    className: "font-semibold text-slate-600"
+    className: "font-semibold text-slate-700"
   }, "Status:"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement(Badge, {
     className: `inventory-status-badge ${getStatusBadgeClass(getComputedStockStatus(selectedItem))}`
   }, getComputedStockStatus(selectedItem))))))), (selectedItem?.quantity ?? 0) > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center text-orange-950",
+    className: "inventory-archive-stock-warning flex items-center text-orange-950",
     style: {
       gap: "12px",
       border: "1px solid #FDBA74",
       background: "#FFF7ED",
       borderRadius: "10px",
-      padding: "10px 12px"
+      padding: "12px 14px"
     }
   }, /*#__PURE__*/React.createElement(AlertTriangle, {
     className: "shrink-0 text-orange-600",
@@ -4569,10 +4928,11 @@ export function InventoryModule({
     }
   }), /*#__PURE__*/React.createElement("p", {
     style: {
-      fontSize: "13px"
+      fontSize: "13px",
+      lineHeight: "1.45"
     }
   }, "This item still has available stock. Archiving it will remove it from active inventory, but the archived record can still be reviewed later.")), /*#__PURE__*/React.createElement("div", {
-    className: "space-y-2"
+    className: "inventory-archive-reason-field space-y-2"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "archive-reason",
     className: "font-semibold text-slate-950",
@@ -4600,7 +4960,7 @@ export function InventoryModule({
     key: option.value,
     value: option.value
   }, option.label))))), /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center text-slate-800",
+    className: "inventory-archive-info-note flex items-center text-slate-800",
     style: {
       gap: "16px",
       border: "1px solid #BFDBFE",
@@ -4733,7 +5093,7 @@ export function InventoryModule({
   }, `"${similarDuplicatePrompt?.item?.name || "Matching item"}"`), " looks very similar to ", /*#__PURE__*/React.createElement("span", {
     className: "font-bold text-red-600"
   }, `"${similarDuplicatePrompt?.proposedName || newItem.name || "this item"}"`), similarDuplicatePrompt?.action === "edit" ? ". If this is the same product, review the edit and use the existing item. If it is truly a different product, you may update it anyway." : similarDuplicatePrompt?.source === "archived" ? ". If this is the same product, cancel and restore the archived record. If it is truly a different product, you may add it as a separate record." : ". If this is the same product, cancel and use Stock In. If it is truly a different product, you may add it as a separate record."), /*#__PURE__*/React.createElement("div", {
-    className: "mt-3 flex max-w-full flex-col items-start text-sm leading-5 text-slate-600"
+    className: "mt-3 flex max-w-full flex-col items-start text-sm leading-5 text-slate-700"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "font-semibold text-slate-800"
   }, "Category:"), " ", /*#__PURE__*/React.createElement("span", {
@@ -4770,7 +5130,7 @@ export function InventoryModule({
       height: "17px"
     }
   })), /*#__PURE__*/React.createElement("span", {
-    className: "text-sm leading-5 text-slate-600"
+    className: "text-sm leading-5 text-slate-700"
   }, "Please review before proceeding.")), /*#__PURE__*/React.createElement(AlertDialogFooter, {
     className: "inventory-alert-dialog-footer px-0 pb-0",
     style: {
@@ -4826,7 +5186,7 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement(AlertDialogTitle, {
     className: "text-xl font-semibold text-slate-950"
   }, discardDialogCopy[discardPrompt]?.title || "Discard changes?"), /*#__PURE__*/React.createElement(AlertDialogDescription, {
-    className: "text-sm leading-relaxed text-slate-600"
+    className: "text-sm leading-relaxed text-slate-700"
   }, discardDialogCopy[discardPrompt]?.description || "Closing this form will remove your unsaved changes.")), /*#__PURE__*/React.createElement(AlertDialogFooter, {
     className: "inventory-alert-dialog-footer px-0 pb-0",
     style: {

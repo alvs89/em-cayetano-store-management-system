@@ -123,7 +123,7 @@ function SectionHeading({ icon, tone, title, description }) {
       <IconTile tone={tone}>{icon}</IconTile>
       <div>
         <h2 className="text-lg font-bold text-slate-950">{title}</h2>
-        <p className="mt-1.5 max-w-xl text-base leading-6 text-slate-600">{description}</p>
+        <p className="mt-1.5 max-w-xl text-base leading-6 text-slate-700">{description}</p>
       </div>
     </div>
   );

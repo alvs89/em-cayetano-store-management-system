@@ -583,7 +583,7 @@ export function AuditTrailModule({ user }) {
               <Database />
             </div>
             <div>
-              <p className="text-sm text-slate-500">Total Records</p>
+              <p className="text-sm text-slate-700">Total Records</p>
               <p className="mt-1 text-2xl font-semibold text-slate-950">{auditLogs.length}</p>
             </div>
           </CardContent>
@@ -594,7 +594,7 @@ export function AuditTrailModule({ user }) {
               <Eye />
             </div>
             <div>
-              <p className="text-sm text-slate-500">Visible After Filters</p>
+              <p className="text-sm text-slate-700">Visible After Filters</p>
               <p className="mt-1 text-2xl font-semibold text-slate-950">{filteredLogs.length}</p>
             </div>
           </CardContent>
@@ -605,7 +605,7 @@ export function AuditTrailModule({ user }) {
               <Clock />
             </div>
             <div>
-              <p className="text-sm text-slate-500">Latest Activity</p>
+              <p className="text-sm text-slate-700">Latest Activity</p>
               <p className="mt-1 text-base font-semibold text-slate-950">
                 {latestLog ? formatDateTime(latestLog.createdAt) : 'No activity yet'}
               </p>
@@ -685,12 +685,12 @@ export function AuditTrailModule({ user }) {
           )}
 
           {loading ? (
-            <div className="flex items-center justify-center py-12 text-slate-500">
+            <div className="flex items-center justify-center py-12 text-slate-700">
               <RefreshCw className="mr-2 h-5 w-5 animate-spin" />
               Loading audit trail...
             </div>
           ) : filteredLogs.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 py-12 text-center text-slate-500">
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 py-12 text-center text-slate-700">
               <p>No audit records match the current filters.</p>
             </div>
           ) : (

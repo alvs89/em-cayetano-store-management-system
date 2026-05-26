@@ -1,6 +1,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 
 const { Pool } = require('pg');
+const { buildEmCayetanoCatalog } = require('./em-cayetano-catalog');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -12,76 +13,33 @@ const pool = new Pool({
 const BRANCHES = ['Manggahan', 'San Rafael'];
 
 const CATEGORY_SUPPLIERS = {
-  Tools: 'Rizal Industrial',
-  Electrical: 'Phelps Dodge Wires',
-  Cement: 'Holcim Philippines',
-  Paint: 'Boysen Paints',
-  Plumbing: 'Neltex Development',
-  Fasteners: 'Metro Hardware Supply',
-  Lumber: 'Cebu Atlantic Hardware',
-  Safety: 'Ace Hardware',
-  Hardware: 'Handyman',
-  Construction: 'Republic Cement',
-  'Office Supplies': 'Metro Hardware Supply',
+  Roofing: 'Metro Hardware Supply',
+  'PVC Pipe / Fittings': 'Neltex Development',
+  Steel: 'Rizal Industrial',
+  'Kiln Dry': 'Cebu Atlantic Hardware',
+  Plywood: 'Cebu Atlantic Hardware',
+  Electricals: 'Phelps Dodge Wires',
+  Paints: 'Boysen Paints',
   Other: 'Wilcon Depot'
 };
 
-const CATALOG = [
-  { name: 'Claw Hammer 16 oz', category: 'Tools', price: 245 },
-  { name: 'Ball Peen Hammer 24 oz', category: 'Tools', price: 320 },
-  { name: 'Adjustable Wrench 10 in', category: 'Tools', price: 385 },
-  { name: 'Combination Wrench Set 8 pcs', category: 'Tools', price: 690 },
-  { name: 'Phillips Screwdriver 6 in', category: 'Tools', price: 95 },
-  { name: 'Flat Screwdriver 6 in', category: 'Tools', price: 95 },
-  { name: 'Long Nose Pliers 8 in', category: 'Tools', price: 210 },
-  { name: 'Steel Measuring Tape 5m', category: 'Tools', price: 165 },
-  { name: 'Circuit Breaker 20A', category: 'Electrical', price: 285 },
-  { name: 'Circuit Breaker 30A', category: 'Electrical', price: 315 },
-  { name: 'LED Bulb 9W Daylight', category: 'Electrical', price: 85 },
-  { name: 'Electrical Tape Black 18mm', category: 'Electrical', price: 38 },
-  { name: 'THHN Wire #12 per Meter', category: 'Electrical', price: 42 },
-  { name: 'THHN Wire #14 per Meter', category: 'Electrical', price: 32 },
-  { name: 'Duplex Convenience Outlet', category: 'Electrical', price: 145 },
-  { name: 'Portland Cement 40kg', category: 'Cement', price: 285 },
-  { name: 'Masonry Cement 40kg', category: 'Cement', price: 255 },
-  { name: 'Tile Adhesive 25kg', category: 'Cement', price: 335 },
-  { name: 'Skim Coat White 20kg', category: 'Cement', price: 410 },
-  { name: 'Semi-Gloss White Paint 1L', category: 'Paint', price: 285 },
-  { name: 'Semi-Gloss White Paint 4L', category: 'Paint', price: 980 },
-  { name: 'Red Oxide Primer 1L', category: 'Paint', price: 265 },
-  { name: 'Paint Roller 7 in', category: 'Paint', price: 135 },
-  { name: 'Paint Brush 2 in', category: 'Paint', price: 58 },
-  { name: 'PVC Pipe 1/2 in x 10 ft', category: 'Plumbing', price: 115 },
-  { name: 'PVC Pipe 3/4 in x 10 ft', category: 'Plumbing', price: 155 },
-  { name: 'PVC Elbow 1/2 in', category: 'Plumbing', price: 18 },
-  { name: 'PVC Coupling 3/4 in', category: 'Plumbing', price: 22 },
-  { name: 'Brass Faucet Standard', category: 'Plumbing', price: 265 },
-  { name: 'Teflon Tape 12mm', category: 'Plumbing', price: 18 },
-  { name: 'Common Nail 2 in per kg', category: 'Fasteners', price: 95 },
-  { name: 'Common Nail 3 in per kg', category: 'Fasteners', price: 98 },
-  { name: 'Concrete Nail 2 in per kg', category: 'Fasteners', price: 125 },
-  { name: 'Wood Screw 1-1/2 in per box', category: 'Fasteners', price: 145 },
-  { name: 'Hex Bolt 3/8 x 2 in', category: 'Fasteners', price: 12 },
-  { name: 'Coco Lumber 2x2x8 ft', category: 'Lumber', price: 95 },
-  { name: 'Coco Lumber 2x3x10 ft', category: 'Lumber', price: 165 },
-  { name: 'Marine Plywood 1/2 in 4x8 ft', category: 'Lumber', price: 980 },
-  { name: 'Marine Plywood 3/4 in 4x8 ft', category: 'Lumber', price: 1350 },
-  { name: 'Hardiflex Board 4.5mm 4x8 ft', category: 'Lumber', price: 515 },
-  { name: 'Safety Gloves Rubberized', category: 'Safety', price: 85 },
-  { name: 'Dust Mask Disposable 20 pcs', category: 'Safety', price: 120 },
-  { name: 'Safety Goggles Clear', category: 'Safety', price: 145 },
-  { name: 'Hard Hat Yellow', category: 'Safety', price: 220 },
-  { name: 'Padlock 50mm', category: 'Hardware', price: 185 },
-  { name: 'Door Hinge 3 in Stainless', category: 'Hardware', price: 78 },
-  { name: 'Cabinet Handle Stainless 4 in', category: 'Hardware', price: 95 },
-  { name: 'Door Knob Cylindrical', category: 'Hardware', price: 395 },
-  { name: 'Angle Bar 1-1/2 x 1/8 in', category: 'Construction', price: 520 },
-  { name: 'Steel Bar 10mm Grade 40', category: 'Construction', price: 185 },
-  { name: 'Steel Bar 12mm Grade 40', category: 'Construction', price: 265 },
-  { name: 'Tie Wire #16 per kg', category: 'Construction', price: 92 },
-  { name: 'GI Sheet Corrugated 8 ft', category: 'Construction', price: 455 },
-  { name: 'Receipt Book Duplicate', category: 'Office Supplies', price: 65 }
-];
+const CATALOG = buildEmCayetanoCatalog();
+
+if (CATALOG.length === 0) {
+  throw new Error('E.M. Cayetano product catalog is empty.');
+}
+
+const getSupplierForItem = (item, index) => {
+  const name = String(item.name || '').toUpperCase();
+  if ((index + 1) % 13 === 0) return null;
+  if (name.includes('NELTEX')) return 'Neltex Development';
+  if (name.includes('BOYSEN')) return 'Boysen Paints';
+  if (name.includes('PHELPS DODGE')) return 'Phelps Dodge Wires';
+  if (name.includes('ROYU')) return 'Metro Hardware Supply';
+  if (name.includes('APO')) return 'Metro Hardware Supply';
+  if (name.includes('C-PURLINS') || name.includes('ANGLE BAR') || name.includes('FLAT BAR')) return 'Rizal Industrial';
+  return CATEGORY_SUPPLIERS[item.category] || 'Metro Hardware Supply';
+};
 
 const SALES_PLANS = [
   {
@@ -94,9 +52,9 @@ const SALES_PLANS = [
     minute: 15,
     remarks: 'Morning walk-in sales encoded after receipt checking.',
     items: [
-      ['Semi-Gloss White Paint 1L', 2],
-      ['Paint Brush 2 in', 3],
-      ['Electrical Tape Black 18mm', 4]
+      ['BOYSEN - LATEX (STONE) -- B 701 FLAT LATEX WHT 1L', 2],
+      ['PRIMER -- B 310 RED OXIDE METAL PRIMER 1L', 3],
+      ['ROYU -- #14 (2.0) (per mtr)', 12]
     ]
   },
   {
@@ -110,9 +68,9 @@ const SALES_PLANS = [
     minute: 35,
     remarks: 'Project buyer purchase for house repair materials.',
     items: [
-      ['Portland Cement 40kg', 6],
-      ['Common Nail 3 in per kg', 2],
-      ['Tie Wire #16 per kg', 3]
+      ['LONG SPAN -- RED/GRN/BLU 8 - 5 grooves', 4],
+      ['COCO -- 2X2X8', 8],
+      ['C-PURLINS MANIPIS -- 2X3 9KG (9.2kg)', 3]
     ]
   },
   {
@@ -126,9 +84,9 @@ const SALES_PLANS = [
     minute: 20,
     remarks: 'Regular customer purchase for plumbing repair.',
     items: [
-      ['PVC Pipe 1/2 in x 10 ft', 4],
-      ['PVC Elbow 1/2 in', 8],
-      ['Teflon Tape 12mm', 5]
+      ['PVC PIPE -- ORANGE 1/2', 5],
+      ['ELBOW 1/4 90deg -- ORANGE 2"', 8],
+      ['COUPLING -- ORANGE 2"', 6]
     ]
   },
   {
@@ -142,9 +100,9 @@ const SALES_PLANS = [
     minute: 40,
     remarks: 'Counter sales for electrical items.',
     items: [
-      ['LED Bulb 9W Daylight', 5],
-      ['Duplex Convenience Outlet', 2],
-      ['THHN Wire #14 per Meter', 12]
+      ['FLOURESCENT LAMP only -- Philips 20w', 4],
+      ['PANEL BOX -- 2BR', 1],
+      ['ROYU -- #12 (3.5) (per mtr)', 10]
     ]
   },
   {
@@ -158,40 +116,46 @@ const SALES_PLANS = [
     minute: 10,
     remarks: 'Small contractor purchase for roofing support.',
     items: [
-      ['GI Sheet Corrugated 8 ft', 4],
-      ['Steel Bar 10mm Grade 40', 6],
-      ['Hard Hat Yellow', 2]
+      ['CORRUGATED (G.26) MANIPIS -- 8', 6],
+      ['ANGLE BAR (3/16) MANIPIS -- 3/16 X 1 - Red', 4],
+      ['STEEL MATTING -- #10 MANIPIS', 2]
     ]
   }
 ];
 
 const NON_SALES_OUT_PLANS = [
-  { branch: 'Manggahan', item: 'Claw Hammer 16 oz', quantity: 1, reason: 'damaged', daysAgo: 3 },
-  { branch: 'Manggahan', item: 'Safety Goggles Clear', quantity: 1, reason: 'lost_missing', daysAgo: 5 },
-  { branch: 'San Rafael', item: 'Red Oxide Primer 1L', quantity: 1, reason: 'damaged', daysAgo: 4 },
-  { branch: 'San Rafael', item: 'Door Hinge 3 in Stainless', quantity: 2, reason: 'manual_adjustment', daysAgo: 6 }
+  { branch: 'Manggahan', item: 'PLASTIC SHEET 8" -- BLUE', quantity: 1, reason: 'damaged', daysAgo: 3 },
+  { branch: 'Manggahan', item: 'COLORED GUTTER -- FLASHING RED/GRN/BLU', quantity: 1, reason: 'lost_missing', daysAgo: 5 },
+  { branch: 'San Rafael', item: 'BOYSEN - ENAMEL (WOOD & STEEL) -- B 690 QDE BLACK .25L', quantity: 1, reason: 'damaged', daysAgo: 4 },
+  { branch: 'San Rafael', item: 'COCO -- 2X3X8', quantity: 2, reason: 'manual_adjustment', daysAgo: 6 }
 ];
 
 const STOCK_IN_PLANS = [
-  { branch: 'Manggahan', item: 'Portland Cement 40kg', quantity: 30, daysAgo: 5 },
-  { branch: 'Manggahan', item: 'Semi-Gloss White Paint 4L', quantity: 12, daysAgo: 7 },
-  { branch: 'Manggahan', item: 'THHN Wire #12 per Meter', quantity: 50, daysAgo: 4 },
-  { branch: 'San Rafael', item: 'LED Bulb 9W Daylight', quantity: 24, daysAgo: 5 },
-  { branch: 'San Rafael', item: 'GI Sheet Corrugated 8 ft', quantity: 16, daysAgo: 8 },
-  { branch: 'San Rafael', item: 'PVC Pipe 3/4 in x 10 ft', quantity: 18, daysAgo: 6 }
+  { branch: 'Manggahan', item: 'LONG SPAN -- RED/GRN/BLU 10 - 5 grooves', quantity: 30, daysAgo: 5 },
+  { branch: 'Manggahan', item: 'BOYSEN - LATEX (STONE) -- B 710 GLOSS LATEX WHT 4L', quantity: 12, daysAgo: 7 },
+  { branch: 'Manggahan', item: 'PHELPS DODGE -- #12 (3.5) 150m (per box)', quantity: 8, daysAgo: 4 },
+  { branch: 'San Rafael', item: 'PVC PIPE -- NELTEX 1', quantity: 18, daysAgo: 5 },
+  { branch: 'San Rafael', item: 'CORRUGATED - RED/GRN -- RED/GREEN 10', quantity: 16, daysAgo: 8 },
+  { branch: 'San Rafael', item: 'ANGLE BAR 1/4 (MAKAPAL) -- 1/4 X 1 - Grn', quantity: 18, daysAgo: 6 }
 ];
 
 const STOCK_OVERRIDES = new Map([
-  ['Manggahan|Adjustable Wrench 10 in', 0],
-  ['Manggahan|Circuit Breaker 30A', 0],
-  ['Manggahan|Marine Plywood 3/4 in 4x8 ft', 2],
-  ['Manggahan|Door Knob Cylindrical', 3],
-  ['Manggahan|Steel Bar 12mm Grade 40', 4],
-  ['San Rafael|Masonry Cement 40kg', 0],
-  ['San Rafael|Paint Roller 7 in', 1],
-  ['San Rafael|Concrete Nail 2 in per kg', 2],
-  ['San Rafael|Safety Gloves Rubberized', 3],
-  ['San Rafael|Padlock 50mm', 4]
+  ['Manggahan|ELBOW 1/8 45deg -- ORANGE 6"', 0],
+  ['Manggahan|C-PURLINS MAKAPAL -- WALL CLIP', 0],
+  ['Manggahan|MARINE -- 3/4 L-M (imp)', 2],
+  ['Manggahan|GUTTER -- GUTTER 8X24 MAKAPAL', 3],
+  ['Manggahan|ANGLE BAR (3/16) MANIPIS -- 3/16 X 1 1/2 - Red', 4],
+  ['San Rafael|BOYSEN - WATER PROOFING -- 7760 PLEXIBOND 16L', 0],
+  ['San Rafael|PVC PIPE -- BLACK 4"', 1],
+  ['San Rafael|ORDINARY -- 3/4 L-O (imp)', 2],
+  ['San Rafael|PANEL BOX -- 10BR', 3],
+  ['San Rafael|CORRUGATED (G.24) MAKAPAL -- 8', 4],
+  ['Manggahan|LONG SPAN -- RED/GRN/BLU 10 - 5 grooves', 45],
+  ['Manggahan|BOYSEN - LATEX (STONE) -- B 710 GLOSS LATEX WHT 4L', 28],
+  ['Manggahan|PHELPS DODGE -- #12 (3.5) 150m (per box)', 12],
+  ['San Rafael|PVC PIPE -- NELTEX 1', 36],
+  ['San Rafael|CORRUGATED - RED/GRN -- RED/GREEN 10', 28],
+  ['San Rafael|ANGLE BAR 1/4 (MAKAPAL) -- 1/4 X 1 - Grn', 30]
 ]);
 
 const philippineTimestamp = (daysAgo, hour = 8, minute = 0) => {
@@ -202,6 +166,7 @@ const philippineTimestamp = (daysAgo, hour = 8, minute = 0) => {
 };
 
 const formatSalesNumber = sequence => `SALE-${new Date().getFullYear()}-${String(sequence).padStart(5, '0')}`;
+const formatPurchaseNumber = sequence => `PUR-${new Date().getFullYear()}-${String(sequence).padStart(5, '0')}`;
 
 const getDiscountDetails = (discountType, subtotalAmount, customAmount = 0) => {
   const normalizedType = String(discountType || 'none').trim().toLowerCase();
@@ -325,6 +290,8 @@ async function refreshDemoInventory() {
 
     await client.query(`
       TRUNCATE TABLE
+        purchase_items,
+        purchase_transactions,
         sales_items,
         sales_transactions,
         stock_movements,
@@ -352,15 +319,16 @@ async function refreshDemoInventory() {
     const inventoryByBranchAndName = new Map();
     const productRows = [];
     const inventoryRows = [];
+    const purchaseSeedLines = [];
 
     for (let index = 0; index < CATALOG.length; index += 1) {
       const item = CATALOG[index];
-      const supplier = CATEGORY_SUPPLIERS[item.category] || 'Wilcon Depot';
+      const supplier = getSupplierForItem(item, index);
       const productResult = await client.query(
-        `INSERT INTO products (name, category, supplier_name, default_selling_price, created_at)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO products (name, category, supplier_name, default_selling_price, cost_price, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING product_id`,
-        [item.name, item.category, supplier, item.price, philippineTimestamp(28 - (index % 14), 8, 10)]
+        [item.name, item.category, supplier, item.price, item.costPrice, philippineTimestamp(28 - (index % 14), 8, 10)]
       );
       const productId = productResult.rows[0].product_id;
       productRows.push({ ...item, supplier, productId });
@@ -404,6 +372,7 @@ async function refreshDemoInventory() {
           category: item.category,
           supplier,
           price: item.price,
+          costPrice: item.costPrice,
           branch,
           currentStock: beginningStock,
           finalStock: plan.stock,
@@ -438,6 +407,13 @@ async function refreshDemoInventory() {
         if (stockInPlan) {
           const previousQuantity = row.currentStock;
           row.currentStock += stockInPlan.quantity;
+          purchaseSeedLines.push({
+            inventory: row,
+            quantity: stockInPlan.quantity,
+            previousQuantity,
+            newQuantity: row.currentStock,
+            createdAt: philippineTimestamp(stockInPlan.daysAgo, 10, 20)
+          });
           await insertMovement(client, {
             inventoryId,
             productId,
@@ -448,8 +424,8 @@ async function refreshDemoInventory() {
             quantity: stockInPlan.quantity,
             previousQuantity,
             newQuantity: row.currentStock,
-            reason: 'delivery_received',
-            note: 'Supplier delivery received and encoded by inventory staff.',
+            reason: 'purchase_received',
+            note: 'Supplier purchase received through Purchase Entry seed data.',
             actorId: actor.user_id,
             actorName: actor.full_name,
             createdAt: philippineTimestamp(stockInPlan.daysAgo, 10, 20)
@@ -477,6 +453,60 @@ async function refreshDemoInventory() {
           });
         }
       }
+    }
+
+    let purchaseSequence = 1;
+    for (const line of purchaseSeedLines) {
+      const actor = await findActor(client, line.inventory.branch);
+      const unitCost = Number(line.inventory.costPrice || Math.max(Number(line.inventory.price || 0) * 0.82, 0).toFixed(2));
+      const subtotal = Number((unitCost * line.quantity).toFixed(2));
+      const purchaseResult = await client.query(
+        `INSERT INTO purchase_transactions (
+           purchase_number, branch, supplier_name, document_type, document_number,
+           payment_terms, subtotal_amount, total_quantity, remarks,
+           status, encoded_by, encoded_by_name, created_at
+         )
+         VALUES ($1, $2, $3, 'DR', $4, $5, $6, $7, $8, 'completed', $9, $10, $11)
+         RETURNING purchase_transaction_id`,
+        [
+          formatPurchaseNumber(purchaseSequence),
+          line.inventory.branch,
+          line.inventory.supplier || 'Unassigned Supplier',
+          `DR-${String(purchaseSequence).padStart(4, '0')}`,
+          purchaseSequence % 2 === 0 ? 'cod' : 'cash',
+          subtotal,
+          line.quantity,
+          'Seeded supplier delivery for presentation data.',
+          actor.user_id,
+          actor.full_name,
+          line.createdAt
+        ]
+      );
+
+      await client.query(
+        `INSERT INTO purchase_items (
+           purchase_transaction_id, inventory_id, product_id, item_name,
+           category, branch, quantity_received, unit_cost, subtotal,
+           previous_quantity, new_quantity, created_at
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [
+          purchaseResult.rows[0].purchase_transaction_id,
+          line.inventory.inventoryId,
+          line.inventory.productId,
+          line.inventory.name,
+          line.inventory.category,
+          line.inventory.branch,
+          line.quantity,
+          unitCost,
+          subtotal,
+          line.previousQuantity,
+          line.newQuantity,
+          line.createdAt
+        ]
+      );
+
+      purchaseSequence += 1;
     }
 
     let salesSequence = 1;
@@ -604,10 +634,10 @@ async function refreshDemoInventory() {
     }
 
     const archiveCandidates = [
-      inventoryByBranchAndName.get('Manggahan|Flat Screwdriver 6 in'),
-      inventoryByBranchAndName.get('Manggahan|Circuit Breaker 20A'),
-      inventoryByBranchAndName.get('San Rafael|PVC Coupling 3/4 in'),
-      inventoryByBranchAndName.get('San Rafael|Cabinet Handle Stainless 4 in')
+      inventoryByBranchAndName.get('Manggahan|PLAIN SHEET (G.26) MANIPIS -- 3X8X26'),
+      inventoryByBranchAndName.get('Manggahan|C-PURLINS MAKAPAL -- WALL ANGLE'),
+      inventoryByBranchAndName.get('San Rafael|COUPLING -- BLACK 3"'),
+      inventoryByBranchAndName.get('San Rafael|FLOURESCENT LAMP only -- Firefly 8w')
     ].filter(Boolean);
 
     for (const candidate of archiveCandidates) {
@@ -651,6 +681,7 @@ async function refreshDemoInventory() {
           productsCreated: productRows.length,
           branchInventoryRecords: inventoryRows.length,
           salesTransactionsCreated: SALES_PLANS.length,
+          purchaseTransactionsCreated: purchaseSeedLines.length,
           archivedRecordsCreated: archiveCandidates.length,
           branches: BRANCHES
         }),
@@ -664,6 +695,7 @@ async function refreshDemoInventory() {
     console.log(`Products created: ${productRows.length}`);
     console.log(`Branch inventory records created: ${inventoryRows.length}`);
     console.log(`Sales transactions created: ${SALES_PLANS.length}`);
+    console.log(`Purchase transactions created: ${purchaseSeedLines.length}`);
     console.log(`Archived records created: ${archiveCandidates.length}`);
   } catch (error) {
     await client.query('ROLLBACK');

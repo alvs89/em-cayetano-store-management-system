@@ -440,6 +440,7 @@ export function ArchiveModule({
       .archive-list-title [data-card-description] {
         display: block;
         margin-top: 4px;
+        color: #374151;
         font-size: 13px;
         line-height: 1.45;
       }
@@ -447,6 +448,7 @@ export function ArchiveModule({
       .archive-list-title [data-card-description] span {
         display: block;
         margin-left: 0;
+        color: #374151;
       }
 
       .archive-table-wrap {
@@ -923,7 +925,7 @@ export function ArchiveModule({
   }, /*#__PURE__*/React.createElement("div", {
     className: "archive-list-title"
   }, /*#__PURE__*/React.createElement(CardTitle, null, "Archived Items"), /*#__PURE__*/React.createElement(CardDescription, null, sortedArchive.length, " ", sortedArchive.length === 1 ? 'item' : 'items', " archived", sortBy && /*#__PURE__*/React.createElement("span", {
-    className: "text-slate-500 ml-2"
+    className: "text-slate-700 ml-2"
   }, "\u2022 Sorted by ", sortLabel, " (", realtimeOrderLabel, ")"))))), /*#__PURE__*/React.createElement(CardContent, {
     className: "p-0"
   }, /*#__PURE__*/React.createElement("div", {
@@ -940,7 +942,7 @@ export function ArchiveModule({
   }), /*#__PURE__*/React.createElement("h3", {
     className: "mb-2 font-semibold text-slate-700"
   }, archivedInventory.length === 0 ? "No Archived Items" : "No Archived Items Found"), /*#__PURE__*/React.createElement("p", {
-    className: "text-sm text-slate-500"
+    className: "text-sm text-slate-700"
   }, archivedInventory.length === 0 ? "Items archived from inventory will appear here." : "Try adjusting your search or category filter."))) : paginatedArchive.map(item => /*#__PURE__*/React.createElement(TableRow, {
     key: item.id,
     className: highlightedArchiveRowId === String(item.id) ? "archive-row-highlight" : ""
@@ -986,7 +988,7 @@ export function ArchiveModule({
   }), /*#__PURE__*/React.createElement("h3", {
     className: "mb-2 font-semibold text-slate-700"
   }, archivedInventory.length === 0 ? "No Archived Items" : "No Archived Items Found"), /*#__PURE__*/React.createElement("p", {
-    className: "text-sm text-slate-500"
+    className: "text-sm text-slate-700"
   }, archivedInventory.length === 0 ? "Items archived from inventory will appear here." : "Try adjusting your search or category filter.")) : paginatedArchive.map(item => /*#__PURE__*/React.createElement("article", {
     key: item.id,
     className: `archive-mobile-card ${highlightedArchiveRowId === String(item.id) ? "archive-row-highlight" : ""}`

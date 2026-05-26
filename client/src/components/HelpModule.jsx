@@ -437,7 +437,7 @@ export function HelpModule({ user }) {
         .help-section-title p {
           margin-top: 5px;
           font-size: 13px;
-          color: #64748b;
+          color: #111827;
           line-height: 1.5;
         }
 
@@ -507,7 +507,7 @@ export function HelpModule({ user }) {
 
         .help-fullview-header p {
           margin-top: 6px;
-          color: #64748b;
+          color: #111827;
           font-size: 14px;
           line-height: 1.5;
         }
@@ -538,7 +538,7 @@ export function HelpModule({ user }) {
 
         .help-fullview-item p {
           margin-top: 9px;
-          color: #475569;
+          color: #111827;
           font-size: 13px;
           line-height: 1.65;
         }
@@ -580,7 +580,7 @@ export function HelpModule({ user }) {
 
         .help-row-summary {
           margin-top: 4px;
-          color: #64748b;
+          color: #111827;
           font-size: 12px;
           line-height: 1.5;
         }
@@ -599,7 +599,7 @@ export function HelpModule({ user }) {
         .help-answer {
           border-top: 1px solid #edf2f7;
           padding: 0 0 16px;
-          color: #475569;
+          color: #111827;
           font-size: 13px;
           line-height: 1.65;
         }
@@ -649,7 +649,7 @@ export function HelpModule({ user }) {
           gap: 12px;
           align-items: center;
           min-height: 34px;
-          color: #475569;
+          color: #111827;
           font-size: 13px;
           line-height: 1.45;
         }
@@ -674,7 +674,7 @@ export function HelpModule({ user }) {
           border: 1px dashed #cbd5e1;
           background: #f8fafc;
           padding: 14px;
-          color: #64748b;
+          color: #111827;
           font-size: 13px;
         }
 
@@ -689,7 +689,7 @@ export function HelpModule({ user }) {
           gap: 12px;
           align-items: start;
           break-inside: avoid;
-          color: #334155;
+          color: #111827;
           font-size: 13px;
           line-height: 1.55;
           margin-bottom: 14px;
@@ -727,7 +727,7 @@ export function HelpModule({ user }) {
         .help-trouble-panel {
           border-top: 1px solid #edf2f7;
           padding: 0 0 15px 34px;
-          color: #475569;
+          color: #111827;
           font-size: 13px;
           line-height: 1.6;
         }
@@ -785,7 +785,7 @@ export function HelpModule({ user }) {
 
         .help-contact-card p {
           margin-top: 5px;
-          color: #64748b;
+          color: #111827;
           font-size: 12px;
           overflow-wrap: anywhere;
         }
@@ -797,7 +797,7 @@ export function HelpModule({ user }) {
           background: #ffffff;
           padding: 36px;
           text-align: center;
-          color: #64748b;
+          color: #111827;
         }
 
         .help-empty-state h2 {

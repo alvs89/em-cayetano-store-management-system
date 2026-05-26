@@ -655,7 +655,7 @@ export function AlertsModule({ user, onNavigate }) {
               </div>
               <div className="min-w-0">
                 <AlertDialogTitle>Dismiss alert?</AlertDialogTitle>
-                <AlertDialogDescription className="mt-2 text-sm leading-6 text-slate-600">
+                <AlertDialogDescription className="mt-2 text-sm leading-6 text-slate-700">
                   This will remove <span className="font-semibold text-slate-900">{alertToDismiss?.title || 'this alert'}</span> from your notifications list.
                   You can still review the related module if the issue needs attention.
                 </AlertDialogDescription>
@@ -696,7 +696,7 @@ function EmptyAlerts({ icon, message }) {
   return (
     <div className="alerts-empty py-16 text-center">
       {icon}
-      <p className="text-slate-400">{message}</p>
+      <p className="text-slate-700">{message}</p>
     </div>
   );
 }

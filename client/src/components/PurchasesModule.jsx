@@ -13,6 +13,14 @@ import { Badge } from './ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { mergeSort } from '../utils/algorithms';
+import { formatPurchaseDocumentLabel, formatPurchasePaymentTerms } from '../utils/format';
+import {
+  HARDWARE_SUPPLIER_OPTIONS,
+  SUPPLIER_CUSTOM_VALUE,
+  getSupplierSelectValue,
+  isListedSupplier,
+  sanitizeSupplierInput,
+} from '../utils/suppliers';
 
 const emptyPurchaseLine = () => ({
   inventoryId: '',
@@ -121,9 +129,13 @@ const getPurchaseLineCount = purchase =>
 const getPurchaseQuantity = purchase =>
   Number(purchase?.totalQuantity ?? purchase?.quantityAdded ?? getPurchaseItems(purchase).reduce((sum, item) => sum + Number(item.quantity || 0), 0));
 
+const normalizeSupplierForMatch = value =>
+  String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
 export function PurchasesModule({ user }) {
   const { inventory, purchaseTransactions, recordPurchase } = useData();
   const [supplierName, setSupplierName] = useState('');
+  const [supplierMode, setSupplierMode] = useState('listed');
   const [documentType, setDocumentType] = useState('DR');
   const [documentNumber, setDocumentNumber] = useState('');
   const [paymentTerms, setPaymentTerms] = useState('cash');
@@ -136,9 +148,12 @@ export function PurchasesModule({ user }) {
   const [isSaving, setIsSaving] = useState(false);
   const [isPurchaseHistoryOpen, setIsPurchaseHistoryOpen] = useState(false);
   const [isClearDialogOpen, setIsClearDialogOpen] = useState(false);
+  const [isConfirmPurchaseOpen, setIsConfirmPurchaseOpen] = useState(false);
   const [purchaseHistorySearch, setPurchaseHistorySearch] = useState('');
   const [selectedPurchaseId, setSelectedPurchaseId] = useState('');
   const [highlightedLineIndex, setHighlightedLineIndex] = useState(null);
+  const [dismissedSupplierSuggestionKey, setDismissedSupplierSuggestionKey] = useState('');
+  const [useSupplierFilter, setUseSupplierFilter] = useState(true);
   const purchaseLinesScrollRef = useRef(null);
   const purchaseLineRefs = useRef({});
   const purchaseLineSelectRefs = useRef({});
@@ -158,10 +173,15 @@ export function PurchasesModule({ user }) {
 
   const filteredInventory = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
+    const selectedSupplier = useSupplierFilter ? normalizeSupplierForMatch(supplierName) : '';
     const filteredItems = sortedInventory.filter(item => {
       const itemCategory = item.category || 'Uncategorized';
       const matchesCategory = inventoryCategoryFilter === 'all' || itemCategory === inventoryCategoryFilter;
       if (!matchesCategory) return false;
+      if (selectedSupplier) {
+        const itemSupplier = normalizeSupplierForMatch(item.supplierName);
+        if (itemSupplier && itemSupplier !== selectedSupplier) return false;
+      }
       if (!query) return true;
       return [
           item.itemCode,
@@ -184,8 +204,16 @@ export function PurchasesModule({ user }) {
         || String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' })
     };
 
-    return mergeSort(filteredItems, sorters[inventorySort] || sorters.name_az);
-  }, [inventoryCategoryFilter, inventorySort, searchQuery, sortedInventory]);
+    const sortedItems = mergeSort(filteredItems, sorters[inventorySort] || sorters.name_az);
+    if (!selectedSupplier) return sortedItems;
+
+    return mergeSort(sortedItems, (a, b) => {
+      const aMatches = normalizeSupplierForMatch(a.supplierName) === selectedSupplier ? 0 : 1;
+      const bMatches = normalizeSupplierForMatch(b.supplierName) === selectedSupplier ? 0 : 1;
+      return aMatches - bMatches
+        || String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' });
+    });
+  }, [inventoryCategoryFilter, inventorySort, searchQuery, sortedInventory, supplierName, useSupplierFilter]);
 
   const inventoryPageCount = Math.max(1, Math.ceil(filteredInventory.length / INVENTORY_PAGE_SIZE));
   const activeInventoryPage = Math.min(inventoryPage, inventoryPageCount);
@@ -193,6 +221,22 @@ export function PurchasesModule({ user }) {
   const paginatedInventory = filteredInventory.slice(inventoryPageStart, inventoryPageStart + INVENTORY_PAGE_SIZE);
   const inventoryShowingStart = filteredInventory.length === 0 ? 0 : inventoryPageStart + 1;
   const inventoryShowingEnd = Math.min(inventoryPageStart + INVENTORY_PAGE_SIZE, filteredInventory.length);
+  const supplierScopedInventory = useMemo(() => {
+    const selectedSupplier = useSupplierFilter ? normalizeSupplierForMatch(supplierName) : '';
+    if (!selectedSupplier) return sortedInventory;
+
+    const scopedItems = sortedInventory.filter(item => {
+      const itemSupplier = normalizeSupplierForMatch(item.supplierName);
+      return !itemSupplier || itemSupplier === selectedSupplier;
+    });
+
+    return mergeSort(scopedItems, (a, b) => {
+      const aMatches = normalizeSupplierForMatch(a.supplierName) === selectedSupplier ? 0 : 1;
+      const bMatches = normalizeSupplierForMatch(b.supplierName) === selectedSupplier ? 0 : 1;
+      return aMatches - bMatches
+        || String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' });
+    });
+  }, [sortedInventory, supplierName, useSupplierFilter]);
 
   useEffect(() => {
     setInventoryPage(1);
@@ -241,6 +285,15 @@ export function PurchasesModule({ user }) {
   const getInventoryById = inventoryId =>
     inventory.find(item => String(item.id) === String(inventoryId));
 
+  const getPurchaseLineInventoryOptions = currentInventoryId => {
+    if (!currentInventoryId) return supplierScopedInventory;
+    const selectedItem = getInventoryById(currentInventoryId);
+    if (!selectedItem || supplierScopedInventory.some(item => String(item.id) === String(currentInventoryId))) {
+      return supplierScopedInventory;
+    }
+    return [selectedItem, ...supplierScopedInventory];
+  };
+
   const lineDetails = purchaseLines.map(line => {
     const item = getInventoryById(line.inventoryId);
     const quantity = line.quantity === '' ? 0 : Number(line.quantity);
@@ -259,10 +312,82 @@ export function PurchasesModule({ user }) {
   const selectedLines = lineDetails.filter(line => line.inventoryId && line.item);
   const totalQuantity = lineDetails.reduce((sum, line) => sum + (Number.isFinite(line.quantity) ? line.quantity : 0), 0);
   const subtotalAmount = lineDetails.reduce((sum, line) => sum + (Number.isFinite(line.subtotal) ? line.subtotal : 0), 0);
+  const selectedSupplierName = supplierName.trim();
+  const supplierReview = (() => {
+    const groups = new Map();
+    let unassignedCount = 0;
+
+    selectedLines.forEach(line => {
+      const itemSupplier = String(line.item?.supplierName || '').trim();
+      if (!itemSupplier) {
+        unassignedCount += 1;
+        return;
+      }
+      const key = normalizeSupplierForMatch(itemSupplier);
+      const current = groups.get(key) || {
+        supplierName: itemSupplier,
+        itemNames: []
+      };
+      current.itemNames.push(line.item?.name || 'Selected item');
+      groups.set(key, current);
+    });
+
+    const supplierGroups = Array.from(groups.values());
+    const selectedSupplierKey = normalizeSupplierForMatch(selectedSupplierName);
+    const suggestionKey = supplierGroups.length === 1
+      ? `${normalizeSupplierForMatch(supplierGroups[0].supplierName)}:${supplierGroups[0].itemNames.join('|')}`
+      : '';
+
+    if (selectedLines.length === 0) return null;
+
+    if (!selectedSupplierName && supplierGroups.length === 1 && suggestionKey !== dismissedSupplierSuggestionKey) {
+      return {
+        type: 'single-suggestion',
+        supplierName: supplierGroups[0].supplierName,
+        itemNames: supplierGroups[0].itemNames,
+        unassignedCount,
+        suggestionKey
+      };
+    }
+
+    if (!selectedSupplierName && supplierGroups.length > 1) {
+      return {
+        type: 'mixed-warning',
+        supplierGroups,
+        unassignedCount
+      };
+    }
+
+    if (selectedSupplierName) {
+      const otherSupplierGroups = supplierGroups.filter(group =>
+        normalizeSupplierForMatch(group.supplierName) !== selectedSupplierKey
+      );
+
+      if (otherSupplierGroups.length > 0) {
+        return {
+          type: 'mismatch-warning',
+          supplierName: selectedSupplierName,
+          supplierGroups: otherSupplierGroups,
+          unassignedCount
+        };
+      }
+    }
+
+    return null;
+  })();
   const isInventorySelectedInOtherLine = (inventoryId, currentIndex) =>
     purchaseLines.some((line, lineIndex) =>
       lineIndex !== currentIndex && String(line.inventoryId) === String(inventoryId)
     );
+
+  const applySupplierSuggestion = () => {
+    if (supplierReview?.type !== 'single-suggestion') return;
+    setSupplierName(supplierReview.supplierName);
+    setSupplierMode(isListedSupplier(supplierReview.supplierName) ? 'listed' : 'custom');
+    setUseSupplierFilter(true);
+    setDismissedSupplierSuggestionKey('');
+    toast.success('Supplier applied to this purchase.');
+  };
 
   const updateLine = (index, key, value) => {
     setPurchaseLines(prev => prev.map((line, lineIndex) => (
@@ -380,6 +505,9 @@ export function PurchasesModule({ user }) {
 
   const resetForm = () => {
     setSupplierName('');
+    setSupplierMode('listed');
+    setDismissedSupplierSuggestionKey('');
+    setUseSupplierFilter(true);
     setDocumentType('DR');
     setDocumentNumber('');
     setPaymentTerms('cash');
@@ -397,9 +525,14 @@ export function PurchasesModule({ user }) {
     toast.success('Purchase draft cleared.');
   };
 
+  const openConfirmPurchaseDialog = () => {
+    if (!validatePurchase()) return;
+    setIsConfirmPurchaseOpen(true);
+  };
+
   const validatePurchase = () => {
     if (!supplierName.trim()) {
-      toast.error('Enter the supplier name.');
+      toast.error('Select a supplier or choose Other to enter one.');
       return false;
     }
 
@@ -459,6 +592,7 @@ export function PurchasesModule({ user }) {
         description: `${purchase.purchaseNumber || 'Purchase entry'} was recorded.`
       });
       resetForm();
+      setIsConfirmPurchaseOpen(false);
     } catch (err) {
       toast.error('Failed to save purchase', {
         description: err?.response?.data?.error || err.message || 'No inventory was added.'
@@ -473,6 +607,21 @@ export function PurchasesModule({ user }) {
       .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()),
     [purchaseTransactions]
   );
+
+  const supplierSelectValue = getSupplierSelectValue(supplierName, supplierMode);
+  const showCustomSupplierInput = supplierSelectValue === SUPPLIER_CUSTOM_VALUE;
+  const updateCustomSupplierName = value => {
+    const cleaned = sanitizeSupplierInput(value);
+    if (cleaned !== value) {
+      toast.warning('Supplier name accepts letters, numbers, and common business characters only.', {
+        id: 'purchase-supplier-valid-characters',
+        duration: 2600
+      });
+    }
+    setSupplierName(cleaned);
+    if (cleaned.trim()) setDismissedSupplierSuggestionKey('');
+    setUseSupplierFilter(true);
+  };
 
   const filteredPurchaseHistory = useMemo(() => {
     const query = purchaseHistorySearch.trim().toLowerCase();
@@ -589,13 +738,198 @@ export function PurchasesModule({ user }) {
 
         .purchase-doc-grid {
           display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 1rem 0.9rem;
-          align-items: end;
+          grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+          gap: 1.1rem clamp(1.25rem, 2.4vw, 2rem);
+          align-items: start;
+        }
+
+        .purchase-doc-column {
+          display: grid;
+          align-content: start;
+          gap: 1rem;
+          min-width: 0;
+        }
+
+        .purchase-doc-grid [data-slot="input"],
+        .purchase-doc-grid [data-slot="select-trigger"],
+        .purchase-doc-grid textarea {
+          box-sizing: border-box;
+          width: 100%;
+          max-width: 100%;
+        }
+
+        .purchase-doc-grid [data-slot="input"]:hover,
+        .purchase-doc-grid [data-slot="select-trigger"]:hover,
+        .purchase-doc-grid textarea:hover {
+          border-color: #ffff00;
+          background: #ffffff;
+        }
+
+        .purchase-doc-grid [data-slot="input"]:focus-visible,
+        .purchase-doc-grid [data-slot="select-trigger"]:focus-visible,
+        .purchase-doc-grid textarea:focus-visible {
+          border-color: #ffff00;
+          outline: none;
+          box-shadow:
+            inset 0 0 0 2px rgba(255, 255, 0, 0.72),
+            0 1px 2px rgba(15, 23, 42, 0.06);
         }
 
         .purchase-doc-wide {
           grid-column: 1 / -1;
+        }
+
+        .purchase-supplier-field-group {
+          display: grid;
+          gap: 0.65rem;
+          min-width: 0;
+        }
+
+        .purchase-supplier-suggestion {
+          display: grid;
+          gap: 0.65rem;
+          border: 1px solid #f6d58d;
+          border-radius: 12px;
+          background: #fffbeb;
+          padding: 0.85rem 0.95rem;
+          color: #1f2937;
+          box-shadow: inset 3px 0 0 #facc15;
+        }
+
+        .purchase-supplier-warning {
+          border-color: #fdba74;
+          background: #fff7ed;
+          box-shadow: inset 3px 0 0 #f97316;
+        }
+
+        .purchase-suggestion-title {
+          margin: 0;
+          color: #111827;
+          font-size: 0.82rem;
+          font-weight: 800;
+          line-height: 1.25;
+        }
+
+        .purchase-suggestion-text {
+          margin: 0;
+          color: #111827;
+          font-size: 0.8rem;
+          line-height: 1.45;
+        }
+
+        .purchase-suggestion-note {
+          margin: 0;
+          color: #92400e;
+          font-size: 0.76rem;
+          font-weight: 650;
+          line-height: 1.35;
+        }
+
+        .purchase-supplier-group-list {
+          display: grid;
+          gap: 0.35rem;
+          color: #111827;
+          font-size: 0.76rem;
+          line-height: 1.35;
+        }
+
+        .purchase-suggestion-text strong,
+        .purchase-suggestion-title strong,
+        .purchase-supplier-group-list strong,
+        .purchase-supplier-filter-name {
+          color: #111827;
+          font-weight: 800;
+        }
+
+        .purchase-suggestion-actions,
+        .purchase-supplier-filter-actions {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 0.45rem;
+        }
+
+        .purchase-suggestion-action,
+        .purchase-filter-action {
+          min-height: 2rem;
+          border-radius: 9px;
+          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .purchase-suggestion-use {
+          border-color: #f4c152;
+          background: #ffffff;
+          color: #78350f;
+        }
+
+        .purchase-suggestion-use:hover,
+        .purchase-suggestion-use:focus-visible {
+          border-color: #eab308;
+          background: #fef3c7;
+          color: #713f12;
+          box-shadow: 0 6px 14px rgba(202, 138, 4, 0.12);
+        }
+
+        .purchase-suggestion-dismiss {
+          color: #475569;
+        }
+
+        .purchase-suggestion-dismiss:hover,
+        .purchase-suggestion-dismiss:focus-visible {
+          background: #ffffff;
+          color: #0f172a;
+          box-shadow: inset 0 0 0 1px #e2e8f0;
+        }
+
+        .purchase-supplier-filter-status {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) max-content;
+          align-items: center;
+          gap: 0.55rem 0.75rem;
+          margin-top: 0.7rem;
+          border: 1px solid #dbeafe;
+          border-radius: 12px;
+          background: #f8fbff;
+          padding: 0.6rem 0.7rem 0.6rem 0.85rem;
+          color: #475569;
+          font-size: 0.78rem;
+          font-weight: 600;
+          line-height: 1.35;
+        }
+
+        .purchase-supplier-filter-message {
+          min-width: 0;
+          overflow-wrap: anywhere;
+        }
+
+        .purchase-filter-action {
+          white-space: nowrap;
+          padding-left: 0.65rem;
+          padding-right: 0.65rem;
+          font-size: 0.75rem;
+          font-weight: 750;
+        }
+
+        .purchase-filter-toggle {
+          color: #1d4ed8;
+        }
+
+        .purchase-filter-toggle:hover,
+        .purchase-filter-toggle:focus-visible {
+          background: #eaf2ff;
+          color: #1e40af;
+          box-shadow: inset 0 0 0 1px #bfdbfe;
+        }
+
+        .purchase-filter-clear {
+          color: #64748b;
+        }
+
+        .purchase-filter-clear:hover,
+        .purchase-filter-clear:focus-visible {
+          background: #eef2f7;
+          color: #334155;
+          box-shadow: inset 0 0 0 1px #cbd5e1;
         }
 
         .purchase-remarks {
@@ -613,11 +947,26 @@ export function PurchasesModule({ user }) {
           display: grid;
           grid-template-columns: minmax(380px, 0.74fr) minmax(520px, 1.26fr);
           gap: 1rem;
-          align-items: start;
+          align-items: stretch;
         }
 
         .purchase-details-layout > .purchase-card {
           height: 100%;
+          min-height: 0;
+        }
+
+        .purchase-find-card {
+          display: flex;
+          min-height: 0;
+          flex-direction: column;
+        }
+
+        .purchase-find-content {
+          display: flex;
+          min-height: 0;
+          flex: 1 1 auto;
+          flex-direction: column;
+          overflow: hidden;
         }
 
         .purchase-subtotal-cell {
@@ -639,6 +988,102 @@ export function PurchasesModule({ user }) {
           min-width: 0;
         }
 
+        .purchase-current-footer {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          gap: 0.65rem;
+          border-top: 1px solid #e2e8f0;
+          padding-top: 0.9rem;
+        }
+
+        .purchase-confirm-dialog {
+          width: min(560px, calc(100vw - 32px)) !important;
+          max-width: min(560px, calc(100vw - 32px)) !important;
+          max-height: calc(100dvh - 24px);
+          overflow-y: auto;
+          overflow-x: hidden;
+          border-radius: 14px;
+          scrollbar-gutter: stable;
+        }
+
+        .purchase-confirm-dialog [data-slot='dialog-header'] {
+          padding: 1.25rem 1.5rem 1.05rem;
+        }
+
+        .purchase-confirm-dialog [data-slot='dialog-title'] {
+          font-size: 1.1rem;
+          line-height: 1.25;
+        }
+
+        .purchase-confirm-dialog [data-slot='dialog-title'] span {
+          width: 2.35rem;
+          height: 2.35rem;
+          border-radius: 0.8rem;
+        }
+
+        .purchase-confirm-dialog [data-slot='dialog-description'] {
+          font-size: 0.88rem;
+          line-height: 1.45;
+        }
+
+        .purchase-confirm-body {
+          display: grid;
+          gap: 0.85rem;
+          padding: 1rem 1.5rem 1.25rem;
+        }
+
+        .purchase-confirm-summary-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.7rem;
+        }
+
+        .purchase-confirm-summary-item {
+          display: grid;
+          gap: 0.2rem;
+          min-width: 0;
+          border: 1px solid #e2e8f0;
+          border-radius: 12px;
+          background: #f8fafc;
+          padding: 0.7rem 0.75rem;
+        }
+
+        .purchase-confirm-summary-item span {
+          color: #64748b;
+          font-size: 0.68rem;
+          font-weight: 800;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+        }
+
+        .purchase-confirm-summary-item strong {
+          min-width: 0;
+          color: #0f172a;
+          font-size: 0.9rem;
+          font-weight: 750;
+          line-height: 1.3;
+          overflow-wrap: anywhere;
+        }
+
+        .purchase-confirm-impact-note {
+          border: 1px solid #bfdbfe;
+          border-radius: 12px;
+          background: #eff6ff;
+          padding: 0.7rem 0.8rem;
+          color: #334155;
+          font-size: 0.8rem;
+          line-height: 1.45;
+        }
+
+        .purchase-confirm-footer {
+          display: flex;
+          justify-content: flex-end;
+          gap: 0.65rem;
+          border-top: 1px solid #e2e8f0;
+          padding: 1rem 1.5rem;
+        }
+
         .purchase-current {
           display: flex;
           min-height: 0;
@@ -647,20 +1092,54 @@ export function PurchasesModule({ user }) {
 
         .purchase-search {
           display: flex;
-          height: 2.55rem;
+          min-height: 2.75rem;
           align-items: center;
           gap: 0.55rem;
           border: 1px solid #e2e8f0;
-          border-radius: 0.7rem;
+          border-radius: 0.8rem;
           background: #ffffff;
-          padding: 0 0.75rem;
+          padding: 0 0.8rem;
+          transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+        }
+
+        .purchase-search:hover {
+          border-color: #ffff00;
+          background: #ffffff;
+        }
+
+        .purchase-search:focus-within {
+          border-color: #ffff00;
+          box-shadow:
+            inset 0 0 0 2px rgba(255, 255, 0, 0.74),
+            0 1px 2px rgba(15, 23, 42, 0.06);
+        }
+
+        .purchase-search [data-slot="input"],
+        .purchase-search input {
+          height: 2.35rem;
+          min-height: 2.35rem;
+          border: 0 !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          outline: none !important;
+          font-size: 0.95rem;
+          line-height: 1.35;
+        }
+
+        .purchase-search [data-slot="input"]:hover,
+        .purchase-search [data-slot="input"]:focus-visible,
+        .purchase-search input:hover,
+        .purchase-search input:focus-visible {
+          border: 0 !important;
+          box-shadow: none !important;
+          outline: none !important;
         }
 
         .purchase-find-controls {
           display: grid;
           grid-template-columns: minmax(0, 1fr) minmax(9.5rem, 0.42fr);
           gap: 0.65rem;
-          margin-top: 0.65rem;
+          margin-top: 0.85rem;
         }
 
         .purchase-find-control {
@@ -684,7 +1163,9 @@ export function PurchasesModule({ user }) {
 
         .purchase-inventory-list {
           margin-top: 0.75rem;
-          max-height: 18rem;
+          min-height: 0;
+          max-height: none;
+          flex: 1 1 0;
           overflow: auto;
           overscroll-behavior: contain;
           border: 1px solid #e2e8f0;
@@ -1193,6 +1674,20 @@ export function PurchasesModule({ user }) {
             grid-template-columns: 1fr;
           }
 
+          .purchase-find-card {
+            min-height: auto;
+          }
+
+          .purchase-find-content {
+            flex: initial;
+          }
+
+          .purchase-inventory-list {
+            flex: initial;
+            min-height: 18rem;
+            max-height: min(54vh, 30rem);
+          }
+
           .purchase-doc-wide {
             grid-column: 1 / -1;
           }
@@ -1244,10 +1739,55 @@ export function PurchasesModule({ user }) {
 
           .purchase-doc-grid {
             min-height: 0;
+            grid-template-columns: 1fr;
+          }
+
+          .purchase-doc-column {
+            gap: 0.9rem;
+          }
+
+          .purchase-search {
+            min-height: 2.65rem;
+            border-radius: 0.75rem;
+            padding: 0 0.7rem;
+          }
+
+          .purchase-search [data-slot="input"],
+          .purchase-search input {
+            height: 2.2rem;
+            min-height: 2.2rem;
+            font-size: 0.9rem;
+          }
+
+          .purchase-supplier-filter-status {
+            align-items: stretch;
+            grid-template-columns: 1fr;
+            margin-top: 0.65rem;
+            padding: 0.65rem;
+          }
+
+          .purchase-supplier-filter-message {
+            min-width: 0;
+          }
+
+          .purchase-supplier-filter-actions {
+            width: 100%;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+          }
+
+          .purchase-filter-action {
+            width: 100%;
+            min-height: 2.15rem;
           }
 
           .purchase-inventory-head {
             display: none;
+          }
+
+          .purchase-inventory-list {
+            min-height: 16rem;
+            max-height: min(52vh, 28rem);
           }
 
           .purchase-inventory-row {
@@ -1277,6 +1817,71 @@ export function PurchasesModule({ user }) {
             width: 100%;
             display: grid;
             grid-template-columns: 1fr;
+          }
+
+          .purchase-current-footer {
+            display: grid;
+            grid-template-columns: 1fr;
+          }
+
+          .purchase-current-footer button {
+            width: 100%;
+          }
+
+          .purchase-confirm-dialog {
+            width: min(520px, calc(100vw - 24px)) !important;
+            max-width: min(520px, calc(100vw - 24px)) !important;
+            border-radius: 13px;
+          }
+
+          .purchase-confirm-dialog [data-slot='dialog-header'] {
+            padding: 1rem 1rem 0.9rem;
+          }
+
+          .purchase-confirm-dialog [data-slot='dialog-title'] {
+            font-size: 1rem;
+          }
+
+          .purchase-confirm-dialog [data-slot='dialog-description'] {
+            font-size: 0.82rem;
+          }
+
+          .purchase-confirm-body {
+            gap: 0.7rem;
+            padding: 0.75rem 0.9rem 0.9rem;
+          }
+
+          .purchase-confirm-summary-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.55rem;
+          }
+
+          .purchase-confirm-summary-item {
+            border-radius: 10px;
+            padding: 0.6rem 0.65rem;
+          }
+
+          .purchase-confirm-summary-item span {
+            font-size: 0.64rem;
+          }
+
+          .purchase-confirm-summary-item strong {
+            font-size: 0.84rem;
+          }
+
+          .purchase-confirm-impact-note {
+            border-radius: 10px;
+            padding: 0.65rem 0.7rem;
+            font-size: 0.78rem;
+          }
+
+          .purchase-confirm-footer {
+            padding: 0.8rem 0.9rem 0.9rem;
+          }
+
+          .purchase-confirm-footer button {
+            min-height: 2.55rem;
+            flex: 1 1 0;
           }
 
           .purchase-header-actions .purchase-history-button,
@@ -1427,6 +2032,45 @@ export function PurchasesModule({ user }) {
         }
 
         @media (max-width: 460px) {
+          .purchase-confirm-dialog {
+            width: calc(100vw - 20px) !important;
+            max-width: calc(100vw - 20px) !important;
+            max-height: calc(100dvh - 16px);
+            border-radius: 12px;
+          }
+
+          .purchase-confirm-dialog [data-slot='dialog-header'] {
+            padding: 0.95rem 0.85rem 0.8rem;
+          }
+
+          .purchase-confirm-dialog [data-slot='dialog-title'] {
+            gap: 0.65rem;
+            font-size: 0.96rem;
+          }
+
+          .purchase-confirm-dialog [data-slot='dialog-title'] span {
+            width: 2.15rem;
+            height: 2.15rem;
+          }
+
+          .purchase-confirm-dialog [data-slot='dialog-description'] {
+            font-size: 0.8rem;
+            line-height: 1.42;
+          }
+
+          .purchase-confirm-summary-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .purchase-confirm-footer {
+            display: grid;
+            grid-template-columns: 1fr;
+          }
+
+          .purchase-confirm-footer button {
+            width: 100%;
+          }
+
           .purchase-lines-table td {
             grid-template-columns: 1fr;
             gap: 0.45rem;
@@ -1483,28 +2127,151 @@ export function PurchasesModule({ user }) {
             </CardHeader>
             <CardContent className="purchase-card-content">
               <div className="purchase-doc-grid">
-                <Field label="Supplier">
-                  <Input value={supplierName} onChange={event => setSupplierName(event.target.value.slice(0, 120))} placeholder="e.g., One Samix" disabled={isSaving} className="h-10" />
-                </Field>
-                <Field label="Document Type">
-                  <Select value={documentType} onValueChange={setDocumentType} disabled={isSaving}>
-                    <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {DOCUMENT_TYPES.map(type => <SelectItem key={type} value={type}>{type}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field label="DR/SI No.">
-                  <Input value={documentNumber} onChange={event => setDocumentNumber(event.target.value.slice(0, 80))} placeholder="Optional" disabled={isSaving} className="h-10" />
-                </Field>
-                <Field label="Terms">
-                  <Select value={paymentTerms} onValueChange={setPaymentTerms} disabled={isSaving}>
-                    <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {PAYMENT_TERMS.map(term => <SelectItem key={term.value} value={term.value}>{term.label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </Field>
+                <div className="purchase-doc-column">
+                  <Field label="Supplier">
+                    <div className="purchase-supplier-field-group">
+                      <Select
+                        value={supplierSelectValue}
+                        onValueChange={value => {
+                          if (value === SUPPLIER_CUSTOM_VALUE) {
+                            setSupplierMode('custom');
+                            if (isListedSupplier(supplierName)) setSupplierName('');
+                            setDismissedSupplierSuggestionKey('');
+                            setUseSupplierFilter(true);
+                            return;
+                          }
+                          setSupplierMode('listed');
+                          setSupplierName(value);
+                          setDismissedSupplierSuggestionKey('');
+                          setUseSupplierFilter(true);
+                        }}
+                        disabled={isSaving}
+                      >
+                        <SelectTrigger className="h-10">
+                          <SelectValue placeholder="Select supplier" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {HARDWARE_SUPPLIER_OPTIONS.map(supplier => (
+                            <SelectItem key={supplier} value={supplier}>{supplier}</SelectItem>
+                          ))}
+                          <SelectItem value={SUPPLIER_CUSTOM_VALUE}>Other supplier / not listed</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {showCustomSupplierInput && (
+                        <Input
+                          value={supplierName}
+                          onChange={event => updateCustomSupplierName(event.target.value)}
+                          placeholder="Enter supplier name"
+                          disabled={isSaving}
+                          className="h-10"
+                        />
+                      )}
+                      {supplierReview?.type === 'single-suggestion' && (
+                        <div className="purchase-supplier-suggestion">
+                          <p className="purchase-suggestion-title">
+                            Suggested supplier: <strong>{supplierReview.supplierName}</strong>
+                          </p>
+                          <p className="purchase-suggestion-text">
+                            Saved supplier for
+                            {supplierReview.itemNames.length === 1 ? (
+                              <> <strong>{supplierReview.itemNames[0]}</strong>.</>
+                            ) : (
+                              <> <strong>{supplierReview.itemNames.length}</strong> selected items.</>
+                            )} Use this only if it matches the supplier document.
+                          </p>
+                          {supplierReview.unassignedCount > 0 && (
+                            <p className="purchase-suggestion-note">
+                              {supplierReview.unassignedCount} selected item{supplierReview.unassignedCount === 1 ? ' has' : 's have'} no saved supplier.
+                            </p>
+                          )}
+                          <div className="purchase-suggestion-actions">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="purchase-suggestion-action purchase-suggestion-use px-3 text-xs font-semibold"
+                              onClick={applySupplierSuggestion}
+                              disabled={isSaving}
+                            >
+                              Use Supplier
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="purchase-suggestion-action purchase-suggestion-dismiss px-3 text-xs font-semibold"
+                              onClick={() => setDismissedSupplierSuggestionKey(supplierReview.suggestionKey)}
+                              disabled={isSaving}
+                            >
+                              Dismiss
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                      {supplierReview?.type === 'mixed-warning' && (
+                        <div className="purchase-supplier-suggestion purchase-supplier-warning">
+                          <p className="purchase-suggestion-title">Different saved suppliers found</p>
+                          <p className="purchase-suggestion-text">
+                            Selected items have more than one saved supplier. Choose the actual supplier for this purchase.
+                          </p>
+                          <div className="purchase-supplier-group-list">
+                            {supplierReview.supplierGroups.slice(0, 3).map(group => (
+                              <span key={group.supplierName}>
+                                <strong>{group.supplierName}</strong>: {group.itemNames.slice(0, 2).join(', ')}{group.itemNames.length > 2 ? ` +${group.itemNames.length - 2} more` : ''}
+                              </span>
+                            ))}
+                          </div>
+                          {supplierReview.unassignedCount > 0 && (
+                            <p className="purchase-suggestion-note">
+                              {supplierReview.unassignedCount} selected item{supplierReview.unassignedCount === 1 ? ' has' : 's have'} no saved supplier.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      {supplierReview?.type === 'mismatch-warning' && (
+                        <div className="purchase-supplier-suggestion purchase-supplier-warning">
+                          <p className="purchase-suggestion-title">Review supplier selection</p>
+                          <p className="purchase-suggestion-text">
+                            Purchase supplier is <strong>{supplierReview.supplierName}</strong>, but some selected items have another saved supplier.
+                          </p>
+                          <div className="purchase-supplier-group-list">
+                            {supplierReview.supplierGroups.slice(0, 3).map(group => (
+                              <span key={group.supplierName}>
+                                <strong>{group.supplierName}</strong>: {group.itemNames.slice(0, 2).join(', ')}{group.itemNames.length > 2 ? ` +${group.itemNames.length - 2} more` : ''}
+                              </span>
+                            ))}
+                          </div>
+                          {supplierReview.unassignedCount > 0 && (
+                            <p className="purchase-suggestion-note">
+                              {supplierReview.unassignedCount} selected item{supplierReview.unassignedCount === 1 ? ' has' : 's have'} no saved supplier.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </Field>
+                  <Field label="DR/SI No.">
+                    <Input value={documentNumber} onChange={event => setDocumentNumber(event.target.value.slice(0, 80))} placeholder="Optional" disabled={isSaving} className="h-10" />
+                  </Field>
+                </div>
+                <div className="purchase-doc-column">
+                  <Field label="Document Type">
+                    <Select value={documentType} onValueChange={setDocumentType} disabled={isSaving}>
+                      <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {DOCUMENT_TYPES.map(type => <SelectItem key={type} value={type}>{type}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field label="Terms">
+                    <Select value={paymentTerms} onValueChange={setPaymentTerms} disabled={isSaving}>
+                      <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {PAYMENT_TERMS.map(term => <SelectItem key={term.value} value={term.value}>{term.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </div>
                 <div className="purchase-doc-wide">
                   <Field label="Remarks">
                     <Textarea
@@ -1522,7 +2289,7 @@ export function PurchasesModule({ user }) {
             </CardContent>
           </Card>
 
-          <Card className="purchase-card">
+          <Card className="purchase-card purchase-find-card">
             <CardHeader className="purchase-card-header">
               <CardTitle className="purchase-title">
                 <span className="purchase-kicker">Inventory</span>
@@ -1530,11 +2297,52 @@ export function PurchasesModule({ user }) {
               </CardTitle>
               <span className="text-xs font-semibold text-slate-500">Page {activeInventoryPage} of {inventoryPageCount}</span>
             </CardHeader>
-            <CardContent className="purchase-card-content">
+            <CardContent className="purchase-card-content purchase-find-content">
                 <div className="purchase-search">
                   <Search className="h-4 w-4 text-slate-500" />
                   <Input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="Search inventory item..." className="h-9 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0" />
                 </div>
+                {supplierName.trim() && (
+                  <div className="purchase-supplier-filter-status">
+                    <span className="purchase-supplier-filter-message">
+                      {useSupplierFilter ? (
+                        <>
+                          Showing items from: <strong className="purchase-supplier-filter-name">{supplierName.trim()}</strong> and unassigned items
+                        </>
+                      ) : (
+                        <>
+                          Showing all inventory items. Purchase supplier remains: <strong className="purchase-supplier-filter-name">{supplierName.trim()}</strong>
+                        </>
+                      )}
+                    </span>
+                    <div className="purchase-supplier-filter-actions">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="purchase-filter-action purchase-filter-toggle"
+                        onClick={() => setUseSupplierFilter(current => !current)}
+                        disabled={isSaving}
+                      >
+                        {useSupplierFilter ? 'Show All Items' : 'Filter by Supplier'}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="purchase-filter-action purchase-filter-clear"
+                        onClick={() => {
+                          setSupplierName('');
+                          setSupplierMode('listed');
+                          setUseSupplierFilter(true);
+                        }}
+                        disabled={isSaving}
+                      >
+                        Clear Supplier
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <div className="purchase-find-controls">
                   <div className="purchase-find-control">
                     <Select value={inventoryCategoryFilter} onValueChange={setInventoryCategoryFilter}>
@@ -1579,7 +2387,7 @@ export function PurchasesModule({ user }) {
                     <div key={item.id} className="purchase-inventory-row">
                       <span className="min-w-0">
                         <span className="block truncate text-sm font-semibold text-slate-900">{item.name}</span>
-                        <span className="block truncate text-xs text-slate-500">{item.itemCode || 'No item code'}</span>
+                        <span className="block truncate text-xs text-slate-700">{item.itemCode || 'No item code'}</span>
                       </span>
                       <span className="purchase-inventory-category truncate text-sm text-slate-700">{item.category}</span>
                       <span className="purchase-inventory-stock text-center">
@@ -1701,7 +2509,7 @@ export function PurchasesModule({ user }) {
                               className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm"
                             >
                               <option value="">Select item</option>
-                              {sortedInventory.map(item => {
+                              {getPurchaseLineInventoryOptions(line.inventoryId).map(item => {
                                 const isAlreadySelected = isInventorySelectedInOtherLine(item.id, index);
                                 return (
                                   <option key={item.id} value={item.id} disabled={isAlreadySelected}>
@@ -1710,7 +2518,7 @@ export function PurchasesModule({ user }) {
                                 );
                               })}
                             </select>
-                            {selectedItem && <p className="mt-1 truncate text-xs text-slate-500">{selectedItem.category}</p>}
+                            {selectedItem && <p className="mt-1 truncate text-xs text-slate-700">{selectedItem.category}</p>}
                           </TableCell>
                           <TableCell data-label="Qty">
                             <div className="purchase-number-stepper" aria-label={`Quantity received for line ${index + 1}`}>
@@ -1816,27 +2624,10 @@ export function PurchasesModule({ user }) {
                 </Table>
               </div>
 
-            </CardContent>
-          </Card>
-          <Card className="purchase-card purchase-summary-card">
-            <CardHeader className="purchase-card-header">
-              <CardTitle className="purchase-title">
-                <span className="purchase-kicker">Summary</span>
-                Purchase Summary
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="purchase-card-content">
-              <div className="purchase-metrics">
-                <Metric icon={<Truck className="h-4 w-4" />} label="Supplier" value={supplierName || 'Not set'} />
-                <Metric icon={<FileText className="h-4 w-4" />} label="Document" value={`${documentType}${documentNumber ? `-${documentNumber}` : ''}`} />
-                <Metric icon={<PackagePlus className="h-4 w-4" />} label="Items" value={`${selectedLines.length} lines`} />
-                <Metric icon={<ReceiptText className="h-4 w-4" />} label="Qty Added" value={`${totalQuantity} units`} accent="green" />
-                <Metric icon={<Wallet className="h-4 w-4" />} label="Total Purchase" value={formatCurrency(subtotalAmount)} />
-              </div>
-              <div className="purchase-action-bar">
-                <Button type="button" className="h-10 bg-red-600 px-5 font-bold text-white hover:bg-red-700" onClick={handleRecordPurchase} disabled={isSaving}>
+              <div className="purchase-current-footer">
+                <Button type="button" className="h-10 bg-red-600 px-5 font-bold text-white hover:bg-red-700" onClick={openConfirmPurchaseDialog} disabled={isSaving}>
                   <Wallet className="mr-2 h-4 w-4" />
-                  {isSaving ? 'Saving...' : 'Save Purchase'}
+                  Save Purchase
                 </Button>
                 <Button type="button" variant="outline" className="h-10 px-4" onClick={() => setIsClearDialogOpen(true)} disabled={isSaving}>
                   <RefreshCw className="mr-2 h-4 w-4" />
@@ -1861,6 +2652,81 @@ export function PurchasesModule({ user }) {
         onSelectPurchase={purchaseId => setSelectedPurchaseId(String(purchaseId))}
       />
 
+      <Dialog open={isConfirmPurchaseOpen} onOpenChange={open => {
+        if (!isSaving) setIsConfirmPurchaseOpen(open);
+      }}>
+        <DialogContent className="purchase-confirm-dialog gap-0 border border-slate-200 bg-white p-0 shadow-2xl">
+          <DialogHeader className="border-b border-slate-200 px-6 pb-5 pt-6 text-left">
+            <DialogTitle className="flex items-center gap-3 text-lg font-bold text-slate-950">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-50 text-red-600">
+                <Wallet className="h-5 w-5" />
+              </span>
+              Confirm Purchase
+            </DialogTitle>
+            <DialogDescription className="pt-2 text-sm leading-6 text-slate-700">
+              Review the supplier delivery details before saving. Confirming will add the received quantities to inventory.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="purchase-confirm-body">
+            <div className="purchase-confirm-summary-grid">
+              <div className="purchase-confirm-summary-item">
+                <span>Supplier</span>
+                <strong>{supplierName || 'Not set'}</strong>
+              </div>
+              <div className="purchase-confirm-summary-item">
+                <span>Document</span>
+                <strong>{formatPurchaseDocumentLabel(documentType, documentNumber)}</strong>
+              </div>
+              <div className="purchase-confirm-summary-item">
+                <span>Terms</span>
+                <strong>{formatPurchasePaymentTerms(paymentTerms)}</strong>
+              </div>
+              <div className="purchase-confirm-summary-item">
+                <span>Items</span>
+                <strong>{selectedLines.length} line{selectedLines.length === 1 ? '' : 's'}</strong>
+              </div>
+              <div className="purchase-confirm-summary-item">
+                <span>Quantity Added</span>
+                <strong>{totalQuantity} unit{totalQuantity === 1 ? '' : 's'}</strong>
+              </div>
+              <div className="purchase-confirm-summary-item">
+                <span>Total Purchase</span>
+                <strong>{formatCurrency(subtotalAmount)}</strong>
+              </div>
+            </div>
+            {remarks.trim() && (
+              <div className="purchase-confirm-summary-item">
+                <span>Remarks</span>
+                <strong>{remarks.trim()}</strong>
+              </div>
+            )}
+            <p className="purchase-confirm-impact-note">
+              This action saves the purchase record and increases stock for the selected inventory items.
+            </p>
+          </div>
+          <div className="purchase-confirm-footer">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 px-4"
+              onClick={() => setIsConfirmPurchaseOpen(false)}
+              disabled={isSaving}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="h-10 bg-red-600 px-5 font-bold text-white hover:bg-red-700"
+              onClick={handleRecordPurchase}
+              disabled={isSaving}
+            >
+              <Wallet className="mr-2 h-4 w-4" />
+              {isSaving ? 'Saving...' : 'Confirm Purchase'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={isClearDialogOpen} onOpenChange={setIsClearDialogOpen}>
         <DialogContent className="purchase-clear-dialog border border-slate-200 bg-white p-0 shadow-2xl">
           <DialogHeader className="border-b border-slate-200 px-6 pb-5 pt-6 text-left">
@@ -1870,7 +2736,7 @@ export function PurchasesModule({ user }) {
               </span>
               Clear Current Purchase?
             </DialogTitle>
-            <DialogDescription className="pt-2 text-sm leading-6 text-slate-600">
+            <DialogDescription className="pt-2 text-sm leading-6 text-slate-700">
               This will remove the supplier details and all purchase lines you have entered. Inventory will not be changed.
             </DialogDescription>
           </DialogHeader>
@@ -1920,7 +2786,7 @@ function PurchaseHistoryDialog({
                 <DialogTitle className="text-2xl font-bold leading-tight tracking-normal text-slate-900">
                   Recent Purchases
                 </DialogTitle>
-                <DialogDescription className="mt-2 text-sm leading-6 text-slate-600">
+                <DialogDescription className="mt-2 text-sm leading-6 text-slate-700">
                   Review supplier delivery records that increased inventory stock.
                 </DialogDescription>
               </div>
@@ -1953,7 +2819,7 @@ function PurchaseHistoryDialog({
           </div>
 
           {purchases.length === 0 ? (
-            <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">
+            <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-700">
               No purchase records match your search.
             </div>
           ) : (
@@ -1971,12 +2837,12 @@ function PurchaseHistoryDialog({
                       <div className="flex items-center justify-between gap-4">
                         <div className="min-w-0">
                           <p className="truncate text-base font-bold text-slate-900">{purchase.purchaseNumber || 'Purchase record'}</p>
-                          <p className="mt-2 flex items-center gap-2 truncate text-sm text-slate-500">
+                          <p className="mt-2 flex items-center gap-2 truncate text-sm text-slate-700">
                             <CalendarDays className="h-4 w-4 shrink-0" />
                             {formatDateTime(purchase.createdAt)}
                           </p>
                           <p className="mt-2 truncate text-sm text-slate-600">
-                            {purchase.supplierName || 'No supplier'} - {purchase.documentType || 'DR'}
+                            {purchase.supplierName || 'No supplier'} - {formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber)}
                           </p>
                         </div>
                         <div className="shrink-0 text-right">
@@ -1993,7 +2859,7 @@ function PurchaseHistoryDialog({
                 {selectedPurchase ? (
                   <PurchaseHistoryDetail purchase={selectedPurchase} />
                 ) : (
-                  <div className="flex h-full items-center justify-center text-center text-sm text-slate-500">
+                  <div className="flex h-full items-center justify-center text-center text-sm text-slate-700">
                     Select a purchase record to view details.
                   </div>
                 )}
@@ -2013,7 +2879,7 @@ function PurchaseHistoryDetail({ purchase }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-xl font-bold text-slate-900">{purchase.purchaseNumber}</h3>
-          <p className="mt-2 flex items-center gap-2 text-sm text-slate-500">
+          <p className="mt-2 flex items-center gap-2 text-sm text-slate-700">
             <CalendarDays className="h-4 w-4" />
             {formatDateTime(purchase.createdAt)}
           </p>
@@ -2023,30 +2889,30 @@ function PurchaseHistoryDetail({ purchase }) {
 
       <div className="grid gap-4 sm:grid-cols-2">
         <HistoryDetail icon={<Truck className="h-5 w-5" />} label="Supplier" value={purchase.supplierName || 'No supplier'} />
-        <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Document" value={`${purchase.documentType || 'DR'}${purchase.documentNumber ? ` - ${purchase.documentNumber}` : ''}`} />
+        <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Document" value={formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber)} />
         <HistoryDetail icon={<PackagePlus className="h-5 w-5" />} label="Line Items" value={`${getPurchaseLineCount(purchase)} line${getPurchaseLineCount(purchase) === 1 ? '' : 's'}`} />
         <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="Quantity Added" value={`${getPurchaseQuantity(purchase)} unit${getPurchaseQuantity(purchase) === 1 ? '' : 's'}`} />
         <HistoryDetail icon={<Wallet className="h-5 w-5" />} label="Total Purchase" value={formatCurrency(purchase.subtotalAmount)} />
-        <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Terms" value={purchase.paymentTerms || 'Cash'} />
+        <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Terms" value={formatPurchasePaymentTerms(purchase.paymentTerms)} />
       </div>
 
       <div>
         <div className="mb-2 flex items-center justify-between gap-3 py-1">
           <h4 className="font-bold text-slate-900">Received Items</h4>
-          <span className="text-sm text-slate-500">{items.length} listed</span>
+          <span className="text-sm text-slate-700">{items.length} listed</span>
         </div>
         <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
           {items.length === 0 ? (
-            <p className="py-6 text-center text-sm text-slate-500">No item details available.</p>
+            <p className="py-6 text-center text-sm text-slate-700">No item details available.</p>
           ) : items.map((item, index) => (
             <div key={item.id || `${item.inventoryId}-${index}`} className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
               <div className="min-w-0">
                 <p className="break-words font-semibold leading-5 text-slate-900">{item.itemName || item.name || 'Inventory item'}</p>
-                <p className="mt-1 break-words text-xs leading-5 text-slate-500">Quantity: {item.quantity || 0}</p>
+                <p className="mt-1 break-words text-xs leading-5 text-slate-700">Quantity: {item.quantity || 0}</p>
               </div>
               <div className="text-right">
                 <p className="font-semibold text-slate-900">{formatCurrency(item.subtotal ?? Number(item.quantity || 0) * Number(item.unitCost || 0))}</p>
-                <p className="mt-1 text-xs text-slate-500">Unit cost {formatCurrency(item.unitCost)}</p>
+                <p className="mt-1 text-xs text-slate-700">Unit cost {formatCurrency(item.unitCost)}</p>
               </div>
             </div>
           ))}

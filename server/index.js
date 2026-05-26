@@ -67,41 +67,54 @@ const CORS_ALLOWED_ORIGINS = (process.env.CORS_ORIGIN || process.env.CLIENT_URL 
 const ALLOWED_ROLES = ['Admin', 'Cashier', 'Inventory Staff'];
 const ALLOWED_BRANCHES = ['Manggahan', 'San Rafael'];
 const OFFICIAL_INVENTORY_CATEGORIES = [
-  'Tools',
-  'Paint',
-  'Cement',
-  'Construction',
-  'Electrical',
-  'Plumbing',
-  'Hardware',
-  'Fasteners',
-  'Lumber',
-  'Safety',
+  'Roofing',
+  'PVC Pipe / Fittings',
+  'Steel',
+  'Kiln Dry',
+  'Plywood',
+  'Electricals',
+  'Paints',
   'Other'
 ];
 const CATEGORY_ALIASES = {
-  tool: 'Tools',
-  tools: 'Tools',
-  tooling: 'Tools',
-  paint: 'Paint',
-  paints: 'Paint',
-  cement: 'Cement',
-  cements: 'Cement',
-  construction: 'Construction',
-  electrical: 'Electrical',
-  electric: 'Electrical',
-  plumbing: 'Plumbing',
-  plumber: 'Plumbing',
-  hardware: 'Hardware',
-  fastener: 'Fasteners',
-  fasteners: 'Fasteners',
-  screw: 'Fasteners',
-  screws: 'Fasteners',
-  nail: 'Fasteners',
-  nails: 'Fasteners',
-  lumber: 'Lumber',
-  wood: 'Lumber',
-  safety: 'Safety',
+  roofing: 'Roofing',
+  roof: 'Roofing',
+  yero: 'Roofing',
+  pvc: 'PVC Pipe / Fittings',
+  'pvc pipe / fittings': 'PVC Pipe / Fittings',
+  'pvc pipes / fittings': 'PVC Pipe / Fittings',
+  'pvc pipe': 'PVC Pipe / Fittings',
+  'pvc pipes': 'PVC Pipe / Fittings',
+  plumbing: 'PVC Pipe / Fittings',
+  plumber: 'PVC Pipe / Fittings',
+  fittings: 'PVC Pipe / Fittings',
+  fitting: 'PVC Pipe / Fittings',
+  steel: 'Steel',
+  construction: 'Steel',
+  metal: 'Steel',
+  'kiln dry': 'Kiln Dry',
+  kiln: 'Kiln Dry',
+  lumber: 'Kiln Dry',
+  wood: 'Kiln Dry',
+  plywood: 'Plywood',
+  electricals: 'Electricals',
+  electrical: 'Electricals',
+  electric: 'Electricals',
+  paint: 'Paints',
+  paints: 'Paints',
+  tool: 'Other',
+  tools: 'Other',
+  tooling: 'Other',
+  cement: 'Other',
+  cements: 'Other',
+  hardware: 'Other',
+  fastener: 'Other',
+  fasteners: 'Other',
+  screw: 'Other',
+  screws: 'Other',
+  nail: 'Other',
+  nails: 'Other',
+  safety: 'Other',
   misc: 'Other',
   miscellaneous: 'Other',
   other: 'Other'
@@ -1821,7 +1834,8 @@ const STOCK_IN_REASONS = new Map([
   ['returned_item', 'Returned Item'],
   ['beginning_balance', 'Beginning Balance'],
   ['manual_adjustment', 'Manual Adjustment'],
-  ['correction', 'Correction']
+  ['correction', 'Correction'],
+  ['found_stock', 'Found Stock']
 ]);
 
 const ARCHIVE_REASONS = new Map([
@@ -5036,6 +5050,146 @@ app.post('/api/inventory/batch-stock-out', authenticate, async (req, res) => {
   }
 });
 
+app.post('/api/inventory/batch-stock-adjustment', authenticate, async (req, res) => {
+  const { items = [], movement_reason, movement_note } = req.body;
+  const normalizedMovementReason = normalizeStockMovementReasonForAction('stock_in', movement_reason);
+
+  if (!canPerformInventoryMovement(req.user)) {
+    return res.status(403).json({
+      error: 'Batch Stock Adjustment is available only to Admin / Manager and Inventory Staff accounts.'
+    });
+  }
+
+  if (!normalizedMovementReason) {
+    return res.status(400).json({ error: 'Please select the stock-in reason for this adjustment.' });
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Add at least one item to process a batch Stock Adjustment.' });
+  }
+
+  const aggregatedItems = new Map();
+  try {
+    for (const item of items) {
+      const inventoryId = Number(item?.inventory_id);
+      const quantity = parseNonNegativeInteger(item?.quantity, 'Stock Adjustment quantity');
+      if (!Number.isInteger(inventoryId) || inventoryId <= 0 || quantity <= 0) {
+        return res.status(400).json({ error: 'Each batch Stock Adjustment line must include a valid item and quantity.' });
+      }
+      aggregatedItems.set(inventoryId, (aggregatedItems.get(inventoryId) || 0) + quantity);
+    }
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ error: err.message || 'Invalid batch Stock Adjustment details.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const updatedItems = [];
+    for (const [inventoryId, quantity] of aggregatedItems.entries()) {
+      const currentResult = await client.query(
+        `SELECT
+           bi.inventory_id,
+           bi.product_id,
+           p.name,
+           p.category,
+           p.supplier_name,
+           p.default_selling_price,
+           bi.branch,
+           bi.stock_level,
+           bi.min_stock_level,
+           bi.lead_time_days,
+           bi.safety_stock,
+           bi.average_daily_sales,
+           bi.status,
+           bi.last_updated
+         FROM branch_inventory bi
+         INNER JOIN products p ON p.product_id = bi.product_id
+         WHERE bi.inventory_id = $1 AND bi.branch = $2
+         FOR UPDATE`,
+        [inventoryId, req.user.branch]
+      );
+
+      if (currentResult.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: `Inventory item ${inventoryId} was not found in your branch.` });
+      }
+
+      const currentItem = currentResult.rows[0];
+      const previousQuantity = Number(currentItem.stock_level || 0);
+      const nextQuantity = previousQuantity + quantity;
+      const nextStatus = computeInventoryStatus(nextQuantity, getEffectiveReorderThreshold(currentItem));
+      const updatedResult = await client.query(
+        `UPDATE branch_inventory
+         SET stock_level = $1,
+             status = $2,
+             last_updated = ${PHILIPPINE_NOW_SQL}
+         WHERE inventory_id = $3 AND branch = $4
+         RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
+        [nextQuantity, nextStatus, inventoryId, req.user.branch]
+      );
+
+      await recordStockMovement(client, {
+        inventoryId,
+        productId: currentItem.product_id,
+        itemName: currentItem.name,
+        category: currentItem.category,
+        branch: currentItem.branch,
+        action: 'stock_in',
+        quantityChanged: quantity,
+        previousQuantity,
+        newQuantity: nextQuantity,
+        reason: normalizedMovementReason,
+        note: movement_note || 'Batch stock adjustment recorded from inventory module.',
+        actorId: req.user.id
+      });
+
+      await recordAuditLog(client, {
+        actorId: req.user.id,
+        targetId: inventoryId,
+        targetName: currentItem.name,
+        targetType: 'inventory_item',
+        action: `BATCH_STOCK_ADJUSTMENT: ${getStockMovementReasonLabel(normalizedMovementReason, 'stock_in')}`,
+        reason: getStockMovementReasonLabel(normalizedMovementReason, 'stock_in'),
+        details: {
+          branch: currentItem.branch,
+          category: currentItem.category,
+          supplier: currentItem.supplier_name || 'Unassigned',
+          quantityChanged: quantity,
+          previousQuantity,
+          newQuantity: nextQuantity,
+          status: nextStatus,
+          note: movement_note || 'Batch stock adjustment recorded from inventory module.'
+        }
+      });
+
+      updatedItems.push({
+        ...updatedResult.rows[0],
+        name: currentItem.name,
+        category: currentItem.category,
+        supplier_name: currentItem.supplier_name,
+        default_selling_price: currentItem.default_selling_price,
+        lead_time_days: currentItem.lead_time_days,
+        safety_stock: currentItem.safety_stock,
+        average_daily_sales: currentItem.average_daily_sales
+      });
+    }
+
+    await client.query('COMMIT');
+    return res.json({ products: updatedItems.map(mapInventoryRow) });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+    console.error('Batch stock adjustment error:', err);
+    return res.status(500).json({ error: 'Failed to process batch Stock Adjustment' });
+  } finally {
+    client.release();
+  }
+});
+
 app.put('/api/inventory/:id', authenticate, async (req, res) => {
   const { id } = req.params;
   const {
@@ -5145,7 +5299,6 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       average_daily_sales: nextAverageDailySales
     }));
     const previousStatus = inventoryRow.status || computeInventoryStatus(previousQuantity, getEffectiveReorderThreshold(inventoryRow));
-    const shouldRefreshInventoryTimestamp = previousQuantity !== nextQuantity || previousStatus !== status;
     const cleanName = cleanInventoryName(name);
     const cleanSupplier = cleanSupplierName(supplier_name);
     const canonicalCategory = canonicalizeInventoryCategory(category);
@@ -5180,6 +5333,16 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       normalizeNullableNumber(inventoryRow.manual_average_daily_sales) !== normalizeNullableNumber(nextManualAverageDailySales) ||
       cleanAverageDailySalesOverrideReason(inventoryRow.average_daily_sales_override_reason) !== nextAverageDailySalesOverrideReason;
     const quantityChanged = previousQuantity !== nextQuantity;
+    const shouldRefreshInventoryTimestamp =
+      quantityChanged ||
+      previousStatus !== status ||
+      identityChanged ||
+      supplierChanged ||
+      defaultSellingPriceChanged ||
+      wspCodeChanged ||
+      costPriceChanged ||
+      reorderLevelChanged ||
+      reorderPlanningChanged;
     const allowedMovementActions = ['stock_in', 'stock_out'];
     const action = allowedMovementActions.includes(movement_action) ? movement_action : null;
     const normalizedMovementReason = action ? normalizeStockMovementReasonForAction(action, movement_reason) : null;

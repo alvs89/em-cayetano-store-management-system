@@ -773,7 +773,7 @@ export function SearchModule({ onNavigate }) {
                 <div className="search-empty-state text-center">
                   <Package className="mx-auto mb-4 h-16 w-16 text-slate-300" />
                   <h3 className="mb-2 text-xl text-slate-600">No records found</h3>
-                  <p className="text-slate-400">Try adjusting your search criteria</p>
+                  <p className="text-slate-700">Try adjusting your search criteria</p>
                 </div>
               ) : (
                 <div className="search-results-grid">
@@ -858,7 +858,7 @@ export function SearchModule({ onNavigate }) {
         ) : (
           <Card className="search-empty-card">
             <CardContent className="py-16">
-              <div className="search-empty-state text-center text-slate-400">
+              <div className="search-empty-state text-center text-slate-700">
                 <Search className="mx-auto mb-4 h-16 w-16 opacity-50" />
                 <p className="mb-2 text-lg">Start searching for products</p>
                 <p className="text-sm">Type in the search box or select filters to see results automatically</p>

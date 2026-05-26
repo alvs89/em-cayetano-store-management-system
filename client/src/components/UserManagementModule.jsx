@@ -1759,7 +1759,7 @@ export function UserManagementModule() {
                     <TableBody>
                       {filteredActiveUsers.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="text-center text-slate-400 py-8">
+                          <TableCell colSpan={7} className="text-center text-slate-700 py-8">
                             No active users found
                           </TableCell>
                         </TableRow>
@@ -1834,7 +1834,7 @@ export function UserManagementModule() {
                     <TableBody>
                       {filteredInactiveUsers.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="text-center text-slate-400 py-8">
+                          <TableCell colSpan={7} className="text-center text-slate-700 py-8">
                             No blocked or inactive accounts
                           </TableCell>
                         </TableRow>
@@ -1957,7 +1957,7 @@ export function UserManagementModule() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs leading-5 text-slate-500">
+                  <p className="text-xs leading-5 text-slate-700">
                     {ROLE_OPTIONS.find(option => option.value === newAccount.role)?.description}
                   </p>
                 </div>
@@ -2017,7 +2017,7 @@ export function UserManagementModule() {
                 </div>
               <div>
                 <DialogTitle>Temporary password generated</DialogTitle>
-                <DialogDescription className="mt-2 text-sm leading-6 text-slate-600">
+                <DialogDescription className="mt-2 text-sm leading-6 text-slate-700">
                     The account is active. Ask the employee to check their email and change this password after first login.
                 </DialogDescription>
               </div>
@@ -2061,7 +2061,7 @@ export function UserManagementModule() {
                 </div>
                 <div className="min-w-0">
                   <DialogTitle>Accounts Requiring Setup</DialogTitle>
-                  <DialogDescription className="mt-2 text-sm leading-6 text-slate-600">
+                  <DialogDescription className="mt-2 text-sm leading-6 text-slate-700">
                     Active users listed here still need to sign in with their temporary password and create their own password.
                   </DialogDescription>
                 </div>

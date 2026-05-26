@@ -135,8 +135,16 @@ const downloadSaleTransactionSummary = sale => {
   const formattedDate = Number.isNaN(saleDate.getTime())
     ? formatDateTime(sale.createdAt)
     : saleDate.toLocaleDateString();
+  const normalizePdfText = value =>
+    String(value ?? '')
+      .replace(/₱/g, 'PHP ')
+      .replace(/₱/g, 'PHP ')
+      .replace(/\u00a0/g, ' ')
+      .replace(/[ \t]{2,}/g, ' ')
+      .trim();
   const drawText = (text, x, y, options = {}) => {
-    doc.text(String(text ?? ''), x, y, options);
+    if (typeof doc.setCharSpace === 'function') doc.setCharSpace(0);
+    doc.text(normalizePdfText(text), x, y, options);
   };
   const drawBox = (x, y, w, h, fill = false) => {
     if (fill) {
@@ -3014,7 +3022,7 @@ export function SalesModule({ user }) {
           display: flex;
           flex-wrap: wrap;
           gap: 0.35rem;
-          color: #64748b;
+          color: #111827;
           font-size: 0.76rem;
           line-height: 1.1rem;
         }
@@ -3919,7 +3927,7 @@ export function SalesModule({ user }) {
                         <span className="block truncate text-sm font-bold text-slate-900">
                           {item.name}
                         </span>
-                        <span className="mt-1 block truncate text-xs text-slate-500">
+                        <span className="mt-1 block truncate text-xs text-slate-900">
                           {item.itemCode || 'No item code'}
                         </span>
                         <span className="sales-product-meta mt-2">
@@ -4241,7 +4249,7 @@ export function SalesModule({ user }) {
                 <div className="sales-remarks-field">
                 <div className="sales-remarks-header">
                   <Label htmlFor="sale-remarks">Remarks, optional</Label>
-                  <span className="text-xs font-medium text-slate-500">
+                  <span className="text-xs font-medium text-slate-700">
                     {remarks.length} / {SALES_REMARKS_MAX_LENGTH}
                   </span>
                 </div>
@@ -4313,7 +4321,7 @@ export function SalesModule({ user }) {
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
                       <h3 className="sales-section-title">Selected Items</h3>
-                      <p className="text-xs font-medium text-slate-500">
+                      <p className="text-xs font-medium text-slate-700">
                         {totalQuantity} unit{totalQuantity === 1 ? '' : 's'}
                       </p>
                     </div>
@@ -5214,7 +5222,7 @@ function CancelSaleDialog({ open, sale, reason, onReasonChange, onOpenChange, on
               disabled={isSubmitting}
               className="min-h-[92px] resize-none"
             />
-            <p className="text-xs leading-5 text-slate-500">
+              <p className="text-xs leading-5 text-slate-700">
               Use a short but clear reason for manager review and audit checking.
             </p>
           </div>
@@ -5347,7 +5355,7 @@ function SalesHistoryDialog({
                           <p className="truncate text-base font-bold text-slate-900">
                             {sale.salesNumber || 'Sales record'}
                           </p>
-                          <p className="sales-history-meta mt-2 text-sm leading-5 text-slate-500">
+                          <p className="sales-history-meta mt-2 text-sm leading-5 text-slate-700">
                             <CalendarDays className="h-4 w-4 text-slate-500" />
                             <span className="truncate">{formatDateTime(sale.createdAt)}</span>
                           </p>
@@ -5363,7 +5371,7 @@ function SalesHistoryDialog({
                         <div className="flex shrink-0 items-center gap-4 text-right">
                           <div>
                             <p className="text-base font-bold text-slate-900">{formatCurrency(sale.totalAmount)}</p>
-                            <p className="mt-1 text-sm text-slate-500">
+                            <p className="mt-1 text-sm text-slate-700">
                               {sale.totalQuantity} item{sale.totalQuantity === 1 ? '' : 's'}
                             </p>
                           </div>
@@ -5422,7 +5430,7 @@ function HistoryDetail({ icon, label, value }) {
         {icon}
       </span>
       <div className="min-w-0">
-        <span className="block text-sm font-medium text-slate-500">{label}</span>
+        <span className="block text-sm font-medium text-slate-700">{label}</span>
         <strong className="mt-1 block truncate text-base text-slate-900">{value}</strong>
       </div>
     </div>
@@ -5436,7 +5444,7 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-xl font-bold text-slate-900">{sale.salesNumber}</h3>
-          <p className="sales-history-meta mt-2 text-sm text-slate-500">
+          <p className="sales-history-meta mt-2 text-sm text-slate-700">
             <CalendarDays className="h-4 w-4 text-slate-500" />
             <span>{formatDateTime(sale.createdAt)}</span>
           </p>
@@ -5500,7 +5508,7 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
       <div className="pb-2 pt-2">
         <div className="mb-2 flex items-center justify-between gap-3 py-1">
           <h4 className="text-base font-semibold text-slate-900">Sold Items</h4>
-          <span className="text-sm text-slate-500">{sale.items?.length || 0} line{sale.items?.length === 1 ? '' : 's'}</span>
+          <span className="text-sm text-slate-700">{sale.items?.length || 0} line{sale.items?.length === 1 ? '' : 's'}</span>
         </div>
         <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
           {(sale.items || []).map(item => (
@@ -5512,10 +5520,10 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
                     <Badge variant="outline" className="bg-white text-slate-700">Non-Inventory</Badge>
                   )}
                 </div>
-                <p className="mt-1 break-words text-xs leading-5 text-slate-500">
+                <p className="mt-1 break-words text-xs leading-5 text-slate-700">
                   Category: {item.category || 'Uncategorized'}
                 </p>
-                <p className="mt-1 text-xs leading-5 text-slate-500">Unit Price: {formatCurrency(item.unitPrice)}</p>
+                <p className="mt-1 text-xs leading-5 text-slate-700">Unit Price: {formatCurrency(item.unitPrice)}</p>
               </div>
               <div className="flex flex-wrap justify-start gap-2 sm:justify-end">
                 <span className="inline-flex h-8 items-center rounded-full bg-white px-3 text-xs font-semibold text-slate-700">
@@ -5525,7 +5533,7 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
             </div>
           ))}
           <div className="flex items-center justify-end gap-6 rounded-lg bg-slate-100 px-4 py-3 text-sm">
-            <span className="text-slate-500">Items Subtotal</span>
+            <span className="text-slate-700">Items Subtotal</span>
             <strong className="whitespace-nowrap text-slate-900">{formatCurrency(sale.subtotalAmount ?? sale.totalAmount)}</strong>
           </div>
         </div>
@@ -5536,7 +5544,7 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
           <MessageSquareText className="h-5 w-5" />
         </span>
         <div className="min-w-0">
-          <span className="block text-xs font-medium uppercase tracking-wide text-slate-500">Remarks</span>
+          <span className="block text-xs font-medium uppercase tracking-wide text-slate-700">Remarks</span>
           <p className="mt-1 text-sm leading-6 text-slate-700">{sale.remarks || 'No remarks recorded.'}</p>
         </div>
       </div>
@@ -5557,7 +5565,7 @@ function SummaryBlock({ icon, label, value, tone = 'slate' }) {
         {icon}
       </span>
       <div className="min-w-0">
-        <span className="block text-xs font-medium text-slate-500">{label}</span>
+        <span className="block text-xs font-medium text-slate-700">{label}</span>
         <strong className="block truncate text-sm text-slate-900">{value}</strong>
       </div>
     </div>

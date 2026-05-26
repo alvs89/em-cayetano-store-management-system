@@ -17,8 +17,15 @@ import { useData } from './DataContext';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { PageHeader } from './PageHeader';
-import { formatDateTime } from '../utils/format';
+import { formatDateTime, formatPurchaseDocumentLabel, formatPurchasePaymentTerms } from '../utils/format';
 import { canAccessReportType, getDefaultReportTypeForRole, getReportTypeOptionsForRole, isAdminRole } from '../utils/roles';
+import {
+  HARDWARE_SUPPLIER_OPTIONS,
+  SUPPLIER_CUSTOM_VALUE,
+  getSupplierSelectValue,
+  isListedSupplier,
+  sanitizeSupplierInput,
+} from '../utils/suppliers';
 export function ReportsModule({
   user
 }) {
@@ -44,6 +51,7 @@ export function ReportsModule({
     quantity: '',
     reorderLevel: '5'
   });
+  const [conversionSupplierMode, setConversionSupplierMode] = useState('listed');
   const [acknowledgeSimilarItem, setAcknowledgeSimilarItem] = useState(false);
   const [isConvertingItem, setIsConvertingItem] = useState(false);
   const reportDateInputRef = useRef(null);
@@ -378,12 +386,14 @@ export function ReportsModule({
       quantity: '',
       reorderLevel: '5'
     });
+    setConversionSupplierMode('listed');
     setAcknowledgeSimilarItem(false);
   };
 
   const closeConvertUntrackedItemDialog = () => {
     if (isConvertingItem) return;
     setReviewItem(null);
+    setConversionSupplierMode('listed');
     setAcknowledgeSimilarItem(false);
   };
 
@@ -392,6 +402,17 @@ export function ReportsModule({
     if (field === 'name' || field === 'category') {
       setAcknowledgeSimilarItem(false);
     }
+  };
+
+  const updateConversionSupplierName = value => {
+    const cleaned = sanitizeSupplierInput(value);
+    if (cleaned !== value) {
+      toast.warning('Supplier name accepts letters, numbers, and common business characters only.', {
+        id: 'convert-supplier-valid-characters',
+        duration: 2600
+      });
+    }
+    updateConversionDraft('supplierName', cleaned);
   };
 
   const parseWholeNumber = value => {
@@ -760,7 +781,140 @@ export function ReportsModule({
       toast.error('This report is not available for your current role.');
       return;
     }
-    const doc = new jsPDF();
+    const isMovementPdfReport = reportType === 'movements' || reportType === 'sales-movements';
+    const doc = new jsPDF({
+      orientation: isMovementPdfReport ? 'landscape' : 'portrait',
+      unit: 'mm',
+      format: 'a4'
+    });
+    const pdfMargin = 20;
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const pageCenter = pageWidth / 2;
+    const pageRight = pageWidth - pdfMargin;
+    const normalizePdfText = value =>
+      String(value ?? '')
+        .replace(/₱/g, 'PHP ')
+        .replace(/₱/g, 'PHP ')
+        .replace(/\u00a0/g, ' ')
+        .replace(/[ \t]{2,}/g, ' ')
+        .trim();
+    const normalizePdfCell = value => Array.isArray(value)
+      ? value.map(normalizePdfCell)
+      : normalizePdfText(value);
+    const getPdfColumnAlignment = headerText => {
+      const header = normalizePdfText(headerText).toLowerCase();
+      if (
+        ['id', 'item code', 'movement id', 'sale no.', 'purchase no.', 'qty', 'qty sold', 'quantity', 'items', 'total units', 'low stock', 'out of stock', 'current', 'threshold', 'qty needed', 'times sold', 'before/after', 'before -> after'].includes(header)
+      ) {
+        return 'center';
+      }
+      if (
+        ['supplier', 'date', 'last updated', 'last sold', 'category', 'doc', 'terms', 'status', 'action', 'payment'].includes(header)
+      ) {
+        return 'center';
+      }
+      if (['total', 'sales amount', 'amount due'].includes(header)) {
+        return 'center';
+      }
+      return 'left';
+    };
+    const originalDocText = doc.text.bind(doc);
+    doc.text = (text, ...args) => {
+      if (typeof doc.setCharSpace === 'function') doc.setCharSpace(0);
+      return originalDocText(normalizePdfCell(text), ...args);
+    };
+    const reportTable = options => {
+      if (typeof doc.setCharSpace === 'function') doc.setCharSpace(0);
+      autoTable(doc, {
+        ...options,
+        margin: {
+          left: pdfMargin,
+          right: pdfMargin,
+          ...(options.margin || {})
+        },
+        tableWidth: options.tableWidth || 'auto',
+        head: normalizePdfCell(options.head || []),
+        body: normalizePdfCell(options.body || []),
+        styles: {
+          font: 'helvetica',
+          fontStyle: 'normal',
+          overflow: 'linebreak',
+          minCellHeight: 6,
+          valign: 'middle',
+          ...(options.styles || {}),
+          cellPadding: {
+            top: 1.5,
+            right: 2,
+            bottom: 1.5,
+            left: 2
+          }
+        },
+        headStyles: {
+          font: 'helvetica',
+          fontStyle: 'bold',
+          halign: 'center',
+          valign: 'middle',
+          overflow: 'visible',
+          cellPadding: {
+            top: 1.4,
+            right: 1,
+            bottom: 1.4,
+            left: 1
+          },
+          ...(options.headStyles || {})
+        },
+        didParseCell: data => {
+          if (data.cell?.text) data.cell.text = normalizePdfCell(data.cell.text);
+          const columnHeader = options.head?.[0]?.[data.column.index] || '';
+          if (data.section === 'body') {
+            data.cell.styles.halign = getPdfColumnAlignment(columnHeader);
+            data.cell.styles.valign = 'middle';
+          }
+          if (data.section === 'head') {
+            data.cell.styles.halign = 'center';
+            data.cell.styles.valign = 'middle';
+          }
+          options.didParseCell?.(data);
+        },
+        willDrawCell: data => {
+          if (typeof doc.setCharSpace === 'function') doc.setCharSpace(0);
+          options.willDrawCell?.(data);
+        }
+      });
+    };
+    const drawLabelValue = (label, value, x, y, options = {}) => {
+      const fontSize = options.fontSize || 10;
+      const labelText = normalizePdfText(`${label}:`);
+      const valueText = normalizePdfText(value);
+      doc.setFontSize(fontSize);
+      doc.setFont('helvetica', 'bold');
+      doc.text(labelText, x, y);
+      const valueX = x + doc.getTextWidth(labelText) + 1.3;
+      doc.setFont('helvetica', 'normal');
+      doc.text(valueText, valueX, y);
+    };
+    const drawLabelValueSegments = (segments, x, y, options = {}) => {
+      const fontSize = options.fontSize || 10;
+      let cursorX = x;
+      doc.setFontSize(fontSize);
+      segments.forEach((segment, index) => {
+        const labelText = normalizePdfText(`${segment.label}:`);
+        const valueText = normalizePdfText(segment.value);
+        doc.setFont('helvetica', 'bold');
+        doc.text(labelText, cursorX, y);
+        cursorX += doc.getTextWidth(labelText) + 1.3;
+        doc.setFont('helvetica', 'normal');
+        doc.text(valueText, cursorX, y);
+        cursorX += doc.getTextWidth(valueText);
+        if (index < segments.length - 1) {
+          cursorX += 2.6;
+          const separator = '|';
+          doc.text(separator, cursorX, y);
+          cursorX += doc.getTextWidth(separator) + 2.6;
+        }
+      });
+    };
     const currentDate = new Date().toLocaleDateString();
     const currentTime = new Date().toLocaleTimeString();
 
@@ -775,28 +929,27 @@ export function ReportsModule({
     // Header
     doc.setFontSize(18);
     doc.setFont('helvetica', 'bold');
-    doc.text('E.M. CAYETANO TRADING', 105, 20, {
+    doc.text('E.M. CAYETANO TRADING', pageCenter, 20, {
       align: 'center'
     });
     doc.setFontSize(12);
     doc.setFont('helvetica', 'normal');
-    doc.text('INVENTORY MANAGEMENT SYSTEM', 105, 28, {
+    doc.text('INVENTORY MANAGEMENT SYSTEM', pageCenter, 28, {
       align: 'center'
     });
 
     // Add line separator
     doc.setLineWidth(0.5);
-    doc.line(20, 32, 190, 32);
+    doc.line(pdfMargin, 32, pageRight, 32);
 
     // Report Info
     doc.setFontSize(10);
-    doc.text(`Report Type: ${getReportTypeLabel()}`, 20, 40);
-    doc.text(`Report Scope: ${getReportScopeLabel()}`, 20, 46);
-    doc.text(`Generated: ${currentDate} ${currentTime}`, 20, 52);
-    doc.text(`Branch: ${user.branch}`, 20, 58);
-    doc.text(`Generated by: ${user.fullName}`, 20, 64);
-    doc.line(20, 68, 190, 68);
-    let startY = 76;
+    drawLabelValue('Report Type', getReportTypeLabel(), pdfMargin, 40);
+    drawLabelValue('Generated', `${currentDate} ${currentTime}`, pdfMargin, 46);
+    drawLabelValue('Branch', user.branch, pdfMargin, 52);
+    drawLabelValue('Generated by', user.fullName, pdfMargin, 58);
+    doc.line(pdfMargin, 62, pageRight, 62);
+    let startY = 70;
     if (reportType === 'summary') {
       // Summary Statistics
       doc.setFontSize(12);
@@ -804,17 +957,17 @@ export function ReportsModule({
       doc.text('INVENTORY SUMMARY', 20, startY);
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
-      doc.text(`Total Items: ${totalItems}`, 30, startY + 8);
-      doc.text(`Total Units in Stock: ${totalQuantity}`, 30, startY + 14);
-      doc.text(`In Stock: ${inStockItems}`, 30, startY + 20);
-      doc.text(`Low Stock: ${lowStockItems}`, 30, startY + 26);
-      doc.text(`Out of Stock: ${outOfStockItems}`, 30, startY + 32);
+      drawLabelValue('Total Items', totalItems, 20, startY + 8);
+      drawLabelValue('Total Units in Stock', totalQuantity, 20, startY + 14);
+      drawLabelValue('In Stock', inStockItems, 20, startY + 20);
+      drawLabelValue('Low Stock', lowStockItems, 20, startY + 26);
+      drawLabelValue('Out of Stock', outOfStockItems, 20, startY + 32);
 
       // Category Breakdown Table
       doc.setFont('helvetica', 'bold');
       doc.text('CATEGORY BREAKDOWN', 20, startY + 45);
       const categoryData = getCategorySummary().map(cat => [cat.category, cat.itemCount.toString(), cat.totalQty.toString(), cat.lowStock.toString(), cat.outOfStock.toString()]);
-      autoTable(doc, {
+      reportTable({
         startY: startY + 50,
         head: [['Category', 'Items', 'Total Units', 'Low Stock', 'Out of Stock']],
         body: categoryData,
@@ -839,12 +992,12 @@ export function ReportsModule({
       doc.text('DETAILED INVENTORY REPORT', 20, startY);
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
-      doc.text(`Category Filter: ${selectedCategory === 'all' ? 'All Categories' : selectedCategory}`, 20, startY + 8);
-      doc.text(`Total Items: ${items.length}`, 20, startY + 14);
+      drawLabelValue('Category Filter', selectedCategory === 'all' ? 'All Categories' : selectedCategory, 20, startY + 8);
+      drawLabelValue('Total Items', items.length, 20, startY + 14);
       const itemData = items.map(item => [getDisplayItemCode(item), item.name, item.category, item.supplierName || 'Unassigned', item.quantity.toString(), item.status, formatDateTime(item.lastUpdated)]);
-      autoTable(doc, {
+      reportTable({
         startY: startY + 20,
-        head: [['Item Code', 'Item Name', 'Category', 'Supplier', 'Quantity', 'Status', 'Last Updated']],
+        head: [['Item Code', 'Item Name', 'Category', 'Supplier', 'Qty', 'Status', 'Last Updated']],
         body: itemData,
         theme: 'striped',
         headStyles: {
@@ -853,33 +1006,33 @@ export function ReportsModule({
           fontStyle: 'bold'
         },
         styles: {
-          fontSize: 8,
-          cellPadding: 2
+          fontSize: 7,
+          cellPadding: 1.6
         },
         alternateRowStyles: {
           fillColor: [248, 250, 252]
         },
         columnStyles: {
           0: {
-            cellWidth: 28
+            cellWidth: 22
           },
           1: {
-            cellWidth: 42
+            cellWidth: 45
           },
           2: {
-            cellWidth: 30
-          },
-          3: {
-            cellWidth: 28
-          },
-          4: {
-            cellWidth: 18
-          },
-          5: {
             cellWidth: 24
           },
-          6: {
+          3: {
             cellWidth: 27
+          },
+          4: {
+            cellWidth: 14
+          },
+          5: {
+            cellWidth: 17
+          },
+          6: {
+            cellWidth: 21
           }
         }
       });
@@ -890,14 +1043,14 @@ export function ReportsModule({
       doc.text('LOW STOCK ALERT REPORT', 20, startY);
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
-      doc.text(`Restocking Attention Items: ${lowStockList.length}`, 20, startY + 8);
+      drawLabelValue('Restocking Attention Items', lowStockList.length, 20, startY + 8);
       if (lowStockList.length === 0) {
         doc.text('No low stock or out-of-stock items found for this report period.', 20, startY + 20);
       } else {
         const itemData = lowStockList.map(item => [getDisplayItemCode(item), item.name, item.category, item.supplierName || 'Unassigned', item.quantity.toString(), item.status, formatDateTime(item.lastUpdated)]);
-        autoTable(doc, {
+        reportTable({
           startY: startY + 15,
-          head: [['Item Code', 'Item Name', 'Category', 'Supplier', 'Quantity', 'Status', 'Last Updated']],
+          head: [['Item Code', 'Item Name', 'Category', 'Supplier', 'Qty', 'Status', 'Last Updated']],
           body: itemData,
           theme: 'striped',
           headStyles: {
@@ -906,33 +1059,33 @@ export function ReportsModule({
             fontStyle: 'bold'
           },
           styles: {
-            fontSize: 8,
-            cellPadding: 2
+            fontSize: 7,
+            cellPadding: 1.6
           },
           alternateRowStyles: {
             fillColor: [254, 242, 242]
           },
           columnStyles: {
             0: {
-              cellWidth: 28
+              cellWidth: 22
             },
             1: {
-              cellWidth: 42
+              cellWidth: 45
             },
             2: {
-              cellWidth: 30
-            },
-            3: {
-              cellWidth: 28
-            },
-            4: {
-              cellWidth: 18
-            },
-            5: {
               cellWidth: 24
             },
-            6: {
+            3: {
               cellWidth: 27
+            },
+            4: {
+              cellWidth: 14
+            },
+            5: {
+              cellWidth: 17
+            },
+            6: {
+              cellWidth: 21
             }
           }
         });
@@ -944,29 +1097,30 @@ export function ReportsModule({
       doc.text('SUPPLIER REORDER REPORT', 20, startY);
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
-      doc.text(`Category Filter: ${selectedCategory === 'all' ? 'All Categories' : selectedCategory}`, 20, startY + 8);
-      doc.text(`Supplier Groups: ${supplierGroups.length}`, 20, startY + 14);
+      drawLabelValue('Category Filter', selectedCategory === 'all' ? 'All Categories' : selectedCategory, 20, startY + 8);
+      drawLabelValue('Supplier Groups', supplierGroups.length, 20, startY + 14);
 
       if (supplierGroups.length === 0) {
         doc.text('No low-stock or out-of-stock items require supplier reorder review.', 20, startY + 28);
       } else {
         let currentY = startY + 24;
         supplierGroups.forEach(group => {
-          if (currentY > 245) {
+          if (currentY > pageHeight - 42) {
             doc.addPage();
             currentY = 20;
           }
           doc.setFontSize(11);
           doc.setFont('helvetica', 'bold');
-          doc.text(`SUPPLIER: ${group.supplier}`, 20, currentY);
+          drawLabelValue('SUPPLIER', group.supplier, 20, currentY, { fontSize: 11 });
           doc.setFontSize(9);
           doc.setFont('helvetica', 'normal');
-          doc.text(
-            `Items: ${group.itemCount} | Out of Stock: ${group.outOfStock} | Low Stock: ${group.lowStock} | Qty Needed to Threshold: ${formatUnitCount(group.neededQuantity)}`,
-            20,
-            currentY + 6
-          );
-          autoTable(doc, {
+          drawLabelValueSegments([
+            { label: 'Items', value: group.itemCount },
+            { label: 'Out of Stock', value: group.outOfStock },
+            { label: 'Low Stock', value: group.lowStock },
+            { label: 'Qty Needed to Threshold', value: formatUnitCount(group.neededQuantity) }
+          ], 20, currentY + 6, { fontSize: 9 });
+          reportTable({
             startY: currentY + 12,
             head: [['Item Code', 'Item', 'Category', 'Current', 'Threshold', 'Qty Needed', 'Status']],
             body: group.items.map(item => [
@@ -993,11 +1147,11 @@ export function ReportsModule({
       doc.text('UNTRACKED SALES ITEMS REPORT', 20, startY);
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
-      doc.text(`Non-inventory item groups: ${untrackedItems.length}`, 20, startY + 8);
+      drawLabelValue('Non-inventory item groups', untrackedItems.length, 20, startY + 8);
       if (untrackedItems.length === 0) {
         doc.text('No non-inventory sales items found for this report period.', 20, startY + 22);
       } else {
-        autoTable(doc, {
+        reportTable({
           startY: startY + 16,
           head: [['Item Description', 'Category', 'Qty Sold', 'Sales Amount', 'Times Sold', 'Last Sold', 'Status']],
           body: untrackedItems.map(item => [
@@ -1021,21 +1175,26 @@ export function ReportsModule({
       doc.text('CATEGORY SUMMARY REPORT', 20, startY);
       let currentY = startY + 10;
       getCategorySummary().forEach((cat, index) => {
-        if (currentY > 250) {
+        if (currentY > pageHeight - 42) {
           doc.addPage();
           currentY = 20;
         }
         doc.setFontSize(11);
         doc.setFont('helvetica', 'bold');
-        doc.text(`CATEGORY: ${cat.category}`, 20, currentY);
+        drawLabelValue('CATEGORY', cat.category, 20, currentY, { fontSize: 11 });
         doc.setFontSize(9);
         doc.setFont('helvetica', 'normal');
-        doc.text(`Total Items: ${cat.itemCount} | Total Units: ${cat.totalQty} | Low Stock: ${cat.lowStock} | Out of Stock: ${cat.outOfStock}`, 20, currentY + 6);
+        drawLabelValueSegments([
+          { label: 'Total Items', value: cat.itemCount },
+          { label: 'Total Units', value: cat.totalQty },
+          { label: 'Low Stock', value: cat.lowStock },
+          { label: 'Out of Stock', value: cat.outOfStock }
+        ], 20, currentY + 6, { fontSize: 9 });
         const categoryItems = computedReportInventory.filter(item => item.category === cat.category);
         const itemData = categoryItems.map(item => [getDisplayItemCode(item), item.name, item.supplierName || 'Unassigned', item.quantity.toString(), item.status, formatDateTime(item.lastUpdated)]);
-        autoTable(doc, {
+        reportTable({
           startY: currentY + 12,
-          head: [['Item Code', 'Item Name', 'Supplier', 'Quantity', 'Status', 'Last Updated']],
+          head: [['Item Code', 'Item Name', 'Supplier', 'Qty', 'Status', 'Last Updated']],
           body: itemData,
           theme: 'striped',
           headStyles: {
@@ -1044,27 +1203,30 @@ export function ReportsModule({
             fontStyle: 'bold'
           },
           styles: {
-            fontSize: 8,
-            cellPadding: 2
+            fontSize: 7,
+            cellPadding: 1.6
           },
           alternateRowStyles: {
             fillColor: [248, 250, 252]
           },
           columnStyles: {
             0: {
-              cellWidth: 30
+              cellWidth: 22
             },
             1: {
-              cellWidth: 60
+              cellWidth: 46
             },
             2: {
-              cellWidth: 25
+              cellWidth: 28
             },
             3: {
-              cellWidth: 30
+              cellWidth: 13
             },
             4: {
-              cellWidth: 30
+              cellWidth: 18
+            },
+            5: {
+              cellWidth: 43
             }
           }
         });
@@ -1078,29 +1240,40 @@ export function ReportsModule({
       doc.text('PURCHASE REPORT', 20, startY);
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
-      doc.text(`Purchase Entries: ${purchaseSummary.entryCount}`, 20, startY + 8);
-      doc.text(`Quantity Received: ${purchaseSummary.totalQuantity}`, 20, startY + 14);
-      doc.text(`Total Purchases: ${formatCurrency(purchaseSummary.totalAmount)}`, 20, startY + 20);
+      drawLabelValue('Purchase Entries', purchaseSummary.entryCount, 20, startY + 8);
+      drawLabelValue('Quantity Received', purchaseSummary.totalQuantity, 20, startY + 14);
+      drawLabelValue('Total Purchases', formatCurrency(purchaseSummary.totalAmount), 20, startY + 20);
 
       if (purchases.length === 0) {
         doc.text('No purchase entries found for this report period.', 20, startY + 34);
       } else {
-        autoTable(doc, {
+        reportTable({
           startY: startY + 32,
-          head: [['Purchase No.', 'Date', 'Supplier', 'Doc', 'Terms', 'Qty', 'Total']],
+          head: [['Purchase No.', 'Date', 'Supplier', 'Doc', 'Terms', 'Qty', 'Total', 'Remarks']],
           body: purchases.map(purchase => [
             purchase.purchaseNumber,
             formatDateTime(purchase.createdAt),
             purchase.supplierName,
-            `${purchase.documentType}${purchase.documentNumber ? ` ${purchase.documentNumber}` : ''}`,
-            purchase.paymentTerms,
+            formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber),
+            formatPurchasePaymentTerms(purchase.paymentTerms),
             String(purchase.totalQuantity),
-            formatCurrency(purchase.subtotalAmount)
+            formatCurrency(purchase.subtotalAmount),
+            String(purchase.remarks || '').trim() || '-'
           ]),
           theme: 'striped',
           headStyles: { fillColor: [22, 101, 52], textColor: 255, fontStyle: 'bold' },
           styles: { fontSize: 8, cellPadding: 2 },
-          alternateRowStyles: { fillColor: [248, 250, 252] }
+          alternateRowStyles: { fillColor: [248, 250, 252] },
+          columnStyles: {
+            0: { cellWidth: 23 },
+            1: { cellWidth: 25 },
+            2: { cellWidth: 25 },
+            3: { cellWidth: 15 },
+            4: { cellWidth: 13 },
+            5: { cellWidth: 10 },
+            6: { cellWidth: 28 },
+            7: { cellWidth: 31 }
+          }
         });
       }
     } else if (reportType === 'movements' || reportType === 'sales-movements') {
@@ -1113,15 +1286,19 @@ export function ReportsModule({
       doc.text(isSalesMovementReport ? 'SALES-BASED STOCK MOVEMENT REPORT' : 'STOCK MOVEMENT HISTORY', 20, startY);
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
-      doc.text(`Category Filter: ${selectedCategory === 'all' ? 'All Categories' : selectedCategory}`, 20, startY + 8);
-      doc.text(`${isSalesMovementReport ? 'Sales Stock Deductions' : 'Total Movements'}: ${movements.length}`, 20, startY + 14);
+      drawLabelValue('Category Filter', selectedCategory === 'all' ? 'All Categories' : selectedCategory, 20, startY + 8);
+      drawLabelValue(isSalesMovementReport ? 'Sales Stock Deductions' : 'Total Movements', movements.length, 20, startY + 14);
       if (isSalesMovementReport) {
-        doc.text(`Quantity Sold: ${getSalesMovementUnits()}`, 20, startY + 20);
-        doc.text(`Sales Transactions: ${salesSummary.transactionCount}`, 20, startY + 26);
-        doc.text(`Subtotal: ${formatCurrency(salesSummary.subtotal)} | Discount: ${formatCurrency(salesSummary.discount)} | Amount Due: ${formatCurrency(salesSummary.amountDue)}`, 20, startY + 32);
+        drawLabelValue('Quantity Sold', getSalesMovementUnits(), 20, startY + 20);
+        drawLabelValue('Sales Transactions', salesSummary.transactionCount, 20, startY + 26);
+        drawLabelValueSegments([
+          { label: 'Subtotal', value: formatCurrency(salesSummary.subtotal) },
+          { label: 'Discount', value: formatCurrency(salesSummary.discount) },
+          { label: 'Amount Due', value: formatCurrency(salesSummary.amountDue) }
+        ], 20, startY + 32);
       } else {
-        doc.text(`Stock In Units: ${movementSummary.stockInUnits}`, 20, startY + 20);
-        doc.text(`Stock Out Units: ${movementSummary.stockOutUnits}`, 20, startY + 26);
+        drawLabelValue('Stock In Units', movementSummary.stockInUnits, 20, startY + 20);
+        drawLabelValue('Stock Out Units', movementSummary.stockOutUnits, 20, startY + 26);
       }
 
       if (movements.length === 0) {
@@ -1133,20 +1310,49 @@ export function ReportsModule({
           isSalesMovementReport ? startY + 44 : startY + 38
         );
       } else {
-        const movementData = movements.map(movement => [
-          isSalesMovementReport ? movement.salesNumber || movement.id : movement.id,
-          formatDateTime(movement.createdAt),
-          formatMovementItemNameForExport(movement),
-          movement.category,
-          getMovementLabel(movement.action),
-          isSalesMovementReport ? getPaymentMethodLabel(movement.paymentMethod) : getMovementReasonLabel(movement.reason),
-          movement.quantityChanged.toString(),
-          `${movement.previousQuantity} -> ${movement.newQuantity}`,
-          movement.actorName || 'System'
-        ]);
-        autoTable(doc, {
+        const movementData = movements.map(movement => {
+          const sharedColumns = [
+            formatDateTime(movement.createdAt),
+            formatMovementItemNameForExport(movement),
+            movement.category,
+            getMovementLabel(movement.action),
+            isSalesMovementReport ? getPaymentMethodLabel(movement.paymentMethod) : getMovementReasonLabel(movement.reason),
+            movement.quantityChanged.toString(),
+            `${movement.previousQuantity} -> ${movement.newQuantity}`,
+            movement.actorName || 'System'
+          ];
+          return isSalesMovementReport
+            ? [movement.salesNumber || movement.id, ...sharedColumns]
+            : sharedColumns;
+        });
+        const movementHead = isSalesMovementReport
+          ? ['Sale No.', 'Date', 'Item', 'Category', 'Action', 'Payment', 'Qty Sold', 'Before/After', 'Handled By']
+          : ['Date', 'Item', 'Category', 'Action', 'Reason', 'Qty', 'Before/After', 'Handled By'];
+        const movementColumnStyles = isSalesMovementReport
+          ? {
+              0: { cellWidth: 24 },
+              1: { cellWidth: 31 },
+              2: { cellWidth: 56 },
+              3: { cellWidth: 28 },
+              4: { cellWidth: 22 },
+              5: { cellWidth: 33 },
+              6: { cellWidth: 18 },
+              7: { cellWidth: 29 },
+              8: { cellWidth: 24 }
+            }
+          : {
+              0: { cellWidth: 31 },
+              1: { cellWidth: 65 },
+              2: { cellWidth: 30 },
+              3: { cellWidth: 23 },
+              4: { cellWidth: 37 },
+              5: { cellWidth: 16 },
+              6: { cellWidth: 31 },
+              7: { cellWidth: 24 }
+            };
+        reportTable({
           startY: isSalesMovementReport ? startY + 42 : startY + 34,
-          head: [[isSalesMovementReport ? 'Sale No.' : 'Movement ID', 'Date', 'Item', 'Category', 'Action', isSalesMovementReport ? 'Payment' : 'Reason', isSalesMovementReport ? 'Qty Sold' : 'Qty', 'Before -> After', 'Handled By']],
+          head: [movementHead],
           body: movementData,
           theme: 'striped',
           headStyles: {
@@ -1155,12 +1361,13 @@ export function ReportsModule({
             fontStyle: 'bold'
           },
           styles: {
-            fontSize: 7,
-            cellPadding: 2
+            fontSize: 7.5,
+            cellPadding: 1.7
           },
           alternateRowStyles: {
             fillColor: [248, 250, 252]
-          }
+          },
+          columnStyles: movementColumnStyles
         });
       }
     }
@@ -1171,10 +1378,10 @@ export function ReportsModule({
       doc.setPage(i);
       doc.setFontSize(8);
       doc.setFont('helvetica', 'normal');
-      doc.text(`Page ${i} of ${pageCount}`, 105, 285, {
+      doc.text(`Page ${i} of ${pageCount}`, pageCenter, pageHeight - 12, {
         align: 'center'
       });
-      doc.text('E.M. Cayetano Trading - Inventory Management System', 105, 290, {
+      doc.text('E.M. Cayetano Trading - Inventory Management System', pageCenter, pageHeight - 7, {
         align: 'center'
       });
     }
@@ -1200,6 +1407,7 @@ export function ReportsModule({
       purchase_received: 'Purchase Received',
       returned_item: 'Returned Item',
       beginning_balance: 'Beginning Balance',
+      found_stock: 'Found Stock',
       sales: 'Sales',
       damaged: 'Damaged',
       expired: 'Expired',
@@ -1334,6 +1542,9 @@ export function ReportsModule({
       </div>
     </article>
   );
+
+  const conversionSupplierSelectValue = getSupplierSelectValue(conversionDraft.supplierName, conversionSupplierMode);
+  const showConversionCustomSupplier = conversionSupplierSelectValue === SUPPLIER_CUSTOM_VALUE;
 
   return (
     <div className="reports-page min-h-screen bg-gray-50 p-4 md:p-8">
@@ -1673,6 +1884,34 @@ export function ReportsModule({
           background: #f8fafc;
         }
 
+        .reports-desktop-table tbody td:first-child,
+        .reports-movement-desktop-table tbody td:first-child,
+        .reports-category-table tbody td:first-child {
+          color: #111827;
+          font-weight: 700;
+        }
+
+        .reports-desktop-table tbody td:first-child :is(p, span, strong, div):not([data-slot='badge']),
+        .reports-movement-desktop-table tbody td:first-child :is(p, span, strong, div):not([data-slot='badge']),
+        .reports-category-table tbody td:first-child :is(p, span, strong, div):not([data-slot='badge']) {
+          color: inherit;
+          font-weight: inherit;
+        }
+
+        .reports-desktop-table tbody td:not(:first-child),
+        .reports-movement-desktop-table tbody td:not(:first-child),
+        .reports-category-table tbody td:not(:first-child) {
+          color: #111827;
+          font-weight: 400;
+        }
+
+        .reports-desktop-table tbody td:not(:first-child) :is(p, span, strong, div):not([data-slot='badge']),
+        .reports-movement-desktop-table tbody td:not(:first-child) :is(p, span, strong, div):not([data-slot='badge']),
+        .reports-category-table tbody td:not(:first-child) :is(p, span, strong, div):not([data-slot='badge']) {
+          color: inherit;
+          font-weight: inherit;
+        }
+
         .reports-record-card {
           min-width: 0;
           border: 1px solid #e2e8f0;
@@ -1799,6 +2038,28 @@ export function ReportsModule({
           font-size: 0.78rem;
           line-height: 1.45;
           overflow-wrap: anywhere;
+        }
+
+        .reports-purchase-remarks-cell {
+          max-width: 14rem;
+          color: #475569;
+          font-size: 0.82rem;
+          line-height: 1.35;
+          overflow-wrap: anywhere;
+          white-space: normal;
+        }
+
+        .reports-purchase-table .reports-purchase-total-head,
+        .reports-purchase-table .reports-purchase-total-cell {
+          width: 8.5rem;
+          min-width: 8.5rem;
+          padding-right: 1rem !important;
+          text-align: right !important;
+        }
+
+        .reports-purchase-table .reports-purchase-total-cell {
+          font-variant-numeric: tabular-nums;
+          white-space: nowrap;
         }
 
         .reports-mobile-category-card,
@@ -2621,7 +2882,7 @@ export function ReportsModule({
               })
             ) : (
               <>
-                <div className="reports-desktop-table">
+                <div className="reports-desktop-table reports-purchase-table">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -2942,7 +3203,8 @@ export function ReportsModule({
                         <TableHead>Document</TableHead>
                         <TableHead>Terms</TableHead>
                         <TableHead>Quantity</TableHead>
-                        <TableHead className="text-right">Total</TableHead>
+                        <TableHead className="reports-purchase-total-head">Total</TableHead>
+                        <TableHead>Remarks</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -2951,10 +3213,11 @@ export function ReportsModule({
                           <TableCell className="font-semibold">{purchase.purchaseNumber}</TableCell>
                           <TableCell>{formatDateTime(purchase.createdAt)}</TableCell>
                           <TableCell>{purchase.supplierName}</TableCell>
-                          <TableCell>{purchase.documentType}{purchase.documentNumber ? ` ${purchase.documentNumber}` : ''}</TableCell>
-                          <TableCell>{purchase.paymentTerms}</TableCell>
+                          <TableCell>{formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber)}</TableCell>
+                          <TableCell>{formatPurchasePaymentTerms(purchase.paymentTerms)}</TableCell>
                           <TableCell>{purchase.totalQuantity}</TableCell>
-                          <TableCell className="text-right font-semibold">{formatCurrency(purchase.subtotalAmount)}</TableCell>
+                          <TableCell className="reports-purchase-total-cell">{formatCurrency(purchase.subtotalAmount)}</TableCell>
+                          <TableCell className="reports-purchase-remarks-cell">{purchase.remarks || '-'}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -2975,11 +3238,11 @@ export function ReportsModule({
                       <div className="reports-record-grid reports-record-grid-four">
                         <div className="reports-record-stat">
                           <span>Document</span>
-                          <strong>{purchase.documentType}{purchase.documentNumber ? ` ${purchase.documentNumber}` : ''}</strong>
+                          <strong>{formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber)}</strong>
                         </div>
                         <div className="reports-record-stat">
                           <span>Terms</span>
-                          <strong>{String(purchase.paymentTerms || 'cash').replace(/_/g, ' ').toUpperCase()}</strong>
+                          <strong>{formatPurchasePaymentTerms(purchase.paymentTerms)}</strong>
                         </div>
                         <div className="reports-record-stat">
                           <span>Quantity</span>
@@ -3153,7 +3416,7 @@ export function ReportsModule({
                             <div className="space-y-1">
                               <div className="font-medium text-slate-900">{itemNameDetails.historicalName}</div>
                               {itemNameDetails.currentName && (
-                                <div className="text-xs text-slate-500">Current name: {itemNameDetails.currentName}</div>
+                                <div className="text-xs text-slate-700">Current name: {itemNameDetails.currentName}</div>
                               )}
                             </div>
                           </TableCell>
@@ -3216,10 +3479,12 @@ export function ReportsModule({
                           <span>Branch</span>
                           <strong>{movement.branch}</strong>
                         </div>
-                        <div className="reports-movement-stat">
-                          <span>{reportType === 'sales-movements' ? 'Sale No.' : 'Movement ID'}</span>
-                          <strong>{reportType === 'sales-movements' ? movement.salesNumber || movement.id : movement.id}</strong>
-                        </div>
+                        {reportType === 'sales-movements' && (
+                          <div className="reports-movement-stat">
+                            <span>Sale No.</span>
+                            <strong>{movement.salesNumber || movement.id}</strong>
+                          </div>
+                        )}
                       </div>
                     </article>
                     );
@@ -3244,7 +3509,7 @@ export function ReportsModule({
                 <DialogTitle className="text-xl font-bold leading-tight text-slate-950">
                   Review Non-Inventory Item
                 </DialogTitle>
-                <DialogDescription className="mt-2 text-sm leading-6 text-slate-600">
+                <DialogDescription className="mt-2 text-sm leading-6 text-slate-700">
                   Add this frequently sold manual item to Inventory only after checking for duplicates and entering its beginning stock.
                 </DialogDescription>
               </div>
@@ -3313,15 +3578,42 @@ export function ReportsModule({
                 </div>
                 <div className="reports-convert-field">
                   <Label htmlFor="convert-supplier">Supplier, optional</Label>
-                  <Input
-                    id="convert-supplier"
-                    className="reports-convert-control"
-                    value={conversionDraft.supplierName}
-                    maxLength={120}
-                    placeholder="e.g., Susi, One Samix"
+                  <Select
+                    value={conversionSupplierSelectValue}
+                    onValueChange={value => {
+                      if (value === SUPPLIER_CUSTOM_VALUE) {
+                        setConversionSupplierMode('custom');
+                        if (isListedSupplier(conversionDraft.supplierName)) {
+                          updateConversionDraft('supplierName', '');
+                        }
+                        return;
+                      }
+                      setConversionSupplierMode('listed');
+                      updateConversionDraft('supplierName', value);
+                    }}
                     disabled={isConvertingItem}
-                    onChange={event => updateConversionDraft('supplierName', event.target.value.slice(0, 120))}
-                  />
+                  >
+                    <SelectTrigger id="convert-supplier" className="reports-convert-control">
+                      <SelectValue placeholder="Select supplier" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {HARDWARE_SUPPLIER_OPTIONS.map(supplier => (
+                        <SelectItem key={supplier} value={supplier}>{supplier}</SelectItem>
+                      ))}
+                      <SelectItem value={SUPPLIER_CUSTOM_VALUE}>Other supplier / not listed</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {showConversionCustomSupplier && (
+                    <Input
+                      id="convert-supplier-custom"
+                      className="reports-convert-control"
+                      value={conversionDraft.supplierName}
+                      maxLength={120}
+                      placeholder="Enter supplier name"
+                      disabled={isConvertingItem}
+                      onChange={event => updateConversionSupplierName(event.target.value)}
+                    />
+                  )}
                 </div>
                 <div className="reports-convert-field">
                   <Label htmlFor="convert-quantity">Beginning Quantity <span className="text-red-600">*</span></Label>
@@ -3906,7 +4198,7 @@ export function ReportsModule({
   }, item.status)), /*#__PURE__*/React.createElement(TableCell, null, formatDateTime(item.lastUpdated))))))), reportType === 'low-stock' && /*#__PURE__*/React.createElement(Card, {
     className: `transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`
   }, /*#__PURE__*/React.createElement(CardHeader, null, /*#__PURE__*/React.createElement(CardTitle, null, "Low Stock Alert"), /*#__PURE__*/React.createElement(CardDescription, null, "Items requiring immediate attention - ", getLowStockItems().length, " items")), /*#__PURE__*/React.createElement(CardContent, null, getLowStockItems().length === 0 ? /*#__PURE__*/React.createElement("div", {
-    className: "text-center py-8 text-slate-500"
+    className: "text-center py-8 text-slate-700"
   }, /*#__PURE__*/React.createElement(AlertTriangle, {
     className: "w-12 h-12 mx-auto mb-3 text-green-500"
   }), /*#__PURE__*/React.createElement("p", null, "No low stock items. All inventory levels are adequate.")) : /*#__PURE__*/React.createElement(Table, null, /*#__PURE__*/React.createElement(TableHeader, null, /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableHead, null, "Item Code"), /*#__PURE__*/React.createElement(TableHead, null, "Item Name"), /*#__PURE__*/React.createElement(TableHead, null, "Category"), /*#__PURE__*/React.createElement(TableHead, null, "Quantity"), /*#__PURE__*/React.createElement(TableHead, null, "Status"), /*#__PURE__*/React.createElement(TableHead, null, "Last Updated"))), /*#__PURE__*/React.createElement(TableBody, null, getLowStockItems().map(item => /*#__PURE__*/React.createElement(TableRow, {
