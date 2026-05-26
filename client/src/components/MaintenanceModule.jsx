@@ -3,7 +3,6 @@ import axios from 'axios';
 import { API_BASE_URL } from '../utils/api';
 import {
   AlertTriangle,
-  CheckCircle2,
   Database,
   Download,
   Info,
@@ -16,14 +15,12 @@ import {
   Trash2,
   TrendingUp,
   Upload,
-  Users,
 } from 'lucide-react';
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { toast } from 'sonner';
 import { PageHeader } from './PageHeader';
-import { useData } from './DataContext';
 import { isAdminRole } from '../utils/roles';
 import {
   AlertDialog,
@@ -80,13 +77,13 @@ const maintenanceActionCopy = {
       'This runs safe maintenance on application database tables by refreshing table statistics. It does not delete inventory, sales, user, report, archive, or backup records.',
   },
   integrity: {
-    title: 'Check current branch data integrity?',
+    title: 'Check system data relationships?',
     label: 'Check Now',
     loadingLabel: 'Checking...',
     toneClass: 'bg-blue-600 hover:bg-blue-700',
     endpoint: '/api/maintenance/integrity-check',
     description:
-      'This scans the signed-in branch for possible inventory, active/archive conflicts, stock movement, and user data issues. It is read-only and will not repair, delete, or overwrite records.',
+      'This read-only check scans the signed-in branch for inventory, purchase, POS sales, manual item, stock movement, archive, user, audit log, backup log, and system log consistency issues. It will not repair, delete, or overwrite records.',
   },
 };
 
@@ -132,16 +129,16 @@ function SectionHeading({ icon, tone, title, description }) {
   );
 }
 
-function InfoRow({ label, value, valueClassName = '' }) {
+function InfoRow({ label, value, valueClassName = '', full = false }) {
   return (
-    <div className="maintenance-info-row text-sm">
+    <div className={`maintenance-info-row text-sm ${full ? 'maintenance-info-row-full' : ''}`}>
       <span className="maintenance-info-label text-slate-600">{label}</span>
       <span className={`maintenance-info-value text-right font-medium text-slate-950 ${valueClassName}`}>{value}</span>
     </div>
   );
 }
 
-export function MaintenanceModule({ onNavigate, user }) {
+export function MaintenanceModule({ user }) {
   const fileInputRef = useRef();
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
@@ -369,6 +366,10 @@ export function MaintenanceModule({ onNavigate, user }) {
           align-items: stretch;
         }
 
+        .maintenance-wide-card {
+          grid-column: 1 / -1;
+        }
+
         .maintenance-card-content {
           padding: 26px;
         }
@@ -393,7 +394,6 @@ export function MaintenanceModule({ onNavigate, user }) {
         .maintenance-section-heading p,
         .maintenance-action-copy,
         .maintenance-meta-value,
-        .maintenance-user-list-item span,
         .maintenance-info-value,
         .maintenance-alert-row p,
         .maintenance-alert-row span {
@@ -490,37 +490,114 @@ export function MaintenanceModule({ onNavigate, user }) {
         .maintenance-optimization-grid {
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 0;
+          gap: 16px;
+          align-items: stretch;
         }
 
         .maintenance-optimization-item {
           min-width: 0;
-          min-height: 240px;
-          padding: 0 28px;
-          border-left: 1px solid #e5e7eb;
+          min-height: 228px;
+          display: grid;
+          grid-template-rows: auto minmax(84px, 1fr) 48px;
+          align-items: start;
+          gap: 14px;
+          padding: 18px;
+          border: 1px solid #e5e7eb;
+          border-radius: 14px;
+          background: #f8fafc;
+        }
+
+        .maintenance-optimization-title {
+          display: grid;
+          grid-template-columns: 42px minmax(0, 1fr);
+          gap: 12px;
+          align-items: center;
+          min-width: 0;
+        }
+
+        .maintenance-optimization-title .maintenance-title-icon {
+          display: inline-flex;
+          height: 42px;
+          width: 42px;
+          align-items: center;
+          justify-content: center;
+          border-radius: 12px;
+          background: #eff6ff;
+          color: #2563eb;
+        }
+
+        .maintenance-optimization-title h3 {
+          margin: 0;
+          min-width: 0;
+          line-height: 1.25;
+        }
+
+        .maintenance-optimization-item p {
+          margin-top: 0;
+          margin-bottom: 0;
+          max-width: 38ch;
+          line-height: 1.55;
+        }
+
+        .maintenance-optimization-item .maintenance-tool-button {
+          align-self: end;
+          justify-self: center;
+          width: 148px;
         }
 
         .maintenance-optimization-item:first-child {
-          padding-left: 0;
-          border-left: 0;
+          padding-left: 18px;
+          border-left: 1px solid #e5e7eb;
         }
 
         .maintenance-optimization-item:last-child {
-          padding-right: 0;
+          padding-right: 18px;
         }
 
         .maintenance-info-list {
           display: grid;
-          gap: 18px;
+          gap: 0;
           padding-top: 16px;
           border-top: 1px solid #eef2f7;
         }
 
         .maintenance-info-row {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+          grid-template-columns: minmax(150px, 0.88fr) minmax(0, 1.12fr);
           align-items: start;
-          gap: 16px;
+          gap: 18px;
+          min-width: 0;
+          padding: 12px 0;
+          border-bottom: 1px solid #eef2f7;
+        }
+
+        .maintenance-info-row:last-child {
+          border-bottom: 0;
+        }
+
+        .maintenance-info-row-full {
+          grid-column: 1 / -1;
+        }
+
+        .maintenance-info-row-full .maintenance-info-value {
+          text-align: right;
+          max-width: none;
+        }
+
+        .maintenance-info-label {
+          min-width: 0;
+          font-size: 0.88rem;
+          font-weight: 600;
+          line-height: 1.45;
+          color: #475569;
+        }
+
+        .maintenance-info-value {
+          min-width: 0;
+          text-align: right;
+          line-height: 1.45;
+          overflow-wrap: anywhere;
+          word-break: normal;
         }
 
         .maintenance-info-header {
@@ -560,29 +637,6 @@ export function MaintenanceModule({ onNavigate, user }) {
           border-color: #93c5fd;
           background: #dbeafe;
           color: #1e40af;
-        }
-
-        .maintenance-user-card {
-          display: grid;
-          grid-template-rows: auto 1fr auto;
-          min-height: 100%;
-        }
-
-        .maintenance-user-list {
-          display: grid;
-          align-content: start;
-          gap: 14px;
-          padding-top: 24px;
-          font-size: 16px;
-          line-height: 1.55;
-          color: #1e293b;
-        }
-
-        .maintenance-user-list-item {
-          display: grid;
-          grid-template-columns: 24px minmax(0, 1fr);
-          gap: 18px;
-          align-items: start;
         }
 
         .maintenance-alert-row {
@@ -665,13 +719,6 @@ export function MaintenanceModule({ onNavigate, user }) {
             grid-template-columns: 1fr;
           }
 
-          .maintenance-user-card {
-            min-height: auto;
-          }
-
-          .maintenance-user-card .mt-10 {
-            margin-top: 24px;
-          }
         }
 
         @media (max-width: 760px) {
@@ -776,14 +823,38 @@ export function MaintenanceModule({ onNavigate, user }) {
 
           .maintenance-optimization-item {
             min-height: auto;
+            grid-template-rows: auto minmax(76px, 1fr) 48px;
+            gap: 12px;
             padding: 16px;
             border: 1px solid #e5e7eb;
             border-radius: 14px;
             background: #f8fafc;
           }
 
+          .maintenance-optimization-title {
+            grid-template-columns: 38px minmax(0, 1fr);
+            gap: 10px;
+          }
+
+          .maintenance-optimization-title .maintenance-title-icon {
+            height: 38px;
+            width: 38px;
+            border-radius: 11px;
+          }
+
+          .maintenance-optimization-item p {
+            margin-top: 0;
+            max-width: none;
+          }
+
+          .maintenance-optimization-item .maintenance-tool-button {
+            width: 100%;
+            justify-self: stretch;
+          }
+
           .maintenance-optimization-item:first-child {
             padding-top: 16px;
+            padding-left: 16px;
             border-top: 1px solid #e5e7eb;
           }
 
@@ -803,7 +874,6 @@ export function MaintenanceModule({ onNavigate, user }) {
           }
 
           .maintenance-tool-button,
-          .maintenance-user-card .mt-10,
           .maintenance-action-button {
             width: 100%;
             max-width: none;
@@ -827,16 +897,6 @@ export function MaintenanceModule({ onNavigate, user }) {
             line-height: 1.45;
           }
 
-          .maintenance-user-list {
-            gap: 10px;
-            padding-top: 18px;
-            font-size: 0.95rem;
-          }
-
-          .maintenance-user-list-item {
-            gap: 12px;
-          }
-
           .maintenance-info-header {
             grid-template-columns: 44px minmax(0, 1fr);
             gap: 12px;
@@ -854,15 +914,17 @@ export function MaintenanceModule({ onNavigate, user }) {
           }
 
           .maintenance-info-row {
-            grid-template-columns: 1fr;
-            gap: 4px;
-            border-radius: 12px;
-            background: #f8fafc;
-            padding: 12px;
+            grid-template-columns: minmax(112px, 0.86fr) minmax(0, 1.14fr);
+            gap: 12px;
+            padding: 11px 0;
+          }
+
+          .maintenance-info-row-full {
+            grid-template-columns: minmax(112px, 0.86fr) minmax(0, 1.14fr);
           }
 
           .maintenance-info-value {
-            text-align: left;
+            text-align: right;
           }
 
           .maintenance-dialog {
@@ -965,6 +1027,16 @@ export function MaintenanceModule({ onNavigate, user }) {
             grid-template-columns: 1fr;
           }
 
+          .maintenance-info-list {
+            grid-template-columns: 1fr;
+          }
+
+          .maintenance-info-row,
+          .maintenance-info-row-full {
+            grid-template-columns: minmax(96px, 0.78fr) minmax(0, 1.22fr);
+            gap: 10px;
+          }
+
           .maintenance-action-card + .maintenance-action-card {
             border-left: 0;
             border-top: 1px solid #e5e7eb;
@@ -972,7 +1044,7 @@ export function MaintenanceModule({ onNavigate, user }) {
 
           .maintenance-optimization-item:nth-child(2) {
             padding-top: 16px;
-            padding-left: 0;
+            padding-left: 16px;
             border-top: 1px solid #e5e7eb;
             border-left: 0;
           }
@@ -1032,7 +1104,7 @@ export function MaintenanceModule({ onNavigate, user }) {
               icon={<Database className="h-6 w-6" />}
               tone="red"
               title="Database Backup & Restore"
-              description="Create or restore full-system database backups covering all branches and sales records."
+              description="Create or restore full-system database backups covering all branches, inventory, POS sales, purchases, users, and logs."
             />
 
             <div className="maintenance-action-grid mt-7">
@@ -1042,7 +1114,7 @@ export function MaintenanceModule({ onNavigate, user }) {
                 </IconTile>
                 <h3 className="text-base font-bold text-slate-950">Create Backup</h3>
                 <p className="maintenance-action-copy">
-                  Create a full-system backup of the current database, including all branch and sales records.
+                  Create a full-system backup of the current database, including inventory, sales, purchases, users, archive records, and logs.
                 </p>
                 <div>
                   <div className="maintenance-meta-row">
@@ -1067,7 +1139,7 @@ export function MaintenanceModule({ onNavigate, user }) {
                 </IconTile>
                 <h3 className="text-base font-bold text-slate-950">Restore Database</h3>
                 <p className="maintenance-action-copy">
-                  Restore the full system using a previous backup file. This may overwrite records for all branches.
+                  Restore the full system using a previous backup file. This may overwrite current inventory, sales, purchase, user, archive, and log records.
                 </p>
                 <div>
                   <div className="maintenance-meta-row">
@@ -1098,66 +1170,63 @@ export function MaintenanceModule({ onNavigate, user }) {
               <Info className="mt-0.5 h-5 w-5 text-blue-600" />
               <div className="grid gap-1">
                 <p>Please create a backup before restoring to prevent data loss.</p>
-                <p>Backup and restore actions apply to the full database, including San Rafael, Manggahan, inventory, and sales records.</p>
+                <p>Backup and restore actions apply to the full database, including San Rafael, Manggahan, inventory, sales, purchases, users, archive records, and logs.</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
         <Card className="rounded-xl border-gray-200 bg-white shadow-sm">
-          <CardContent className="maintenance-card-content maintenance-user-card">
-            <SectionHeading
-              icon={<Users className="h-6 w-6" />}
-              tone="green"
-              title="User Management"
-              description="Manage user accounts, roles, and access permissions."
-            />
-
-            <div className="maintenance-user-list">
-              {[
-                'View and manage user accounts',
-                'Approve or deactivate users',
-                'Manage user roles and permissions',
-                'Assign or change branch access',
-              ].map(item => (
-                <div className="maintenance-user-list-item" key={item}>
-                  <CheckCircle2 className="h-5 w-5 shrink-0 text-green-600" />
-                  <span>{item}</span>
-                </div>
-              ))}
+          <CardContent className="maintenance-card-content">
+            <div className="maintenance-info-header">
+              <div className="maintenance-info-header-icon">
+                <Info className="h-6 w-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-slate-950">System Information</h2>
+                <p className="mt-1.5 text-base leading-6 text-slate-600">View important system details and maintenance scope.</p>
+              </div>
             </div>
 
-            <Button
-              type="button"
-              className="mt-10 h-12 w-full max-w-[260px] justify-center rounded-lg bg-green-600 font-semibold text-white shadow-sm hover:bg-green-700"
-              onClick={() => isAdmin && onNavigate('user-management')}
-              disabled={!isAdmin}
-            >
-              <Users className="h-4 w-4" />
-              Manage Users
-            </Button>
+            <div className="maintenance-info-list mt-4">
+              <InfoRow
+                label="Database Status"
+                value={databaseOnline ? 'Online' : summary.databaseStatus}
+                valueClassName={databaseOnline ? 'text-green-600' : 'text-red-600'}
+              />
+              <InfoRow label="Application Version" value={appVersion} />
+              <InfoRow label="Environment" value={appEnvironment} />
+              <InfoRow label="Current Branch" value={currentBranch} />
+              <InfoRow label="Backup/Restore Scope" value="Full system, all branches" full />
+              <InfoRow label="Integrity Check Scope" value={`Signed-in branch (${currentBranch}) plus shared user/log links`} full />
+              <InfoRow label="System Time" value={displayedTime} />
+              <InfoRow label="Last Backup" value={lastBackup} />
+              <InfoRow label="Last Restore" value={lastRestore} />
+            </div>
           </CardContent>
         </Card>
 
-        <Card className="rounded-xl border-gray-200 bg-white shadow-sm">
+        <Card className="maintenance-wide-card rounded-xl border-gray-200 bg-white shadow-sm">
           <CardContent className="maintenance-card-content">
             <SectionHeading
               icon={<TrendingUp className="h-6 w-6" />}
               tone="blue"
               title="System Optimization"
-              description="Optimize application database table performance and clean up eligible non-critical system-wide logs."
+              description="Optimize application database table performance, clean eligible non-critical logs, and review data relationships."
             />
 
             <div className="maintenance-optimization-grid mt-8">
-              <div className="maintenance-optimization-item flex flex-col items-start gap-3">
-                <IconTile tone="blue" className="mb-3">
-                  <Trash2 className="h-6 w-6" />
-                </IconTile>
-                <h3 className="text-base font-bold text-slate-950">Clear System Logs</h3>
-                <p className="mt-2 min-h-16 text-base leading-7 text-slate-600">Remove eligible non-critical system-wide logs after the configured retention period.</p>
+              <div className="maintenance-optimization-item">
+                <div className="maintenance-optimization-title">
+                  <span className="maintenance-title-icon">
+                    <Trash2 className="h-5 w-5" />
+                  </span>
+                  <h3 className="text-base font-bold text-slate-950">Clear System Logs</h3>
+                </div>
+                <p className="text-base text-slate-600">Remove eligible non-critical system-wide logs after the configured retention period.</p>
                 <Button
                   type="button"
-                  className="maintenance-tool-button mt-auto"
+                  className="maintenance-tool-button"
                   onClick={() => requestMaintenanceAction('clearLogs')}
                   disabled={!isAdmin || Boolean(activeMaintenanceAction)}
                 >
@@ -1166,15 +1235,17 @@ export function MaintenanceModule({ onNavigate, user }) {
                 </Button>
               </div>
 
-              <div className="maintenance-optimization-item flex flex-col items-start gap-3">
-                <IconTile tone="blue" className="mb-3">
-                  <Server className="h-6 w-6" />
-                </IconTile>
-                <h3 className="text-base font-bold text-slate-950">Optimize Database</h3>
-                <p className="mt-2 min-h-16 text-base leading-7 text-slate-600">Refresh application table statistics for better performance.</p>
+              <div className="maintenance-optimization-item">
+                <div className="maintenance-optimization-title">
+                  <span className="maintenance-title-icon">
+                    <Server className="h-5 w-5" />
+                  </span>
+                  <h3 className="text-base font-bold text-slate-950">Optimize Database</h3>
+                </div>
+                <p className="text-base text-slate-600">Refresh application table statistics for better performance.</p>
                 <Button
                   type="button"
-                  className="maintenance-tool-button mt-auto"
+                  className="maintenance-tool-button"
                   onClick={() => requestMaintenanceAction('optimize')}
                   disabled={!isAdmin || Boolean(activeMaintenanceAction)}
                 >
@@ -1183,15 +1254,17 @@ export function MaintenanceModule({ onNavigate, user }) {
                 </Button>
               </div>
 
-              <div className="maintenance-optimization-item flex flex-col items-start gap-3">
-                <IconTile tone="blue" className="mb-3">
-                  <PieChart className="h-6 w-6" />
-                </IconTile>
-                <h3 className="text-base font-bold text-slate-950">Check Data Integrity</h3>
-                <p className="mt-2 min-h-16 text-base leading-7 text-slate-600">Check signed-in branch data integrity issues without changing records.</p>
+              <div className="maintenance-optimization-item">
+                <div className="maintenance-optimization-title">
+                  <span className="maintenance-title-icon">
+                    <PieChart className="h-5 w-5" />
+                  </span>
+                  <h3 className="text-base font-bold text-slate-950">Check Data Integrity</h3>
+                </div>
+                <p className="text-base text-slate-600">Check inventory, purchase, sales, manual item, user, and log relationships without changing records.</p>
                 <Button
                   type="button"
-                  className="maintenance-tool-button mt-auto"
+                  className="maintenance-tool-button"
                   onClick={() => requestMaintenanceAction('integrity')}
                   disabled={!isAdmin || Boolean(activeMaintenanceAction)}
                 >
@@ -1250,35 +1323,6 @@ export function MaintenanceModule({ onNavigate, user }) {
           </CardContent>
         </Card>
 
-        <Card className="rounded-xl border-gray-200 bg-white shadow-sm">
-          <CardContent className="maintenance-card-content">
-            <div className="maintenance-info-header">
-              <div className="maintenance-info-header-icon">
-                <Info className="h-6 w-6" />
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-slate-950">System Information</h2>
-                <p className="mt-1.5 text-base leading-6 text-slate-600">View important system details and maintenance scope.</p>
-              </div>
-            </div>
-
-            <div className="maintenance-info-list mt-4">
-              <InfoRow
-                label="Database Status"
-                value={databaseOnline ? 'Online' : summary.databaseStatus}
-                valueClassName={databaseOnline ? 'text-green-600' : 'text-red-600'}
-              />
-              <InfoRow label="Application Version" value={appVersion} />
-              <InfoRow label="Environment" value={appEnvironment} />
-              <InfoRow label="Current Branch" value={currentBranch} />
-              <InfoRow label="Backup/Restore Scope" value="Full system, all branches" />
-              <InfoRow label="Integrity Check Scope" value={`Signed-in branch (${currentBranch})`} />
-              <InfoRow label="System Time" value={displayedTime} />
-              <InfoRow label="Last Backup" value={lastBackup} />
-              <InfoRow label="Last Restore" value={lastRestore} />
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       <div className="maintenance-alert-row mt-6 rounded-lg border border-blue-100 bg-blue-50 text-base text-slate-700">
@@ -1298,7 +1342,7 @@ export function MaintenanceModule({ onNavigate, user }) {
               <div className="min-w-0">
                 <AlertDialogTitle>Create database backup?</AlertDialogTitle>
                 <AlertDialogDescription className="mt-2 text-sm leading-6 text-slate-600">
-                  The system will generate and download a full-system backup of the current database records, including all branch inventory, sales records, users, reports, archive records, and logs. Keep this file secure because it may contain inventory, sales, and account information.
+                  The system will generate and download a full-system backup of the current database records, including all branch inventory, POS sales, manual sales items, purchase entries, users, archive records, audit logs, backup logs, and system logs. Keep this file secure because it may contain inventory, sales, supplier, and account information.
                 </AlertDialogDescription>
               </div>
             </div>
@@ -1333,7 +1377,7 @@ export function MaintenanceModule({ onNavigate, user }) {
               <div className="min-w-0">
                 <AlertDialogTitle>Restore database backup?</AlertDialogTitle>
                 <AlertDialogDescription className="mt-2 text-sm leading-6 text-slate-600">
-                Restoring <span className="maintenance-restore-file-name">{selectedRestoreFile?.name}</span> may overwrite the full system database, including all branch inventory and sales records. Create a fresh backup first if you have not already done so.
+                Restoring <span className="maintenance-restore-file-name">{selectedRestoreFile?.name}</span> may overwrite the full system database, including inventory, POS sales, purchase entries, users, archive records, audit logs, backup logs, and system logs for all branches. Create a fresh backup first if you have not already done so.
                 </AlertDialogDescription>
                 <div className="mt-4">
                   <label htmlFor="restore-confirmation" className="maintenance-restore-label">
@@ -1401,7 +1445,7 @@ export function MaintenanceModule({ onNavigate, user }) {
               className={pendingAction?.toneClass || 'bg-blue-600 hover:bg-blue-700'}
             >
               {activeMaintenanceAction && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {activeMaintenanceAction ? pendingAction?.loadingLabel : 'Continue'}
+              {activeMaintenanceAction ? pendingAction?.loadingLabel : pendingAction?.label}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

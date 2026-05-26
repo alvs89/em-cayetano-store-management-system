@@ -2415,13 +2415,23 @@ function getRestoreValidationError(sql) {
   const normalized = String(sql || '').toLowerCase();
   const requiredMarkers = [
     'postgresql database dump',
+    'create table public.schema_migrations',
     'create table public.users',
     'create table public.products',
-    'create table public.branch_inventory'
+    'create table public.branch_inventory',
+    'create table public.stock_movements',
+    'create table public.sales_transactions',
+    'create table public.sales_items',
+    'create table public.purchase_transactions',
+    'create table public.purchase_items',
+    'create table public.archived_inventory',
+    'create table public.audit_logs',
+    'create table public.backup_logs',
+    'create table public.system_logs'
   ];
 
   if (!requiredMarkers.every(marker => normalized.includes(marker))) {
-    return 'The selected file does not look like a valid E.M. Cayetano PostgreSQL backup.';
+    return 'The selected file does not look like a complete E.M. Cayetano PostgreSQL backup.';
   }
 
   const blockedPatterns = [
@@ -5928,36 +5938,37 @@ app.get('/api/maintenance/backup', authenticate, requireAdmin, async (req, res) 
   execFile(
     getPostgresToolPath('PG_DUMP_PATH', 'pg_dump'),
     ['--no-owner', '--no-privileges', '--format=plain', `--dbname=${dbUrl}`],
-    (err, stdout, stderr) => {
+    async (err, stdout, stderr) => {
       if (err) {
         const details = stderr || getPostgresToolError(err, 'pg_dump');
         console.error('Backup failed:', details);
         return res.status(500).json({ error: 'Backup failed', details });
       }
 
-      pool.query(
-        `INSERT INTO backup_logs (action, actor_id, actor_name)
-         VALUES ($1, $2, (SELECT full_name FROM users WHERE user_id = $2))`,
-        ['backup', req.user.id]
-      ).catch((logErr) => {
-        console.error('Backup log insert failed:', logErr.message);
-      });
-      recordAuditLog(pool, {
-        actorId: req.user.id,
-        targetName: 'Database Backup',
-        action: 'CREATE_BACKUP'
-      }).catch((logErr) => {
-        console.error('Backup audit log insert failed:', logErr.message);
-      });
-      recordSystemLog(pool, {
-        eventType: 'DATABASE_BACKUP',
-        severity: 'info',
-        message: 'Database backup was generated.',
-        context: { delivery: 'download' },
-        actorId: req.user.id
-      }).catch((logErr) => {
-        console.error('Backup system log insert failed:', logErr.message);
-      });
+      const logResults = await Promise.allSettled([
+        pool.query(
+          `INSERT INTO backup_logs (action, actor_id, actor_name)
+           VALUES ($1, $2, (SELECT full_name FROM users WHERE user_id = $2))`,
+          ['backup', req.user.id]
+        ),
+        recordAuditLog(pool, {
+          actorId: req.user.id,
+          targetName: 'Database Backup',
+          action: 'CREATE_BACKUP'
+        }),
+        recordSystemLog(pool, {
+          eventType: 'DATABASE_BACKUP',
+          severity: 'info',
+          message: 'Database backup was generated.',
+          context: { delivery: 'download' },
+          actorId: req.user.id
+        })
+      ]);
+      logResults
+        .filter(result => result.status === 'rejected')
+        .forEach(result => {
+          console.error('Backup log write failed:', result.reason?.message || result.reason);
+        });
 
       res.setHeader('Content-disposition', `attachment; filename=backup_${Date.now()}.sql`);
       res.setHeader('Content-Type', 'application/sql');
@@ -6023,6 +6034,7 @@ app.post('/api/maintenance/clear-logs', authenticate, requireAdmin, async (req, 
 
 app.post('/api/maintenance/optimize', authenticate, requireAdmin, async (req, res) => {
   const tables = [
+    'schema_migrations',
     'users',
     'products',
     'branch_inventory',
@@ -6076,7 +6088,22 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
       activeArchivedConflicts,
       invalidUsers,
       invalidSalesTransactions,
-      invalidSalesItems
+      invalidSalesItems,
+      duplicateProductCatalogItems,
+      incompleteProductDetails,
+      invalidArchivedInventory,
+      orphanSalesItems,
+      invalidSalesItemLinks,
+      salesTotalMismatches,
+      invalidPurchaseTransactions,
+      invalidPurchaseItems,
+      orphanPurchaseItems,
+      invalidPurchaseItemLinks,
+      purchaseTotalMismatches,
+      purchaseMovementMismatches,
+      orphanAuditLogs,
+      orphanSystemLogs,
+      orphanBackupLogs
     ] = await Promise.all([
       pool.query(
         `SELECT branch, product_id, COUNT(*)::int AS count
@@ -6184,10 +6211,200 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
              OR si.subtotal < 0
              OR si.previous_quantity < 0
              OR si.new_quantity < 0
+             OR si.item_type NOT IN ('inventory', 'non_inventory')
+             OR si.branch <> st.branch
              OR si.item_name IS NULL
              OR TRIM(si.item_name) = ''
            )`,
         [scopeBranch]
+      ),
+      pool.query(
+        `SELECT LOWER(TRIM(p.name)) AS normalized_name, LOWER(TRIM(p.category)) AS normalized_category, COUNT(*)::int AS count
+         FROM products p
+         INNER JOIN branch_inventory bi ON bi.product_id = p.product_id
+         WHERE bi.branch = $1
+         GROUP BY LOWER(TRIM(p.name)), LOWER(TRIM(p.category))
+         HAVING COUNT(*) > 1`,
+        [scopeBranch]
+      ),
+      pool.query(
+        `SELECT DISTINCT p.product_id, p.name, p.category, p.supplier_name, p.default_selling_price, p.wsp_code, p.cost_price
+         FROM products p
+         INNER JOIN branch_inventory bi ON bi.product_id = p.product_id
+         WHERE bi.branch = $1
+           AND (
+             p.supplier_name IS NULL
+             OR TRIM(p.supplier_name) = ''
+             OR p.default_selling_price IS NULL
+             OR p.default_selling_price <= 0
+             OR p.default_selling_price > 100000000
+             OR p.cost_price < 0
+             OR (p.wsp_code IS NOT NULL AND LENGTH(TRIM(p.wsp_code)) > 60)
+           )`,
+        [scopeBranch]
+      ),
+      pool.query(
+        `SELECT archived_inventory_id, name, category, branch, stock_level, min_stock_level, default_selling_price, cost_price
+         FROM archived_inventory
+         WHERE branch = $1
+           AND (
+             stock_level < 0
+             OR min_stock_level < 0
+             OR name IS NULL
+             OR TRIM(name) = ''
+             OR category IS NULL
+             OR TRIM(category) = ''
+             OR default_selling_price < 0
+             OR cost_price < 0
+           )`,
+        [scopeBranch]
+      ),
+      pool.query(
+        `SELECT si.sales_item_id
+         FROM sales_items si
+         LEFT JOIN sales_transactions st ON st.sales_transaction_id = si.sales_transaction_id
+         WHERE st.sales_transaction_id IS NULL`
+      ),
+      pool.query(
+        `SELECT si.sales_item_id, st.sales_number, si.item_type, si.inventory_id, si.product_id, si.item_name
+         FROM sales_items si
+         INNER JOIN sales_transactions st ON st.sales_transaction_id = si.sales_transaction_id
+         LEFT JOIN branch_inventory bi
+           ON bi.inventory_id = si.inventory_id
+          AND bi.branch = st.branch
+         LEFT JOIN products p ON p.product_id = si.product_id
+         WHERE st.branch = $1
+           AND (
+             (si.item_type = 'inventory' AND (si.inventory_id IS NULL OR bi.inventory_id IS NULL OR si.product_id IS NULL OR p.product_id IS NULL))
+             OR (si.item_type = 'non_inventory' AND (si.is_inventory_item = true OR si.inventory_id IS NOT NULL OR si.product_id IS NOT NULL))
+           )`,
+        [scopeBranch]
+      ),
+      pool.query(
+        `SELECT st.sales_transaction_id, st.sales_number, st.total_quantity, st.subtotal_amount, st.discount_amount, st.delivery_charge, st.total_amount,
+                COALESCE(SUM(si.quantity_sold), 0)::int AS item_quantity,
+                COALESCE(ROUND(SUM(si.subtotal)::numeric, 2), 0)::numeric AS item_subtotal
+         FROM sales_transactions st
+         LEFT JOIN sales_items si ON si.sales_transaction_id = st.sales_transaction_id
+         WHERE st.branch = $1
+         GROUP BY st.sales_transaction_id
+         HAVING st.total_quantity <> COALESCE(SUM(si.quantity_sold), 0)::int
+            OR ABS(st.subtotal_amount - COALESCE(ROUND(SUM(si.subtotal)::numeric, 2), 0)) > 0.01
+            OR ABS(st.total_amount - ROUND((st.subtotal_amount - st.discount_amount + st.delivery_charge)::numeric, 2)) > 0.01`,
+        [scopeBranch]
+      ),
+      pool.query(
+        `SELECT purchase_transaction_id, purchase_number, branch, supplier_name, document_type, payment_terms, subtotal_amount, total_quantity, status
+         FROM purchase_transactions
+         WHERE branch = $1
+           AND (
+             purchase_number IS NULL
+             OR TRIM(purchase_number) = ''
+             OR supplier_name IS NULL
+             OR TRIM(supplier_name) = ''
+             OR document_type NOT IN ('DR', 'SI', 'OR', 'OTHER')
+             OR payment_terms NOT IN ('cash', 'cod', 'credit', 'branch_transfer')
+             OR subtotal_amount < 0
+             OR total_quantity < 0
+             OR status NOT IN ('completed', 'cancelled')
+           )`,
+        [scopeBranch]
+      ),
+      pool.query(
+        `SELECT pi.purchase_item_id, pt.purchase_number, pi.item_name, pi.quantity_received, pi.unit_cost, pi.subtotal, pi.previous_quantity, pi.new_quantity
+         FROM purchase_items pi
+         INNER JOIN purchase_transactions pt ON pt.purchase_transaction_id = pi.purchase_transaction_id
+         WHERE pt.branch = $1
+           AND (
+             pi.branch <> pt.branch
+             OR pi.quantity_received <= 0
+             OR pi.unit_cost < 0
+             OR pi.subtotal < 0
+             OR pi.previous_quantity < 0
+             OR pi.new_quantity < 0
+             OR pi.new_quantity <> pi.previous_quantity + pi.quantity_received
+             OR ABS(pi.subtotal - ROUND((pi.quantity_received * pi.unit_cost)::numeric, 2)) > 0.01
+             OR pi.item_name IS NULL
+             OR TRIM(pi.item_name) = ''
+             OR pi.category IS NULL
+             OR TRIM(pi.category) = ''
+           )`,
+        [scopeBranch]
+      ),
+      pool.query(
+        `SELECT pi.purchase_item_id
+         FROM purchase_items pi
+         LEFT JOIN purchase_transactions pt ON pt.purchase_transaction_id = pi.purchase_transaction_id
+         WHERE pt.purchase_transaction_id IS NULL`
+      ),
+      pool.query(
+        `SELECT pi.purchase_item_id, pt.purchase_number, pi.inventory_id, pi.product_id, pi.item_name
+         FROM purchase_items pi
+         INNER JOIN purchase_transactions pt ON pt.purchase_transaction_id = pi.purchase_transaction_id
+         LEFT JOIN branch_inventory bi
+           ON bi.inventory_id = pi.inventory_id
+          AND bi.branch = pt.branch
+         LEFT JOIN products p ON p.product_id = pi.product_id
+         WHERE pt.branch = $1
+           AND (
+             pi.inventory_id IS NULL
+             OR bi.inventory_id IS NULL
+             OR pi.product_id IS NULL
+             OR p.product_id IS NULL
+           )`,
+        [scopeBranch]
+      ),
+      pool.query(
+        `SELECT pt.purchase_transaction_id, pt.purchase_number, pt.total_quantity, pt.subtotal_amount,
+                COALESCE(SUM(pi.quantity_received), 0)::int AS item_quantity,
+                COALESCE(ROUND(SUM(pi.subtotal)::numeric, 2), 0)::numeric AS item_subtotal
+         FROM purchase_transactions pt
+         LEFT JOIN purchase_items pi ON pi.purchase_transaction_id = pt.purchase_transaction_id
+         WHERE pt.branch = $1
+         GROUP BY pt.purchase_transaction_id
+         HAVING pt.total_quantity <> COALESCE(SUM(pi.quantity_received), 0)::int
+            OR ABS(pt.subtotal_amount - COALESCE(ROUND(SUM(pi.subtotal)::numeric, 2), 0)) > 0.01`,
+        [scopeBranch]
+      ),
+      pool.query(
+        `SELECT pi.purchase_item_id, pt.purchase_number, pi.inventory_id, pi.quantity_received, pi.previous_quantity, pi.new_quantity
+         FROM purchase_items pi
+         INNER JOIN purchase_transactions pt ON pt.purchase_transaction_id = pi.purchase_transaction_id
+         LEFT JOIN stock_movements sm
+           ON sm.inventory_id = pi.inventory_id
+          AND sm.product_id = pi.product_id
+          AND sm.branch = pt.branch
+          AND sm.action = 'stock_in'
+          AND sm.reason = 'purchase_received'
+          AND sm.quantity_changed = pi.quantity_received
+          AND sm.previous_quantity = pi.previous_quantity
+          AND sm.new_quantity = pi.new_quantity
+          AND sm.note ILIKE '%' || pt.purchase_number || '%'
+         WHERE pt.branch = $1
+           AND pt.status = 'completed'
+           AND sm.movement_id IS NULL`,
+        [scopeBranch]
+      ),
+      pool.query(
+        `SELECT al.id, al.actor_id
+         FROM audit_logs al
+         LEFT JOIN users u ON u.user_id = al.actor_id
+         WHERE al.actor_id IS NOT NULL
+           AND u.user_id IS NULL`
+      ),
+      pool.query(
+        `SELECT sl.id, sl.actor_id
+         FROM system_logs sl
+         LEFT JOIN users u ON u.user_id = sl.actor_id
+         WHERE sl.actor_id IS NOT NULL
+           AND u.user_id IS NULL`
+      ),
+      pool.query(
+        `SELECT bl.id, bl.actor_id
+         FROM backup_logs bl
+         LEFT JOIN users u ON u.user_id = bl.actor_id
+         WHERE bl.actor_id IS NOT NULL
+           AND u.user_id IS NULL`
       )
     ]);
 
@@ -6229,9 +6446,24 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
         count: missingProducts.rowCount
       },
       {
+        key: 'duplicate_product_catalog_items',
+        label: 'Duplicate product names/categories in active inventory',
+        count: duplicateProductCatalogItems.rowCount
+      },
+      {
+        key: 'incomplete_product_details',
+        label: 'Active products with missing supplier, SRP, or invalid price details',
+        count: incompleteProductDetails.rowCount
+      },
+      {
         key: 'orphan_stock_movements',
         label: 'Stock movements linked to missing inventory records',
         count: orphanMovements.rowCount
+      },
+      {
+        key: 'invalid_archived_inventory',
+        label: 'Archived inventory records with invalid item or price details',
+        count: invalidArchivedInventory.rowCount
       },
       {
         key: 'active_archived_conflicts',
@@ -6252,6 +6484,66 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
         key: 'invalid_sales_items',
         label: 'Sales line items with invalid quantity, amount, or item details',
         count: invalidSalesItems.rowCount
+      },
+      {
+        key: 'orphan_sales_items',
+        label: 'Sales line items without a parent sales transaction',
+        count: orphanSalesItems.rowCount
+      },
+      {
+        key: 'invalid_sales_item_links',
+        label: 'Sales line items with incorrect inventory/manual item links',
+        count: invalidSalesItemLinks.rowCount
+      },
+      {
+        key: 'sales_total_mismatches',
+        label: 'Sales records where totals do not match item lines',
+        count: salesTotalMismatches.rowCount
+      },
+      {
+        key: 'invalid_purchase_transactions',
+        label: 'Purchase records with invalid supplier, terms, status, or totals',
+        count: invalidPurchaseTransactions.rowCount
+      },
+      {
+        key: 'invalid_purchase_items',
+        label: 'Purchase line items with invalid quantity, cost, subtotal, or stock impact',
+        count: invalidPurchaseItems.rowCount
+      },
+      {
+        key: 'orphan_purchase_items',
+        label: 'Purchase line items without a parent purchase record',
+        count: orphanPurchaseItems.rowCount
+      },
+      {
+        key: 'invalid_purchase_item_links',
+        label: 'Purchase line items linked to missing inventory or product records',
+        count: invalidPurchaseItemLinks.rowCount
+      },
+      {
+        key: 'purchase_total_mismatches',
+        label: 'Purchase records where totals do not match item lines',
+        count: purchaseTotalMismatches.rowCount
+      },
+      {
+        key: 'purchase_movement_mismatches',
+        label: 'Completed purchase items without matching stock-in movement records',
+        count: purchaseMovementMismatches.rowCount
+      },
+      {
+        key: 'orphan_audit_logs',
+        label: 'Audit logs linked to missing user accounts',
+        count: orphanAuditLogs.rowCount
+      },
+      {
+        key: 'orphan_system_logs',
+        label: 'System logs linked to missing user accounts',
+        count: orphanSystemLogs.rowCount
+      },
+      {
+        key: 'orphan_backup_logs',
+        label: 'Backup logs linked to missing user accounts',
+        count: orphanBackupLogs.rowCount
       },
       {
         key: 'status_mismatches',
@@ -6343,29 +6635,30 @@ app.post(
             });
           }
 
-          pool.query(
-            `INSERT INTO backup_logs (action, actor_id, actor_name)
-             VALUES ($1, $2, (SELECT full_name FROM users WHERE user_id = $2))`,
-            ['restore', req.user.id]
-          ).catch((logErr) => {
-            console.error('Restore log insert failed:', logErr.message);
-          });
-          recordAuditLog(pool, {
-            actorId: req.user.id,
-            targetName: 'Database Restore',
-            action: 'RESTORE_DATABASE'
-          }).catch((logErr) => {
-            console.error('Restore audit log insert failed:', logErr.message);
-          });
-          recordSystemLog(pool, {
-            eventType: 'DATABASE_RESTORE',
-            severity: 'warning',
-            message: 'Database restore completed from an uploaded SQL backup.',
-            context: { source: 'uploaded_sql_backup' },
-            actorId: req.user.id
-          }).catch((logErr) => {
-            console.error('Restore system log insert failed:', logErr.message);
-          });
+          const logResults = await Promise.allSettled([
+            pool.query(
+              `INSERT INTO backup_logs (action, actor_id, actor_name)
+               VALUES ($1, $2, (SELECT full_name FROM users WHERE user_id = $2))`,
+              ['restore', req.user.id]
+            ),
+            recordAuditLog(pool, {
+              actorId: req.user.id,
+              targetName: 'Database Restore',
+              action: 'RESTORE_DATABASE'
+            }),
+            recordSystemLog(pool, {
+              eventType: 'DATABASE_RESTORE',
+              severity: 'warning',
+              message: 'Database restore completed from an uploaded SQL backup.',
+              context: { source: 'uploaded_sql_backup' },
+              actorId: req.user.id
+            })
+          ]);
+          logResults
+            .filter(result => result.status === 'rejected')
+            .forEach(result => {
+              console.error('Restore log write failed:', result.reason?.message || result.reason);
+            });
 
           return res.json({ message: 'Database restored successfully', output: stdout });
         }
