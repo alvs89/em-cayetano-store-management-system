@@ -1,20 +1,31 @@
 export const SUPPLIER_CUSTOM_VALUE = "__custom_supplier__";
 
 export const HARDWARE_SUPPLIER_OPTIONS = [
-  "One Samix",
-  "Susi Hardware",
-  "Rizal Industrial",
-  "Metro Hardware Supply",
-  "Cebu Atlantic Hardware",
-  "Wilcon Depot",
-  "Handyman",
-  "Ace Hardware",
-  "Davies Paints",
-  "Boysen Paints",
-  "Holcim Philippines",
-  "Republic Cement",
-  "Phelps Dodge Wires",
-  "Neltex Development"
+  "ALVIN B LAVENTE",
+  "AMULET MARKETING CORP",
+  "BELJEM CONSTRUCTION SUPPLIES TRADING",
+  "BEST POWER TRADING",
+  "BOWMAN BUILDERS CORP",
+  "CMA COMMERCIAL TRADING CORP",
+  "CRYSTALITE",
+  "DGM",
+  "EXCELIN MARKETING OPC",
+  "FIREFLY",
+  "HODIENG",
+  "HYZ STEEL TRADING",
+  "LPMP TRADING",
+  "MAC STEVE MARKETING",
+  "ONE SAMEX DEVT CORP",
+  "OPTIMAL TRADING",
+  "PHT GEN MDSE",
+  "PNM MARKETING",
+  "QUALISTEEL ENTERPRISES",
+  "ROYU",
+  "SAKRETE ENTERPRISES INC",
+  "THUNDER CRACKER MARKETING CORP",
+  "TWINBAR METAL INDUSTRIES INC",
+  "WEBERT MARKETING CORP",
+  "WINACE TRADING & CONSTRUCTION SUPPLY"
 ];
 
 export const normalizeSupplierName = value =>

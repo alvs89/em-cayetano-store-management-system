@@ -477,6 +477,15 @@ export function PurchasesModule({ user }) {
 
   const addInventoryItemToPurchase = item => {
     if (!item || isSaving) return;
+    const existingIndex = purchaseLines.findIndex(line => String(line.inventoryId) === String(item.id));
+    if (existingIndex >= 0) {
+      setHighlightedLineIndex(existingIndex);
+      toast.info('This item has already been added. Adjust the quantity in Current Purchase.', {
+        id: `purchase-item-already-added-${item.id}`
+      });
+      return;
+    }
+
     const preparedLine = {
       inventoryId: String(item.id),
       quantity: '1',
@@ -484,14 +493,6 @@ export function PurchasesModule({ user }) {
     };
 
     setPurchaseLines(prev => {
-      const existingIndex = prev.findIndex(line => String(line.inventoryId) === String(item.id));
-      if (existingIndex >= 0) {
-        setHighlightedLineIndex(existingIndex);
-        return prev.map((line, lineIndex) => lineIndex === existingIndex
-          ? { ...line, quantity: String(Number(line.quantity || 0) + 1) }
-          : line);
-      }
-
       const emptyIndex = prev.findIndex(line => !line.inventoryId && !line.quantity && !line.unitCost);
       if (emptyIndex >= 0) {
         setHighlightedLineIndex(emptyIndex);
@@ -1206,6 +1207,14 @@ export function PurchasesModule({ user }) {
           background: #f8fafc;
         }
 
+        .purchase-inventory-row.is-selected {
+          background: #e2e8f0;
+        }
+
+        .purchase-inventory-row.is-selected:hover {
+          background: #d6dee9;
+        }
+
         .purchase-add-btn {
           appearance: none;
           display: inline-flex;
@@ -1234,7 +1243,20 @@ export function PurchasesModule({ user }) {
           opacity: 0.55;
         }
 
-        .purchase-inventory-row:hover .purchase-add-btn:not(:disabled) {
+        .purchase-inventory-row.is-selected .purchase-add-btn {
+          border-color: #64748b;
+          background: #cbd5e1;
+          color: #1f2937;
+        }
+
+        .purchase-inventory-row.is-selected .purchase-add-btn:hover,
+        .purchase-inventory-row.is-selected .purchase-add-btn:focus-visible {
+          border-color: #475569;
+          background: #b8c2cf;
+          color: #111827;
+        }
+
+        .purchase-inventory-row:not(.is-selected):hover .purchase-add-btn:not(:disabled) {
           border-color: #22c55e;
           background: #dcfce7;
           color: #166534;
@@ -2383,30 +2405,33 @@ export function PurchasesModule({ user }) {
                   </div>
                   {paginatedInventory.length === 0 ? (
                     <p className="px-4 py-8 text-center text-sm text-slate-600">No inventory items found.</p>
-                  ) : paginatedInventory.map(item => (
-                    <div key={item.id} className="purchase-inventory-row">
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-semibold text-slate-900">{item.name}</span>
-                        <span className="block truncate text-xs text-slate-700">{item.itemCode || 'No item code'}</span>
-                      </span>
-                      <span className="purchase-inventory-category truncate text-sm text-slate-700">{item.category}</span>
-                      <span className="purchase-inventory-stock text-center">
-                        <Badge className="bg-green-50 text-green-700 hover:bg-green-50">{item.quantity}</Badge>
-                      </span>
-                      <span className="flex justify-end">
-                        <button
-                          type="button"
-                          className="purchase-add-btn"
-                          onClick={() => addInventoryItemToPurchase(item)}
-                          disabled={isSaving}
-                          aria-label={`Add ${item.name} to current purchase`}
-                          title={`Add ${item.name}`}
-                        >
-                          <Plus className="h-4 w-4" />
-                        </button>
-                      </span>
-                    </div>
-                  ))}
+                  ) : paginatedInventory.map(item => {
+                    const isAlreadySelected = purchaseLines.some(line => String(line.inventoryId) === String(item.id));
+                    return (
+                      <div key={item.id} className={`purchase-inventory-row${isAlreadySelected ? ' is-selected' : ''}`}>
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-semibold text-slate-900">{item.name}</span>
+                          <span className="block truncate text-xs text-slate-700">{item.itemCode || 'No item code'}</span>
+                        </span>
+                        <span className="purchase-inventory-category truncate text-sm text-slate-700">{item.category}</span>
+                        <span className="purchase-inventory-stock text-center">
+                          <Badge className="bg-green-50 text-green-700 hover:bg-green-50">{item.quantity}</Badge>
+                        </span>
+                        <span className="flex justify-end">
+                          <button
+                            type="button"
+                            className="purchase-add-btn"
+                            onClick={() => addInventoryItemToPurchase(item)}
+                            disabled={isSaving}
+                            aria-label={`${isAlreadySelected ? 'Already added: ' : 'Add '}${item.name} to current purchase`}
+                            title={isAlreadySelected ? 'Already added. Adjust quantity in Current Purchase.' : `Add ${item.name}`}
+                          >
+                            <Plus className="h-4 w-4" />
+                          </button>
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
                 <div className="purchase-pagination">
                   <span>Showing {inventoryShowingStart}-{inventoryShowingEnd} of {filteredInventory.length} items</span>

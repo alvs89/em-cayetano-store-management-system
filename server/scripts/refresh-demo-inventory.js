@@ -2,6 +2,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }
 
 const { Pool } = require('pg');
 const { buildEmCayetanoCatalog } = require('./em-cayetano-catalog');
+const { getOfficialSupplierForProduct } = require('./supplier-master-list');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -12,34 +13,13 @@ const pool = new Pool({
 
 const BRANCHES = ['Manggahan', 'San Rafael'];
 
-const CATEGORY_SUPPLIERS = {
-  Roofing: 'Metro Hardware Supply',
-  'PVC Pipe / Fittings': 'Neltex Development',
-  Steel: 'Rizal Industrial',
-  'Kiln Dry': 'Cebu Atlantic Hardware',
-  Plywood: 'Cebu Atlantic Hardware',
-  Electricals: 'Phelps Dodge Wires',
-  Paints: 'Boysen Paints',
-  Other: 'Wilcon Depot'
-};
-
 const CATALOG = buildEmCayetanoCatalog();
 
 if (CATALOG.length === 0) {
   throw new Error('E.M. Cayetano product catalog is empty.');
 }
 
-const getSupplierForItem = (item, index) => {
-  const name = String(item.name || '').toUpperCase();
-  if ((index + 1) % 13 === 0) return null;
-  if (name.includes('NELTEX')) return 'Neltex Development';
-  if (name.includes('BOYSEN')) return 'Boysen Paints';
-  if (name.includes('PHELPS DODGE')) return 'Phelps Dodge Wires';
-  if (name.includes('ROYU')) return 'Metro Hardware Supply';
-  if (name.includes('APO')) return 'Metro Hardware Supply';
-  if (name.includes('C-PURLINS') || name.includes('ANGLE BAR') || name.includes('FLAT BAR')) return 'Rizal Industrial';
-  return CATEGORY_SUPPLIERS[item.category] || 'Metro Hardware Supply';
-};
+const getSupplierForItem = getOfficialSupplierForProduct;
 
 const SALES_PLANS = [
   {

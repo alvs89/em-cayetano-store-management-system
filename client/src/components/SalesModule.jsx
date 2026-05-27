@@ -779,6 +779,25 @@ const sanitizePaymentReferenceInput = value => {
 const isValidMoneyText = value =>
   String(value || '').trim() === '' || /^\d+(\.\d{0,2})?$/.test(String(value).trim());
 
+const normalizeProductSearchText = value =>
+  String(value || '')
+    .toLowerCase()
+    .replace(/[°]/g, ' ')
+    .replace(/[^a-z0-9./#&"+-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const getSaleProductSearchText = item =>
+  normalizeProductSearchText([
+    item.itemCode,
+    item.name,
+    item.category,
+    item.supplierName,
+    item.status,
+    item.defaultSellingPrice,
+    item.wspCode
+  ].filter(Boolean).join(' '));
+
 export function SalesModule({ user }) {
   const { inventory, salesTransactions, recordSale, cancelSale } = useData();
   const [customerType, setCustomerType] = useState('walk_in');
@@ -861,24 +880,15 @@ export function SalesModule({ user }) {
   );
 
   const filteredSaleInventory = useMemo(() => {
-    const query = productSearch.trim().toLowerCase();
+    const searchTerms = normalizeProductSearchText(productSearch).split(' ').filter(Boolean);
 
     const filteredItems = activeInventory.filter(item => {
       const matchesCategory = productCategory === 'all' || (item.category || 'Uncategorized') === productCategory;
       if (!matchesCategory) return false;
-      if (!query) return true;
+      if (searchTerms.length === 0) return true;
 
-      return [
-        item.itemCode,
-        item.name,
-        item.category,
-        item.supplierName,
-        item.defaultSellingPrice
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase()
-        .includes(query);
+      const searchableText = getSaleProductSearchText(item);
+      return searchTerms.every(term => searchableText.includes(term));
     });
 
     const sorters = {
@@ -1287,6 +1297,14 @@ export function SalesModule({ user }) {
     if (!item || isSaving) return;
 
     const inventoryId = String(item.id);
+    const existingLine = saleLines.find(line => String(line.inventoryId) === inventoryId);
+    if (existingLine) {
+      toast.info('This item has already been added. Adjust the quantity in Selected Items.', {
+        id: `sales-item-already-added-${inventoryId}`
+      });
+      return;
+    }
+
     const availableStock = Number(item.quantity || 0);
     if (availableStock <= 0) {
       toast.warning(`${item.name} is out of stock and cannot be added to the sale.`);
@@ -1301,22 +1319,6 @@ export function SalesModule({ user }) {
     };
 
     setSaleLines(prev => {
-      const existingIndex = prev.findIndex(line => String(line.inventoryId) === inventoryId);
-
-      if (existingIndex >= 0) {
-        const currentQuantity = Number(prev[existingIndex].quantity || 0);
-        if (currentQuantity >= availableStock) {
-          toast.warning(`${item.name} has only ${availableStock} unit${availableStock === 1 ? '' : 's'} available.`);
-          return prev;
-        }
-
-        return prev.map((line, lineIndex) => (
-          lineIndex === existingIndex
-            ? { ...line, quantity: String(currentQuantity + 1) }
-            : line
-        ));
-      }
-
       const emptyIndex = prev.findIndex(line => (
         !String(line.inventoryId || '').trim() &&
         !String(line.itemName || '').trim() &&
@@ -3230,6 +3232,15 @@ export function SalesModule({ user }) {
           box-shadow: 0 0 0 3px rgba(244, 244, 0, 0.28);
         }
 
+        .sales-product-search input,
+        .sales-product-search input:hover,
+        .sales-product-search input:focus,
+        .sales-product-search input:focus-visible {
+          border-color: transparent !important;
+          box-shadow: none !important;
+          outline: none !important;
+        }
+
         .sales-product-filter-trigger[data-slot="select-trigger"] {
           min-height: 3rem;
           height: 3rem;
@@ -3304,16 +3315,58 @@ export function SalesModule({ user }) {
 
         .sales-product-card {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(6.25rem, auto);
-          gap: 0.8rem;
-          align-items: center;
+          grid-template-columns: minmax(0, 1fr) minmax(6.35rem, auto);
+          grid-template-rows: 3.9rem minmax(2.5rem, 1fr);
+          column-gap: 0.8rem;
+          row-gap: 0.55rem;
+          align-items: start;
           border: 1px solid #e2e8f0;
           border-radius: 0.95rem;
           background: #ffffff;
-          min-height: 7.15rem;
-          padding: 0.95rem;
+          height: 9.15rem;
+          min-height: 9.15rem;
+          padding: 0.9rem;
           text-align: left;
           transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .sales-product-info {
+          display: contents;
+        }
+
+        .sales-product-name {
+          display: block;
+          grid-column: 1;
+          grid-row: 1;
+          min-height: 3.9rem;
+          max-height: 3.9rem;
+          overflow: hidden;
+          color: #0f172a;
+          font-size: 0.9rem;
+          font-weight: 800;
+          line-height: 1.3rem;
+          overflow-wrap: break-word;
+          word-break: normal;
+          white-space: normal;
+        }
+
+        .sales-product-code {
+          display: block;
+          min-width: 0;
+          color: #111827;
+          font-size: 0.76rem;
+          line-height: 1.05rem;
+          overflow-wrap: anywhere;
+          white-space: normal;
+        }
+
+        .sales-product-details {
+          display: grid;
+          grid-column: 1;
+          grid-row: 2;
+          min-width: 0;
+          gap: 0.35rem;
+          align-self: center;
         }
 
         .sales-product-card:hover,
@@ -3338,10 +3391,28 @@ export function SalesModule({ user }) {
           background: #f8fafc;
         }
 
+        .sales-product-card.is-selected {
+          border-color: #94a3b8;
+          background: #e2e8f0;
+        }
+
         .sales-product-card.is-out-of-stock .sales-product-add-pill {
           border-color: #e2e8f0;
           background: #f1f5f9;
           color: #64748b;
+        }
+
+        .sales-product-card.is-selected .sales-product-add-pill {
+          border-color: #64748b;
+          background: #cbd5e1;
+          color: #1f2937;
+        }
+
+        .sales-product-card.is-selected .sales-product-add-pill:hover,
+        .sales-product-card.is-selected .sales-product-add-pill:focus-visible {
+          border-color: #475569;
+          background: #b8c2cf;
+          color: #111827;
         }
 
         .sales-product-avatar {
@@ -3404,19 +3475,44 @@ export function SalesModule({ user }) {
         }
 
         .sales-product-card-action {
-          display: flex;
-          width: 6.9rem;
+          display: contents;
+          width: 6.7rem;
           height: 100%;
-          flex-direction: column;
-          align-items: flex-end;
-          justify-content: center;
-          gap: 0.55rem;
-          justify-self: end;
         }
 
         .sales-product-card-price {
+          grid-column: 2;
+          grid-row: 1;
           width: 100%;
+          min-height: 1.25rem;
+          align-self: start;
+          justify-self: end;
+          padding-top: 0.05rem;
           text-align: right;
+        }
+
+        .sales-product-card-action .sales-product-add-pill {
+          grid-column: 2;
+          grid-row: 2;
+          align-self: center;
+          justify-self: center;
+        }
+
+        @media (max-width: 640px) {
+          .sales-product-card {
+            grid-template-columns: minmax(0, 1fr) minmax(5.8rem, auto);
+            gap: 0.65rem;
+            padding: 0.8rem;
+          }
+
+          .sales-product-card-action {
+            width: 6rem;
+          }
+
+          .sales-product-add-pill {
+            min-width: 5.4rem;
+            padding: 0 0.75rem;
+          }
         }
 
         .sales-add-product-button:hover,
@@ -3473,6 +3569,8 @@ export function SalesModule({ user }) {
           font-size: 0.92rem;
           font-weight: 800;
           line-height: 1.2rem;
+          overflow-wrap: anywhere;
+          white-space: normal;
         }
 
         .sales-cart-meta {
@@ -3487,7 +3585,7 @@ export function SalesModule({ user }) {
 
         .sales-cart-controls {
           display: grid;
-          grid-template-columns: auto minmax(0, 1fr);
+          grid-template-columns: minmax(8rem, 0.95fr) minmax(0, 1.35fr);
           grid-column: 1 / -1;
           gap: 0.6rem;
           align-items: center;
@@ -3496,11 +3594,12 @@ export function SalesModule({ user }) {
 
         .sales-cart-secondary-controls {
           display: inline-grid;
-          grid-template-columns: minmax(7.25rem, 8.5rem) auto;
+          grid-template-columns: minmax(8.5rem, 1fr) auto;
           align-items: center;
-          justify-self: start;
+          justify-self: stretch;
           gap: 0.6rem;
           min-width: 0;
+          width: 100%;
         }
 
         .sales-cart-row-actions {
@@ -3528,8 +3627,9 @@ export function SalesModule({ user }) {
         }
 
         .sales-qty-stepper {
-          display: inline-grid;
-          grid-template-columns: 2.05rem 2.35rem 2.05rem;
+          display: grid;
+          width: 100%;
+          grid-template-columns: 2.15rem minmax(2.75rem, 1fr) 2.15rem;
           align-items: center;
           overflow: hidden;
           border: 1px solid #cbd5e1;
@@ -3570,7 +3670,8 @@ export function SalesModule({ user }) {
         }
 
         .sales-qty-stepper input {
-          width: 2.35rem;
+          width: 100%;
+          min-width: 0;
           height: 100%;
           border: 0;
           background: transparent;
@@ -4296,7 +4397,7 @@ export function SalesModule({ user }) {
                   <Input
                     value={productSearch}
                     onChange={event => setProductSearch(event.target.value)}
-                    placeholder="Search item name, code, supplier"
+                    placeholder="Search name, code, category, supplier, size, color"
                     className="h-11 border-0 bg-transparent px-0 text-base shadow-none focus-visible:border-0 focus-visible:ring-0"
                   />
                 </div>
@@ -4347,28 +4448,31 @@ export function SalesModule({ user }) {
                   const existingLine = saleLines.find(line => String(line.inventoryId) === String(item.id));
                   const selectedQuantity = Number(existingLine?.quantity || 0);
                   const isOutOfStock = Number(item.quantity || 0) <= 0;
+                  const isAlreadySelected = selectedQuantity > 0;
                   return (
                     <div
                       key={item.id}
-                      className={`sales-product-card${isOutOfStock ? ' is-out-of-stock' : ''}${isSaving ? ' is-disabled' : ''}`}
+                      className={`sales-product-card${isOutOfStock ? ' is-out-of-stock' : ''}${isAlreadySelected ? ' is-selected' : ''}${isSaving ? ' is-disabled' : ''}`}
                     >
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-bold text-slate-900">
+                      <span className="sales-product-info">
+                        <span className="sales-product-name" title={item.name}>
                           {item.name}
                         </span>
-                        <span className="mt-1 block truncate text-xs text-slate-900">
-                          {item.itemCode || 'No item code'}
-                        </span>
-                        <span className="sales-product-meta mt-2">
-                          <span>{item.category || 'Uncategorized'}</span>
-                          <span>&middot;</span>
-                          <span>{item.quantity} unit{Number(item.quantity) === 1 ? '' : 's'}</span>
-                          {selectedQuantity > 0 && (
-                            <>
-                              <span>&middot;</span>
-                              <span>{selectedQuantity} selected</span>
-                            </>
-                          )}
+                        <span className="sales-product-details">
+                          <span className="sales-product-code" title={item.itemCode || 'No item code'}>
+                            {item.itemCode || 'No item code'}
+                          </span>
+                          <span className="sales-product-meta">
+                            <span>{item.category || 'Uncategorized'}</span>
+                            <span>&middot;</span>
+                            <span>{item.quantity} unit{Number(item.quantity) === 1 ? '' : 's'}</span>
+                            {selectedQuantity > 0 && (
+                              <>
+                                <span>&middot;</span>
+                                <span>{selectedQuantity} selected</span>
+                              </>
+                            )}
+                          </span>
                         </span>
                       </span>
                       <span className="sales-product-card-action">
@@ -4380,10 +4484,10 @@ export function SalesModule({ user }) {
                           className="sales-product-add-pill"
                           onClick={() => addInventoryItemToSale(item)}
                           disabled={isSaving || isOutOfStock}
-                          aria-label={`${isOutOfStock ? 'Out of stock: ' : 'Add '}${item.name}`}
+                          aria-label={`${isAlreadySelected ? 'Already added: ' : isOutOfStock ? 'Out of stock: ' : 'Add '}${item.name}`}
                         >
                           <ShoppingCart className="h-4 w-4" />
-                          {isOutOfStock ? 'Out' : 'Add'}
+                          {isAlreadySelected ? 'Added' : isOutOfStock ? 'Out' : 'Add'}
                         </button>
                       </span>
                     </div>
