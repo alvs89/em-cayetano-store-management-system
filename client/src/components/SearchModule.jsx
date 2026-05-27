@@ -181,14 +181,20 @@ export function SearchModule({ onNavigate }) {
         .search-result-card:hover,
         .search-result-card:focus-visible {
           transform: translateY(-2px);
-          box-shadow: 0 18px 32px rgba(15, 23, 42, 0.1);
-          border-color: #facc15;
+          background: #f8fafc !important;
+          box-shadow: 0 16px 30px rgba(15, 23, 42, 0.08) !important;
+          border-color: #94a3b8 !important;
           outline: none;
+        }
+
+        .search-result-card:focus-visible {
+          box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16), 0 16px 30px rgba(15, 23, 42, 0.08) !important;
         }
 
         .search-result-card:active {
           transform: translateY(0);
-          box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+          background: #f1f5f9 !important;
+          box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08) !important;
         }
 
         .search-result-header {
@@ -741,7 +747,7 @@ export function SearchModule({ onNavigate }) {
                 <Filter className="h-4 w-4 shrink-0" />
                 <span>Active filters:</span>
                 {searchQuery && (
-                  <Badge variant="secondary" className="bg-yellow-100 text-yellow-800">
+                  <Badge variant="secondary" className="border border-slate-200 bg-slate-100 text-slate-800">
                     Search: &quot;{searchQuery}&quot;
                   </Badge>
                 )}

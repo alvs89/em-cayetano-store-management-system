@@ -812,6 +812,7 @@ export function SalesModule({ user }) {
   const [historyPeriod, setHistoryPeriod] = useState('all');
   const [selectedHistorySaleId, setSelectedHistorySaleId] = useState('');
   const [isClearItemsConfirmOpen, setIsClearItemsConfirmOpen] = useState(false);
+  const [isSelectedItemsReviewOpen, setIsSelectedItemsReviewOpen] = useState(false);
   const canCancelSales = isAdminRole(user?.role);
 
   useEffect(() => {
@@ -1730,7 +1731,7 @@ export function SalesModule({ user }) {
 
         .sales-section-heading {
           display: flex;
-          align-items: flex-start;
+          align-items: center;
           gap: 0.75rem;
           margin-bottom: 0.85rem;
         }
@@ -1987,13 +1988,123 @@ export function SalesModule({ user }) {
         }
 
         .sales-cancel-dialog {
-          width: min(100% - 1.5rem, 39rem);
-          max-width: min(100% - 1.5rem, 39rem) !important;
+          width: min(100% - 2rem, 42rem);
+          max-width: min(100% - 2rem, 42rem) !important;
+          max-height: calc(100dvh - 2rem);
+          overflow-y: auto;
           border-radius: 1rem;
         }
 
         .sales-cancel-content {
-          padding: 1.35rem;
+          display: flex;
+          flex-direction: column;
+          gap: 1.35rem;
+          padding: clamp(1.25rem, 2.2vw, 1.75rem);
+        }
+
+        .sales-cancel-header {
+          display: flex;
+          align-items: flex-start;
+          gap: 1rem;
+        }
+
+        .sales-cancel-copy {
+          min-width: 0;
+          padding-top: 0.1rem;
+        }
+
+        .sales-cancel-description {
+          margin-top: 0.6rem;
+          color: #111827;
+        }
+
+        .sales-cancel-sale-number {
+          font-weight: 750;
+          color: #0f172a;
+        }
+
+        .sales-cancel-reason-group {
+          display: grid;
+          gap: 0.55rem;
+        }
+
+        .sales-cancel-reason-label {
+          color: #111827;
+          font-size: 0.9rem;
+          font-weight: 650;
+          line-height: 1.25;
+        }
+
+        .sales-cancel-reason-input {
+          min-height: 5.75rem;
+          border-radius: 0.75rem;
+          background: #f8fafc;
+          color: #111827;
+          line-height: 1.5;
+          padding: 0.85rem 1rem;
+        }
+
+        .sales-cancel-helper {
+          color: #111827;
+          font-size: 0.78rem;
+          line-height: 1.45;
+        }
+
+        .sales-cancel-actions {
+          display: flex;
+          gap: 0.75rem;
+          justify-content: flex-end;
+          margin-top: 0.1rem;
+        }
+
+        .sales-cancel-actions button {
+          min-height: 2.75rem;
+          border-radius: 0.75rem;
+          padding-inline: 1.15rem;
+        }
+
+        @media (max-width: 640px) {
+          .sales-cancel-dialog {
+            width: min(100% - 1.25rem, 28rem);
+            max-width: min(100% - 1.25rem, 28rem) !important;
+            border-radius: 0.9rem;
+          }
+
+          .sales-cancel-content {
+            gap: 1rem;
+            padding: 1rem;
+          }
+
+          .sales-cancel-header {
+            gap: 0.85rem;
+          }
+
+          .sales-cancel-icon {
+            width: 3.1rem;
+            height: 3.1rem;
+          }
+
+          .sales-cancel-description {
+            margin-top: 0.5rem;
+            font-size: 0.92rem;
+            line-height: 1.45;
+          }
+
+          .sales-cancel-reason-input {
+            min-height: 5rem;
+            padding: 0.8rem 0.9rem;
+            font-size: 0.95rem;
+          }
+
+          .sales-cancel-actions {
+            flex-direction: column-reverse;
+            gap: 0.65rem;
+          }
+
+          .sales-cancel-actions button {
+            width: 100%;
+            min-height: 2.75rem;
+          }
         }
 
         .sales-receipt-preview-dialog {
@@ -2075,14 +2186,21 @@ export function SalesModule({ user }) {
 
         .sales-cancel-icon {
           display: inline-flex;
-          width: 2.75rem;
-          height: 2.75rem;
+          width: 3.5rem;
+          height: 3.5rem;
           flex-shrink: 0;
           align-items: center;
           justify-content: center;
           border-radius: 0.9rem;
           background: #fff7ed;
           color: #c2410c;
+        }
+
+        @media (max-width: 640px) {
+          .sales-cancel-icon {
+            width: 3.1rem;
+            height: 3.1rem;
+          }
         }
 
         .sales-checkout-card {
@@ -2179,6 +2297,15 @@ export function SalesModule({ user }) {
           align-items: center;
           justify-content: space-between;
           gap: 0.75rem;
+        }
+
+        .sales-remarks-input {
+          min-height: 5.25rem;
+          resize: vertical;
+          border-radius: 0.8rem;
+          background: #ffffff;
+          color: #111827;
+          line-height: 1.5;
         }
 
         .sales-stock-preview-item {
@@ -2399,6 +2526,56 @@ export function SalesModule({ user }) {
           align-items: start;
         }
 
+        .sales-cancelled-notice {
+          display: flex;
+          align-items: flex-start;
+          gap: 0.75rem;
+          margin: 0.35rem 0 0.45rem;
+          padding: 0.95rem 1rem;
+          border: 1px solid #fecaca;
+          border-radius: 0.9rem;
+          background: #fef2f2;
+          color: #991b1b;
+          font-size: 0.9rem;
+          line-height: 1.55;
+        }
+
+        .sales-cancelled-notice-icon {
+          display: inline-flex;
+          width: 2rem;
+          height: 2rem;
+          flex-shrink: 0;
+          align-items: center;
+          justify-content: center;
+          border-radius: 999px;
+          background: #fee2e2;
+          color: #dc2626;
+        }
+
+        .sales-cancelled-notice-copy {
+          min-width: 0;
+        }
+
+        .sales-cancelled-reason {
+          margin-top: 0.25rem;
+          word-break: break-word;
+        }
+
+        @media (max-width: 640px) {
+          .sales-cancelled-notice {
+            gap: 0.65rem;
+            margin: 0.25rem 0 0.35rem;
+            padding: 0.85rem;
+            font-size: 0.86rem;
+            line-height: 1.5;
+          }
+
+          .sales-cancelled-notice-icon {
+            width: 1.85rem;
+            height: 1.85rem;
+          }
+        }
+
         .sales-confirm-clear-dialog {
           width: min(420px, calc(100vw - 2rem));
           border-radius: 1rem;
@@ -2490,6 +2667,166 @@ export function SalesModule({ user }) {
           justify-content: flex-end;
           gap: 0.65rem;
           margin-top: 1.25rem;
+        }
+
+        .sales-selected-items-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 0.85rem;
+          margin-bottom: 0.85rem;
+        }
+
+        .sales-selected-items-actions {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          gap: 0.5rem;
+        }
+
+        .sales-selected-items-action {
+          min-height: 2.35rem;
+          border-radius: 0.7rem;
+          font-weight: 700;
+        }
+
+        .sales-selected-items-dialog {
+          width: min(100% - 2rem, 48rem);
+          max-width: min(100% - 2rem, 48rem) !important;
+          border-radius: 1rem;
+          overflow: hidden;
+        }
+
+        .sales-selected-items-dialog-content {
+          display: flex;
+          max-height: calc(100dvh - 2rem);
+          flex-direction: column;
+        }
+
+        .sales-selected-items-dialog-header {
+          border-bottom: 1px solid #e2e8f0;
+          padding: 1.25rem 1.35rem 1rem;
+        }
+
+        .sales-selected-items-dialog-title {
+          display: flex;
+          align-items: center;
+          gap: 0.85rem;
+        }
+
+        .sales-selected-items-dialog-icon {
+          display: inline-flex;
+          width: 2.75rem;
+          height: 2.75rem;
+          flex-shrink: 0;
+          align-items: center;
+          justify-content: center;
+          border-radius: 0.85rem;
+          background: #eff6ff;
+          color: #2563eb;
+        }
+
+        .sales-selected-items-dialog-body {
+          display: grid;
+          gap: 0.75rem;
+          overflow-y: auto;
+          padding: 1rem 1.35rem;
+        }
+
+        .sales-selected-items-review-row {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr);
+          gap: 0.85rem;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.9rem;
+          background: #ffffff;
+          padding: 0.85rem;
+        }
+
+        .sales-selected-items-review-number {
+          display: inline-flex;
+          width: 2rem;
+          height: 2rem;
+          align-items: center;
+          justify-content: center;
+          border-radius: 999px;
+          background: #f8fafc;
+          color: #0f172a;
+          font-size: 0.82rem;
+          font-weight: 800;
+        }
+
+        .sales-selected-items-review-main {
+          min-width: 0;
+        }
+
+        .sales-selected-items-review-title {
+          color: #0f172a;
+          font-size: 0.98rem;
+          font-weight: 800;
+          line-height: 1.35;
+          word-break: break-word;
+        }
+
+        .sales-selected-items-review-meta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.35rem 0.55rem;
+          margin-top: 0.25rem;
+          color: #111827;
+          font-size: 0.82rem;
+          line-height: 1.35;
+        }
+
+        .sales-selected-items-review-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 0.55rem;
+          margin-top: 0.75rem;
+        }
+
+        .sales-selected-items-review-detail {
+          border: 1px solid #e2e8f0;
+          border-radius: 0.7rem;
+          background: #f8fafc;
+          padding: 0.55rem 0.65rem;
+        }
+
+        .sales-selected-items-review-label {
+          display: block;
+          color: #475569;
+          font-size: 0.68rem;
+          font-weight: 800;
+          letter-spacing: 0.02em;
+          line-height: 1rem;
+          text-transform: uppercase;
+        }
+
+        .sales-selected-items-review-value {
+          display: block;
+          margin-top: 0.1rem;
+          color: #0f172a;
+          font-size: 0.88rem;
+          font-weight: 800;
+          line-height: 1.2rem;
+          overflow-wrap: break-word;
+        }
+
+        .sales-selected-items-dialog-footer {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 0.75rem;
+          border-top: 1px solid #e2e8f0;
+          padding: 0.9rem 1.35rem 1.15rem;
+        }
+
+        .sales-selected-items-dialog-summary {
+          margin-right: auto;
+          color: #0f172a;
+          font-size: 0.88rem;
+          font-weight: 700;
+          line-height: 1.35;
         }
 
         .sales-non-inventory-dialog {
@@ -3093,7 +3430,28 @@ export function SalesModule({ user }) {
           display: grid;
           gap: 0.55rem;
           min-height: 0;
-          overflow: visible;
+          max-height: min(24rem, 38vh);
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          padding-right: 0.25rem;
+          scrollbar-gutter: stable;
+        }
+
+        .sales-cart-list::-webkit-scrollbar {
+          width: 0.45rem;
+        }
+
+        .sales-cart-list::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .sales-cart-list::-webkit-scrollbar-thumb {
+          border-radius: 999px;
+          background: #cbd5e1;
+        }
+
+        .sales-cart-list::-webkit-scrollbar-thumb:hover {
+          background: #94a3b8;
         }
 
         .sales-cart-row {
@@ -3338,9 +3696,12 @@ export function SalesModule({ user }) {
           }
 
           .sales-product-browser,
-          .sales-cart-list,
           .sales-checkout-compact {
             max-height: none;
+          }
+
+          .sales-cart-list {
+            max-height: min(26rem, 45vh);
           }
 
           .sales-product-toolbar {
@@ -3609,6 +3970,11 @@ export function SalesModule({ user }) {
             width: 2.7rem;
           }
 
+          .sales-cart-list {
+            max-height: min(22rem, 45vh);
+            padding-right: 0.15rem;
+          }
+
           @media (max-width: 430px) {
             .sales-cart-controls {
               grid-template-columns: 1fr;
@@ -3616,6 +3982,11 @@ export function SalesModule({ user }) {
 
             .sales-cart-secondary-controls {
               grid-template-columns: minmax(0, 1fr) auto;
+            }
+
+            .sales-selected-items-actions,
+            .sales-selected-items-review-grid {
+              grid-template-columns: 1fr;
             }
           }
 
@@ -3736,6 +4107,64 @@ export function SalesModule({ user }) {
           .sales-confirm-clear-actions button,
           .sales-non-inventory-footer button,
           .sales-receipt-actions button {
+            width: 100%;
+          }
+
+          .sales-selected-items-header {
+            align-items: stretch;
+            flex-direction: column;
+          }
+
+          .sales-selected-items-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            justify-content: stretch;
+            width: 100%;
+          }
+
+          .sales-selected-items-action {
+            width: 100%;
+          }
+
+          .sales-selected-items-dialog {
+            width: min(100% - 1.25rem, 30rem);
+            max-width: min(100% - 1.25rem, 30rem) !important;
+            border-radius: 0.9rem;
+          }
+
+          .sales-selected-items-dialog-header {
+            padding: 1rem 1rem 0.85rem;
+          }
+
+          .sales-selected-items-dialog-body {
+            padding: 0.85rem 1rem;
+          }
+
+          .sales-selected-items-review-row {
+            grid-template-columns: 1fr;
+            gap: 0.65rem;
+          }
+
+          .sales-selected-items-review-number {
+            width: 1.85rem;
+            height: 1.85rem;
+          }
+
+          .sales-selected-items-review-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .sales-selected-items-dialog-footer {
+            align-items: stretch;
+            flex-direction: column;
+            padding: 0.85rem 1rem 1rem;
+          }
+
+          .sales-selected-items-dialog-summary {
+            margin-right: 0;
+          }
+
+          .sales-selected-items-dialog-footer button {
             width: 100%;
           }
 
@@ -4245,24 +4674,6 @@ export function SalesModule({ user }) {
                 </div>
               </div>
 
-              <div className="sales-form-section">
-                <div className="sales-remarks-field">
-                <div className="sales-remarks-header">
-                  <Label htmlFor="sale-remarks">Remarks, optional</Label>
-                  <span className="text-xs font-medium text-slate-700">
-                    {remarks.length} / {SALES_REMARKS_MAX_LENGTH}
-                  </span>
-                </div>
-                <Textarea
-                  id="sale-remarks"
-                  placeholder="Example: Daily walk-in sales encoded after checking receipts."
-                  maxLength={SALES_REMARKS_MAX_LENGTH}
-                  value={remarks}
-                  disabled={isSaving}
-                  onChange={event => setRemarks(event.target.value)}
-                />
-                </div>
-              </div>
             </CardContent>
           </Card>
 
@@ -4318,24 +4729,37 @@ export function SalesModule({ user }) {
                 </div>
 
                 <div className="sales-form-section sales-checkout-section bg-slate-50/60">
-                  <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="sales-selected-items-header">
                     <div>
                       <h3 className="sales-section-title">Selected Items</h3>
                       <p className="text-xs font-medium text-slate-700">
                         {totalQuantity} unit{totalQuantity === 1 ? '' : 's'}
                       </p>
                     </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="sales-action-button border-red-200 text-red-600 hover:border-red-500 hover:bg-red-50 hover:text-red-700"
-                      onClick={handleClearSelectedItemsRequest}
-                      disabled={isSaving || cartLines.length === 0}
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      Clear All
-                    </Button>
+                    <div className="sales-selected-items-actions">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="sales-action-button sales-selected-items-action text-slate-700 hover:border-slate-400 hover:bg-slate-100 hover:text-slate-950"
+                        onClick={() => setIsSelectedItemsReviewOpen(true)}
+                        disabled={cartLines.length === 0}
+                      >
+                        <ClipboardList className="mr-2 h-4 w-4" />
+                        View All
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="sales-action-button sales-selected-items-action border-red-200 text-red-600 hover:border-red-500 hover:bg-red-50 hover:text-red-700"
+                        onClick={handleClearSelectedItemsRequest}
+                        disabled={isSaving || cartLines.length === 0}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Clear All
+                      </Button>
+                    </div>
                   </div>
 
                   <div className="sales-cart-list">
@@ -4606,6 +5030,34 @@ export function SalesModule({ user }) {
                 </div>
 
                 <div className="sales-form-section sales-checkout-section bg-slate-50/60">
+                  <div className="sales-section-heading">
+                    <span className="sales-section-icon">
+                      <ClipboardList className="h-5 w-5" />
+                    </span>
+                    <div>
+                      <h3 className="sales-section-title">Transaction Remarks</h3>
+                    </div>
+                  </div>
+                  <div className="sales-remarks-field">
+                    <div className="sales-remarks-header">
+                      <Label htmlFor="sale-remarks">Remarks, optional</Label>
+                      <span className="text-xs font-medium text-slate-700">
+                        {remarks.length} / {SALES_REMARKS_MAX_LENGTH}
+                      </span>
+                    </div>
+                    <Textarea
+                      id="sale-remarks"
+                      placeholder="Example: Daily walk-in sales encoded after checking receipts."
+                      maxLength={SALES_REMARKS_MAX_LENGTH}
+                      value={remarks}
+                      disabled={isSaving}
+                      onChange={event => setRemarks(event.target.value)}
+                      className="sales-remarks-input"
+                    />
+                  </div>
+                </div>
+
+                <div className="sales-form-section sales-checkout-section bg-slate-50/60">
                   <h3 className="mb-3 text-base font-semibold text-slate-900">Transaction Summary</h3>
                   <div className="sales-summary-grid">
                     <SummaryBlock icon={<User className="h-5 w-5" />} label="Customer Type" value={customerTypeLabels[customerType]} tone="blue" />
@@ -4660,6 +5112,13 @@ export function SalesModule({ user }) {
         onConfirm={confirmAddNonInventoryItem}
         onAddAnother={() => confirmAddNonInventoryItem({ keepOpen: true })}
         isSaving={isSaving}
+      />
+      <SelectedItemsReviewDialog
+        open={isSelectedItemsReviewOpen}
+        onOpenChange={setIsSelectedItemsReviewOpen}
+        lines={cartLines}
+        totalQuantity={totalQuantity}
+        subtotalAmount={subtotalAmount}
       />
       <SalesHistoryDialog
         open={isHistoryOpen}
@@ -4739,6 +5198,103 @@ export function SalesModule({ user }) {
         onStartNewSale={() => setCompletedSale(null)}
       />
     </div>
+  );
+}
+
+function SelectedItemsReviewDialog({ open, onOpenChange, lines, totalQuantity, subtotalAmount }) {
+  const visibleLines = Array.isArray(lines) ? lines : [];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sales-selected-items-dialog border border-slate-200 bg-white p-0 shadow-2xl">
+        <div className="sales-selected-items-dialog-content">
+          <DialogHeader className="sales-selected-items-dialog-header text-left">
+            <div className="sales-selected-items-dialog-title">
+              <span className="sales-selected-items-dialog-icon">
+                <ClipboardList className="h-5 w-5" />
+              </span>
+              <div className="min-w-0">
+                <DialogTitle className="text-lg font-bold leading-tight text-slate-950">
+                  Selected Items
+                </DialogTitle>
+                <DialogDescription className="mt-1 text-sm leading-6 text-slate-700">
+                  Review all items currently included in this sale.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="sales-selected-items-dialog-body">
+            {visibleLines.length === 0 ? (
+              <div className="sales-cart-empty">No selected items to review.</div>
+            ) : visibleLines.map((line, index) => {
+              const displayName = line.itemName || 'Non-inventory item';
+              const displayCategory = line.category || 'Uncategorized';
+              const displayCode = line.isManual ? 'Non-Inventory' : line.item?.itemCode || 'No item code';
+              const remainingStock = line.isManual
+                ? null
+                : Math.max(Number(line.item?.quantity || 0) - Number(line.quantity || 0), 0);
+
+              return (
+                <div key={`selected-items-review-${index}`} className="sales-selected-items-review-row">
+                  <span className="sales-selected-items-review-number">{index + 1}</span>
+                  <div className="sales-selected-items-review-main">
+                    <h4 className="sales-selected-items-review-title">{displayName}</h4>
+                    <div className="sales-selected-items-review-meta">
+                      <span>{displayCode}</span>
+                      <span>&middot;</span>
+                      <span>{displayCategory}</span>
+                      {line.isManual && (
+                        <>
+                          <span>&middot;</span>
+                          <span>Non-inventory item</span>
+                        </>
+                      )}
+                    </div>
+                    <div className="sales-selected-items-review-grid">
+                      <div className="sales-selected-items-review-detail">
+                        <span className="sales-selected-items-review-label">Quantity</span>
+                        <span className="sales-selected-items-review-value">
+                          {Number(line.quantity || 0).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="sales-selected-items-review-detail">
+                        <span className="sales-selected-items-review-label">Unit Price</span>
+                        <span className="sales-selected-items-review-value">{formatCurrency(line.unitPrice)}</span>
+                      </div>
+                      <div className="sales-selected-items-review-detail">
+                        <span className="sales-selected-items-review-label">Subtotal</span>
+                        <span className="sales-selected-items-review-value">{formatCurrency(line.subtotal)}</span>
+                      </div>
+                      <div className="sales-selected-items-review-detail">
+                        <span className="sales-selected-items-review-label">Stock After</span>
+                        <span className="sales-selected-items-review-value">
+                          {line.isManual ? 'Not tracked' : `${remainingStock} left`}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <DialogFooter className="sales-selected-items-dialog-footer">
+            <div className="sales-selected-items-dialog-summary">
+              {visibleLines.length} line{visibleLines.length === 1 ? '' : 's'} · {totalQuantity} unit{totalQuantity === 1 ? '' : 's'} · {formatCurrency(subtotalAmount)}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="sales-action-button hover:bg-slate-100"
+              onClick={() => onOpenChange(false)}
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -5198,35 +5754,35 @@ function CancelSaleDialog({ open, sale, reason, onReasonChange, onOpenChange, on
       <DialogContent className="sales-cancel-dialog border border-amber-300 bg-white p-0 shadow-2xl">
         <div className="sales-cancel-content">
           <DialogHeader className="text-left">
-            <div className="sales-confirm-clear-header">
+            <div className="sales-cancel-header">
               <span className="sales-cancel-icon">
                 <ReceiptText className="h-4 w-4" />
               </span>
-              <div className="min-w-0">
+              <div className="sales-cancel-copy">
                 <DialogTitle className="text-lg font-bold leading-tight text-slate-950">
                   Cancel this sale?
                 </DialogTitle>
-                <DialogDescription className="mt-2 text-sm leading-6 text-slate-600">
-                  This will mark {sale?.salesNumber || 'this sales record'} as cancelled and restore any tracked inventory quantities. This action will be recorded in the audit trail.
+                <DialogDescription className="sales-cancel-description text-sm leading-6">
+                  This will mark <span className="sales-cancel-sale-number">{sale?.salesNumber || 'this sales record'}</span> as cancelled and restore any tracked inventory quantities. This action will be recorded in the audit trail.
                 </DialogDescription>
               </div>
             </div>
           </DialogHeader>
-          <div className="mt-4 space-y-2">
-            <Label htmlFor="sale-cancel-reason">Cancellation Reason</Label>
+          <div className="sales-cancel-reason-group">
+            <Label htmlFor="sale-cancel-reason" className="sales-cancel-reason-label">Cancellation Reason</Label>
             <Textarea
               id="sale-cancel-reason"
               value={reason}
               onChange={event => onReasonChange(event.target.value.slice(0, 500))}
               placeholder="Example: Wrong item or quantity was encoded."
               disabled={isSubmitting}
-              className="min-h-[92px] resize-none"
+              className="sales-cancel-reason-input resize-none"
             />
-              <p className="text-xs leading-5 text-slate-700">
+              <p className="sales-cancel-helper">
               Use a short but clear reason for manager review and audit checking.
             </p>
           </div>
-          <DialogFooter className="mt-5 gap-2 sm:justify-end">
+          <DialogFooter className="sales-cancel-actions">
             <Button
               type="button"
               variant="outline"
@@ -5479,9 +6035,18 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
       </div>
 
       {isCancelled && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-800">
-          <strong>Cancelled sale:</strong> Inventory was restored for this transaction.
-          {sale.cancelReason ? ` Reason: ${sale.cancelReason}` : ''}
+        <div className="sales-cancelled-notice">
+          <span className="sales-cancelled-notice-icon" aria-hidden="true">
+            <X className="h-4 w-4" />
+          </span>
+          <div className="sales-cancelled-notice-copy">
+            <div><strong>Cancelled sale:</strong> Inventory was restored for this transaction.</div>
+            {sale.cancelReason && (
+              <div className="sales-cancelled-reason">
+                <strong>Reason:</strong> {sale.cancelReason}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

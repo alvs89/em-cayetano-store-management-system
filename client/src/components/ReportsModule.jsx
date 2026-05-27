@@ -1316,7 +1316,7 @@ export function ReportsModule({
             formatMovementItemNameForExport(movement),
             movement.category,
             getMovementLabel(movement.action),
-            isSalesMovementReport ? getPaymentMethodLabel(movement.paymentMethod) : getMovementReasonLabel(movement.reason),
+            isSalesMovementReport ? getPaymentMethodLabel(movement.paymentMethod) : getMovementReasonDisplay(movement),
             movement.quantityChanged.toString(),
             `${movement.previousQuantity} -> ${movement.newQuantity}`,
             movement.actorName || 'System'
@@ -1408,6 +1408,7 @@ export function ReportsModule({
       returned_item: 'Returned Item',
       beginning_balance: 'Beginning Balance',
       found_stock: 'Found Stock',
+      sales_cancellation: 'Cancellation',
       sales: 'Sales',
       damaged: 'Damaged',
       expired: 'Expired',
@@ -1417,6 +1418,14 @@ export function ReportsModule({
       correction: 'Correction'
     };
     return labels[reason] || '-';
+  };
+
+  const getMovementReasonDisplay = movement => {
+    const note = String(movement?.note || '').toLowerCase();
+    if (movement?.reason === 'correction' && note.includes('cancelled sales transaction')) {
+      return 'Cancellation';
+    }
+    return getMovementReasonLabel(movement?.reason);
   };
 
   const getPaymentMethodLabel = method => {
@@ -3426,7 +3435,7 @@ export function ReportsModule({
                               {getMovementLabel(movement.action)}
                             </Badge>
                           </TableCell>
-                          <TableCell>{reportType === 'sales-movements' ? getPaymentMethodLabel(movement.paymentMethod) : getMovementReasonLabel(movement.reason)}</TableCell>
+                          <TableCell>{reportType === 'sales-movements' ? getPaymentMethodLabel(movement.paymentMethod) : getMovementReasonDisplay(movement)}</TableCell>
                           <TableCell className="font-semibold">{movement.quantityChanged}</TableCell>
                           <TableCell>{movement.previousQuantity}</TableCell>
                           <TableCell>{movement.newQuantity}</TableCell>
@@ -3457,7 +3466,7 @@ export function ReportsModule({
                       <div className="reports-movement-stats">
                         <div className="reports-movement-stat">
                           <span>{reportType === 'sales-movements' ? 'Payment' : 'Reason'}</span>
-                          <strong>{reportType === 'sales-movements' ? getPaymentMethodLabel(movement.paymentMethod) : getMovementReasonLabel(movement.reason)}</strong>
+                          <strong>{reportType === 'sales-movements' ? getPaymentMethodLabel(movement.paymentMethod) : getMovementReasonDisplay(movement)}</strong>
                         </div>
                         <div className="reports-movement-stat">
                           <span>{reportType === 'sales-movements' ? 'Qty Sold' : 'Qty'}</span>

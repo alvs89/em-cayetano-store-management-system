@@ -1834,6 +1834,7 @@ const STOCK_IN_REASONS = new Map([
   ['returned_item', 'Returned Item'],
   ['beginning_balance', 'Beginning Balance'],
   ['manual_adjustment', 'Manual Adjustment'],
+  ['sales_cancellation', 'Cancellation'],
   ['correction', 'Correction'],
   ['found_stock', 'Found Stock']
 ]);
@@ -4214,7 +4215,7 @@ app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) =
         quantityChanged: restoredQuantity,
         previousQuantity,
         newQuantity,
-        reason: 'correction',
+        reason: 'sales_cancellation',
         note: `Cancelled sales transaction ${sale.sales_number}. Reason: ${cleanReason}`,
         actorId: req.user.id
       });
