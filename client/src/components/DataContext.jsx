@@ -15,6 +15,13 @@ const computeStockStatusFromLevels = (quantity, reorderLevel) => {
   return stockLevel <= threshold ? "Low Stock" : "In Stock";
 };
 
+const normalizeOptionalNumber = value => (
+  value === null || value === undefined || value === "" ? "" : Number(value)
+);
+
+const getEffectiveLowStockThreshold = product =>
+  normalizeOptionalNumber(product.active_low_stock_threshold ?? product.min_stock_level ?? 0);
+
 const getStockAlertEventId = (prefix, item) => {
   const quantity = Number(item.quantity);
   const quantityKey = Number.isFinite(quantity) ? quantity : "unknown";
@@ -254,7 +261,16 @@ export function DataProvider({ children }) {
           costPrice: p.cost_price === null || p.cost_price === undefined ? '' : Number(p.cost_price),
           quantity: p.stock_level,
           reorderLevel: p.min_stock_level,
-          status: computeStockStatusFromLevels(p.stock_level, p.min_stock_level),
+          leadTimeDays: normalizeOptionalNumber(p.lead_time_days),
+          safetyStock: normalizeOptionalNumber(p.safety_stock),
+          averageDailySales: normalizeOptionalNumber(p.average_daily_sales),
+          averageDailySalesMode: p.average_daily_sales_mode || 'auto',
+          manualAverageDailySales: normalizeOptionalNumber(p.manual_average_daily_sales),
+          averageDailySalesOverrideReason: p.average_daily_sales_override_reason || '',
+          recommendedReorderPoint: normalizeOptionalNumber(p.recommended_reorder_point),
+          activeLowStockThreshold: getEffectiveLowStockThreshold(p),
+          suggestedOrderQuantity: normalizeOptionalNumber(p.suggested_order_quantity),
+          status: p.status || computeStockStatusFromLevels(p.stock_level, getEffectiveLowStockThreshold(p)),
           branch: p.branch,
           // preserve full ISO timestamp so the UI can display accurate relative times
           lastUpdated: p.last_updated ? new Date(p.last_updated).toISOString() : '',
@@ -296,7 +312,16 @@ export function DataProvider({ children }) {
           costPrice: p.cost_price === null || p.cost_price === undefined ? '' : Number(p.cost_price),
           quantity: p.stock_level,
           reorderLevel: p.min_stock_level,
-          status: computeStockStatusFromLevels(p.stock_level, p.min_stock_level),
+          leadTimeDays: normalizeOptionalNumber(p.lead_time_days),
+          safetyStock: normalizeOptionalNumber(p.safety_stock),
+          averageDailySales: normalizeOptionalNumber(p.average_daily_sales),
+          averageDailySalesMode: p.average_daily_sales_mode || 'auto',
+          manualAverageDailySales: normalizeOptionalNumber(p.manual_average_daily_sales),
+          averageDailySalesOverrideReason: p.average_daily_sales_override_reason || '',
+          recommendedReorderPoint: normalizeOptionalNumber(p.recommended_reorder_point),
+          activeLowStockThreshold: getEffectiveLowStockThreshold(p),
+          suggestedOrderQuantity: normalizeOptionalNumber(p.suggested_order_quantity),
+          status: p.status || computeStockStatusFromLevels(p.stock_level, getEffectiveLowStockThreshold(p)),
           branch: p.branch,
           // preserve full ISO timestamps for accuracy in alerts and history
           lastUpdated: p.last_updated ? new Date(p.last_updated).toISOString() : '',
@@ -341,6 +366,8 @@ export function DataProvider({ children }) {
         actorId: movement.actor_id?.toString() ?? '',
         actorName: movement.actor_name || '',
         createdAt: movement.created_at ? new Date(movement.created_at).toISOString() : '',
+        encodedAt: movement.encoded_at ? new Date(movement.encoded_at).toISOString() : '',
+        backdateReason: movement.backdate_reason || '',
       }));
       setStockMovements(movements);
     } catch (err) {
@@ -375,6 +402,8 @@ export function DataProvider({ children }) {
     soldByName: sale.sold_by_name || '',
     remarks: sale.remarks || '',
     createdAt: sale.created_at ? new Date(sale.created_at).toISOString() : '',
+    encodedAt: sale.encoded_at ? new Date(sale.encoded_at).toISOString() : '',
+    backdateReason: sale.backdate_reason || '',
     cancelledAt: sale.cancelled_at ? new Date(sale.cancelled_at).toISOString() : '',
     cancelReason: sale.cancel_reason || '',
     items: (sale.items || []).map((item) => ({
@@ -428,6 +457,8 @@ export function DataProvider({ children }) {
     encodedBy: purchase.encoded_by?.toString() ?? '',
     encodedByName: purchase.encoded_by_name || '',
     createdAt: purchase.created_at ? new Date(purchase.created_at).toISOString() : '',
+    encodedAt: purchase.encoded_at ? new Date(purchase.encoded_at).toISOString() : '',
+    backdateReason: purchase.backdate_reason || '',
     cancelledAt: purchase.cancelled_at ? new Date(purchase.cancelled_at).toISOString() : '',
     cancelReason: purchase.cancel_reason || '',
     items: (purchase.items || []).map((item) => ({
@@ -682,6 +713,11 @@ export function DataProvider({ children }) {
         cost_price: item.costPrice,
         stock_level: item.quantity,
         min_stock_level: item.reorderLevel,
+        lead_time_days: item.leadTimeDays,
+        safety_stock: item.safetyStock,
+        average_daily_sales_mode: item.averageDailySalesMode || "auto",
+        manual_average_daily_sales: item.manualAverageDailySales,
+        average_daily_sales_override_reason: item.averageDailySalesOverrideReason,
         allow_similar_duplicate: Boolean(item.allowSimilarDuplicate),
       },
       { headers: token ? { Authorization: `Bearer ${token}` } : {} }
@@ -703,6 +739,7 @@ export function DataProvider({ children }) {
           ? (() => {
               const nextQuantity = typeof updates.quantity === 'number' ? updates.quantity : it.quantity;
               const nextReorderLevel = updates.reorderLevel ?? it.reorderLevel;
+              const nextActiveThreshold = updates.activeLowStockThreshold ?? nextReorderLevel;
               const quantityChanged = nextQuantity !== it.quantity;
               return {
                 ...it,
@@ -714,7 +751,15 @@ export function DataProvider({ children }) {
                 costPrice: updates.costPrice ?? it.costPrice,
                 quantity: nextQuantity,
                 reorderLevel: nextReorderLevel,
-                status: computeStockStatusFromLevels(nextQuantity, nextReorderLevel),
+                leadTimeDays: updates.leadTimeDays ?? it.leadTimeDays,
+                safetyStock: updates.safetyStock ?? it.safetyStock,
+                averageDailySales: updates.averageDailySales ?? it.averageDailySales,
+                averageDailySalesMode: updates.averageDailySalesMode ?? it.averageDailySalesMode,
+                manualAverageDailySales: updates.manualAverageDailySales ?? it.manualAverageDailySales,
+                averageDailySalesOverrideReason: updates.averageDailySalesOverrideReason ?? it.averageDailySalesOverrideReason,
+                recommendedReorderPoint: updates.recommendedReorderPoint ?? it.recommendedReorderPoint,
+                activeLowStockThreshold: nextActiveThreshold,
+                status: computeStockStatusFromLevels(nextQuantity, nextActiveThreshold),
                 lastUpdated: quantityChanged ? new Date().toISOString() : it.lastUpdated,
               };
             })()
@@ -734,10 +779,17 @@ export function DataProvider({ children }) {
           cost_price: updates.costPrice,
           stock_level: updates.quantity,
           min_stock_level: updates.reorderLevel,
+          lead_time_days: updates.leadTimeDays,
+          safety_stock: updates.safetyStock,
+          average_daily_sales_mode: updates.averageDailySalesMode,
+          manual_average_daily_sales: updates.manualAverageDailySales,
+          average_daily_sales_override_reason: updates.averageDailySalesOverrideReason,
           movement_action: updates.movementAction,
           movement_quantity: updates.movementQuantity,
           movement_reason: updates.movementReason,
           movement_note: updates.movementNote,
+          actual_transaction_at: updates.actualTransactionAt,
+          backdate_reason: updates.backdateReason,
           allow_similar_duplicate: Boolean(updates.allowSimilarDuplicate),
         },
         { headers: token ? { Authorization: `Bearer ${token}` } : {} }
@@ -757,7 +809,7 @@ export function DataProvider({ children }) {
     }
   };
 
-  const batchStockOut = async ({ items, movementReason, movementNote }) => {
+  const batchStockOut = async ({ items, movementReason, movementNote, actualTransactionAt, backdateReason }) => {
     const token = localStorage.getItem("token");
     try {
       const res = await axios.post(
@@ -769,6 +821,8 @@ export function DataProvider({ children }) {
           })),
           movement_reason: movementReason,
           movement_note: movementNote,
+          actual_transaction_at: actualTransactionAt,
+          backdate_reason: backdateReason,
         },
         { headers: token ? { Authorization: `Bearer ${token}` } : {} }
       );
@@ -784,7 +838,7 @@ export function DataProvider({ children }) {
     }
   };
 
-  const batchStockAdjustment = async ({ items, movementReason, movementNote }) => {
+  const batchStockAdjustment = async ({ items, movementReason, movementNote, actualTransactionAt, backdateReason }) => {
     const token = localStorage.getItem("token");
     try {
       const res = await axios.post(
@@ -796,6 +850,8 @@ export function DataProvider({ children }) {
           })),
           movement_reason: movementReason,
           movement_note: movementNote,
+          actual_transaction_at: actualTransactionAt,
+          backdate_reason: backdateReason,
         },
         { headers: token ? { Authorization: `Bearer ${token}` } : {} }
       );
@@ -811,7 +867,7 @@ export function DataProvider({ children }) {
     }
   };
 
-  const recordSale = async ({ customerType, items, remarks, paymentMethod, discountType, discountAmount, deliveryCharge, amountReceived, paymentReference, paymentConfirmed }) => {
+  const recordSale = async ({ customerType, items, remarks, paymentMethod, discountType, discountAmount, deliveryCharge, amountReceived, paymentReference, paymentConfirmed, actualTransactionAt, backdateReason }) => {
     const token = localStorage.getItem("token");
     try {
       const res = await axios.post(
@@ -826,6 +882,8 @@ export function DataProvider({ children }) {
           amount_received: amountReceived,
           payment_reference: paymentReference,
           payment_confirmed: paymentConfirmed,
+          actual_transaction_at: actualTransactionAt,
+          backdate_reason: backdateReason,
           items: items.map(item => ({
             inventory_id: item.inventoryId,
             item_type: item.isManual ? 'non_inventory' : 'inventory',
@@ -854,7 +912,7 @@ export function DataProvider({ children }) {
     }
   };
 
-  const recordPurchase = async ({ supplierName, documentType, documentNumber, paymentTerms, remarks, items }) => {
+  const recordPurchase = async ({ supplierName, documentType, documentNumber, paymentTerms, remarks, items, actualTransactionAt, backdateReason }) => {
     const token = localStorage.getItem("token");
     try {
       const res = await axios.post(
@@ -865,6 +923,8 @@ export function DataProvider({ children }) {
           document_number: documentNumber,
           payment_terms: paymentTerms,
           remarks,
+          actual_transaction_at: actualTransactionAt,
+          backdate_reason: backdateReason,
           items: items.map(item => ({
             inventory_id: item.inventoryId,
             quantity: item.quantity,

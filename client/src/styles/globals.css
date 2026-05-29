@@ -31,6 +31,11 @@
   --emc-red: #FF0000;
   --emc-yellow-hover: #e6e600;
   --emc-red-hover: #cc0000;
+  --emc-interactive-yellow: #ffff00;
+  --emc-interactive-yellow-soft: rgba(255, 255, 0, 0.42);
+  --emc-interactive-yellow-wash: rgba(255, 255, 0, 0.12);
+  --emc-interactive-border: rgba(202, 138, 4, 0.42);
+  --emc-interactive-shadow: 0 8px 18px rgba(202, 138, 4, 0.08);
   
   --chart-1: #FFFF00;
   --chart-2: #FF0000;
@@ -443,14 +448,6 @@ body {
 /* App-wide non-button interaction feedback. Keep buttons on their intentional
    module-specific hover styles, but make fields and selectable surfaces easier
    to recognize with the EMC yellow cue. */
-#root {
-  --emc-interactive-yellow: #ffff00;
-  --emc-interactive-yellow-soft: rgba(255, 255, 0, 0.42);
-  --emc-interactive-yellow-wash: rgba(255, 255, 0, 0.12);
-  --emc-interactive-border: rgba(202, 138, 4, 0.42);
-  --emc-interactive-shadow: 0 8px 18px rgba(202, 138, 4, 0.08);
-}
-
 #root :is(input, textarea, [data-slot="select-trigger"]):not(:disabled):not([aria-disabled="true"]) {
   transition:
     background-color 150ms ease,
@@ -473,6 +470,227 @@ body {
   box-shadow:
     inset 0 0 0 2px rgba(255, 255, 0, 0.72),
     0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.actual-transaction-date-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.actual-transaction-date-icon {
+  position: absolute;
+  left: 14px;
+  z-index: 1;
+  width: 18px;
+  height: 18px;
+  color: #2563eb;
+  pointer-events: none;
+}
+
+.actual-transaction-date-input {
+  min-height: 52px;
+  width: 100%;
+  min-width: 0;
+  border: 1.5px solid #94a3b8;
+  border-radius: 12px;
+  background: #ffffff;
+  padding-left: 46px;
+  padding-right: 14px;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: text;
+  box-shadow: inset 0 1px 0 rgba(15, 23, 42, 0.03);
+}
+
+.actual-transaction-date-input:hover {
+  border-color: #2563eb;
+  background: #f8fbff;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+}
+
+.actual-transaction-date-input:focus,
+.actual-transaction-date-input:focus-visible {
+  border-color: #2563eb;
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.14);
+}
+
+.actual-transaction-date-input::-webkit-calendar-picker-indicator {
+  min-width: 28px;
+  min-height: 28px;
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.actual-transaction-date-input::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
+.actual-transaction-date-helper {
+  margin-top: 10px;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.actual-transaction-split-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 16px;
+  row-gap: 14px;
+  align-items: start;
+  min-width: 0;
+  margin-top: 10px;
+}
+
+.actual-transaction-split-field {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+}
+
+.actual-transaction-split-label {
+  display: block;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  padding-left: 2px;
+}
+
+.actual-transaction-part-input {
+  height: 48px;
+  min-height: 48px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 0 14px;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: text;
+  box-shadow: inset 0 1px 0 rgba(15, 23, 42, 0.03);
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+#root input.actual-transaction-part-input:hover,
+#root input.actual-transaction-part-input[data-slot="input"]:hover,
+input.actual-transaction-part-input:hover,
+input.actual-transaction-part-input[data-slot="input"]:hover {
+  border-color: var(--emc-interactive-yellow);
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px var(--emc-interactive-yellow-soft);
+}
+
+#root input.actual-transaction-part-input:focus,
+#root input.actual-transaction-part-input:focus-visible,
+#root input.actual-transaction-part-input[data-slot="input"]:focus,
+#root input.actual-transaction-part-input[data-slot="input"]:focus-visible,
+input.actual-transaction-part-input:focus,
+input.actual-transaction-part-input:focus-visible,
+input.actual-transaction-part-input[data-slot="input"]:focus,
+input.actual-transaction-part-input[data-slot="input"]:focus-visible {
+  border-color: var(--emc-interactive-yellow);
+  background: #ffffff;
+  outline: 0;
+  outline-color: transparent;
+  outline-offset: 0;
+  --tw-ring-shadow: 0 0 #0000;
+  --tw-ring-offset-shadow: 0 0 #0000;
+  --tw-ring-color: transparent;
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 0, 0.72),
+    0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.actual-transaction-part-input::-webkit-calendar-picker-indicator {
+  display: none;
+  opacity: 0;
+  width: 0;
+  min-width: 0;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.actual-transaction-part-input::-webkit-date-and-time-value {
+  text-align: left;
+}
+
+.actual-transaction-part-input::-webkit-inner-spin-button,
+.actual-transaction-part-input::-webkit-clear-button {
+  display: none;
+  -webkit-appearance: none;
+}
+
+.actual-transaction-date-control {
+  min-height: 52px;
+  border: 1.5px solid #94a3b8;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(15, 23, 42, 0.03);
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.actual-transaction-date-control:hover {
+  border-color: var(--emc-interactive-yellow);
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px var(--emc-interactive-yellow-soft);
+}
+
+.actual-transaction-date-control:focus-within {
+  border-color: var(--emc-interactive-yellow);
+  background: #ffffff;
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 0, 0.72),
+    0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.actual-transaction-date-control .actual-transaction-date-input {
+  min-height: 50px;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.actual-transaction-date-control .actual-transaction-date-input:hover,
+.actual-transaction-date-control .actual-transaction-date-input:focus,
+.actual-transaction-date-control .actual-transaction-date-input:focus-visible {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+@media (max-width: 340px) {
+  .actual-transaction-date-input {
+    min-height: 54px;
+    font-size: 16px;
+  }
+
+  .actual-transaction-split-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .actual-transaction-part-input {
+    height: 50px;
+    min-height: 50px;
+    font-size: 16px;
+  }
 }
 
 #root :is([data-slot="select-item"], [data-slot="dropdown-menu-item"], [data-slot="command-item"]):not([data-disabled]):not([aria-disabled="true"]) {

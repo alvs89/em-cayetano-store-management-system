@@ -214,6 +214,7 @@ pool.on('connect', (client) => {
 });
 
 const PHILIPPINE_NOW_SQL = `(CURRENT_TIMESTAMP AT TIME ZONE '${APP_TIME_ZONE}')`;
+const BACKDATE_FUTURE_TOLERANCE_MS = 60 * 1000;
 
 async function ensureSchema() {
   await pool.query('CREATE SCHEMA IF NOT EXISTS public;');
@@ -301,7 +302,9 @@ async function ensureSchema() {
       note TEXT,
       actor_id INT REFERENCES users(user_id) ON DELETE SET NULL,
       actor_name TEXT,
-      created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
+      created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
+      encoded_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
+      backdate_reason TEXT
     );
   `);
 
@@ -333,6 +336,8 @@ async function ensureSchema() {
       sold_by_name TEXT,
       remarks TEXT,
       created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
+      encoded_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
+      backdate_reason TEXT,
       cancelled_at TIMESTAMP,
       cancelled_by INT REFERENCES users(user_id) ON DELETE SET NULL,
       cancel_reason TEXT
@@ -375,6 +380,8 @@ async function ensureSchema() {
       encoded_by INT REFERENCES users(user_id) ON DELETE SET NULL,
       encoded_by_name TEXT,
       created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
+      encoded_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
+      backdate_reason TEXT,
       cancelled_at TIMESTAMP,
       cancelled_by INT REFERENCES users(user_id) ON DELETE SET NULL,
       cancel_reason TEXT
@@ -569,6 +576,19 @@ async function ensureSchema() {
     ALTER TABLE stock_movements
     ALTER COLUMN created_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
   `);
+  await pool.query(`
+    ALTER TABLE stock_movements
+    ADD COLUMN IF NOT EXISTS encoded_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+  await pool.query(`
+    ALTER TABLE stock_movements
+    ADD COLUMN IF NOT EXISTS backdate_reason TEXT;
+  `);
+  await pool.query(`
+    UPDATE stock_movements
+    SET encoded_at = COALESCE(encoded_at, created_at, ${PHILIPPINE_NOW_SQL})
+    WHERE encoded_at IS NULL;
+  `);
 
   await pool.query(`
     ALTER TABLE stock_movements
@@ -578,6 +598,19 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE sales_transactions
     ALTER COLUMN created_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS encoded_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS backdate_reason TEXT;
+  `);
+  await pool.query(`
+    UPDATE sales_transactions
+    SET encoded_at = COALESCE(encoded_at, created_at, ${PHILIPPINE_NOW_SQL})
+    WHERE encoded_at IS NULL;
   `);
 
   await pool.query(`
@@ -722,6 +755,19 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE purchase_transactions
     ALTER COLUMN created_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+  await pool.query(`
+    ALTER TABLE purchase_transactions
+    ADD COLUMN IF NOT EXISTS encoded_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+  await pool.query(`
+    ALTER TABLE purchase_transactions
+    ADD COLUMN IF NOT EXISTS backdate_reason TEXT;
+  `);
+  await pool.query(`
+    UPDATE purchase_transactions
+    SET encoded_at = COALESCE(encoded_at, created_at, ${PHILIPPINE_NOW_SQL})
+    WHERE encoded_at IS NULL;
   `);
 
   await pool.query(`
@@ -1152,16 +1198,17 @@ function computeReorderPoint({ averageDailySales = null, leadTimeDays = null, sa
 }
 
 function getEffectiveReorderThreshold(row = {}) {
+  return Number(row.min_stock_level ?? row.minStockLevel ?? 0);
+}
+
+function computeSuggestedOrderQuantity(row) {
   const reorderPoint = computeReorderPoint({
     averageDailySales: row.average_daily_sales ?? row.averageDailySales,
     leadTimeDays: row.lead_time_days ?? row.leadTimeDays,
     safetyStock: row.safety_stock ?? row.safetyStock
   });
-  return reorderPoint !== null ? reorderPoint : Number(row.min_stock_level ?? row.minStockLevel ?? 0);
-}
-
-function computeSuggestedOrderQuantity(row) {
-  return Math.max(0, getEffectiveReorderThreshold(row) - Number(row.stock_level || 0));
+  const planningThreshold = reorderPoint !== null ? reorderPoint : getEffectiveReorderThreshold(row);
+  return Math.max(0, planningThreshold - Number(row.stock_level || 0));
 }
 
 function normalizeAverageDailySalesMode(value) {
@@ -1172,6 +1219,89 @@ function cleanAverageDailySalesOverrideReason(value) {
   if (value === undefined || value === null) return null;
   const cleaned = String(value).trim().replace(/\s+/g, ' ');
   return cleaned || null;
+}
+
+function formatDateAsPhilippineTimestamp(date) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: APP_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(date).reduce((acc, part) => {
+    if (part.type !== 'literal') acc[part.type] = part.value;
+    return acc;
+  }, {});
+
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
+function parseOptionalActualTransactionAt(value, fieldName = 'Actual transaction date') {
+  if (value === undefined || value === null || String(value).trim() === '') return null;
+  const rawValue = String(value).trim();
+  const localMatch = rawValue.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+
+  if (localMatch) {
+    const [, year, month, day, hour, minute, second = '00'] = localMatch;
+    const parsed = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}${APP_TIMESTAMP_OFFSET}`);
+    const yearNumber = Number(year);
+    const monthNumber = Number(month);
+    const dayNumber = Number(day);
+    const hourNumber = Number(hour);
+    const minuteNumber = Number(minute);
+    const secondNumber = Number(second);
+    const normalized = new Date(Date.UTC(yearNumber, monthNumber - 1, dayNumber, hourNumber, minuteNumber, secondNumber));
+    const isValidCalendarDate =
+      normalized.getUTCFullYear() === yearNumber &&
+      normalized.getUTCMonth() === monthNumber - 1 &&
+      normalized.getUTCDate() === dayNumber &&
+      hourNumber >= 0 && hourNumber <= 23 &&
+      minuteNumber >= 0 && minuteNumber <= 59 &&
+      secondNumber >= 0 && secondNumber <= 59;
+
+    if (!isValidCalendarDate || Number.isNaN(parsed.getTime())) {
+      const err = new Error(`${fieldName} must be a valid date and time.`);
+      err.statusCode = 400;
+      throw err;
+    }
+    if (parsed.getTime() > Date.now() + BACKDATE_FUTURE_TOLERANCE_MS) {
+      const err = new Error(`${fieldName} cannot be in the future.`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+  }
+
+  const parsed = new Date(rawValue);
+  if (Number.isNaN(parsed.getTime())) {
+    const err = new Error(`${fieldName} must be a valid date and time.`);
+    err.statusCode = 400;
+    throw err;
+  }
+  if (parsed.getTime() > Date.now() + BACKDATE_FUTURE_TOLERANCE_MS) {
+    const err = new Error(`${fieldName} cannot be in the future.`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return formatDateAsPhilippineTimestamp(parsed);
+}
+
+function cleanBackdateReason(value) {
+  if (value === undefined || value === null) return null;
+  const cleaned = String(value).trim().replace(/\s+/g, ' ');
+  return cleaned.slice(0, 240) || null;
+}
+
+function getTransactionTiming(body = {}) {
+  const actualTransactionAt = parseOptionalActualTransactionAt(body.actual_transaction_at);
+  return {
+    actualTransactionAt,
+    backdateReason: cleanBackdateReason(body.backdate_reason)
+  };
 }
 
 async function calculateRecentAverageDailySales(client, inventoryId) {
@@ -1686,7 +1816,9 @@ function mapStockMovementRow(row) {
     note: row.note,
     actor_id: row.actor_id,
     actor_name: row.actor_name,
-    created_at: row.created_at
+    created_at: row.created_at,
+    encoded_at: row.encoded_at,
+    backdate_reason: row.backdate_reason
   };
 }
 
@@ -1718,6 +1850,8 @@ function mapSalesTransactionRow(row) {
     sold_by_name: row.sold_by_name,
     remarks: row.remarks,
     created_at: row.created_at,
+    encoded_at: row.encoded_at,
+    backdate_reason: row.backdate_reason,
     cancelled_at: row.cancelled_at,
     cancelled_by: row.cancelled_by,
     cancel_reason: row.cancel_reason,
@@ -1761,6 +1895,8 @@ function mapPurchaseTransactionRow(row) {
     encoded_by: row.encoded_by,
     encoded_by_name: row.encoded_by_name,
     created_at: row.created_at,
+    encoded_at: row.encoded_at,
+    backdate_reason: row.backdate_reason,
     cancelled_at: row.cancelled_at,
     cancelled_by: row.cancelled_by,
     cancel_reason: row.cancel_reason,
@@ -1882,7 +2018,9 @@ async function recordStockMovement(client, {
   newQuantity,
   reason = null,
   note,
-  actorId
+  actorId,
+  actualTransactionAt = null,
+  backdateReason = null
 }) {
   if (!action || Number(quantityChanged) <= 0 || Number(previousQuantity) === Number(newQuantity)) {
     return;
@@ -1902,9 +2040,12 @@ async function recordStockMovement(client, {
        reason,
        note,
        actor_id,
-       actor_name
+       actor_name,
+       created_at,
+       encoded_at,
+       backdate_reason
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, (SELECT full_name FROM users WHERE user_id = $12))`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, (SELECT full_name FROM users WHERE user_id = $12), COALESCE($13::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $14)`,
     [
       inventoryId,
       productId,
@@ -1917,7 +2058,9 @@ async function recordStockMovement(client, {
       Number(newQuantity),
       reason || null,
       note || null,
-      actorId
+      actorId,
+      actualTransactionAt,
+      backdateReason || null
     ]
   );
 }
@@ -3586,7 +3729,9 @@ app.get('/api/stock-movements', authenticate, async (req, res) => {
          note,
          actor_id,
          actor_name,
-         created_at
+         created_at,
+         encoded_at,
+         backdate_reason
        FROM stock_movements
        WHERE branch = $1
        ORDER BY created_at DESC, movement_id DESC`,
@@ -3630,6 +3775,8 @@ app.get('/api/sales', authenticate, async (req, res) => {
          st.sold_by_name,
          st.remarks,
          st.created_at,
+         st.encoded_at,
+         st.backdate_reason,
          st.cancelled_at,
          st.cancelled_by,
          st.cancel_reason,
@@ -3691,6 +3838,12 @@ app.post('/api/sales', authenticate, async (req, res) => {
   const requiresPaymentConfirmation = ['gcash', 'bank_transfer'].includes(normalizedPaymentMethod);
   const cleanPaymentReference = String(payment_reference || '').trim().slice(0, 120) || null;
   const isPaymentConfirmed = payment_confirmed === true || payment_confirmed === 'true';
+  let transactionTiming;
+  try {
+    transactionTiming = getTransactionTiming(req.body);
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ error: err.message });
+  }
 
   if (!canRecordSales(req.user)) {
     return res.status(403).json({
@@ -3960,9 +4113,12 @@ app.post('/api/sales', authenticate, async (req, res) => {
          status,
          sold_by,
          sold_by_name,
-         remarks
+         remarks,
+         created_at,
+         encoded_at,
+         backdate_reason
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, true, $17, $18, ${PHILIPPINE_NOW_SQL}, 'completed', $19, $20, $21)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, true, $17, $18, ${PHILIPPINE_NOW_SQL}, 'completed', $19, $20, $21, COALESCE($22::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $23)
        RETURNING *`,
       [
         salesNumber,
@@ -3985,7 +4141,9 @@ app.post('/api/sales', authenticate, async (req, res) => {
         soldByName,
         req.user.id,
         soldByName,
-        cleanRemarks
+        cleanRemarks,
+        transactionTiming.actualTransactionAt,
+        transactionTiming.backdateReason
       ]
     );
 
@@ -4007,9 +4165,10 @@ app.post('/api/sales', authenticate, async (req, res) => {
            unit_price,
            subtotal,
            previous_quantity,
-           new_quantity
+           new_quantity,
+           created_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE($14::timestamp, ${PHILIPPINE_NOW_SQL}))
          RETURNING *`,
         [
           salesTransaction.sales_transaction_id,
@@ -4024,7 +4183,8 @@ app.post('/api/sales', authenticate, async (req, res) => {
           line.unitPrice,
           line.subtotal,
           line.previousQuantity,
-          line.newQuantity
+          line.newQuantity,
+          transactionTiming.actualTransactionAt
         ]
       );
 
@@ -4046,7 +4206,9 @@ app.post('/api/sales', authenticate, async (req, res) => {
         newQuantity: line.newQuantity,
         reason: 'sales',
         note: `Sale recorded through Sales module (${salesNumber}).`,
-        actorId: req.user.id
+        actorId: req.user.id,
+        actualTransactionAt: transactionTiming.actualTransactionAt,
+        backdateReason: transactionTiming.backdateReason
       });
 
       await refreshAverageDailySalesForInventory(client, line.inventoryId);
@@ -4078,7 +4240,10 @@ app.post('/api/sales', authenticate, async (req, res) => {
         paymentConfirmed: true,
         paymentConfirmedBy: soldByName,
         itemCount: insertedItems.length,
-        remarks: cleanRemarks
+        remarks: cleanRemarks,
+        actualTransactionAt: salesTransaction.created_at,
+        encodedAt: salesTransaction.encoded_at,
+        backdateReason: transactionTiming.backdateReason
       }
     });
 
@@ -4297,6 +4462,8 @@ app.get('/api/purchases', authenticate, async (req, res) => {
          pt.encoded_by,
          pt.encoded_by_name,
          pt.created_at,
+         pt.encoded_at,
+         pt.backdate_reason,
          pt.cancelled_at,
          pt.cancelled_by,
          pt.cancel_reason,
@@ -4358,6 +4525,12 @@ app.post('/api/purchases', authenticate, async (req, res) => {
   const cleanRemarks = String(remarks || '').trim().slice(0, 500) || null;
   const allowedDocumentTypes = new Set(['DR', 'SI', 'OR', 'OTHER']);
   const allowedPaymentTerms = new Set(['cash', 'cod', 'credit', 'branch_transfer']);
+  let transactionTiming;
+  try {
+    transactionTiming = getTransactionTiming(req.body);
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ error: err.message });
+  }
 
   if (!cleanSupplierName || cleanSupplierName.length > 120) {
     return res.status(400).json({ error: 'Supplier name is required and must be 120 characters or less.' });
@@ -4509,9 +4682,12 @@ app.post('/api/purchases', authenticate, async (req, res) => {
          remarks,
          status,
          encoded_by,
-         encoded_by_name
+         encoded_by_name,
+         created_at,
+         encoded_at,
+         backdate_reason
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'completed', $10, $11)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'completed', $10, $11, COALESCE($12::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $13)
        RETURNING *`,
       [
         purchaseNumber,
@@ -4524,7 +4700,9 @@ app.post('/api/purchases', authenticate, async (req, res) => {
         totalQuantity,
         cleanRemarks,
         req.user.id,
-        encodedByName
+        encodedByName,
+        transactionTiming.actualTransactionAt,
+        transactionTiming.backdateReason
       ]
     );
 
@@ -4544,9 +4722,10 @@ app.post('/api/purchases', authenticate, async (req, res) => {
            unit_cost,
            subtotal,
            previous_quantity,
-           new_quantity
+           new_quantity,
+           created_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12::timestamp, ${PHILIPPINE_NOW_SQL}))
          RETURNING *`,
         [
           purchaseTransaction.purchase_transaction_id,
@@ -4559,7 +4738,8 @@ app.post('/api/purchases', authenticate, async (req, res) => {
           line.unitCost,
           line.subtotal,
           line.previousQuantity,
-          line.newQuantity
+          line.newQuantity,
+          transactionTiming.actualTransactionAt
         ]
       );
       insertedItems.push(itemResult.rows[0]);
@@ -4576,7 +4756,9 @@ app.post('/api/purchases', authenticate, async (req, res) => {
         newQuantity: line.newQuantity,
         reason: 'purchase_received',
         note: `Purchase entry ${purchaseNumber} from ${cleanSupplierName}${cleanDocumentNumber ? ` (${normalizedDocumentType} ${cleanDocumentNumber})` : ''}.`,
-        actorId: req.user.id
+        actorId: req.user.id,
+        actualTransactionAt: transactionTiming.actualTransactionAt,
+        backdateReason: transactionTiming.backdateReason
       });
     }
 
@@ -4596,7 +4778,10 @@ app.post('/api/purchases', authenticate, async (req, res) => {
         totalQuantity,
         subtotalAmount: roundedSubtotalAmount,
         itemCount: insertedItems.length,
-        remarks: cleanRemarks
+        remarks: cleanRemarks,
+        actualTransactionAt: purchaseTransaction.created_at,
+        encodedAt: purchaseTransaction.encoded_at,
+        backdateReason: transactionTiming.backdateReason
       }
     });
 
@@ -4907,6 +5092,12 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
 app.post('/api/inventory/batch-stock-out', authenticate, async (req, res) => {
   const { items = [], movement_reason, movement_note } = req.body;
   const normalizedMovementReason = normalizeStockMovementReasonForAction('stock_out', movement_reason);
+  let transactionTiming;
+  try {
+    transactionTiming = getTransactionTiming(req.body);
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ error: err.message });
+  }
 
   if (!canPerformInventoryMovement(req.user)) {
     return res.status(403).json({
@@ -5003,7 +5194,9 @@ app.post('/api/inventory/batch-stock-out', authenticate, async (req, res) => {
         newQuantity: nextQuantity,
         reason: normalizedMovementReason,
         note: movement_note || 'Daily sales or stock-out deduction recorded from inventory module.',
-        actorId: req.user.id
+        actorId: req.user.id,
+        actualTransactionAt: transactionTiming.actualTransactionAt,
+        backdateReason: transactionTiming.backdateReason
       });
 
       await recordAuditLog(client, {
@@ -5021,7 +5214,9 @@ app.post('/api/inventory/batch-stock-out', authenticate, async (req, res) => {
           previousQuantity,
           newQuantity: nextQuantity,
           status: nextStatus,
-          note: movement_note || 'Daily sales or stock-out deduction recorded from inventory module.'
+          note: movement_note || 'Daily sales or stock-out deduction recorded from inventory module.',
+          actualTransactionAt: transactionTiming.actualTransactionAt,
+          backdateReason: transactionTiming.backdateReason
         }
       });
 
@@ -5054,6 +5249,12 @@ app.post('/api/inventory/batch-stock-out', authenticate, async (req, res) => {
 app.post('/api/inventory/batch-stock-adjustment', authenticate, async (req, res) => {
   const { items = [], movement_reason, movement_note } = req.body;
   const normalizedMovementReason = normalizeStockMovementReasonForAction('stock_in', movement_reason);
+  let transactionTiming;
+  try {
+    transactionTiming = getTransactionTiming(req.body);
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ error: err.message });
+  }
 
   if (!canPerformInventoryMovement(req.user)) {
     return res.status(403).json({
@@ -5143,7 +5344,9 @@ app.post('/api/inventory/batch-stock-adjustment', authenticate, async (req, res)
         newQuantity: nextQuantity,
         reason: normalizedMovementReason,
         note: movement_note || 'Batch stock adjustment recorded from inventory module.',
-        actorId: req.user.id
+        actorId: req.user.id,
+        actualTransactionAt: transactionTiming.actualTransactionAt,
+        backdateReason: transactionTiming.backdateReason
       });
 
       await recordAuditLog(client, {
@@ -5161,7 +5364,9 @@ app.post('/api/inventory/batch-stock-adjustment', authenticate, async (req, res)
           previousQuantity,
           newQuantity: nextQuantity,
           status: nextStatus,
-          note: movement_note || 'Batch stock adjustment recorded from inventory module.'
+          note: movement_note || 'Batch stock adjustment recorded from inventory module.',
+          actualTransactionAt: transactionTiming.actualTransactionAt,
+          backdateReason: transactionTiming.backdateReason
         }
       });
 
@@ -5214,6 +5419,12 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     movement_note,
     allow_similar_duplicate = false
   } = req.body;
+  let transactionTiming;
+  try {
+    transactionTiming = getTransactionTiming(req.body);
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ error: err.message });
+  }
 
   const client = await pool.connect();
   try {
@@ -5605,7 +5816,9 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
         newQuantity: nextQuantity,
         reason: normalizedMovementReason,
         note: movement_note || null,
-        actorId: req.user.id
+        actorId: req.user.id,
+        actualTransactionAt: transactionTiming.actualTransactionAt,
+        backdateReason: transactionTiming.backdateReason
       });
       await recordAuditLog(client, {
         actorId: req.user.id,
@@ -5624,7 +5837,9 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
           previousQuantity,
           newQuantity: nextQuantity,
           status: updatedItem.status,
-          note: movement_note || null
+          note: movement_note || null,
+          actualTransactionAt: transactionTiming.actualTransactionAt,
+          backdateReason: transactionTiming.backdateReason
         }
       });
     } else {

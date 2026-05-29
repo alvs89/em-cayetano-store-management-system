@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, FileText, PackagePlus, Plus, Minus, ReceiptText, RefreshCw, Search, Trash2, Truck, Wallet, X, History } from 'lucide-react';
+import { CalendarDays, Clock, FileText, PackagePlus, Plus, Minus, ReceiptText, RefreshCw, Search, Trash2, Truck, Wallet, X, History } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from './PageHeader';
 import { useData } from './DataContext';
@@ -58,6 +58,36 @@ const formatDateTime = value => {
   if (!value) return 'No date';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? 'Invalid date' : date.toLocaleString();
+};
+
+const toTransactionDateInputValue = value => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return offsetDate.toISOString().slice(0, 16);
+};
+
+const getDatePartFromDateTime = value => String(value || '').slice(0, 10);
+const getTimePartFromDateTime = value => String(value || '').slice(11, 16);
+const getCurrentDateTimeInputValue = () => toTransactionDateInputValue(new Date());
+const getCurrentDatePart = () => getCurrentDateTimeInputValue().slice(0, 10);
+const getCurrentTimePart = () => getCurrentDateTimeInputValue().slice(11, 16);
+const combineActualTransactionDateTime = (datePart, timePart) =>
+  datePart && timePart ? `${datePart}T${timePart}` : '';
+
+const isPastTransactionDate = value => {
+  if (!value) return false;
+  const date = new Date(value);
+  return !Number.isNaN(date.getTime()) && date.getTime() < Date.now() - 60 * 1000;
+};
+
+const isBackdatedRecord = record => {
+  if (!record?.createdAt || !record?.encodedAt) return false;
+  const transactionDate = new Date(record.createdAt);
+  const encodedDate = new Date(record.encodedAt);
+  if (Number.isNaN(transactionDate.getTime()) || Number.isNaN(encodedDate.getTime())) return false;
+  return encodedDate.getTime() - transactionDate.getTime() > 60 * 1000 || Boolean(record.backdateReason);
 };
 
 const notifyPurchaseValidation = (message, id) => {
@@ -140,6 +170,8 @@ export function PurchasesModule({ user }) {
   const [documentNumber, setDocumentNumber] = useState('');
   const [paymentTerms, setPaymentTerms] = useState('cash');
   const [remarks, setRemarks] = useState('');
+  const [actualTransactionAt, setActualTransactionAt] = useState('');
+  const [backdateReason, setBackdateReason] = useState('');
   const [purchaseLines, setPurchaseLines] = useState([emptyPurchaseLine()]);
   const [searchQuery, setSearchQuery] = useState('');
   const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState('all');
@@ -157,6 +189,15 @@ export function PurchasesModule({ user }) {
   const purchaseLinesScrollRef = useRef(null);
   const purchaseLineRefs = useRef({});
   const purchaseLineSelectRefs = useRef({});
+
+  const handleActualTransactionAtChange = value => {
+    setActualTransactionAt(value);
+    if (isPastTransactionDate(value)) {
+      toast.info('This purchase will be saved as a backdated transaction.', {
+        description: 'Reports will use the transaction date. Audit trail will keep the encoded date.'
+      });
+    }
+  };
 
   const sortedInventory = useMemo(
     () => mergeSort([...inventory], (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' })),
@@ -513,6 +554,8 @@ export function PurchasesModule({ user }) {
     setDocumentNumber('');
     setPaymentTerms('cash');
     setRemarks('');
+    setActualTransactionAt('');
+    setBackdateReason('');
     setPurchaseLines([emptyPurchaseLine()]);
     setSearchQuery('');
     setInventoryCategoryFilter('all');
@@ -540,6 +583,18 @@ export function PurchasesModule({ user }) {
     if (selectedLines.length === 0) {
       toast.error('Add at least one item to the purchase.');
       return false;
+    }
+
+    if (actualTransactionAt) {
+      const selectedDate = new Date(actualTransactionAt);
+      if (Number.isNaN(selectedDate.getTime())) {
+        toast.error('Actual transaction date must be valid.');
+        return false;
+      }
+      if (selectedDate.getTime() > Date.now() + 60 * 1000) {
+        toast.error('Actual transaction date cannot be in the future.');
+        return false;
+      }
     }
 
     const usedItems = new Set();
@@ -583,6 +638,8 @@ export function PurchasesModule({ user }) {
         documentNumber: documentNumber.trim(),
         paymentTerms,
         remarks: remarks.trim(),
+        actualTransactionAt: actualTransactionAt || '',
+        backdateReason: isPastTransactionDate(actualTransactionAt) ? backdateReason.trim() : '',
         items: selectedLines.map(line => ({
           inventoryId: line.inventoryId,
           quantity: line.quantity,
@@ -633,6 +690,9 @@ export function PurchasesModule({ user }) {
       purchase.documentType,
       purchase.documentNumber,
       purchase.paymentTerms,
+      formatDateTime(purchase.createdAt),
+      formatDateTime(purchase.encodedAt),
+      purchase.backdateReason,
       ...getPurchaseItems(purchase).map(item => item.itemName || item.name)
     ].filter(Boolean).join(' ').toLowerCase().includes(query));
   }, [purchaseHistorySearch, sortedPurchases]);
@@ -2295,6 +2355,63 @@ export function PurchasesModule({ user }) {
                   </Field>
                 </div>
                 <div className="purchase-doc-wide">
+                  <Field label="Actual Transaction Date">
+                    <div className="actual-transaction-split-grid">
+                      <div className="actual-transaction-split-field">
+                        <Label htmlFor="purchase-actual-transaction-date" className="actual-transaction-split-label">
+                          Date
+                        </Label>
+                        <Input
+                          id="purchase-actual-transaction-date"
+                          type="date"
+                          value={getDatePartFromDateTime(actualTransactionAt)}
+                          max={getCurrentDatePart()}
+                          onChange={event => {
+                            const nextDate = event.target.value;
+                            handleActualTransactionAtChange(nextDate ? combineActualTransactionDateTime(nextDate, getTimePartFromDateTime(actualTransactionAt) || getCurrentTimePart()) : '');
+                          }}
+                          disabled={isSaving}
+                          className="actual-transaction-part-input"
+                        />
+                      </div>
+                      <div className="actual-transaction-split-field">
+                        <Label htmlFor="purchase-actual-transaction-time" className="actual-transaction-split-label">
+                          Time
+                        </Label>
+                        <Input
+                          id="purchase-actual-transaction-time"
+                          type="time"
+                          value={getTimePartFromDateTime(actualTransactionAt)}
+                          onChange={event => {
+                            const nextTime = event.target.value;
+                            handleActualTransactionAtChange(nextTime ? combineActualTransactionDateTime(getDatePartFromDateTime(actualTransactionAt) || getCurrentDatePart(), nextTime) : '');
+                          }}
+                          disabled={isSaving}
+                          className="actual-transaction-part-input"
+                        />
+                      </div>
+                    </div>
+                    <p className="actual-transaction-date-helper">
+                      Use this if the delivery or stock receipt was recorded manually and encoded later. Leave both blank to use the current date and time.
+                    </p>
+                  </Field>
+                  {isPastTransactionDate(actualTransactionAt) && (
+                    <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                      <p className="text-sm font-semibold text-amber-900">This purchase will be saved as a backdated transaction.</p>
+                      <Label htmlFor="purchase-backdate-reason" className="mt-2 block">Backdate reason, optional</Label>
+                      <Input
+                        id="purchase-backdate-reason"
+                        value={backdateReason}
+                        maxLength={240}
+                        onChange={event => setBackdateReason(event.target.value)}
+                        placeholder="Example: Encoded after internet interruption"
+                        disabled={isSaving}
+                        className="mt-2 h-10 bg-white"
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="purchase-doc-wide">
                   <Field label="Remarks">
                     <Textarea
                       value={remarks}
@@ -2864,8 +2981,14 @@ function PurchaseHistoryDialog({
                           <p className="truncate text-base font-bold text-slate-900">{purchase.purchaseNumber || 'Purchase record'}</p>
                           <p className="mt-2 flex items-center gap-2 truncate text-sm text-slate-700">
                             <CalendarDays className="h-4 w-4 shrink-0" />
-                            {formatDateTime(purchase.createdAt)}
+                            Transaction: {formatDateTime(purchase.createdAt)}
                           </p>
+                          {isBackdatedRecord(purchase) && (
+                            <p className="mt-1 flex items-center gap-2 truncate text-xs text-amber-700">
+                              <Clock className="h-4 w-4 shrink-0 text-amber-600" />
+                              Encoded: {formatDateTime(purchase.encodedAt)}
+                            </p>
+                          )}
                           <p className="mt-2 truncate text-sm text-slate-600">
                             {purchase.supplierName || 'No supplier'} - {formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber)}
                           </p>
@@ -2906,8 +3029,14 @@ function PurchaseHistoryDetail({ purchase }) {
           <h3 className="text-xl font-bold text-slate-900">{purchase.purchaseNumber}</h3>
           <p className="mt-2 flex items-center gap-2 text-sm text-slate-700">
             <CalendarDays className="h-4 w-4" />
-            {formatDateTime(purchase.createdAt)}
+            Transaction Date: {formatDateTime(purchase.createdAt)}
           </p>
+          {isBackdatedRecord(purchase) && (
+            <p className="mt-1 flex items-center gap-2 text-sm text-amber-700">
+              <Clock className="h-4 w-4 text-amber-600" />
+              Encoded Date: {formatDateTime(purchase.encodedAt)}
+            </p>
+          )}
         </div>
         <Badge className="bg-green-100 px-3 py-1 text-green-700 hover:bg-green-100">Completed</Badge>
       </div>
@@ -2919,6 +3048,9 @@ function PurchaseHistoryDetail({ purchase }) {
         <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="Quantity Added" value={`${getPurchaseQuantity(purchase)} unit${getPurchaseQuantity(purchase) === 1 ? '' : 's'}`} />
         <HistoryDetail icon={<Wallet className="h-5 w-5" />} label="Total Purchase" value={formatCurrency(purchase.subtotalAmount)} />
         <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Terms" value={formatPurchasePaymentTerms(purchase.paymentTerms)} />
+        {purchase.backdateReason && (
+          <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Backdate Reason" value={purchase.backdateReason} />
+        )}
       </div>
 
       <div>

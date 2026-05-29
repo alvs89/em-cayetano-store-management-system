@@ -94,6 +94,9 @@ const formatCustomerType = value => {
 const formatDetailValue = (value, key = '') => {
   if (value === null || value === undefined || value === '') return 'None';
   if (String(key || '').toLowerCase() === 'customertype') return formatCustomerType(value);
+  if (['actualtransactionat', 'encodedat', 'transactiondate', 'encodeddate'].includes(String(key || '').replace(/[_\s-]/g, '').toLowerCase())) {
+    return formatDateTime(value);
+  }
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'object') {
     return Object.entries(value)

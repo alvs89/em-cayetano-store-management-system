@@ -26,6 +26,17 @@ import {
   isListedSupplier,
   sanitizeSupplierInput,
 } from '../utils/suppliers';
+
+const isBackdatedRecord = record => {
+  if (!record?.createdAt || !record?.encodedAt) return false;
+  const transactionDate = new Date(record.createdAt);
+  const encodedDate = new Date(record.encodedAt);
+  if (Number.isNaN(transactionDate.getTime()) || Number.isNaN(encodedDate.getTime())) return false;
+  return encodedDate.getTime() - transactionDate.getTime() > 60 * 1000 || Boolean(record.backdateReason);
+};
+
+const formatEncodedDate = record => isBackdatedRecord(record) ? formatDateTime(record.encodedAt) : '-';
+
 export function ReportsModule({
   user
 }) {
@@ -41,6 +52,8 @@ export function ReportsModule({
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [reportPeriod, setReportPeriod] = useState('daily');
   const [selectedReportDate, setSelectedReportDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [selectedReorderSupplier, setSelectedReorderSupplier] = useState('');
+  const [reorderQuantities, setReorderQuantities] = useState({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [reviewItem, setReviewItem] = useState(null);
   const [conversionDraft, setConversionDraft] = useState({
@@ -253,6 +266,30 @@ export function ReportsModule({
   const getReportLowStockThreshold = item =>
     Number(item?.activeLowStockThreshold ?? item?.reorderLevel ?? item?.lowStockThreshold ?? 0);
 
+  const getReportEstimatedReorderPoint = item => {
+    const value = item?.recommendedReorderPoint;
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  };
+
+  const isSuggestedForReorderReview = item => {
+    const quantity = Number(item?.quantity || 0);
+    const manualThreshold = getReportLowStockThreshold(item);
+    const estimatedPoint = getReportEstimatedReorderPoint(item);
+    return (
+      estimatedPoint !== null &&
+      quantity > manualThreshold &&
+      quantity <= estimatedPoint
+    );
+  };
+
+  const formatSupplierLeadTime = item => {
+    const days = Number(item?.leadTimeDays || 0);
+    if (!Number.isFinite(days) || days <= 0) return 'Not set';
+    return `${days} day${days === 1 ? '' : 's'}`;
+  };
+
   const getComputedReportStockStatus = item => {
     const quantity = Number(item?.quantity || 0);
     const threshold = getReportLowStockThreshold(item);
@@ -263,7 +300,9 @@ export function ReportsModule({
   const withComputedReportStockStatus = item => ({
     ...item,
     status: getComputedReportStockStatus(item),
-    lowStockThreshold: getReportLowStockThreshold(item)
+    lowStockThreshold: getReportLowStockThreshold(item),
+    estimatedReorderPoint: getReportEstimatedReorderPoint(item),
+    reorderReviewSuggested: isSuggestedForReorderReview(item)
   });
 
   // Calculate current inventory snapshot statistics. Activity reports use the selected period separately.
@@ -535,6 +574,8 @@ export function ReportsModule({
           id: `${sale.id}-${item.id}`,
           salesNumber: sale.salesNumber,
           createdAt: sale.createdAt,
+          encodedAt: sale.encodedAt,
+          backdateReason: sale.backdateReason,
           inventoryId: item.inventoryId,
           productId: item.productId,
           itemName: item.itemName,
@@ -604,15 +645,46 @@ export function ReportsModule({
     });
 
   const getSupplierReorderItems = () =>
-    sortByQuantityAsc(inventory.map(withComputedReportStockStatus).filter(item => item.status === 'Out of Stock' || item.status === 'Low Stock'))
+    sortByQuantityAsc(inventory.map(withComputedReportStockStatus).filter(item =>
+      item.status === 'Out of Stock' ||
+      item.status === 'Low Stock' ||
+      item.reorderReviewSuggested
+    ))
       .filter(item => selectedCategory === 'all' || item.category === selectedCategory)
       .map(item => ({
         ...item,
         lowStockThreshold: getReportLowStockThreshold(item),
-        neededQuantity: Math.max(getReportLowStockThreshold(item) - Number(item.quantity || 0), 0)
+        reorderReviewPoint: item.reorderReviewSuggested
+          ? item.estimatedReorderPoint
+          : getReportLowStockThreshold(item),
+        neededQuantity: Math.max(
+          (item.reorderReviewSuggested ? item.estimatedReorderPoint : getReportLowStockThreshold(item)) - Number(item.quantity || 0),
+          0
+        ),
+        reorderReviewLabel: item.reorderReviewSuggested ? 'Review' : item.status
       }));
 
-  const getSupplierReorderGroups = () => {
+  const getReorderQuantityDraftKey = item => String(item?.id ?? item?.inventoryId ?? item?.itemCode ?? item?.name ?? '');
+
+  const getPreparedReorderQuantity = item => {
+    const key = getReorderQuantityDraftKey(item);
+    const draftValue = reorderQuantities[key];
+    if (draftValue === undefined || draftValue === null || draftValue === '') {
+      return Number(item?.neededQuantity || 0);
+    }
+    return Number(draftValue || 0);
+  };
+
+  const updatePreparedReorderQuantity = (item, value) => {
+    const key = getReorderQuantityDraftKey(item);
+    const cleaned = String(value ?? '').replace(/\D/g, '').slice(0, 6);
+    setReorderQuantities(prev => ({
+      ...prev,
+      [key]: cleaned
+    }));
+  };
+
+  const getAllSupplierReorderGroups = () => {
     const groups = getSupplierReorderItems().reduce((acc, item) => {
       const supplier = item.supplierName?.trim() || 'Unassigned Supplier';
       if (!acc[supplier]) {
@@ -621,6 +693,7 @@ export function ReportsModule({
           itemCount: 0,
           outOfStock: 0,
           lowStock: 0,
+          reviewSuggested: 0,
           neededQuantity: 0,
           items: []
         };
@@ -629,6 +702,7 @@ export function ReportsModule({
       acc[supplier].itemCount += 1;
       acc[supplier].outOfStock += item.status === 'Out of Stock' ? 1 : 0;
       acc[supplier].lowStock += item.status === 'Low Stock' ? 1 : 0;
+      acc[supplier].reviewSuggested += item.reorderReviewSuggested ? 1 : 0;
       acc[supplier].neededQuantity += item.neededQuantity;
       acc[supplier].items.push(item);
       return acc;
@@ -639,6 +713,42 @@ export function ReportsModule({
       return a.supplier.localeCompare(b.supplier);
     });
   };
+
+  const getSupplierReorderGroups = () => {
+    const groups = getAllSupplierReorderGroups();
+    if (!selectedReorderSupplier) return [];
+    return groups.filter(group => group.supplier === selectedReorderSupplier);
+  };
+
+  const getSelectedSupplierReorderGroup = () => getSupplierReorderGroups()[0] || null;
+
+  useEffect(() => {
+    if (reportType !== 'supplier-reorder') return;
+    const groups = getAllSupplierReorderGroups();
+    if (groups.length === 0) {
+      if (selectedReorderSupplier) setSelectedReorderSupplier('');
+      return;
+    }
+    if (!groups.some(group => group.supplier === selectedReorderSupplier)) {
+      setSelectedReorderSupplier(groups[0].supplier);
+    }
+  }, [inventory, selectedCategory, reportType, selectedReorderSupplier]);
+
+  useEffect(() => {
+    const reorderItems = getSupplierReorderItems();
+    setReorderQuantities(prev => {
+      let changed = false;
+      const next = { ...prev };
+      reorderItems.forEach(item => {
+        const key = getReorderQuantityDraftKey(item);
+        if (key && next[key] === undefined) {
+          next[key] = String(item.neededQuantity || 0);
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [inventory, selectedCategory]);
 
   const getActiveInventoryMatchForManualItem = (itemName, category) => {
     const normalizedName = normalizeReviewText(itemName);
@@ -709,11 +819,13 @@ export function ReportsModule({
     }
 
     if (reportType === 'supplier-reorder') {
-      const reorderItems = getSupplierReorderItems();
+      const selectedGroup = getSelectedSupplierReorderGroup();
+      const reorderItems = selectedGroup?.items || [];
+      const preparedQuantity = reorderItems.reduce((sum, item) => sum + getPreparedReorderQuantity(item), 0);
       return [
         { label: 'Items to Reorder', value: reorderItems.length, icon: <Package className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
-        { label: 'Qty Needed', value: reorderItems.reduce((sum, item) => sum + Number(item.neededQuantity || 0), 0), icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
-        { label: 'Suppliers', value: getSupplierReorderGroups().length, icon: <PackagePlus className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
+        { label: 'Suggested Qty', value: reorderItems.reduce((sum, item) => sum + Number(item.neededQuantity || 0), 0), icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
+        { label: 'Reorder Qty', value: preparedQuantity, icon: <PackagePlus className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
         { label: 'Out of Stock', value: reorderItems.filter(item => item.status === 'Out of Stock').length, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: reorderItems.some(item => item.status === 'Out of Stock') ? 'border-l-red-500' : 'border-l-slate-300' },
       ];
     }
@@ -805,7 +917,7 @@ export function ReportsModule({
     const getPdfColumnAlignment = headerText => {
       const header = normalizePdfText(headerText).toLowerCase();
       if (
-        ['id', 'item code', 'movement id', 'sale no.', 'purchase no.', 'qty', 'qty sold', 'quantity', 'items', 'total units', 'low stock', 'out of stock', 'current', 'threshold', 'qty needed', 'times sold', 'before/after', 'before -> after'].includes(header)
+        ['id', 'item code', 'movement id', 'sale no.', 'purchase no.', 'qty', 'qty sold', 'quantity', 'items', 'total units', 'low stock', 'out of stock', 'current', 'threshold', 'manual', 'est. point', 'suggested', 'suggested qty', 'suggest qty', 'reorder qty', 'order qty', 'lead time', 'qty needed', 'times sold', 'before/after', 'before -> after'].includes(header)
       ) {
         return 'center';
       }
@@ -1094,14 +1206,14 @@ export function ReportsModule({
       const supplierGroups = getSupplierReorderGroups();
       doc.setFontSize(12);
       doc.setFont('helvetica', 'bold');
-      doc.text('SUPPLIER REORDER REPORT', 20, startY);
+      doc.text('SUPPLIER REORDER LIST', 20, startY);
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
       drawLabelValue('Category Filter', selectedCategory === 'all' ? 'All Categories' : selectedCategory, 20, startY + 8);
-      drawLabelValue('Supplier Groups', supplierGroups.length, 20, startY + 14);
+      drawLabelValue('Supplier', selectedReorderSupplier || 'No supplier selected', 20, startY + 14);
 
       if (supplierGroups.length === 0) {
-        doc.text('No low-stock or out-of-stock items require supplier reorder review.', 20, startY + 28);
+        doc.text('No low-stock or out-of-stock items require supplier reorder review for the selected supplier.', 20, startY + 28);
       } else {
         let currentY = startY + 24;
         supplierGroups.forEach(group => {
@@ -1118,23 +1230,39 @@ export function ReportsModule({
             { label: 'Items', value: group.itemCount },
             { label: 'Out of Stock', value: group.outOfStock },
             { label: 'Low Stock', value: group.lowStock },
-            { label: 'Qty Needed to Threshold', value: formatUnitCount(group.neededQuantity) }
+            { label: 'For Review', value: group.reviewSuggested },
+            { label: 'Suggested Qty', value: formatUnitCount(group.neededQuantity) },
+            { label: 'Reorder Qty', value: formatUnitCount(group.items.reduce((sum, item) => sum + getPreparedReorderQuantity(item), 0)) }
           ], 20, currentY + 6, { fontSize: 9 });
           reportTable({
             startY: currentY + 12,
-            head: [['Item Code', 'Item', 'Category', 'Current', 'Threshold', 'Qty Needed', 'Status']],
+            tableWidth: pageWidth - pdfMargin * 2,
+            head: [['Item Code', 'Item', 'Category', 'Current', 'Threshold', 'Est. Point', 'Suggest Qty', 'Order Qty', 'Status']],
             body: group.items.map(item => [
               getDisplayItemCode(item),
               item.name,
               item.category,
               String(item.quantity),
               String(item.lowStockThreshold),
+              item.estimatedReorderPoint === null ? '-' : String(item.estimatedReorderPoint),
               String(item.neededQuantity),
-              item.status
+              String(getPreparedReorderQuantity(item)),
+              item.reorderReviewLabel
             ]),
             theme: 'striped',
-            headStyles: { fillColor: [71, 85, 105], textColor: 255, fontStyle: 'bold' },
-            styles: { fontSize: 8, cellPadding: 2 },
+            headStyles: { fillColor: [71, 85, 105], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+            styles: { fontSize: 7, cellPadding: { top: 1.8, right: 1.3, bottom: 1.8, left: 1.3 } },
+            columnStyles: {
+              0: { cellWidth: 18 },
+              1: { cellWidth: 36, halign: 'left' },
+              2: { cellWidth: 22, halign: 'center' },
+              3: { cellWidth: 13, halign: 'center' },
+              4: { cellWidth: 15, halign: 'center' },
+              5: { cellWidth: 14, halign: 'center' },
+              6: { cellWidth: 16, halign: 'center' },
+              7: { cellWidth: 16, halign: 'center' },
+              8: { cellWidth: 20, halign: 'center' }
+            },
             alternateRowStyles: { fillColor: [248, 250, 252] }
           });
           currentY = doc.lastAutoTable.finalY + 12;
@@ -1249,10 +1377,11 @@ export function ReportsModule({
       } else {
         reportTable({
           startY: startY + 32,
-          head: [['Purchase No.', 'Date', 'Supplier', 'Doc', 'Terms', 'Qty', 'Total', 'Remarks']],
+          head: [['Purchase No.', 'Transaction Date', 'Encoded Date', 'Supplier', 'Doc', 'Terms', 'Qty', 'Total', 'Remarks']],
           body: purchases.map(purchase => [
             purchase.purchaseNumber,
             formatDateTime(purchase.createdAt),
+            formatEncodedDate(purchase),
             purchase.supplierName,
             formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber),
             formatPurchasePaymentTerms(purchase.paymentTerms),
@@ -1265,14 +1394,15 @@ export function ReportsModule({
           styles: { fontSize: 8, cellPadding: 2 },
           alternateRowStyles: { fillColor: [248, 250, 252] },
           columnStyles: {
-            0: { cellWidth: 23 },
-            1: { cellWidth: 25 },
-            2: { cellWidth: 25 },
-            3: { cellWidth: 15 },
-            4: { cellWidth: 13 },
-            5: { cellWidth: 10 },
-            6: { cellWidth: 28 },
-            7: { cellWidth: 31 }
+            0: { cellWidth: 21 },
+            1: { cellWidth: 24 },
+            2: { cellWidth: 24 },
+            3: { cellWidth: 23 },
+            4: { cellWidth: 14 },
+            5: { cellWidth: 13 },
+            6: { cellWidth: 9 },
+            7: { cellWidth: 24 },
+            8: { cellWidth: 22 }
           }
         });
       }
@@ -1313,6 +1443,7 @@ export function ReportsModule({
         const movementData = movements.map(movement => {
           const sharedColumns = [
             formatDateTime(movement.createdAt),
+            formatEncodedDate(movement),
             formatMovementItemNameForExport(movement),
             movement.category,
             getMovementLabel(movement.action),
@@ -1326,29 +1457,31 @@ export function ReportsModule({
             : sharedColumns;
         });
         const movementHead = isSalesMovementReport
-          ? ['Sale No.', 'Date', 'Item', 'Category', 'Action', 'Payment', 'Qty Sold', 'Before/After', 'Handled By']
-          : ['Date', 'Item', 'Category', 'Action', 'Reason', 'Qty', 'Before/After', 'Handled By'];
+          ? ['Sale No.', 'Transaction Date', 'Encoded Date', 'Item', 'Category', 'Action', 'Payment', 'Qty Sold', 'Before/After', 'Handled By']
+          : ['Transaction Date', 'Encoded Date', 'Item', 'Category', 'Action', 'Reason', 'Qty', 'Before/After', 'Handled By'];
         const movementColumnStyles = isSalesMovementReport
           ? {
-              0: { cellWidth: 24 },
-              1: { cellWidth: 31 },
-              2: { cellWidth: 56 },
-              3: { cellWidth: 28 },
-              4: { cellWidth: 22 },
-              5: { cellWidth: 33 },
+              0: { cellWidth: 18 },
+              1: { cellWidth: 24 },
+              2: { cellWidth: 24 },
+              3: { cellWidth: 35 },
+              4: { cellWidth: 18 },
+              5: { cellWidth: 16 },
               6: { cellWidth: 18 },
-              7: { cellWidth: 29 },
-              8: { cellWidth: 24 }
+              7: { cellWidth: 11 },
+              8: { cellWidth: 18 },
+              9: { cellWidth: 18 }
             }
           : {
-              0: { cellWidth: 31 },
-              1: { cellWidth: 65 },
-              2: { cellWidth: 30 },
-              3: { cellWidth: 23 },
-              4: { cellWidth: 37 },
-              5: { cellWidth: 16 },
-              6: { cellWidth: 31 },
-              7: { cellWidth: 24 }
+              0: { cellWidth: 25 },
+              1: { cellWidth: 25 },
+              2: { cellWidth: 40 },
+              3: { cellWidth: 20 },
+              4: { cellWidth: 17 },
+              5: { cellWidth: 25 },
+              6: { cellWidth: 12 },
+              7: { cellWidth: 20 },
+              8: { cellWidth: 18 }
             };
         reportTable({
           startY: isSalesMovementReport ? startY + 42 : startY + 34,
@@ -1877,6 +2010,11 @@ export function ReportsModule({
           min-width: 720px;
         }
 
+        .reports-supplier-reorder-table table {
+          min-width: 1120px;
+          table-layout: fixed;
+        }
+
         .reports-desktop-table thead,
         .reports-movement-desktop-table thead,
         .reports-category-table thead {
@@ -1891,6 +2029,52 @@ export function ReportsModule({
         .reports-movement-desktop-table th,
         .reports-category-table th {
           background: #f8fafc;
+        }
+
+        .reports-supplier-reorder-table th {
+          padding: 12px 10px;
+          white-space: normal;
+          word-break: normal;
+          overflow-wrap: normal;
+          line-height: 1.2;
+          vertical-align: middle;
+          font-size: 12px;
+        }
+
+        .reports-supplier-reorder-table td {
+          padding: 12px 10px;
+          vertical-align: middle;
+        }
+
+        .reports-supplier-reorder-table th:nth-child(1),
+        .reports-supplier-reorder-table td:nth-child(1) { width: 110px; }
+
+        .reports-supplier-reorder-table th:nth-child(2),
+        .reports-supplier-reorder-table td:nth-child(2) { width: 220px; }
+
+        .reports-supplier-reorder-table th:nth-child(3),
+        .reports-supplier-reorder-table td:nth-child(3) { width: 120px; }
+
+        .reports-supplier-reorder-table th:nth-child(4),
+        .reports-supplier-reorder-table td:nth-child(4),
+        .reports-supplier-reorder-table th:nth-child(5),
+        .reports-supplier-reorder-table td:nth-child(5),
+        .reports-supplier-reorder-table th:nth-child(6),
+        .reports-supplier-reorder-table td:nth-child(6),
+        .reports-supplier-reorder-table th:nth-child(7),
+        .reports-supplier-reorder-table td:nth-child(7),
+        .reports-supplier-reorder-table th:nth-child(8),
+        .reports-supplier-reorder-table td:nth-child(8),
+        .reports-supplier-reorder-table th:nth-child(9),
+        .reports-supplier-reorder-table td:nth-child(9) {
+          width: 92px;
+          text-align: center;
+        }
+
+        .reports-supplier-reorder-table th:nth-child(10),
+        .reports-supplier-reorder-table td:nth-child(10) {
+          width: 100px;
+          text-align: center;
         }
 
         .reports-desktop-table tbody td:first-child,
@@ -2002,6 +2186,36 @@ export function ReportsModule({
           font-size: 14px;
           line-height: 1.25;
           overflow-wrap: anywhere;
+        }
+
+        .reports-reorder-quantity-input {
+          height: 38px;
+          max-width: 112px;
+          border-color: #cbd5e1;
+          border-radius: 10px;
+          background: #ffffff;
+          text-align: center;
+          font-weight: 700;
+          color: #0f172a;
+        }
+
+        .reports-reorder-quantity-input:hover,
+        .reports-reorder-quantity-input:focus,
+        .reports-reorder-quantity-input:focus-visible {
+          border-color: #ffff00;
+          box-shadow:
+            inset 0 0 0 1px rgba(255, 255, 0, 0.62),
+            0 1px 2px rgba(15, 23, 42, 0.06);
+        }
+
+        .reports-reorder-quantity-card-field {
+          display: grid;
+          gap: 6px;
+        }
+
+        .reports-reorder-quantity-card-field .reports-reorder-quantity-input {
+          max-width: none;
+          text-align: left;
         }
 
         .reports-count-badge {
@@ -2752,6 +2966,27 @@ export function ReportsModule({
                   </Select>
                 </div>
               )}
+              {reportType === 'supplier-reorder' && (
+                <div className="flex-1">
+                  <label className="text-sm font-medium mb-2 block text-gray-700">Supplier to Prepare</label>
+                  <Select
+                    value={selectedReorderSupplier}
+                    onValueChange={setSelectedReorderSupplier}
+                    disabled={getAllSupplierReorderGroups().length === 0}
+                  >
+                    <SelectTrigger data-reports-control className="border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00]">
+                      <SelectValue placeholder="Select supplier" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {getAllSupplierReorderGroups().map(group => (
+                        <SelectItem key={group.supplier} value={group.supplier}>
+                          {group.supplier}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
           </div>
         </CardContent>
@@ -2998,7 +3233,7 @@ export function ReportsModule({
                 {renderReportsEmptyState({
                   icon: Package,
                   title: 'No reorder items found',
-                  message: `No current low-stock or out-of-stock items match${selectedCategory === 'all' ? '' : ` the ${selectedCategory} category`}.`
+                  message: `No current low-stock or out-of-stock items match${selectedCategory === 'all' ? '' : ` the ${selectedCategory} category`}${selectedReorderSupplier ? ` for ${selectedReorderSupplier}` : ''}.`
                 })}
               </CardContent>
             </Card>
@@ -3007,28 +3242,32 @@ export function ReportsModule({
               <CardHeader>
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <CardTitle>{group.supplier}</CardTitle>
+                    <CardTitle>Supplier Reorder List - {group.supplier}</CardTitle>
                     <CardDescription>
-                      {formatItemCount(group.itemCount)} needing reorder review - Qty needed to threshold: {formatUnitCount(group.neededQuantity)}
+                      {formatItemCount(group.itemCount)} needing reorder review - suggested quantity: {formatUnitCount(group.neededQuantity)}
                     </CardDescription>
                   </div>
                   <div className="flex shrink-0 flex-wrap justify-end gap-2">
                     {group.outOfStock > 0 && <Badge className={getStatusCountBadgeClass('Out of Stock')}>{group.outOfStock} Out of Stock</Badge>}
                     {group.lowStock > 0 && <Badge className={getStatusCountBadgeClass('Low Stock')}>{group.lowStock} Low Stock</Badge>}
+                    {group.reviewSuggested > 0 && <Badge variant="outline">{group.reviewSuggested} For Review</Badge>}
                   </div>
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="reports-desktop-table">
+                <div className="reports-desktop-table reports-supplier-reorder-table">
                   <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Item Code</TableHead>
                         <TableHead>Item Name</TableHead>
                         <TableHead>Category</TableHead>
-                        <TableHead>Current Stock</TableHead>
-                        <TableHead>Low-Stock Threshold</TableHead>
-                        <TableHead>Qty Needed</TableHead>
+                        <TableHead>Current</TableHead>
+                        <TableHead>Threshold</TableHead>
+                        <TableHead>Est. Reorder Point</TableHead>
+                        <TableHead>Lead Time</TableHead>
+                        <TableHead>Suggested Qty</TableHead>
+                        <TableHead>Reorder Qty</TableHead>
                         <TableHead>Status</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -3040,11 +3279,26 @@ export function ReportsModule({
                           <TableCell>{item.category}</TableCell>
                           <TableCell className="font-semibold">{item.quantity}</TableCell>
                           <TableCell>{item.lowStockThreshold}</TableCell>
+                          <TableCell>{item.estimatedReorderPoint === null ? '-' : item.estimatedReorderPoint}</TableCell>
+                          <TableCell>{formatSupplierLeadTime(item)}</TableCell>
                           <TableCell className="font-semibold">{item.neededQuantity}</TableCell>
                           <TableCell>
-                            <Badge className={getStockStatusBadgeClass(item.status)}>
-                              {item.status}
-                            </Badge>
+                            <Input
+                              value={reorderQuantities[getReorderQuantityDraftKey(item)] ?? String(item.neededQuantity || 0)}
+                              onChange={event => updatePreparedReorderQuantity(item, event.target.value)}
+                              inputMode="numeric"
+                              aria-label={`Reorder quantity for ${item.name}`}
+                              className="reports-reorder-quantity-input"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            {item.reorderReviewSuggested ? (
+                              <Badge variant="outline">Review</Badge>
+                            ) : (
+                              <Badge className={getStockStatusBadgeClass(item.status)}>
+                                {item.status}
+                              </Badge>
+                            )}
                           </TableCell>
                         </TableRow>
                       ))}
@@ -3060,13 +3314,28 @@ export function ReportsModule({
                           <h4 className="reports-record-name">{item.name}</h4>
                           <p className="reports-record-meta">{item.category}</p>
                         </div>
-                        <Badge className={`shrink-0 ${getStockStatusBadgeClass(item.status)}`}>{item.status}</Badge>
+                        {item.reorderReviewSuggested ? (
+                          <Badge variant="outline" className="shrink-0">Review</Badge>
+                        ) : (
+                          <Badge className={`shrink-0 ${getStockStatusBadgeClass(item.status)}`}>{item.status}</Badge>
+                        )}
                       </div>
                       <div className="reports-record-grid reports-record-grid-four">
                         <div className="reports-record-stat"><span>Current</span><strong>{item.quantity}</strong></div>
-                        <div className="reports-record-stat"><span>Threshold</span><strong>{item.lowStockThreshold}</strong></div>
-                        <div className="reports-record-stat"><span>Qty Needed</span><strong>{item.neededQuantity}</strong></div>
-                        <div className="reports-record-stat"><span>Supplier</span><strong>{group.supplier}</strong></div>
+                        <div className="reports-record-stat"><span>Manual</span><strong>{item.lowStockThreshold}</strong></div>
+                        <div className="reports-record-stat"><span>Est. Point</span><strong>{item.estimatedReorderPoint === null ? '-' : item.estimatedReorderPoint}</strong></div>
+                        <div className="reports-record-stat"><span>Lead Time</span><strong>{formatSupplierLeadTime(item)}</strong></div>
+                        <div className="reports-record-stat"><span>Suggested</span><strong>{item.neededQuantity}</strong></div>
+                        <div className="reports-record-stat reports-reorder-quantity-card-field">
+                          <span>Reorder Qty</span>
+                          <Input
+                            value={reorderQuantities[getReorderQuantityDraftKey(item)] ?? String(item.neededQuantity || 0)}
+                            onChange={event => updatePreparedReorderQuantity(item, event.target.value)}
+                            inputMode="numeric"
+                            aria-label={`Reorder quantity for ${item.name}`}
+                            className="reports-reorder-quantity-input"
+                          />
+                        </div>
                       </div>
                     </article>
                   ))}
@@ -3207,7 +3476,8 @@ export function ReportsModule({
                     <TableHeader>
                       <TableRow>
                         <TableHead>Purchase No.</TableHead>
-                        <TableHead>Date</TableHead>
+                        <TableHead>Transaction Date</TableHead>
+                        <TableHead>Encoded Date</TableHead>
                         <TableHead>Supplier</TableHead>
                         <TableHead>Document</TableHead>
                         <TableHead>Terms</TableHead>
@@ -3221,6 +3491,7 @@ export function ReportsModule({
                         <TableRow key={purchase.id}>
                           <TableCell className="font-semibold">{purchase.purchaseNumber}</TableCell>
                           <TableCell>{formatDateTime(purchase.createdAt)}</TableCell>
+                          <TableCell>{formatEncodedDate(purchase)}</TableCell>
                           <TableCell>{purchase.supplierName}</TableCell>
                           <TableCell>{formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber)}</TableCell>
                           <TableCell>{formatPurchasePaymentTerms(purchase.paymentTerms)}</TableCell>
@@ -3237,7 +3508,10 @@ export function ReportsModule({
                     <article key={purchase.id} className="reports-record-card reports-purchase-record-card">
                       <div className="reports-record-top">
                         <div className="min-w-0">
-                          <p className="reports-record-code">{formatDateTime(purchase.createdAt)}</p>
+                          <p className="reports-record-code">Transaction: {formatDateTime(purchase.createdAt)}</p>
+                          {isBackdatedRecord(purchase) && (
+                            <p className="reports-record-meta">Encoded: {formatDateTime(purchase.encodedAt)}</p>
+                          )}
                           <h4 className="reports-record-name">{purchase.purchaseNumber}</h4>
                           <p className="reports-record-meta">
                             {purchase.supplierName || 'Unassigned supplier'}
@@ -3404,7 +3678,8 @@ export function ReportsModule({
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Date</TableHead>
+                        <TableHead>Transaction Date</TableHead>
+                        <TableHead>Encoded Date</TableHead>
                         <TableHead>Item</TableHead>
                         <TableHead>Category</TableHead>
                         <TableHead>Action</TableHead>
@@ -3421,6 +3696,7 @@ export function ReportsModule({
                     return (
                         <TableRow key={movement.id}>
                           <TableCell>{formatDateTime(movement.createdAt)}</TableCell>
+                          <TableCell>{formatEncodedDate(movement)}</TableCell>
                           <TableCell>
                             <div className="space-y-1">
                               <div className="font-medium text-slate-900">{itemNameDetails.historicalName}</div>
@@ -3457,7 +3733,10 @@ export function ReportsModule({
                           {itemNameDetails.currentName && (
                             <p className="reports-movement-meta">Current name: {itemNameDetails.currentName}</p>
                           )}
-                          <p className="reports-movement-meta">{movement.category} • {formatDateTime(movement.createdAt)}</p>
+                          <p className="reports-movement-meta">{movement.category} - Transaction: {formatDateTime(movement.createdAt)}</p>
+                          {isBackdatedRecord(movement) && (
+                            <p className="reports-movement-meta">Encoded: {formatDateTime(movement.encodedAt)}</p>
+                          )}
                         </div>
                         <Badge className={`shrink-0 ${getMovementBadgeClass(movement.action)}`}>
                           {getMovementLabel(movement.action)}

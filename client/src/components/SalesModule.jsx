@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Minus, ReceiptText, Trash2, ShoppingCart, History, CheckCircle, Info, PackageCheck, AlertTriangle, TrendingUp, User, Coins, ClipboardList, Search, CalendarDays, Tag, Wallet, MessageSquareText, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Pencil } from 'lucide-react';
+import { Plus, Minus, ReceiptText, Trash2, ShoppingCart, History, CheckCircle, Info, PackageCheck, AlertTriangle, TrendingUp, User, Coins, ClipboardList, Search, CalendarDays, Clock, Tag, Wallet, MessageSquareText, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import jsPDF from 'jspdf';
 import { PageHeader } from './PageHeader';
@@ -32,7 +32,46 @@ const DEFAULT_NON_INVENTORY_DRAFT = {
   quantity: '1',
   unitPrice: ''
 };
+const OFFICIAL_SALES_CATEGORIES = [
+  'Roofing',
+  'PVC Pipe / Fittings',
+  'Steel',
+  'Kiln Dry',
+  'Plywood',
+  'Electricals',
+  'Paints',
+  'Other'
+];
 const VAGUE_NON_INVENTORY_NAMES = new Set(['other', 'others', 'misc', 'miscellaneous']);
+const toTransactionDateInputValue = value => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return offsetDate.toISOString().slice(0, 16);
+};
+
+const getDatePartFromDateTime = value => String(value || '').slice(0, 10);
+const getTimePartFromDateTime = value => String(value || '').slice(11, 16);
+const getCurrentDateTimeInputValue = () => toTransactionDateInputValue(new Date());
+const getCurrentDatePart = () => getCurrentDateTimeInputValue().slice(0, 10);
+const getCurrentTimePart = () => getCurrentDateTimeInputValue().slice(11, 16);
+const combineActualTransactionDateTime = (datePart, timePart) =>
+  datePart && timePart ? `${datePart}T${timePart}` : '';
+
+const isPastTransactionDate = value => {
+  if (!value) return false;
+  const date = new Date(value);
+  return !Number.isNaN(date.getTime()) && date.getTime() < Date.now() - 60 * 1000;
+};
+
+const isBackdatedRecord = record => {
+  if (!record?.createdAt || !record?.encodedAt) return false;
+  const transactionDate = new Date(record.createdAt);
+  const encodedDate = new Date(record.encodedAt);
+  if (Number.isNaN(transactionDate.getTime()) || Number.isNaN(encodedDate.getTime())) return false;
+  return encodedDate.getTime() - transactionDate.getTime() > 60 * 1000 || Boolean(record.backdateReason);
+};
 
 const customerTypeLabels = {
   walk_in: 'Walk-in Customer',
@@ -135,6 +174,7 @@ const downloadSaleTransactionSummary = sale => {
   const formattedDate = Number.isNaN(saleDate.getTime())
     ? formatDateTime(sale.createdAt)
     : saleDate.toLocaleDateString();
+  const encodedDate = isBackdatedRecord(sale) ? formatDateTime(sale.encodedAt) : '';
   const normalizePdfText = value =>
     String(value ?? '')
       .replace(/₱/g, 'PHP ')
@@ -220,6 +260,11 @@ const downloadSaleTransactionSummary = sale => {
   drawText('Date:', pageWidth - margin - 70, y + 4);
   doc.setFont('helvetica', 'normal');
   drawText(formattedDate, pageWidth - margin - 42, y + 4);
+  if (encodedDate) {
+    doc.setFontSize(7);
+    drawText(`Encoded: ${encodedDate}`, pageWidth - margin, y + 13, { align: 'right' });
+    doc.setFontSize(9);
+  }
 
   y = 58;
   drawBox(margin, y, contentWidth, 27);
@@ -410,6 +455,7 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
   const branchAddress = escapeReceiptText(getReceiptBranchAddress(sale.branch));
   const receiptVat = getReceiptVatBreakdown(sale);
   const receiptDate = escapeReceiptText(formatDateTime(sale.createdAt));
+  const receiptEncodedDate = isBackdatedRecord(sale) ? escapeReceiptText(formatDateTime(sale.encodedAt)) : '';
   const cashChecked = sale.paymentMethod === 'credit' ? '' : 'checked';
   const chargeChecked = sale.paymentMethod === 'credit' ? 'checked' : '';
 
@@ -646,7 +692,8 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
               <div class="check-line"><span class="box">${cashChecked ? '&#10003;' : ''}</span> CASH SALES</div>
               <div class="check-line"><span class="box">${chargeChecked ? '&#10003;' : ''}</span> CHARGE SALES</div>
             </div>
-            <div class="date-box"><strong>Date:</strong><span>${receiptDate}</span></div>
+            <div class="date-box"><strong>Transaction Date:</strong><span>${receiptDate}</span></div>
+            ${receiptEncodedDate ? `<div class="date-box"><strong>Encoded Date:</strong><span>${receiptEncodedDate}</span></div>` : ''}
           </section>
 
           <section class="sold-to">
@@ -810,6 +857,8 @@ export function SalesModule({ user }) {
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
   const [paymentConfirmedAmount, setPaymentConfirmedAmount] = useState(null);
   const [remarks, setRemarks] = useState('');
+  const [actualTransactionAt, setActualTransactionAt] = useState('');
+  const [backdateReason, setBackdateReason] = useState('');
   const [saleLines, setSaleLines] = useState([emptySaleLine()]);
   const [isSaving, setIsSaving] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -833,6 +882,15 @@ export function SalesModule({ user }) {
   const [isClearItemsConfirmOpen, setIsClearItemsConfirmOpen] = useState(false);
   const [isSelectedItemsReviewOpen, setIsSelectedItemsReviewOpen] = useState(false);
   const canCancelSales = isAdminRole(user?.role);
+
+  const handleActualTransactionAtChange = value => {
+    setActualTransactionAt(value);
+    if (isPastTransactionDate(value)) {
+      toast.info('This sale will be saved as a backdated transaction.', {
+        description: 'Reports will use the transaction date. Audit trail will keep the encoded date.'
+      });
+    }
+  };
 
   useEffect(() => {
     const applyHistoryTarget = ({ period } = {}) => {
@@ -874,10 +932,22 @@ export function SalesModule({ user }) {
     [inventory]
   );
 
-  const productCategories = useMemo(
-    () => ['all', ...Array.from(new Set(activeInventory.map(item => item.category || 'Uncategorized'))).sort((a, b) => a.localeCompare(b))],
-    [activeInventory]
-  );
+  const productCategories = useMemo(() => {
+    const inventoryCategories = activeInventory
+      .map(item => item.category || 'Uncategorized')
+      .filter(Boolean);
+    const categorySet = new Set([...OFFICIAL_SALES_CATEGORIES, ...inventoryCategories]);
+    return ['all', ...Array.from(categorySet).sort((a, b) => {
+      const aIndex = OFFICIAL_SALES_CATEGORIES.indexOf(a);
+      const bIndex = OFFICIAL_SALES_CATEGORIES.indexOf(b);
+      if (aIndex !== -1 || bIndex !== -1) {
+        if (aIndex === -1) return 1;
+        if (bIndex === -1) return -1;
+        return aIndex - bIndex;
+      }
+      return a.localeCompare(b);
+    })];
+  }, [activeInventory]);
 
   const filteredSaleInventory = useMemo(() => {
     const searchTerms = normalizeProductSearchText(productSearch).split(' ').filter(Boolean);
@@ -1048,6 +1118,8 @@ export function SalesModule({ user }) {
         sale.paymentReference,
         sale.paymentConfirmedBy,
         formatDateTime(sale.createdAt),
+        formatDateTime(sale.encodedAt),
+        sale.backdateReason,
         ...(sale.items || []).flatMap(item => [
           item.itemName,
           item.category,
@@ -1383,6 +1455,8 @@ export function SalesModule({ user }) {
     setPaymentConfirmed(false);
     setPaymentConfirmedAmount(null);
     setRemarks('');
+    setActualTransactionAt('');
+    setBackdateReason('');
     setSaleLines([emptySaleLine()]);
     setIsNonInventoryDialogOpen(false);
     setNonInventoryDraft(DEFAULT_NON_INVENTORY_DRAFT);
@@ -1560,6 +1634,18 @@ export function SalesModule({ user }) {
       return false;
     }
 
+    if (actualTransactionAt) {
+      const selectedDate = new Date(actualTransactionAt);
+      if (Number.isNaN(selectedDate.getTime())) {
+        toast.error('Actual transaction date must be valid.');
+        return false;
+      }
+      if (selectedDate.getTime() > Date.now() + 60 * 1000) {
+        toast.error('Actual transaction date cannot be in the future.');
+        return false;
+      }
+    }
+
     return true;
   };
 
@@ -1579,6 +1665,8 @@ export function SalesModule({ user }) {
         amountReceived: paymentMethod === 'cash' ? safeAmountReceived : totalAmount,
         paymentReference: needsPaymentConfirmation ? paymentReference.trim() : '',
         paymentConfirmed: needsPaymentConfirmation || paymentMethod === 'cash',
+        actualTransactionAt: actualTransactionAt || '',
+        backdateReason: isPastTransactionDate(actualTransactionAt) ? backdateReason.trim() : '',
         items: selectedLineDetails.map(line => ({
           inventoryId: line.inventoryId,
           isManual: Boolean(line.isManual),
@@ -1783,6 +1871,7 @@ export function SalesModule({ user }) {
           min-height: 3.5rem;
           align-items: center;
           gap: 0.65rem;
+          min-width: 0;
           border: 1px solid #e2e8f0;
           border-radius: 0.65rem;
           background: #f8fafc;
@@ -1793,7 +1882,51 @@ export function SalesModule({ user }) {
         }
 
         .sales-customer-control {
+          width: 100%;
+          min-width: 0;
           min-height: 3.5rem;
+          overflow: hidden;
+        }
+
+        .sales-customer-control [data-slot="select-value"] {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .sales-transaction-date-input {
+          min-height: 3.75rem;
+          border: 1.5px solid #94a3b8;
+          background: #ffffff;
+          color: #0f172a;
+          font-size: 1rem;
+          font-weight: 600;
+          cursor: text;
+          box-shadow: inset 0 1px 0 rgba(15, 23, 42, 0.03);
+        }
+
+        .sales-transaction-date-input:hover {
+          border-color: #2563eb;
+          background: #f8fbff;
+          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+        }
+
+        .sales-transaction-date-input:focus,
+        .sales-transaction-date-input:focus-visible {
+          border-color: #2563eb;
+          background: #ffffff;
+          box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.14);
+        }
+
+        .sales-transaction-date-input::-webkit-calendar-picker-indicator {
+          cursor: pointer;
+          opacity: 0.8;
+          padding: 0.35rem;
+        }
+
+        .sales-transaction-date-input::-webkit-calendar-picker-indicator:hover {
+          opacity: 1;
         }
 
         .sales-payment-input-row {
@@ -1942,7 +2075,40 @@ export function SalesModule({ user }) {
         }
 
         .sales-action-button {
-          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .sales-action-button:not(:disabled):hover,
+        .sales-action-button:not(:disabled):focus-visible {
+          background-color: #f1f5f9;
+          border-color: #cbd5e1;
+          box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+        }
+
+        .sales-save-sale-button {
+          border: 1px solid #dc2626;
+          background: #ff0000;
+          color: #ffffff;
+          font-weight: 750;
+          box-shadow: 0 10px 18px rgba(220, 38, 38, 0.16);
+        }
+
+        .sales-save-sale-button:not(:disabled):hover,
+        .sales-save-sale-button:not(:disabled):focus-visible {
+          border-color: #b91c1c;
+          background: #dc2626;
+          color: #ffffff;
+          box-shadow: 0 12px 22px rgba(220, 38, 38, 0.22);
+        }
+
+        .sales-save-sale-button:disabled,
+        .sales-save-sale-button:disabled:hover,
+        .sales-save-sale-button:disabled:focus-visible {
+          border-color: #e2e8f0 !important;
+          background: #f1f5f9 !important;
+          color: #94a3b8 !important;
+          box-shadow: none !important;
+          opacity: 1;
         }
 
         .sales-view-all-button {
@@ -3080,12 +3246,13 @@ export function SalesModule({ user }) {
           font-weight: 700;
           box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
           transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+          padding: 0.75rem 1.25rem;
         }
 
         .sales-context-action-button:hover,
         .sales-context-action-button:focus-visible {
           border-color: #cbd5e1;
-          background: #f8fafc;
+          background: #f1f5f9;
           color: #0f172a;
           box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
         }
@@ -3099,6 +3266,22 @@ export function SalesModule({ user }) {
           opacity: 0.55;
           box-shadow: none;
           transform: none;
+        }
+
+        @media (max-width: 640px) {
+          .sales-context-action-button {
+            min-height: 2.5rem;
+            font-size: 0.9rem;
+            padding: 0.625rem 1rem;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .sales-context-action-button {
+            min-height: 2.25rem;
+            font-size: 0.85rem;
+            padding: 0.5rem 0.875rem;
+          }
         }
 
         .sales-product-panel .sales-record-content {
@@ -3198,13 +3381,20 @@ export function SalesModule({ user }) {
 
         .sales-pos-customer-bar {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-          gap: 0.85rem;
+          grid-template-columns: minmax(0, 1.1fr) minmax(13rem, 0.9fr);
+          gap: 1.15rem;
+          align-items: end;
+        }
+
+        .sales-checkout-card .sales-pos-customer-bar {
+          grid-template-columns: 1fr;
+          gap: 0.9rem;
         }
 
         .sales-pos-field {
           display: grid;
           gap: 0.45rem;
+          min-width: 0;
         }
 
         .sales-pos-search-row {
@@ -4435,7 +4625,7 @@ export function SalesModule({ user }) {
                     <Button
                       type="button"
                       variant="outline"
-                      className="sales-action-button mt-3 border-slate-200 text-slate-700 hover:border-slate-500 hover:bg-white hover:text-slate-900"
+                      className="sales-action-button sales-context-action-button mt-3"
                       onClick={addManualLine}
                       disabled={isSaving}
                     >
@@ -4986,6 +5176,75 @@ export function SalesModule({ user }) {
                 <div className="sales-form-section sales-checkout-section bg-slate-50/60">
                   <div className="sales-section-heading">
                     <span className="sales-section-icon">
+                      <CalendarDays className="h-5 w-5" />
+                    </span>
+                    <div>
+                      <h3 className="sales-section-title">Transaction Date</h3>
+                    </div>
+                  </div>
+                  <div className="grid gap-3">
+                    <div className="grid gap-2">
+                      <Label>Actual Transaction Date, optional</Label>
+                      <div className="actual-transaction-split-grid">
+                        <div className="actual-transaction-split-field">
+                          <Label htmlFor="sale-actual-transaction-date" className="actual-transaction-split-label">
+                            Date
+                          </Label>
+                          <Input
+                            id="sale-actual-transaction-date"
+                            type="date"
+                            value={getDatePartFromDateTime(actualTransactionAt)}
+                            max={getCurrentDatePart()}
+                            disabled={isSaving}
+                            onChange={event => {
+                              const nextDate = event.target.value;
+                              handleActualTransactionAtChange(nextDate ? combineActualTransactionDateTime(nextDate, getTimePartFromDateTime(actualTransactionAt) || getCurrentTimePart()) : '');
+                            }}
+                            className="actual-transaction-part-input"
+                          />
+                        </div>
+                        <div className="actual-transaction-split-field">
+                          <Label htmlFor="sale-actual-transaction-time" className="actual-transaction-split-label">
+                            Time
+                          </Label>
+                          <Input
+                            id="sale-actual-transaction-time"
+                            type="time"
+                            value={getTimePartFromDateTime(actualTransactionAt)}
+                            disabled={isSaving}
+                            onChange={event => {
+                              const nextTime = event.target.value;
+                              handleActualTransactionAtChange(nextTime ? combineActualTransactionDateTime(getDatePartFromDateTime(actualTransactionAt) || getCurrentDatePart(), nextTime) : '');
+                            }}
+                            className="actual-transaction-part-input"
+                          />
+                        </div>
+                      </div>
+                      <p className="actual-transaction-date-helper">
+                        Choose the actual date and time of the sale. Leave both blank to use the current date and time.
+                      </p>
+                    </div>
+                    {isPastTransactionDate(actualTransactionAt) && (
+                      <div className="grid gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                        <p className="text-sm font-semibold text-amber-900">This sale will be saved as a backdated transaction.</p>
+                        <Label htmlFor="sale-backdate-reason">Backdate reason, optional</Label>
+                        <Input
+                          id="sale-backdate-reason"
+                          value={backdateReason}
+                          maxLength={240}
+                          disabled={isSaving}
+                          onChange={event => setBackdateReason(event.target.value)}
+                          placeholder="Example: Encoded after power outage"
+                          className="h-11 rounded-xl border-amber-200 bg-white text-slate-950"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="sales-form-section sales-checkout-section bg-slate-50/60">
+                  <div className="sales-section-heading">
+                    <span className="sales-section-icon">
                       <Wallet className="h-5 w-5" />
                     </span>
                     <div>
@@ -5188,7 +5447,7 @@ export function SalesModule({ user }) {
                   </Button>
                   <Button
                     type="button"
-                    className="sales-action-button bg-[#FF0000] px-6 text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="sales-action-button sales-save-sale-button px-6 disabled:cursor-not-allowed"
                     onClick={handleSaveSaleRequest}
                     disabled={isSaving}
                   >
@@ -5633,7 +5892,10 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
             <div className="sales-receipt-divider" />
             <div className="space-y-1 text-xs leading-5 text-slate-700">
               <p>Sale No: <strong>{sale?.salesNumber || 'Sales record'}</strong></p>
-              <p>Date: {formatDateTime(sale?.createdAt)}</p>
+              <p>Transaction Date: {formatDateTime(sale?.createdAt)}</p>
+              {isBackdatedRecord(sale) && (
+                <p>Encoded Date: {formatDateTime(sale?.encodedAt)}</p>
+              )}
               <p>Cashier: {sale?.soldByName || 'System'}</p>
               <p>Customer: {customerTypeLabels[sale?.customerType] || 'Walk-in Customer'}</p>
             </div>
@@ -6017,8 +6279,14 @@ function SalesHistoryDialog({
                           </p>
                           <p className="sales-history-meta mt-2 text-sm leading-5 text-slate-700">
                             <CalendarDays className="h-4 w-4 text-slate-500" />
-                            <span className="truncate">{formatDateTime(sale.createdAt)}</span>
+                            <span className="truncate">Transaction: {formatDateTime(sale.createdAt)}</span>
                           </p>
+                          {isBackdatedRecord(sale) && (
+                            <p className="sales-history-meta mt-1 text-xs leading-5 text-amber-700">
+                              <Clock className="h-4 w-4 text-amber-600" />
+                              <span className="truncate">Encoded: {formatDateTime(sale.encodedAt)}</span>
+                            </p>
+                          )}
                           <p className="sales-history-meta mt-2 truncate text-sm leading-5 text-slate-600">
                             <User className="h-4 w-4 text-slate-500" />
                             <span className="truncate">{customerTypeLabels[sale.customerType] || 'Walk-in Customer'} - {sale.soldByName || 'System'}</span>
@@ -6106,8 +6374,14 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
           <h3 className="text-xl font-bold text-slate-900">{sale.salesNumber}</h3>
           <p className="sales-history-meta mt-2 text-sm text-slate-700">
             <CalendarDays className="h-4 w-4 text-slate-500" />
-            <span>{formatDateTime(sale.createdAt)}</span>
+            <span>Transaction Date: {formatDateTime(sale.createdAt)}</span>
           </p>
+          {isBackdatedRecord(sale) && (
+            <p className="sales-history-meta mt-1 text-sm text-amber-700">
+              <Clock className="h-4 w-4 text-amber-600" />
+              <span>Encoded Date: {formatDateTime(sale.encodedAt)}</span>
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button
@@ -6171,6 +6445,9 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
         )}
         {requiresPaymentConfirmation(sale.paymentMethod) && (
           <HistoryDetail icon={<CheckCircle className="h-5 w-5" />} label="Payment Confirmation" value={sale.paymentConfirmedBy ? `Confirmed by ${sale.paymentConfirmedBy}` : 'Confirmed'} />
+        )}
+        {sale.backdateReason && (
+          <HistoryDetail icon={<ClipboardList className="h-5 w-5" />} label="Backdate Reason" value={sale.backdateReason} />
         )}
       </div>
 
