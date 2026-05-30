@@ -208,7 +208,10 @@ export function DataProvider({ children }) {
   const [systemSummary, setSystemSummary] = useState({
     pendingRegistrations: [],
     lastBackupAt: null,
-    recentSystemEvents: []
+    recentSystemEvents: [],
+    dailySalesTarget: null,
+    dailySalesTargetUpdatedAt: null,
+    dailySalesTargetUpdatedBy: null
   });
   const [dismissedAlertIds, setDismissedAlertIds] = useState(() => {
     try {
@@ -257,7 +260,6 @@ export function DataProvider({ children }) {
           category: p.category,
           supplierName: p.supplier_name || '',
           defaultSellingPrice: p.default_selling_price === null || p.default_selling_price === undefined ? '' : Number(p.default_selling_price),
-          wspCode: p.wsp_code || '',
           costPrice: p.cost_price === null || p.cost_price === undefined ? '' : Number(p.cost_price),
           quantity: p.stock_level,
           reorderLevel: p.min_stock_level,
@@ -308,7 +310,6 @@ export function DataProvider({ children }) {
           category: p.category,
           supplierName: p.supplier_name || '',
           defaultSellingPrice: p.default_selling_price === null || p.default_selling_price === undefined ? '' : Number(p.default_selling_price),
-          wspCode: p.wsp_code || '',
           costPrice: p.cost_price === null || p.cost_price === undefined ? '' : Number(p.cost_price),
           quantity: p.stock_level,
           reorderLevel: p.min_stock_level,
@@ -381,6 +382,9 @@ export function DataProvider({ children }) {
     salesNumber: sale.sales_number || '',
     branch: sale.branch || '',
     customerType: sale.customer_type || 'walk_in',
+    customerName: sale.customer_name || 'C',
+    customerTin: sale.customer_tin || '',
+    customerAddress: sale.customer_address || 'C',
     totalQuantity: Number(sale.total_quantity || 0),
     subtotalAmount: Number(sale.subtotal_amount || sale.total_amount || 0),
     discountAmount: Number(sale.discount_amount || 0),
@@ -498,7 +502,14 @@ export function DataProvider({ children }) {
     try {
       const token = localStorage.getItem("token");
       if (!token) {
-        setSystemSummary({ pendingRegistrations: [], lastBackupAt: null, recentSystemEvents: [] });
+        setSystemSummary({
+          pendingRegistrations: [],
+          lastBackupAt: null,
+          recentSystemEvents: [],
+          dailySalesTarget: null,
+          dailySalesTargetUpdatedAt: null,
+          dailySalesTargetUpdatedBy: null
+        });
         return;
       }
       const response = await axios.get(apiUrl("/api/system/summary"), {
@@ -509,6 +520,17 @@ export function DataProvider({ children }) {
       console.error('Failed to load system summary:', err);
     }
   }, []);
+
+  const updateDailySalesTarget = useCallback(async (dailySalesTarget) => {
+    const token = localStorage.getItem("token");
+    const response = await axios.put(
+      apiUrl("/api/system/daily-sales-target"),
+      { daily_sales_target: dailySalesTarget },
+      { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+    );
+    await refreshSystemSummary();
+    return response.data;
+  }, [refreshSystemSummary]);
 
   useEffect(() => {
     fetchInventory();
@@ -709,7 +731,6 @@ export function DataProvider({ children }) {
         category: item.category,
         supplier_name: item.supplierName,
         default_selling_price: item.defaultSellingPrice,
-        wsp_code: item.wspCode,
         cost_price: item.costPrice,
         stock_level: item.quantity,
         min_stock_level: item.reorderLevel,
@@ -747,7 +768,6 @@ export function DataProvider({ children }) {
                 category: updates.category ?? it.category,
                 supplierName: updates.supplierName ?? it.supplierName,
                 defaultSellingPrice: updates.defaultSellingPrice ?? it.defaultSellingPrice,
-                wspCode: updates.wspCode ?? it.wspCode,
                 costPrice: updates.costPrice ?? it.costPrice,
                 quantity: nextQuantity,
                 reorderLevel: nextReorderLevel,
@@ -775,7 +795,6 @@ export function DataProvider({ children }) {
           category: updates.category,
           supplier_name: updates.supplierName,
           default_selling_price: updates.defaultSellingPrice,
-          wsp_code: updates.wspCode,
           cost_price: updates.costPrice,
           stock_level: updates.quantity,
           min_stock_level: updates.reorderLevel,
@@ -867,13 +886,16 @@ export function DataProvider({ children }) {
     }
   };
 
-  const recordSale = async ({ customerType, items, remarks, paymentMethod, discountType, discountAmount, deliveryCharge, amountReceived, paymentReference, paymentConfirmed, actualTransactionAt, backdateReason }) => {
+  const recordSale = async ({ customerType, customerName, customerTin, customerAddress, items, remarks, paymentMethod, discountType, discountAmount, deliveryCharge, amountReceived, paymentReference, paymentConfirmed, actualTransactionAt, backdateReason }) => {
     const token = localStorage.getItem("token");
     try {
       const res = await axios.post(
         apiUrl("/api/sales"),
         {
           customer_type: customerType,
+          customer_name: customerName,
+          customer_tin: customerTin,
+          customer_address: customerAddress,
           remarks,
           payment_method: paymentMethod,
           discount_type: discountType,
@@ -1039,6 +1061,7 @@ export function DataProvider({ children }) {
         archiveInventoryItem,
         restoreArchivedInventoryItem,
         alerts,
+        systemSummary,
         unreadAlertCount,
         warningAlertCount,
         infoAlertCount,
@@ -1050,6 +1073,7 @@ export function DataProvider({ children }) {
         unmarkAlertRead,
         auditAction,
         refreshSystemSummary,
+        updateDailySalesTarget,
       }}
     >
       {children}

@@ -261,7 +261,6 @@ async function ensureSchema() {
       category VARCHAR(50) NOT NULL,
       supplier_name VARCHAR(120),
       default_selling_price NUMERIC(12,2),
-      wsp_code VARCHAR(60),
       cost_price NUMERIC(12,2),
       created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
     );
@@ -314,6 +313,9 @@ async function ensureSchema() {
       sales_number VARCHAR(40) UNIQUE NOT NULL,
       branch VARCHAR(50) NOT NULL,
       customer_type VARCHAR(40) DEFAULT 'walk_in' CHECK (customer_type IN ('walk_in', 'sister_company', 'hardware_reseller', 'regular', 'contractor')),
+      customer_name VARCHAR(160) NOT NULL DEFAULT 'C',
+      customer_tin VARCHAR(80),
+      customer_address VARCHAR(240) NOT NULL DEFAULT 'C',
       total_quantity INTEGER NOT NULL DEFAULT 0,
       subtotal_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
       discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -425,7 +427,6 @@ async function ensureSchema() {
       status VARCHAR(20) DEFAULT 'In Stock',
       supplier_name VARCHAR(120),
       default_selling_price NUMERIC(12,2),
-      wsp_code VARCHAR(60),
       cost_price NUMERIC(12,2),
       last_updated TIMESTAMP,
       archived_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
@@ -456,6 +457,16 @@ async function ensureSchema() {
       actor_id INT,
       actor_name TEXT,
       created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS branch_settings (
+      branch VARCHAR(50) PRIMARY KEY,
+      daily_sales_target NUMERIC(12,2),
+      updated_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+      updated_by_name TEXT,
+      updated_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
     );
   `);
 
@@ -518,11 +529,6 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE products
     ADD COLUMN IF NOT EXISTS default_selling_price NUMERIC(12,2);
-  `);
-
-  await pool.query(`
-    ALTER TABLE products
-    ADD COLUMN IF NOT EXISTS wsp_code VARCHAR(60);
   `);
 
   await pool.query(`
@@ -606,6 +612,28 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE sales_transactions
     ADD COLUMN IF NOT EXISTS backdate_reason TEXT;
+  `);
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS customer_name VARCHAR(160) NOT NULL DEFAULT 'C';
+  `);
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS customer_tin VARCHAR(80);
+  `);
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS customer_address VARCHAR(240) NOT NULL DEFAULT 'C';
+  `);
+  await pool.query(`
+    UPDATE sales_transactions
+    SET
+      customer_name = COALESCE(NULLIF(TRIM(customer_name), ''), 'C'),
+      customer_address = COALESCE(NULLIF(TRIM(customer_address), ''), 'C')
+    WHERE customer_name IS NULL
+       OR TRIM(customer_name) = ''
+       OR customer_address IS NULL
+       OR TRIM(customer_address) = '';
   `);
   await pool.query(`
     UPDATE sales_transactions
@@ -793,11 +821,6 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE archived_inventory
     ADD COLUMN IF NOT EXISTS default_selling_price NUMERIC(12,2);
-  `);
-
-  await pool.query(`
-    ALTER TABLE archived_inventory
-    ADD COLUMN IF NOT EXISTS wsp_code VARCHAR(60);
   `);
 
   await pool.query(`
@@ -1563,57 +1586,6 @@ function parseOptionalPositiveDecimal(value, fieldName, { max = null } = {}) {
   return parsed;
 }
 
-const WSP_CODE_DIGITS = {
-  Q: '1',
-  U: '2',
-  I: '3',
-  C: '4',
-  K: '5',
-  E: '6',
-  P: '7',
-  O: '8',
-  X: '9',
-  Y: '0'
-};
-
-function normalizeWspCode(value) {
-  const code = String(value ?? '').trim().toUpperCase();
-  if (!code) return null;
-  if (!/^[QUICKEPOXYS]+$/.test(code)) {
-    const error = new Error('WSP Code can only use QUICK EPOXY letters and S for repeat.');
-    error.statusCode = 400;
-    throw error;
-  }
-  return code;
-}
-
-function decodeWspCodeToCost(value) {
-  const code = normalizeWspCode(value);
-  if (!code) return null;
-
-  let decoded = '';
-  for (const letter of code) {
-    if (letter === 'S') {
-      if (!decoded) {
-        const error = new Error('S in WSP Code can only repeat a previous digit.');
-        error.statusCode = 400;
-        throw error;
-      }
-      decoded += decoded[decoded.length - 1];
-    } else {
-      decoded += WSP_CODE_DIGITS[letter];
-    }
-  }
-
-  const amount = Number(decoded);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    const error = new Error('WSP Code must decode to an amount greater than zero.');
-    error.statusCode = 400;
-    throw error;
-  }
-  return amount;
-}
-
 async function findProductByIdentity(client, { name, category }) {
   const canonicalCategory = canonicalizeInventoryCategory(category);
   const cleanName = cleanInventoryName(name);
@@ -1621,7 +1593,7 @@ async function findProductByIdentity(client, { name, category }) {
   const normalizedIdentityName = normalizeInventoryIdentityName(cleanName);
 
   const existing = await client.query(
-    `SELECT product_id, name, category, supplier_name, default_selling_price, wsp_code, cost_price
+    `SELECT product_id, name, category, supplier_name, default_selling_price, cost_price
      FROM products
      WHERE LOWER(category) = LOWER($1)`,
     [canonicalCategory]
@@ -1630,7 +1602,7 @@ async function findProductByIdentity(client, { name, category }) {
   return existing.rows.find(row => normalizeInventoryIdentityName(row.name) === normalizedIdentityName) || null;
 }
 
-async function findOrCreateProduct(client, { name, category, supplierName = null, defaultSellingPrice = null, wspCode = undefined, costPrice = null }) {
+async function findOrCreateProduct(client, { name, category, supplierName = null, defaultSellingPrice = null, costPrice = null }) {
   const canonicalCategory = canonicalizeInventoryCategory(category);
   const cleanName = cleanInventoryName(name);
   const cleanSupplier = cleanSupplierName(supplierName);
@@ -1657,22 +1629,18 @@ async function findOrCreateProduct(client, { name, category, supplierName = null
       : Number(costPrice);
     const shouldUpdateSupplier = cleanSupplier && cleanSupplier !== existing.supplier_name;
     const shouldUpdateDefaultPrice = nextDefaultPrice !== existingDefaultPrice;
-    const nextWspCode = wspCode === undefined ? existing.wsp_code : wspCode;
-    const shouldUpdateWspCode = nextWspCode !== existing.wsp_code;
     const shouldUpdateCostPrice = nextCostPrice !== existingCostPrice;
 
-    if (shouldUpdateSupplier || shouldUpdateDefaultPrice || shouldUpdateWspCode || shouldUpdateCostPrice) {
+    if (shouldUpdateSupplier || shouldUpdateDefaultPrice || shouldUpdateCostPrice) {
       await client.query(
         `UPDATE products
          SET supplier_name = $1,
              default_selling_price = $2,
-             wsp_code = $3,
-             cost_price = $4
-         WHERE product_id = $5`,
+             cost_price = $3
+         WHERE product_id = $4`,
         [
           shouldUpdateSupplier ? cleanSupplier : existing.supplier_name,
           nextDefaultPrice,
-          nextWspCode,
           nextCostPrice,
           existing.product_id
         ]
@@ -1682,10 +1650,10 @@ async function findOrCreateProduct(client, { name, category, supplierName = null
   }
 
   const inserted = await client.query(
-    `INSERT INTO products (name, category, supplier_name, default_selling_price, wsp_code, cost_price)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO products (name, category, supplier_name, default_selling_price, cost_price)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING product_id`,
-    [cleanName, canonicalCategory, cleanSupplier, defaultSellingPrice, wspCode, costPrice]
+    [cleanName, canonicalCategory, cleanSupplier, defaultSellingPrice, costPrice]
   );
 
   return inserted.rows[0].product_id;
@@ -1793,7 +1761,6 @@ function mapInventoryRow(row, options = {}) {
     last_updated: row.last_updated
   };
   if (options.includeCostPrice) {
-    mapped.wsp_code = row.wsp_code;
     mapped.cost_price = row.cost_price;
   }
   return mapped;
@@ -1826,7 +1793,6 @@ function mapArchivedInventoryRow(row, options = {}) {
     archived_at: row.archived_at
   };
   if (options.includeCostPrice) {
-    mapped.wsp_code = row.wsp_code;
     mapped.cost_price = row.cost_price;
   }
   return mapped;
@@ -1860,6 +1826,9 @@ function mapSalesTransactionRow(row) {
     sales_number: row.sales_number,
     branch: row.branch,
     customer_type: row.customer_type,
+    customer_name: row.customer_name || 'C',
+    customer_tin: row.customer_tin || '',
+    customer_address: row.customer_address || 'C',
     total_quantity: row.total_quantity,
     subtotal_amount: row.subtotal_amount,
     discount_amount: row.discount_amount,
@@ -3624,6 +3593,13 @@ app.get('/api/system/summary', authenticate, async (req, res) => {
        LIMIT 1`
     );
 
+    const branchSettingsResult = await pool.query(
+      `SELECT daily_sales_target, updated_by_name, updated_at
+       FROM branch_settings
+       WHERE branch = $1`,
+      [req.user.branch]
+    );
+
     const recentSystemEventsResult = isAdmin(req.user)
       ? await pool.query(
           `SELECT id, event_type, severity, message, context, actor_name, created_at
@@ -3649,12 +3625,57 @@ app.get('/api/system/summary', authenticate, async (req, res) => {
       lastBackupBy: latestBackupResult.rows[0]?.actor_name || null,
       lastRestoreAt: latestRestoreResult.rows[0]?.created_at || null,
       lastRestoreBy: latestRestoreResult.rows[0]?.actor_name || null,
+      dailySalesTarget: branchSettingsResult.rows[0]?.daily_sales_target ?? null,
+      dailySalesTargetUpdatedBy: branchSettingsResult.rows[0]?.updated_by_name || null,
+      dailySalesTargetUpdatedAt: branchSettingsResult.rows[0]?.updated_at || null,
       recentSystemEvents: recentSystemEventsResult.rows,
       serverTime: new Date().toISOString()
     });
   } catch (err) {
     console.error('System summary error:', err);
     return res.status(500).json({ error: 'Failed to load system summary' });
+  }
+});
+
+app.put('/api/system/daily-sales-target', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const targetAmount = parseOptionalPositiveDecimal(req.body?.daily_sales_target, 'Daily sales target', { max: 100000000 });
+
+    const result = await pool.query(
+      `INSERT INTO branch_settings (branch, daily_sales_target, updated_by, updated_by_name, updated_at)
+       VALUES ($1, $2, $3, $4, ${PHILIPPINE_NOW_SQL})
+       ON CONFLICT (branch)
+       DO UPDATE SET
+         daily_sales_target = EXCLUDED.daily_sales_target,
+         updated_by = EXCLUDED.updated_by,
+         updated_by_name = EXCLUDED.updated_by_name,
+         updated_at = ${PHILIPPINE_NOW_SQL}
+       RETURNING branch, daily_sales_target, updated_by_name, updated_at`,
+      [req.user.branch, targetAmount, req.user.id, req.user.fullName || req.user.username || 'System User']
+    );
+
+    await recordAuditLogSafely(pool, {
+      actorId: req.user.id,
+      targetName: req.user.branch,
+      targetType: 'branch_settings',
+      action: 'UPDATE_DAILY_SALES_TARGET',
+      details: {
+        branch: req.user.branch,
+        dailySalesTarget: targetAmount
+      }
+    });
+
+    return res.json({
+      dailySalesTarget: result.rows[0]?.daily_sales_target ?? null,
+      dailySalesTargetUpdatedBy: result.rows[0]?.updated_by_name || null,
+      dailySalesTargetUpdatedAt: result.rows[0]?.updated_at || null
+    });
+  } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+    console.error('Update daily sales target error:', err);
+    return res.status(500).json({ error: 'Failed to update daily sales target' });
   }
 });
 
@@ -3672,7 +3693,6 @@ app.get('/api/inventory', authenticate, async (req, res) => {
          p.category,
          p.supplier_name,
          p.default_selling_price,
-         p.wsp_code,
          p.cost_price,
          bi.stock_level,
          bi.min_stock_level,
@@ -3715,7 +3735,6 @@ app.get('/api/archive', authenticate, async (req, res) => {
          category,
          supplier_name,
          default_selling_price,
-         wsp_code,
          cost_price,
          branch,
          stock_level,
@@ -3785,6 +3804,9 @@ app.get('/api/sales', authenticate, async (req, res) => {
          st.sales_number,
          st.branch,
          st.customer_type,
+         st.customer_name,
+         st.customer_tin,
+         st.customer_address,
          st.total_quantity,
          st.subtotal_amount,
          st.discount_amount,
@@ -3853,6 +3875,9 @@ app.get('/api/sales', authenticate, async (req, res) => {
 app.post('/api/sales', authenticate, async (req, res) => {
   const {
     customer_type = 'walk_in',
+    customer_name = '',
+    customer_tin = '',
+    customer_address = '',
     items = [],
     remarks = '',
     payment_method = 'cash',
@@ -3864,6 +3889,9 @@ app.post('/api/sales', authenticate, async (req, res) => {
     payment_confirmed = false
   } = req.body;
   const normalizedCustomerType = String(customer_type || 'walk_in').trim().toLowerCase();
+  const cleanCustomerName = String(customer_name || '').trim().replace(/\s+/g, ' ') || 'C';
+  const cleanCustomerTin = String(customer_tin || '').trim().replace(/\s+/g, ' ') || null;
+  const cleanCustomerAddress = String(customer_address || '').trim().replace(/\s+/g, ' ') || 'C';
   const allowedCustomerTypes = new Set(['walk_in', 'sister_company', 'hardware_reseller', 'regular', 'contractor']);
   const normalizedPaymentMethod = String(payment_method || 'cash').trim().toLowerCase();
   const allowedPaymentMethods = new Set(['cash', 'gcash', 'bank_transfer', 'credit']);
@@ -3885,6 +3913,22 @@ app.post('/api/sales', authenticate, async (req, res) => {
 
   if (!allowedCustomerTypes.has(normalizedCustomerType)) {
     return res.status(400).json({ error: 'Please select a valid customer type.' });
+  }
+
+  if (cleanCustomerName.length > 160) {
+    return res.status(400).json({ error: 'Registered name must be 160 characters or fewer.' });
+  }
+
+  if (cleanCustomerTin && cleanCustomerTin.length > 80) {
+    return res.status(400).json({ error: 'TIN must be 80 characters or fewer.' });
+  }
+
+  if (cleanCustomerTin && !/^[0-9-]+$/.test(cleanCustomerTin)) {
+    return res.status(400).json({ error: 'TIN must contain numbers and dashes only.' });
+  }
+
+  if (cleanCustomerAddress.length > 240) {
+    return res.status(400).json({ error: 'Business address must be 240 characters or fewer.' });
   }
 
   if (!allowedPaymentMethods.has(normalizedPaymentMethod)) {
@@ -3974,6 +4018,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
     let subtotalAmount = 0;
     const saleLines = [];
     const updatedItems = [];
+    const priceAdjustments = [];
 
     for (const [inventoryId, line] of aggregatedItems.entries()) {
       const currentResult = await client.query(
@@ -4017,6 +4062,28 @@ app.post('/api/sales', authenticate, async (req, res) => {
 
       const unitPrice = Number(line.unitPrice || 0);
       const subtotal = Number((quantitySold * unitPrice).toFixed(2));
+      const defaultSellingPrice = Number(currentItem.default_selling_price || 0);
+      let updatedDefaultSellingPrice = currentItem.default_selling_price;
+      const shouldUpdateInventorySrp = defaultSellingPrice <= 0 || Math.abs(defaultSellingPrice - unitPrice) > 0.009;
+      if (shouldUpdateInventorySrp) {
+        priceAdjustments.push({
+          inventoryId,
+          productId: currentItem.product_id,
+          itemName: currentItem.name,
+          previousInventorySrp: defaultSellingPrice > 0 ? defaultSellingPrice : null,
+          soldUnitPrice: unitPrice,
+          difference: defaultSellingPrice > 0 ? Number((unitPrice - defaultSellingPrice).toFixed(2)) : null,
+          inventorySrpUpdated: true
+        });
+        const priceUpdateResult = await client.query(
+          `UPDATE products
+           SET default_selling_price = $1
+           WHERE product_id = $2
+           RETURNING default_selling_price`,
+          [unitPrice, currentItem.product_id]
+        );
+        updatedDefaultSellingPrice = priceUpdateResult.rows[0]?.default_selling_price ?? unitPrice;
+      }
       const newQuantity = previousQuantity - quantitySold;
       const nextStatus = computeInventoryStatus(newQuantity, getEffectiveReorderThreshold(currentItem));
 
@@ -4052,7 +4119,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
         name: currentItem.name,
         category: currentItem.category,
         supplier_name: currentItem.supplier_name,
-        default_selling_price: currentItem.default_selling_price,
+        default_selling_price: updatedDefaultSellingPrice,
         lead_time_days: currentItem.lead_time_days,
         safety_stock: currentItem.safety_stock,
         average_daily_sales: currentItem.average_daily_sales
@@ -4102,8 +4169,9 @@ app.post('/api/sales', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'Discount cannot be greater than the sales subtotal.' });
     }
 
-    const netTotalAmount = Number((roundedSubtotalAmount - roundedDiscountAmount + roundedDeliveryCharge).toFixed(2));
-    const { vatableSales, vatAmount } = computeVatBreakdown(netTotalAmount);
+    const taxableSalesAmount = Math.max(Number((roundedSubtotalAmount - roundedDiscountAmount).toFixed(2)), 0);
+    const netTotalAmount = Number((taxableSalesAmount + roundedDeliveryCharge).toFixed(2));
+    const { vatableSales, vatAmount } = computeVatBreakdown(taxableSalesAmount);
     const parsedAmountReceived = amount_received === null || amount_received === undefined || amount_received === ''
       ? null
       : parseNonNegativeDecimal(amount_received, 'Amount received', { max: 100000000 });
@@ -4125,6 +4193,9 @@ app.post('/api/sales', authenticate, async (req, res) => {
          sales_number,
          branch,
          customer_type,
+         customer_name,
+         customer_tin,
+         customer_address,
          total_quantity,
          subtotal_amount,
          discount_amount,
@@ -4150,12 +4221,15 @@ app.post('/api/sales', authenticate, async (req, res) => {
          encoded_at,
          backdate_reason
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, true, $17, $18, ${PHILIPPINE_NOW_SQL}, 'completed', $19, $20, $21, COALESCE($22::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $23)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, true, $20, $21, ${PHILIPPINE_NOW_SQL}, 'completed', $22, $23, $24, COALESCE($25::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $26)
        RETURNING *`,
       [
         salesNumber,
         req.user.branch,
         normalizedCustomerType,
+        cleanCustomerName,
+        cleanCustomerTin,
+        cleanCustomerAddress,
         totalQuantity,
         roundedSubtotalAmount,
         roundedDiscountAmount,
@@ -4256,6 +4330,9 @@ app.post('/api/sales', authenticate, async (req, res) => {
       details: {
         branch: req.user.branch,
         customerType: normalizedCustomerType,
+        customerName: cleanCustomerName,
+        customerTinProvided: Boolean(cleanCustomerTin),
+        customerAddress: cleanCustomerAddress,
         totalQuantity,
         subtotalAmount: roundedSubtotalAmount,
         discountAmount: roundedDiscountAmount,
@@ -4272,6 +4349,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
         paymentConfirmed: true,
         paymentConfirmedBy: soldByName,
         itemCount: insertedItems.length,
+        priceAdjustments,
         remarks: cleanRemarks,
         actualTransactionAt: salesTransaction.created_at,
         encodedAt: salesTransaction.encoded_at,
@@ -4841,7 +4919,6 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
     category,
     supplier_name,
     default_selling_price,
-    wsp_code,
     cost_price,
     stock_level,
     min_stock_level,
@@ -4912,10 +4989,7 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
     const stockLevel = parseNonNegativeInteger(stock_level, 'Stock level');
     const minStockLevel = parseNonNegativeInteger(min_stock_level, 'Manual low-stock threshold');
     const defaultSellingPrice = parseOptionalPositiveDecimal(default_selling_price, 'Default selling price', { max: 100000000 });
-    const normalizedWspCode = normalizeWspCode(wsp_code);
-    const costPrice = normalizedWspCode
-      ? decodeWspCodeToCost(normalizedWspCode)
-      : parseOptionalPositiveDecimal(cost_price, 'Decoded WSP cost', { max: 100000000 });
+    const costPrice = parseOptionalPositiveDecimal(cost_price, 'Cost price', { max: 100000000 });
     const leadTimeDays = parseOptionalNonNegativeInteger(lead_time_days, 'Supplier lead time', { max: 365 });
     const safetyStock = parseOptionalNonNegativeInteger(safety_stock, 'Safety stock', { max: 100000 });
     const averageDailySalesMode = normalizeAverageDailySalesMode(average_daily_sales_mode);
@@ -4999,7 +5073,6 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
         category: canonicalCategory,
         supplierName: cleanSupplier,
         defaultSellingPrice,
-        wspCode: normalizedWspCode,
         costPrice
       });
     const status = computeInventoryStatus(stockLevel, getEffectiveReorderThreshold({
@@ -5060,7 +5133,6 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
          p.category,
          p.supplier_name,
          p.default_selling_price,
-         p.wsp_code,
          p.cost_price,
          bi.stock_level,
          bi.min_stock_level,
@@ -5091,7 +5163,6 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
         category: createdItem.category,
         supplier: createdItem.supplier_name || 'Unassigned',
         defaultSellingPrice,
-        wspCode: normalizedWspCode,
         costPrice,
         initialQuantity: stockLevel,
         reorderLevel: minStockLevel,
@@ -5471,7 +5542,6 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     category,
     supplier_name,
     default_selling_price,
-    wsp_code,
     cost_price,
     stock_level,
     min_stock_level,
@@ -5506,7 +5576,6 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
          p.category,
          p.supplier_name,
          p.default_selling_price,
-         p.wsp_code,
          p.cost_price,
          bi.branch,
          bi.stock_level,
@@ -5566,12 +5635,9 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     const nextDefaultSellingPrice = default_selling_price === undefined
       ? (inventoryRow.default_selling_price === null || inventoryRow.default_selling_price === undefined ? null : Number(inventoryRow.default_selling_price))
       : parseOptionalPositiveDecimal(default_selling_price, 'Default selling price', { max: 100000000 });
-    const nextWspCode = wsp_code === undefined ? inventoryRow.wsp_code : normalizeWspCode(wsp_code);
-    const nextCostPrice = wsp_code !== undefined
-      ? (nextWspCode ? decodeWspCodeToCost(nextWspCode) : null)
-      : cost_price === undefined
-        ? (inventoryRow.cost_price === null || inventoryRow.cost_price === undefined ? null : Number(inventoryRow.cost_price))
-        : parseOptionalPositiveDecimal(cost_price, 'Decoded WSP cost', { max: 100000000 });
+    const nextCostPrice = cost_price === undefined
+      ? (inventoryRow.cost_price === null || inventoryRow.cost_price === undefined ? null : Number(inventoryRow.cost_price))
+      : parseOptionalPositiveDecimal(cost_price, 'Cost price', { max: 100000000 });
     const status = computeInventoryStatus(nextQuantity, getEffectiveReorderThreshold({
       min_stock_level: nextMinStockLevel,
       lead_time_days: nextLeadTimeDays,
@@ -5601,7 +5667,6 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     const supplierChanged = cleanSupplier !== cleanSupplierName(inventoryRow.supplier_name);
     const defaultSellingPriceChanged =
       normalizeNullableNumber(inventoryRow.default_selling_price) !== normalizeNullableNumber(nextDefaultSellingPrice);
-    const wspCodeChanged = (inventoryRow.wsp_code || null) !== (nextWspCode || null);
     const costPriceChanged =
       normalizeNullableNumber(inventoryRow.cost_price) !== normalizeNullableNumber(nextCostPrice);
     const reorderLevelChanged = Number(inventoryRow.min_stock_level || 0) !== nextMinStockLevel;
@@ -5619,7 +5684,6 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       identityChanged ||
       supplierChanged ||
       defaultSellingPriceChanged ||
-      wspCodeChanged ||
       costPriceChanged ||
       reorderLevelChanged ||
       reorderPlanningChanged;
@@ -5642,7 +5706,6 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       !identityChanged &&
       !supplierChanged &&
       !defaultSellingPriceChanged &&
-      !wspCodeChanged &&
       !costPriceChanged &&
       !reorderLevelChanged &&
       !reorderPlanningChanged;
@@ -5806,7 +5869,6 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
         category: canonicalCategory,
         supplierName: cleanSupplier,
         defaultSellingPrice: nextDefaultSellingPrice,
-        wspCode: nextWspCode,
         costPrice: nextCostPrice
       });
     } else {
@@ -5816,10 +5878,9 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
              category = $2,
              supplier_name = $3,
              default_selling_price = $4,
-             wsp_code = $5,
-             cost_price = $6
-         WHERE product_id = $7`,
-        [cleanName, canonicalCategory, cleanSupplier, nextDefaultSellingPrice, nextWspCode, nextCostPrice, productId]
+             cost_price = $5
+         WHERE product_id = $6`,
+        [cleanName, canonicalCategory, cleanSupplier, nextDefaultSellingPrice, nextCostPrice, productId]
       );
     }
 
@@ -5875,7 +5936,6 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
          p.category,
          p.supplier_name,
          p.default_selling_price,
-         p.wsp_code,
          p.cost_price,
          bi.stock_level,
          bi.min_stock_level,
@@ -5953,8 +6013,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       if (inventoryRow.category !== canonicalCategory) changedFields.push('category');
       if (supplierChanged) changedFields.push('supplier');
       if (defaultSellingPriceChanged) changedFields.push('default selling price');
-      if (wspCodeChanged) changedFields.push('encoded WSP');
-      if (costPriceChanged) changedFields.push('decoded WSP cost');
+      if (costPriceChanged) changedFields.push('cost price');
       if (previousQuantity !== nextQuantity) changedFields.push('quantity');
       if (Number(inventoryRow.min_stock_level || 0) !== nextMinStockLevel) changedFields.push('reorder level');
       if (reorderPlanningChanged) changedFields.push('reorder planning');
@@ -5974,7 +6033,6 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
               category: inventoryRow.category,
               supplier: inventoryRow.supplier_name || 'Unassigned',
               defaultSellingPrice: normalizeNullableNumber(inventoryRow.default_selling_price),
-              wspCode: inventoryRow.wsp_code || null,
               costPrice: normalizeNullableNumber(inventoryRow.cost_price),
               reorderLevel: Number(inventoryRow.min_stock_level || 0),
               leadTimeDays: Number(inventoryRow.lead_time_days || 0),
@@ -5990,7 +6048,6 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
               category: updatedItem.category,
               supplier: updatedItem.supplier_name || 'Unassigned',
               defaultSellingPrice: normalizeNullableNumber(updatedItem.default_selling_price),
-              wspCode: updatedItem.wsp_code || null,
               costPrice: normalizeNullableNumber(updatedItem.cost_price),
               reorderLevel: nextMinStockLevel,
               leadTimeDays: nextLeadTimeDays,
@@ -6054,7 +6111,6 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
          p.category,
          p.supplier_name,
          p.default_selling_price,
-         p.wsp_code,
          p.cost_price,
          bi.branch,
          bi.stock_level,
@@ -6087,7 +6143,6 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
          category,
          supplier_name,
          default_selling_price,
-         wsp_code,
          cost_price,
          branch,
          stock_level,
@@ -6103,7 +6158,7 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
          archive_reason,
          archived_by
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
       [
         archivedItem.inventory_id,
         archivedItem.product_id,
@@ -6111,7 +6166,6 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
         archivedItem.category,
         archivedItem.supplier_name,
         archivedItem.default_selling_price,
-        archivedItem.wsp_code,
         archivedItem.cost_price,
         archivedItem.branch,
         archivedItem.stock_level,
@@ -6201,7 +6255,6 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
          category,
          supplier_name,
          default_selling_price,
-         wsp_code,
          cost_price,
          branch,
          stock_level,
@@ -6231,7 +6284,6 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
       defaultSellingPrice: archivedItem.default_selling_price === null || archivedItem.default_selling_price === undefined
         ? null
         : Number(archivedItem.default_selling_price),
-      wspCode: archivedItem.wsp_code,
       costPrice: archivedItem.cost_price === null || archivedItem.cost_price === undefined
         ? null
         : Number(archivedItem.cost_price)
@@ -6362,7 +6414,6 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
          p.category,
          p.supplier_name,
          p.default_selling_price,
-         p.wsp_code,
          p.cost_price,
          bi.stock_level,
          bi.min_stock_level,
@@ -6712,7 +6763,7 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
         [scopeBranch]
       ),
       pool.query(
-        `SELECT DISTINCT p.product_id, p.name, p.category, p.supplier_name, p.default_selling_price, p.wsp_code, p.cost_price
+        `SELECT DISTINCT p.product_id, p.name, p.category, p.supplier_name, p.default_selling_price, p.cost_price
          FROM products p
          INNER JOIN branch_inventory bi ON bi.product_id = p.product_id
          WHERE bi.branch = $1
@@ -6723,7 +6774,6 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
              OR p.default_selling_price <= 0
              OR p.default_selling_price > 100000000
              OR p.cost_price < 0
-             OR (p.wsp_code IS NOT NULL AND LENGTH(TRIM(p.wsp_code)) > 60)
            )`,
         [scopeBranch]
       ),

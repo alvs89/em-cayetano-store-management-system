@@ -10,6 +10,7 @@ import {
   PackagePlus,
   ReceiptText,
   Search,
+  Target,
   Truck,
   Users
 } from 'lucide-react';
@@ -41,6 +42,24 @@ const sanitizeWholeNumberInput = (value, fieldName, toastId) => {
     });
   }
   return cleaned;
+};
+
+const sanitizeMoneyInput = (value, fieldName, toastId) => {
+  const rawValue = String(value || '');
+  const cleaned = rawValue
+    .replace(/[^\d.]/g, '')
+    .replace(/(\..*)\./g, '$1');
+  const [whole = '', decimals = ''] = cleaned.split('.');
+  const nextValue = cleaned.includes('.') ? `${whole}.${decimals.slice(0, 2)}` : whole;
+
+  if (rawValue !== nextValue) {
+    toast.warning(`${fieldName} accepts numbers and decimals only.`, {
+      id: toastId,
+      duration: 2500
+    });
+  }
+
+  return nextValue;
 };
 
 const isToday = value => {
@@ -101,14 +120,18 @@ export function Dashboard({
     itemId: '',
     physicalCount: ''
   });
+  const [isQuotaDialogOpen, setIsQuotaDialogOpen] = React.useState(false);
+  const [quotaForm, setQuotaForm] = React.useState('');
+  const [isSavingQuota, setIsSavingQuota] = React.useState(false);
 
   const {
     inventory,
     unreadAlertCount,
     stockMovements,
     salesTransactions,
-    purchaseTransactions,
-    users
+    users,
+    systemSummary,
+    updateDailySalesTarget
   } = useData();
 
   const role = normalizeRole(user?.role);
@@ -134,7 +157,6 @@ export function Dashboard({
     missingPriceItems.length > 0 ? `${missingPriceItems.length} missing SRP` : ''
   ].filter(Boolean);
   const salesToday = (salesTransactions || []).filter(sale => sale.status !== 'cancelled' && isToday(sale.createdAt));
-  const purchasesToday = (purchaseTransactions || []).filter(purchase => purchase.status !== 'cancelled' && isToday(purchase.createdAt));
   const stockMovementsToday = (stockMovements || []).filter(movement => isToday(movement.createdAt));
   const completedSales = (salesTransactions || []).filter(sale => sale.status !== 'cancelled');
   const completedSalesThisMonth = completedSales.filter(sale => isThisMonth(sale.createdAt));
@@ -142,10 +164,14 @@ export function Dashboard({
   const topSellingThisMonth = getTopSellingItem(completedSalesThisMonth);
   const overallSalesAmount = completedSales.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0);
   const salesTodayAmount = salesToday.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0);
+  const dailySalesTarget = Number(systemSummary?.dailySalesTarget || 0);
+  const hasDailySalesTarget = Number.isFinite(dailySalesTarget) && dailySalesTarget > 0;
+  const quotaProgress = hasDailySalesTarget
+    ? Math.min(100, Math.round((salesTodayAmount / dailySalesTarget) * 100))
+    : 0;
   const salesTodayQuantity = salesToday.reduce((sum, sale) => (
     sum + (sale.items || []).reduce((itemSum, item) => itemSum + Number(item.quantitySold || item.quantity || 0), 0)
   ), 0);
-  const purchasesTodayAmount = purchasesToday.reduce((sum, purchase) => sum + Number(purchase.subtotalAmount || 0), 0);
   const stockInTodayCount = stockMovementsToday.filter(movement => String(movement.action || '').toLowerCase() === 'stock in').length;
   const stockOutTodayCount = stockMovementsToday.filter(movement => String(movement.action || '').toLowerCase() === 'stock out').length;
   const unitsMovedToday = stockMovementsToday.reduce((sum, movement) => sum + Number(movement.quantityChanged || 0), 0);
@@ -167,6 +193,40 @@ export function Dashboard({
     : null;
 
   const formatUnitLabel = value => Number(value) === 1 ? 'unit' : 'units';
+
+  const openQuotaDialog = () => {
+    if (!isAdmin) return;
+    setQuotaForm(hasDailySalesTarget ? dailySalesTarget.toFixed(2) : '');
+    setIsQuotaDialogOpen(true);
+  };
+
+  const saveDailyQuota = async () => {
+    if (!isAdmin || isSavingQuota) return;
+
+    const cleanValue = quotaForm.trim();
+    if (cleanValue) {
+      const parsedValue = Number(cleanValue);
+      if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+        toast.warning('Daily quota must be greater than zero.', {
+          id: 'dashboard-daily-quota-invalid',
+          duration: 2500
+        });
+        return;
+      }
+    }
+
+    try {
+      setIsSavingQuota(true);
+      await updateDailySalesTarget(cleanValue ? Number(cleanValue) : null);
+      toast.success(cleanValue ? 'Daily quota updated.' : 'Daily quota cleared.');
+      setIsQuotaDialogOpen(false);
+    } catch (err) {
+      const message = err?.response?.data?.error || 'Daily quota could not be saved.';
+      toast.error(message);
+    } finally {
+      setIsSavingQuota(false);
+    }
+  };
 
   const resetStockCountForm = () => {
     setStockCountForm({
@@ -312,14 +372,6 @@ export function Dashboard({
 
   const operationsCards = isInventoryStaff ? [
     {
-      label: 'Purchases Today',
-      value: purchasesToday.length,
-      detail: `${purchasesToday.length} purchase entr${purchasesToday.length === 1 ? 'y' : 'ies'}`,
-      icon: Truck,
-      tone: 'green',
-      action: canUseReports ? () => openTargetReport('purchases', { period: 'daily' }) : canUsePurchases ? () => onNavigate('purchases') : undefined
-    },
-    {
       label: 'Stock In Today',
       value: stockInTodayCount,
       detail: 'Received stock records',
@@ -356,6 +408,17 @@ export function Dashboard({
           ? () => openSalesHistory('today')
           : undefined
     },
+    (isAdmin || isCashier || canUseSales) && {
+      label: 'Daily Quota',
+      value: hasDailySalesTarget ? `${quotaProgress}%` : 'Not set',
+      detail: hasDailySalesTarget
+        ? `${formatCurrency(salesTodayAmount)} of ${formatCurrency(dailySalesTarget)} reached`
+        : 'No daily quota set',
+      icon: Target,
+      tone: hasDailySalesTarget && salesTodayAmount >= dailySalesTarget ? 'green' : 'amber',
+      progress: hasDailySalesTarget ? quotaProgress : undefined,
+      action: isAdmin ? openQuotaDialog : undefined
+    },
     isCashier && {
       label: 'Top Item Today',
       value: topSellingToday ? topSellingToday.quantity : 0,
@@ -365,14 +428,6 @@ export function Dashboard({
       icon: Package,
       tone: 'green',
       action: canUseSales ? () => openSalesHistory('today') : undefined
-    },
-    canUsePurchases && {
-      label: 'Purchases Today',
-      value: formatCurrency(purchasesTodayAmount),
-      detail: `${purchasesToday.length} purchase entr${purchasesToday.length === 1 ? 'y' : 'ies'}`,
-      icon: Truck,
-      tone: 'green',
-      action: canUseReports ? () => openTargetReport('purchases', { period: 'daily' }) : () => onNavigate('purchases')
     },
     (isAdmin || isInventoryStaff) && {
       label: 'Stock Movements',
@@ -618,7 +673,7 @@ export function Dashboard({
           display: grid;
           grid-template-columns: minmax(0, 1fr) 46px;
           gap: 14px;
-          align-items: center;
+          align-items: start;
           min-height: 96px;
           border: 1px solid #dbe3ef;
           border-left-width: 5px;
@@ -689,6 +744,279 @@ export function Dashboard({
           border-radius: 10px;
           background: #f8fafc;
           color: #475569;
+        }
+
+        .dashboard-summary-progress {
+          display: block;
+          width: 100%;
+          height: 7px;
+          margin-top: 10px;
+          overflow: hidden;
+          border-radius: 999px;
+          background: #e5e7eb;
+        }
+
+        .dashboard-summary-progress-fill {
+          display: block;
+          height: 100%;
+          border-radius: inherit;
+          background: #f59e0b;
+        }
+
+        .summary-green .dashboard-summary-progress-fill {
+          background: #16a34a;
+        }
+
+        .dashboard-quota-dialog {
+          width: min(560px, calc(100vw - 32px));
+          max-height: calc(100dvh - 28px);
+          overflow: hidden;
+          padding: 0;
+        }
+
+        .dashboard-quota-header {
+          display: grid;
+          grid-template-columns: 48px minmax(0, 1fr);
+          gap: 14px;
+          align-items: center;
+          padding: 22px 24px 16px;
+          border-bottom: 1px solid #edf2f7;
+        }
+
+        .dashboard-quota-icon {
+          display: inline-flex;
+          width: 48px;
+          height: 48px;
+          align-items: center;
+          justify-content: center;
+          border-radius: 14px;
+          background: #fff7ed;
+          color: #ff6b00;
+        }
+
+        .dashboard-quota-title {
+          color: #111827;
+          font-size: 24px;
+          line-height: 1.15;
+          font-weight: 900;
+          letter-spacing: 0;
+        }
+
+        .dashboard-quota-description {
+          margin-top: 6px;
+          color: #475569;
+          font-size: 14px;
+          line-height: 1.5;
+        }
+
+        .dashboard-quota-body {
+          display: grid;
+          gap: 16px;
+          padding: 18px 24px 20px;
+        }
+
+        .dashboard-quota-field {
+          display: grid;
+          gap: 8px;
+        }
+
+        .dashboard-quota-input {
+          height: 52px;
+          border: 1px solid #dbe3ef;
+          border-radius: 12px;
+          background: #ffffff;
+          color: #0f172a;
+          font-size: 18px;
+          font-weight: 700;
+          transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+        }
+
+        .dashboard-quota-input:hover {
+          border-color: #f59e0b;
+          background: #fffdf7;
+        }
+
+        .dashboard-quota-input:focus,
+        .dashboard-quota-input:focus-visible {
+          border-color: #ff6b00;
+          box-shadow: 0 0 0 3px rgba(255, 107, 0, 0.18);
+        }
+
+        .dashboard-quota-summary {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+          border: 1px solid #dbe3ef;
+          border-radius: 14px;
+          background: #f8fafc;
+          padding: 12px;
+        }
+
+        .dashboard-quota-summary-item {
+          min-width: 0;
+          border-radius: 10px;
+          background: #ffffff;
+          padding: 11px 12px;
+        }
+
+        .dashboard-quota-summary-label {
+          display: block;
+          color: #64748b;
+          font-size: 12px;
+          font-weight: 700;
+          line-height: 1.2;
+        }
+
+        .dashboard-quota-summary-value {
+          display: block;
+          margin-top: 5px;
+          color: #0f172a;
+          font-size: 18px;
+          font-weight: 900;
+          line-height: 1.2;
+          overflow-wrap: anywhere;
+        }
+
+        .dashboard-quota-footer {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(112px, max-content));
+          justify-content: end;
+          align-items: center;
+          gap: 10px;
+          padding: 14px 24px 20px;
+          border-top: 1px solid #edf2f7;
+          background: #ffffff;
+        }
+
+        .dashboard-quota-footer .dashboard-quota-button {
+          min-width: 112px;
+          min-height: 44px;
+          border-radius: 10px;
+          font-weight: 800;
+        }
+
+        .dashboard-quota-secondary-button {
+          border-color: #dbe3ef;
+          background: #ffffff;
+          color: #0f172a;
+        }
+
+        .dashboard-quota-secondary-button:hover {
+          border-color: #cbd5e1;
+          background: #f8fafc;
+        }
+
+        .dashboard-quota-primary-button {
+          background: #ff6b00;
+          color: #ffffff;
+          box-shadow: 0 8px 18px rgba(255, 107, 0, 0.22);
+        }
+
+        .dashboard-quota-primary-button:hover {
+          background: #e85f00;
+          color: #ffffff;
+        }
+
+        .dashboard-quota-primary-button:disabled {
+          opacity: 1;
+          background: #f3a366;
+          color: #ffffff;
+          box-shadow: none;
+        }
+
+        @media (max-width: 520px) {
+          .dashboard-quota-dialog {
+            width: min(420px, calc(100vw - 24px));
+            max-height: calc(100dvh - 20px);
+            overflow-y: auto;
+          }
+
+          .dashboard-quota-header {
+            grid-template-columns: 38px minmax(0, 1fr);
+            gap: 10px;
+            padding: 16px 16px 12px;
+          }
+
+          .dashboard-quota-icon {
+            width: 38px;
+            height: 38px;
+            border-radius: 12px;
+          }
+
+          .dashboard-quota-title {
+            font-size: 20px;
+          }
+
+          .dashboard-quota-description {
+            margin-top: 4px;
+            font-size: 13px;
+            line-height: 1.4;
+          }
+
+          .dashboard-quota-body,
+          .dashboard-quota-footer {
+            padding-left: 16px;
+            padding-right: 16px;
+          }
+
+          .dashboard-quota-body {
+            gap: 14px;
+            padding-top: 16px;
+            padding-bottom: 16px;
+          }
+
+          .dashboard-quota-input {
+            height: 48px;
+            font-size: 17px;
+          }
+
+          .dashboard-quota-summary {
+            gap: 8px;
+            padding: 10px;
+          }
+
+          .dashboard-quota-summary {
+            grid-template-columns: 1fr;
+          }
+
+          .dashboard-quota-summary-item {
+            padding: 10px 11px;
+          }
+
+          .dashboard-quota-summary-value {
+            font-size: 17px;
+          }
+
+          .dashboard-quota-footer {
+            grid-template-columns: 1fr;
+            gap: 8px;
+            padding-top: 12px;
+            padding-bottom: 16px;
+          }
+
+          .dashboard-quota-footer .dashboard-quota-button {
+            width: 100%;
+            min-height: 46px;
+          }
+        }
+
+        @media (max-width: 380px) {
+          .dashboard-quota-dialog {
+            width: calc(100vw - 16px);
+          }
+
+          .dashboard-quota-header {
+            grid-template-columns: 1fr;
+          }
+
+          .dashboard-quota-icon {
+            width: 36px;
+            height: 36px;
+          }
+
+          .dashboard-quota-title {
+            font-size: 19px;
+          }
         }
 
         .summary-blue .dashboard-summary-icon {
@@ -1120,6 +1448,68 @@ export function Dashboard({
         )}
           </div>
 
+      <Dialog open={isQuotaDialogOpen} onOpenChange={open => {
+        setIsQuotaDialogOpen(open);
+        if (!open) {
+          setQuotaForm('');
+          setIsSavingQuota(false);
+        }
+      }}>
+        <DialogContent className="dashboard-quota-dialog border border-slate-200 bg-white shadow-2xl">
+          <DialogHeader className="dashboard-quota-header text-left">
+            <span className="dashboard-quota-icon" aria-hidden="true">
+              <Target className="h-6 w-6" />
+            </span>
+            <div className="min-w-0">
+              <DialogTitle className="dashboard-quota-title">
+                Daily Sales Target
+              </DialogTitle>
+              <DialogDescription className="dashboard-quota-description">
+                Set the branch sales target used for today&apos;s quota progress.
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+
+          <div className="dashboard-quota-body">
+            <div className="dashboard-quota-field">
+              <Label htmlFor="dashboard-daily-quota" className="text-sm font-bold text-slate-900">
+                Daily Sales Target
+              </Label>
+              <Input
+                id="dashboard-daily-quota"
+                className="dashboard-quota-input"
+                inputMode="decimal"
+                value={quotaForm}
+                onChange={event => setQuotaForm(sanitizeMoneyInput(event.target.value, 'Daily quota', 'dashboard-daily-quota-numbers-only'))}
+                placeholder="0.00"
+              />
+            </div>
+
+            <div className="dashboard-quota-summary">
+              <div className="dashboard-quota-summary-item">
+                <span className="dashboard-quota-summary-label">Today&apos;s Sales</span>
+                <span className="dashboard-quota-summary-value">{formatCurrency(salesTodayAmount)}</span>
+              </div>
+              {hasDailySalesTarget && (
+                <div className="dashboard-quota-summary-item">
+                  <span className="dashboard-quota-summary-label">Current Target</span>
+                  <span className="dashboard-quota-summary-value">{formatCurrency(dailySalesTarget)}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter className="dashboard-quota-footer">
+            <Button type="button" variant="outline" className="dashboard-quota-button dashboard-quota-secondary-button" onClick={() => setIsQuotaDialogOpen(false)} disabled={isSavingQuota}>
+              Cancel
+            </Button>
+            <Button type="button" className="dashboard-quota-button dashboard-quota-primary-button" onClick={saveDailyQuota} disabled={isSavingQuota}>
+              {isSavingQuota ? 'Saving...' : 'Save Target'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={isStockCountDialogOpen} onOpenChange={open => {
         setIsStockCountDialogOpen(open);
         if (!open) resetStockCountForm();
@@ -1229,14 +1619,22 @@ function SummaryCard({
   detail,
   icon: Icon,
   tone,
+  progress,
   action
 }) {
+  const progressValue = Number(progress);
+  const hasProgress = Number.isFinite(progressValue);
   const content = (
     <>
       <span className="min-w-0">
         <span className="dashboard-summary-label block">{label}</span>
         <span className="dashboard-summary-value block">{value}</span>
         <span className="dashboard-summary-detail block">{detail}</span>
+        {hasProgress && (
+          <span className="dashboard-summary-progress" aria-hidden="true">
+            <span className="dashboard-summary-progress-fill" style={{ width: `${Math.max(0, Math.min(100, progressValue))}%` }} />
+          </span>
+        )}
       </span>
       <span className="dashboard-summary-icon">
         <Icon className="h-5 w-5" />

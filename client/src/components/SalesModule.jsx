@@ -24,7 +24,6 @@ const emptySaleLine = () => ({
   unitPrice: ''
 });
 
-const SALES_REMARKS_MAX_LENGTH = 500;
 const PRODUCT_PAGE_SIZE = 10;
 const DEFAULT_NON_INVENTORY_DRAFT = {
   itemName: '',
@@ -124,14 +123,29 @@ const isNonInventorySaleItem = item =>
 const requiresPaymentConfirmation = paymentMethod => ['gcash', 'bank_transfer'].includes(paymentMethod);
 const VAT_RATE = 0.12;
 
-const computeVatBreakdown = totalAmount => {
-  const gross = Number(totalAmount || 0);
+const computeVatBreakdown = taxableAmount => {
+  const gross = Number(taxableAmount || 0);
   const vatableSales = Number((gross / (1 + VAT_RATE)).toFixed(2));
   const vatAmount = Number((gross - vatableSales).toFixed(2));
   return { vatableSales, vatAmount };
 };
 
-const getReceiptVatBreakdown = sale => computeVatBreakdown(Number(sale?.totalAmount || 0));
+const getTaxableSalesAmount = sale => {
+  const subtotal = Number(sale?.subtotalAmount ?? sale?.subtotal_amount ?? 0);
+  const discount = Number(sale?.discountAmount ?? sale?.discount_amount ?? 0);
+  return Math.max(Number((subtotal - discount).toFixed(2)), 0);
+};
+
+const getReceiptVatBreakdown = sale => {
+  const storedVatableSales = Number(sale?.vatableSales ?? sale?.vatable_sales ?? 0);
+  const storedVatAmount = Number(sale?.vatAmount ?? sale?.vat_amount ?? 0);
+
+  if (storedVatableSales > 0 || storedVatAmount > 0) {
+    return { vatableSales: storedVatableSales, vatAmount: storedVatAmount };
+  }
+
+  return computeVatBreakdown(getTaxableSalesAmount(sale));
+};
 
 const escapeReceiptText = value =>
   String(value ?? '')
@@ -155,16 +169,22 @@ const formatDateTime = value => {
   return date.toLocaleString();
 };
 
+const formatReceiptDateOnly = value => {
+  if (!value) return 'No date recorded';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Invalid date';
+  return date.toLocaleDateString();
+};
+
 const RECEIPT_BUSINESS_INFO = {
   businessName: 'E.M. CAYETANO TRADING',
-  tin: 'VAT REG TIN: [Client\'s Official TIN]',
+  tin: 'VAT Reg. TIN 176-665-005-00000',
+  proprietor: 'EDNA M. CAYETANO - Prop.',
+  contact: 'Tel No. 8285-9611 Cell. No. (0918) 930-6300',
   addresses: {
-    manggahan: '196 J. P. Rizal St, Rodriguez, 1860 Rizal',
+    manggahan: '196 J.P Rizal Avenue, Manggahan 1860\nRodriguez, Rizal, Philippines',
     san_rafael: '482 MH del Pilar St, Rodriguez, 1860 Rizal'
-  },
-  permit: 'PERMIT TO USE LOOSE LEAF NO.: [To be provided]',
-  authority: 'BIR AUTHORITY TO PRINT NO.: [To be provided]',
-  approvedSeries: 'APPROVED SERIES: [System-generated series]'
+  }
 };
 
 const getReceiptBranchAddress = branch => {
@@ -175,6 +195,25 @@ const getReceiptBranchAddress = branch => {
   return RECEIPT_BUSINESS_INFO.addresses.manggahan;
 };
 
+const normalizeReceiptCustomerText = value => String(value || '').trim().replace(/\s+/g, ' ');
+const getReceiptCustomerName = sale => normalizeReceiptCustomerText(sale?.customerName) || 'C';
+const getReceiptCustomerTin = sale => normalizeReceiptCustomerText(sale?.customerTin);
+const getReceiptCustomerAddress = sale => normalizeReceiptCustomerText(sale?.customerAddress) || 'C';
+const getReceiptAddressLines = address => String(address || '').split(/\n+/).map(line => line.trim()).filter(Boolean);
+const formatReceiptAddressHtml = address => getReceiptAddressLines(address).map(escapeReceiptText).join('<br>');
+const sanitizeTinInput = value => {
+  const rawValue = String(value || '');
+  const cleaned = rawValue.replace(/[^0-9-]/g, '');
+  if (rawValue !== cleaned) {
+    toast.warning('TIN must contain numbers and dashes only.', {
+      id: 'sales-tin-numbers-dashes-only',
+      description: 'Please use a format like 000-000-000-000.',
+      duration: 2500
+    });
+  }
+  return cleaned;
+};
+
 const downloadSaleTransactionSummary = sale => {
   if (!sale) return;
 
@@ -182,20 +221,25 @@ const downloadSaleTransactionSummary = sale => {
   const items = sale.items || [];
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
-  const margin = 12;
-  const contentWidth = pageWidth - (margin * 2);
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const receiptX = 2;
+  const receiptY = 2;
+  const receiptWidth = pageWidth - (receiptX * 2);
+  const receiptHeight = pageHeight - (receiptY * 2);
+  const margin = receiptX + 6;
+  const contentWidth = receiptWidth - 12;
   const money = value => `P${Number(value || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   })}`;
   const paymentLabel = paymentMethodLabels[sale.paymentMethod] || 'Cash';
-  const customerName = sale.customerName || (sale.customerType === 'walk_in' ? 'Various' : customerTypeLabels[sale.customerType] || 'Various');
+  const customerName = getReceiptCustomerName(sale);
   const branchAddress = getReceiptBranchAddress(sale.branch);
   const receiptVat = getReceiptVatBreakdown(sale);
   const saleDate = sale.createdAt ? new Date(sale.createdAt) : new Date();
   const formattedDate = Number.isNaN(saleDate.getTime())
     ? formatDateTime(sale.createdAt)
-    : saleDate.toLocaleDateString();
+    : formatReceiptDateOnly(sale.createdAt);
   const encodedDate = isBackdatedRecord(sale) ? formatDateTime(sale.encodedAt) : '';
   const normalizePdfText = value =>
     String(value ?? '')
@@ -226,42 +270,43 @@ const downloadSaleTransactionSummary = sale => {
 
   doc.setDrawColor(17, 24, 39);
   doc.setLineWidth(0.35);
-  doc.setFillColor(17, 45, 84);
-  doc.rect(margin, 8, contentWidth, 2.5, 'F');
+  doc.rect(receiptX, receiptY, receiptWidth, receiptHeight);
 
-  let y = 18;
+  let y = receiptY + 14;
+  const headerLeftWidth = contentWidth - 66;
+  const headerLeftCenter = margin + (headerLeftWidth / 2);
+  const invoiceRightX = receiptX + receiptWidth - 6;
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(15);
-  drawText(RECEIPT_BUSINESS_INFO.businessName, margin + 20, y);
-  doc.setFontSize(8.5);
+  doc.setFontSize(18);
+  drawText(RECEIPT_BUSINESS_INFO.businessName, headerLeftCenter, y, { align: 'center' });
+  doc.setFontSize(9);
   doc.setFont('helvetica', 'bold');
-  drawText(RECEIPT_BUSINESS_INFO.tin, margin + 20, y + 6);
+  drawText(RECEIPT_BUSINESS_INFO.tin, headerLeftCenter, y + 7, { align: 'center' });
+  doc.setFontSize(10);
+  drawText(RECEIPT_BUSINESS_INFO.proprietor, headerLeftCenter, y + 13, { align: 'center' });
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.splitTextToSize(branchAddress, 76).forEach((lineText, index) => {
-    drawText(lineText, margin + 20, y + 11 + (index * 4));
+  doc.setFontSize(8.5);
+  getReceiptAddressLines(branchAddress).forEach((lineText, index) => {
+    drawText(lineText, headerLeftCenter, y + 19 + (index * 4), { align: 'center' });
   });
-
-  doc.setDrawColor(220, 38, 38);
-  doc.setLineWidth(1.1);
-  doc.circle(margin + 8, y + 7, 3.2);
-  doc.circle(margin + 3, y + 15, 3.2);
-  doc.circle(margin + 13, y + 15, 3.2);
-  doc.line(margin + 6, y + 9, margin + 4.5, y + 12);
-  doc.line(margin + 10, y + 9, margin + 12, y + 12);
-  doc.line(margin + 6.2, y + 15, margin + 9.8, y + 15);
+  drawText(RECEIPT_BUSINESS_INFO.contact, headerLeftCenter, y + 28, { align: 'center' });
 
   doc.setDrawColor(17, 24, 39);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(20);
-  doc.setTextColor(17, 45, 84);
-  drawText('INVOICE', pageWidth - margin, y + 10, { align: 'right' });
-  doc.setTextColor(220, 38, 38);
-  doc.setFontSize(12);
-  drawText(`Invoice No.: ${saleNumber}`, pageWidth - margin, y + 22, { align: 'right' });
+  doc.setTextColor(55, 65, 81);
+  doc.setFontSize(10);
+  drawText('SALES', invoiceRightX, y + 3, { align: 'right' });
+  doc.setFontSize(23);
+  drawText('INVOICE', invoiceRightX, y + 14, { align: 'right' });
   doc.setTextColor(17, 24, 39);
+  doc.setFontSize(11);
+  drawText(`No.: ${saleNumber}`, invoiceRightX, y + 27, { align: 'right' });
+  doc.setTextColor(17, 24, 39);
+  doc.setLineWidth(0.45);
+  const headerBottomY = receiptY + 46;
+  doc.line(receiptX, headerBottomY, receiptX + receiptWidth, headerBottomY);
 
-  y = 45;
+  y = headerBottomY + 12;
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   const drawCheckbox = (x, boxY, checked) => {
@@ -276,19 +321,21 @@ const downloadSaleTransactionSummary = sale => {
   drawText('CASH SALES', margin + 16, y);
   drawCheckbox(margin + 10, y + 2, sale.paymentMethod === 'credit');
   drawText('CHARGE SALES', margin + 16, y + 5);
-  drawBox(pageWidth - margin - 72, y - 3, 72, 11);
-  doc.line(pageWidth - margin - 46, y - 3, pageWidth - margin - 46, y + 8);
+  const dateBoxWidth = 80;
+  const dateBoxX = receiptX + receiptWidth - 6 - dateBoxWidth;
+  drawBox(dateBoxX, y - 7, dateBoxWidth, 13);
+  doc.line(dateBoxX + 26, y - 7, dateBoxX + 26, y + 6);
   doc.setFont('helvetica', 'bold');
-  drawText('Date:', pageWidth - margin - 70, y + 4);
+  drawText('Date:', dateBoxX + 3, y + 1.2);
   doc.setFont('helvetica', 'normal');
-  drawText(formattedDate, pageWidth - margin - 42, y + 4);
+  drawText(formattedDate, dateBoxX + 53, y + 1.2, { align: 'center' });
   if (encodedDate) {
     doc.setFontSize(7);
-    drawText(`Encoded: ${encodedDate}`, pageWidth - margin, y + 13, { align: 'right' });
+    drawText(`Encoded: ${encodedDate}`, receiptX + receiptWidth - 6, y + 11, { align: 'right' });
     doc.setFontSize(9);
   }
 
-  y = 58;
+  y = headerBottomY + 21;
   drawBox(margin, y, contentWidth, 27);
   doc.setFillColor(243, 244, 246);
   doc.rect(margin, y, contentWidth, 6, 'F');
@@ -299,14 +346,14 @@ const downloadSaleTransactionSummary = sale => {
   drawText('Registered Name :', margin + 8, y + 12);
   drawText(customerName, margin + 52, y + 12);
   drawText('TIN             :', margin + 8, y + 18);
-  drawText(sale.customerTin || '-', margin + 52, y + 18);
+  drawText(getReceiptCustomerTin(sale), margin + 52, y + 18);
   drawText('Business Address:', margin + 8, y + 24);
-  drawText(sale.customerAddress || '-', margin + 52, y + 24);
+  drawText(getReceiptCustomerAddress(sale), margin + 52, y + 24);
 
-  y = 90;
+  y += 38;
   const tableX = margin;
   const tableWidth = contentWidth;
-  const colWidths = [88, 26, 34, tableWidth - 88 - 26 - 34];
+  const colWidths = [108, 28, 35, tableWidth - 108 - 28 - 35];
   const headerHeight = 10;
   const rowHeight = 8;
   const minimumRows = 10;
@@ -343,14 +390,16 @@ const downloadSaleTransactionSummary = sale => {
     drawText(nameLines[0] || 'Inventory item', tableX + 2, rowTop + 3.4);
     if (nameLines[1]) drawText(nameLines[1], tableX + 2, rowTop + 6.6);
     drawText(String(item.quantitySold || 0), tableX + colWidths[0] + colWidths[1] / 2, rowTop + 5.2, { align: 'center' });
-    drawText(money(item.unitPrice), tableX + colWidths[0] + colWidths[1] + colWidths[2] - 2, rowTop + 5.2, { align: 'right' });
-    drawText(money(item.subtotal), tableX + tableWidth - 2, rowTop + 5.2, { align: 'right' });
+    drawText(money(item.unitPrice), tableX + colWidths[0] + colWidths[1] + colWidths[2] / 2, rowTop + 5.2, { align: 'center' });
+    drawText(money(item.subtotal), tableX + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] / 2, rowTop + 5.2, { align: 'center' });
   });
 
-  y += tableHeight + 8;
-  const taxBoxWidth = 75;
-  const totalsBoxWidth = 92;
+  y += tableHeight + 7;
+  const taxBoxWidth = 78;
+  const totalsBoxWidth = 88;
   const boxRowHeight = 8;
+  const totalsX = margin + contentWidth - totalsBoxWidth;
+  const taxableSalesAmount = getTaxableSalesAmount(sale);
   const leftRows = [
     ['VATable Sales', money(receiptVat.vatableSales)],
     ['VAT', money(receiptVat.vatAmount)],
@@ -360,12 +409,13 @@ const downloadSaleTransactionSummary = sale => {
   const rightRows = [
     ['Sales Subtotal', money(sale.subtotalAmount ?? sale.totalAmount)],
     [`Less: Discount`, money(sale.discountAmount)],
-    ['Add: Delivery Charge', money(sale.deliveryCharge)],
-    ['Total Sales (VAT Inclusive)', money(sale.totalAmount)],
+    ['Total Sales (VAT Inclusive)', money(taxableSalesAmount)],
     ['Less: VAT', money(receiptVat.vatAmount)],
     ['Amount: Net of VAT', money(receiptVat.vatableSales)],
     ['Add: VAT', money(receiptVat.vatAmount)],
-    ['TOTAL AMOUNT DUE', money(sale.totalAmount)]
+    ['Add: Delivery Charge', money(sale.deliveryCharge)],
+    ['TOTAL AMOUNT DUE', money(sale.totalAmount)],
+    ['Change', money(sale.changeAmount)]
   ];
   drawBox(margin, y, taxBoxWidth, leftRows.length * boxRowHeight);
   leftRows.forEach(([label, value], index) => {
@@ -375,39 +425,29 @@ const downloadSaleTransactionSummary = sale => {
     drawText(label, margin + 43, rowY + 5.2, { align: 'right' });
     drawText(value, margin + taxBoxWidth - 2, rowY + 5.2, { align: 'right' });
   });
-  const totalsX = pageWidth - margin - totalsBoxWidth;
   drawBox(totalsX, y, totalsBoxWidth, rightRows.length * boxRowHeight);
   rightRows.forEach(([label, value], index) => {
     const rowY = y + (index * boxRowHeight);
     if (index > 0) doc.line(totalsX, rowY, totalsX + totalsBoxWidth, rowY);
+    const isTotalRow = label === 'TOTAL AMOUNT DUE';
     doc.line(totalsX + 54, rowY, totalsX + 54, rowY + boxRowHeight);
-    doc.setFont('helvetica', index === rightRows.length - 1 ? 'bold' : 'normal');
+    doc.setFont('helvetica', isTotalRow ? 'bold' : 'normal');
     drawText(label, totalsX + 52, rowY + 5.2, { align: 'right' });
     drawText(value, totalsX + totalsBoxWidth - 2, rowY + 5.2, { align: 'right' });
   });
   doc.setFont('helvetica', 'normal');
-  y += rightRows.length * boxRowHeight + 7;
+  y += leftRows.length * boxRowHeight + 7;
 
   drawText(`Received the amount of ${money(sale.amountReceived ?? sale.totalAmount)} via ${paymentLabel}.`, margin, y);
-  drawText(`Change: ${money(sale.changeAmount)}`, margin, y + 5);
-  if (sale.paymentReference) drawText(`Payment Reference: ${String(sale.paymentReference).slice(0, 40)}`, margin, y + 10);
+  if (sale.paymentReference) drawText(`Payment Reference: ${String(sale.paymentReference).slice(0, 40)}`, margin, y + 5);
   if (sale.remarks) {
     doc.setFont('helvetica', 'bold');
-    drawText('Remarks:', margin, y + 17);
+    drawText('Remarks:', margin, y + 12);
     doc.setFont('helvetica', 'normal');
     doc.splitTextToSize(sale.remarks, contentWidth).slice(0, 3).forEach((lineText, index) => {
-      drawText(lineText, margin, y + 22 + (index * 4));
+      drawText(lineText, margin, y + 17 + (index * 4));
     });
   }
-
-  const footerY = Math.max(274, y + (sale.remarks ? 36 : 14));
-  drawBox(margin, footerY - 6, contentWidth, 14);
-  doc.setFontSize(6.5);
-  drawText(RECEIPT_BUSINESS_INFO.permit, margin + 2, footerY - 1);
-  drawText('DATE ISSUED: [To be provided]', margin + 2, footerY + 3);
-  drawText(RECEIPT_BUSINESS_INFO.authority, pageWidth - margin - 88, footerY - 1);
-  drawText('DATE ISSUED: [To be provided]', pageWidth - margin - 88, footerY + 3);
-  drawText(RECEIPT_BUSINESS_INFO.approvedSeries, pageWidth - margin - 88, footerY + 7);
 
   doc.save(`${saleNumber}_transaction_receipt.pdf`);
 };
@@ -473,10 +513,11 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
       </tr>
     `)
   ].join('');
-  const customerName = escapeReceiptText(sale.customerName || (sale.customerType === 'walk_in' ? 'Various' : customerTypeLabels[sale.customerType] || 'Various'));
-  const branchAddress = escapeReceiptText(getReceiptBranchAddress(sale.branch));
+  const customerName = escapeReceiptText(getReceiptCustomerName(sale));
+  const branchAddress = formatReceiptAddressHtml(getReceiptBranchAddress(sale.branch));
   const receiptVat = getReceiptVatBreakdown(sale);
-  const receiptDate = escapeReceiptText(formatDateTime(sale.createdAt));
+  const taxableSalesAmount = getTaxableSalesAmount(sale);
+  const receiptDate = escapeReceiptText(formatReceiptDateOnly(sale.createdAt));
   const receiptEncodedDate = isBackdatedRecord(sale) ? escapeReceiptText(formatDateTime(sale.encodedAt)) : '';
   const cashChecked = sale.paymentMethod === 'credit' ? '' : 'checked';
   const chargeChecked = sale.paymentMethod === 'credit' ? 'checked' : '';
@@ -504,64 +545,62 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
             border: 1px solid #111827;
             background: #fff;
           }
-          .top-rule {
-            height: 4px;
-            background: #112d54;
-          }
           .header {
             display: grid;
-            grid-template-columns: 1fr auto;
-            gap: 20px;
-            padding: 20px 22px 12px;
-          }
-          .brand {
-            display: grid;
-            grid-template-columns: 48px 1fr;
-            gap: 14px;
+            grid-template-columns: minmax(0, 1fr) 58mm;
+            gap: 14mm;
             align-items: start;
+            padding: 16px 22px 12px;
+            border-bottom: 2px solid #111827;
           }
-          .mark {
-            position: relative;
-            width: 42px;
-            height: 42px;
-            margin-top: 2px;
-          }
-          .mark span {
-            position: absolute;
-            display: block;
-            width: 12px;
-            height: 12px;
-            border: 3px solid #dc2626;
-            border-radius: 999px;
-            background: #fff;
-          }
-          .mark span:nth-child(1) { top: 0; left: 15px; }
-          .mark span:nth-child(2) { bottom: 0; left: 0; }
-          .mark span:nth-child(3) { bottom: 0; right: 0; }
+          .brand { text-align: center; }
           .brand-name {
-            font-size: 20px;
+            font-size: 23px;
             font-weight: 800;
-            letter-spacing: .02em;
+            letter-spacing: .01em;
+            line-height: 1.05;
           }
           .tin {
-            margin-top: 2px;
+            margin-top: 4px;
             font-weight: 700;
           }
-          .address {
-            max-width: 84mm;
+          .proprietor {
             margin-top: 2px;
+            font-size: 14px;
+            font-weight: 800;
+          }
+          .address {
+            margin: 2px auto 0;
             font-size: 11px;
+            line-height: 1.25;
+          }
+          .contact {
+            margin-top: 3px;
+            font-size: 11px;
+            line-height: 1.25;
+          }
+          .invoice-block {
+            text-align: right;
+            color: #374151;
+          }
+          .sales-label {
+            font-size: 15px;
+            font-weight: 800;
+            font-style: italic;
+            line-height: 1;
           }
           .invoice-title {
-            color: #112d54;
-            font-size: 30px;
+            margin-top: 4px;
+            color: #374151;
+            font-size: 34px;
             font-weight: 800;
             text-align: right;
+            line-height: 1.05;
           }
           .invoice-number {
-            margin-top: 18px;
-            color: #dc2626;
-            font-size: 18px;
+            margin-top: 10px;
+            color: #374151;
+            font-size: 16px;
             font-weight: 700;
             text-align: right;
           }
@@ -571,7 +610,7 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
             justify-content: space-between;
             align-items: end;
             padding: 0 22px;
-            margin-top: 2px;
+            margin: 12px 0;
             gap: 16px;
           }
           .check-lines {
@@ -598,21 +637,27 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
             border: 1px solid #111827;
             display: grid;
             grid-template-columns: minmax(30mm, 36%) minmax(0, 1fr);
-            min-height: 34px;
+            min-height: 30px;
           }
           .date-box strong,
           .date-box span {
             min-width: 0;
-            padding: 9px 10px;
+            padding: 7px 10px;
             overflow-wrap: anywhere;
             word-break: normal;
           }
           .date-box strong {
             border-right: 1px solid #111827;
             line-height: 1.15;
+            display: flex;
+            align-items: center;
           }
           .date-box span {
+            display: flex;
+            align-items: center;
+            justify-content: center;
             line-height: 1.25;
+            text-align: center;
           }
           .sold-to {
             margin: 0 22px;
@@ -658,7 +703,7 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
           }
           tbody tr { height: 29px; }
           .center-cell { text-align: center; }
-          .amount-cell { text-align: right; white-space: nowrap; }
+          .amount-cell { text-align: center; white-space: nowrap; }
           .bottom-grid {
             display: grid;
             grid-template-columns: 78mm 1fr;
@@ -690,31 +735,22 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
             margin-top: 16px;
             font-size: 12px;
           }
-          .footer {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 18px;
-            border-top: 1px solid #111827;
-            padding: 7px 10px;
-            font-size: 9px;
-          }
         </style>
       </head>
       <body>
         <main class="receipt">
-          <div class="top-rule"></div>
           <header class="header">
             <div class="brand">
-              <div class="mark"><span></span><span></span><span></span></div>
-              <div>
-                <div class="brand-name">${escapeReceiptText(RECEIPT_BUSINESS_INFO.businessName)}</div>
-                <div class="tin">${escapeReceiptText(RECEIPT_BUSINESS_INFO.tin)}</div>
-                <div class="address">${branchAddress}</div>
-              </div>
+              <div class="brand-name">${escapeReceiptText(RECEIPT_BUSINESS_INFO.businessName)}</div>
+              <div class="tin">${escapeReceiptText(RECEIPT_BUSINESS_INFO.tin)}</div>
+              <div class="proprietor">${escapeReceiptText(RECEIPT_BUSINESS_INFO.proprietor)}</div>
+              <div class="address">${branchAddress}</div>
+              <div class="contact">${escapeReceiptText(RECEIPT_BUSINESS_INFO.contact)}</div>
             </div>
-            <div>
+            <div class="invoice-block">
+              <div class="sales-label">SALES</div>
               <div class="invoice-title">INVOICE</div>
-              <div class="invoice-number">Invoice No.: ${saleNumber}</div>
+              <div class="invoice-number">No.: ${saleNumber}</div>
             </div>
           </header>
 
@@ -723,7 +759,7 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
               <div class="check-line"><span class="box">${cashChecked ? '&#10003;' : ''}</span> CASH SALES</div>
               <div class="check-line"><span class="box">${chargeChecked ? '&#10003;' : ''}</span> CHARGE SALES</div>
             </div>
-            <div class="date-box"><strong>Transaction Date:</strong><span>${receiptDate}</span></div>
+            <div class="date-box"><strong>Date:</strong><span>${receiptDate}</span></div>
             ${receiptEncodedDate ? `<div class="date-box"><strong>Encoded Date:</strong><span>${receiptEncodedDate}</span></div>` : ''}
           </section>
 
@@ -731,8 +767,8 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
             <div class="sold-to-title">SOLD TO:</div>
             <div class="sold-to-body">
               <div class="sold-line"><span>Registered Name :</span><strong>${customerName}</strong></div>
-              <div class="sold-line"><span>TIN :</span><span>${escapeReceiptText(sale.customerTin || '-')}</span></div>
-              <div class="sold-line"><span>Business Address :</span><span>${escapeReceiptText(sale.customerAddress || '-')}</span></div>
+              <div class="sold-line"><span>TIN :</span><span>${escapeReceiptText(getReceiptCustomerTin(sale))}</span></div>
+              <div class="sold-line"><span>Business Address :</span><span>${escapeReceiptText(getReceiptCustomerAddress(sale))}</span></div>
             </div>
           </section>
 
@@ -765,11 +801,11 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
                 <tbody>
                   <tr><td>Sales Subtotal</td><td>${escapeReceiptText(formatCurrency(sale.subtotalAmount ?? sale.totalAmount))}</td></tr>
                   <tr><td>Less: Discount</td><td>${escapeReceiptText(formatCurrency(sale.discountAmount))}</td></tr>
-                  <tr><td>Add: Delivery Charge</td><td>${escapeReceiptText(formatCurrency(sale.deliveryCharge))}</td></tr>
-                  <tr><td>Total Sales<br><small>(VAT Inclusive)</small></td><td>${escapeReceiptText(formatCurrency(sale.totalAmount))}</td></tr>
+                  <tr><td>Total Sales<br><small>(VAT Inclusive)</small></td><td>${escapeReceiptText(formatCurrency(taxableSalesAmount))}</td></tr>
                   <tr><td>Less: VAT</td><td>${escapeReceiptText(formatCurrency(receiptVat.vatAmount))}</td></tr>
                   <tr><td>Amount: Net of VAT</td><td>${escapeReceiptText(formatCurrency(receiptVat.vatableSales))}</td></tr>
                   <tr><td>Add: VAT</td><td>${escapeReceiptText(formatCurrency(receiptVat.vatAmount))}</td></tr>
+                  <tr><td>Add: Delivery Charge</td><td>${escapeReceiptText(formatCurrency(sale.deliveryCharge))}</td></tr>
                   <tr class="total-row"><td>TOTAL AMOUNT DUE</td><td>${escapeReceiptText(formatCurrency(sale.totalAmount))}</td></tr>
                   <tr><td>Change</td><td>${escapeReceiptText(formatCurrency(sale.changeAmount))}</td></tr>
                 </tbody>
@@ -782,17 +818,6 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
               <strong>Remarks:</strong> ${escapeReceiptText(sale.remarks)}
             </section>
           ` : ''}
-          <footer class="footer">
-            <div>
-              ${escapeReceiptText(RECEIPT_BUSINESS_INFO.permit)}<br>
-              DATE ISSUED: [To be provided]
-            </div>
-            <div>
-              ${escapeReceiptText(RECEIPT_BUSINESS_INFO.authority)}<br>
-              DATE ISSUED: [To be provided]<br>
-              ${escapeReceiptText(RECEIPT_BUSINESS_INFO.approvedSeries)}
-            </div>
-          </footer>
         </main>
         <script>
           window.addEventListener('load', () => {
@@ -872,13 +897,15 @@ const getSaleProductSearchText = item =>
     item.category,
     item.supplierName,
     item.status,
-    item.defaultSellingPrice,
-    item.wspCode
+    item.defaultSellingPrice
   ].filter(Boolean).join(' '));
 
 export function SalesModule({ user }) {
   const { inventory, salesTransactions, recordSale, cancelSale } = useData();
   const [customerType, setCustomerType] = useState('walk_in');
+  const [customerName, setCustomerName] = useState('');
+  const [customerTin, setCustomerTin] = useState('');
+  const [customerAddress, setCustomerAddress] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [discountType, setDiscountType] = useState('none');
   const [discountAmount, setDiscountAmount] = useState('');
@@ -887,7 +914,6 @@ export function SalesModule({ user }) {
   const [paymentReference, setPaymentReference] = useState('');
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
   const [paymentConfirmedAmount, setPaymentConfirmedAmount] = useState(null);
-  const [remarks, setRemarks] = useState('');
   const [actualTransactionAt, setActualTransactionAt] = useState('');
   const [backdateReason, setBackdateReason] = useState('');
   const [saleLines, setSaleLines] = useState([emptySaleLine()]);
@@ -1068,8 +1094,9 @@ export function SalesModule({ user }) {
     : Number((subtotalAmount * selectedDiscountOption.rate).toFixed(2));
   const parsedDeliveryCharge = deliveryCharge === '' ? 0 : Number(deliveryCharge);
   const safeDeliveryCharge = Number.isFinite(parsedDeliveryCharge) ? parsedDeliveryCharge : 0;
-  const totalAmount = Math.max(subtotalAmount - safeDiscountAmount + safeDeliveryCharge, 0);
-  const { vatableSales, vatAmount } = computeVatBreakdown(totalAmount);
+  const taxableSalesAmount = Math.max(Number((subtotalAmount - safeDiscountAmount).toFixed(2)), 0);
+  const totalAmount = Math.max(Number((taxableSalesAmount + safeDeliveryCharge).toFixed(2)), 0);
+  const { vatableSales, vatAmount } = computeVatBreakdown(taxableSalesAmount);
   const parsedAmountReceived = amountReceived === '' ? 0 : Number(amountReceived);
   const safeAmountReceived = Number.isFinite(parsedAmountReceived) ? parsedAmountReceived : 0;
   const needsPaymentConfirmation = requiresPaymentConfirmation(paymentMethod);
@@ -1096,6 +1123,9 @@ export function SalesModule({ user }) {
 
   const hasSalesFormInput = useMemo(() => (
     customerType !== 'walk_in' ||
+    customerName.trim() !== '' ||
+    customerTin.trim() !== '' ||
+    customerAddress.trim() !== '' ||
     paymentMethod !== 'cash' ||
     discountType !== 'none' ||
     String(discountAmount || '').trim() !== '' ||
@@ -1103,14 +1133,13 @@ export function SalesModule({ user }) {
     String(amountReceived || '').trim() !== '' ||
     String(paymentReference || '').trim() !== '' ||
     paymentConfirmed ||
-    remarks.trim() !== '' ||
     saleLines.some(line => (
       String(line.inventoryId || '').trim() !== '' ||
       String(line.itemName || '').trim() !== '' ||
       String(line.quantity || '').trim() !== '' ||
       String(line.unitPrice || '').trim() !== ''
     ))
-  ), [amountReceived, customerType, deliveryCharge, discountAmount, discountType, paymentConfirmed, paymentMethod, paymentReference, remarks, saleLines]);
+  ), [amountReceived, customerAddress, customerName, customerTin, customerType, deliveryCharge, discountAmount, discountType, paymentConfirmed, paymentMethod, paymentReference, saleLines]);
 
   const filteredSalesHistory = useMemo(() => {
     const now = new Date();
@@ -1137,6 +1166,9 @@ export function SalesModule({ user }) {
       const searchableText = [
         sale.salesNumber,
         customerTypeLabels[sale.customerType],
+        sale.customerName,
+        sale.customerTin,
+        sale.customerAddress,
         paymentMethodLabels[sale.paymentMethod],
         sale.discountLabel,
         getDiscountLabel(sale),
@@ -1243,6 +1275,48 @@ export function SalesModule({ user }) {
           }
         : line
     )));
+  };
+
+  const updateLineUnitPrice = (index, rawValue) => {
+    const nextValue = sanitizePriceInput(rawValue);
+    setSaleLines(prev => prev.map((line, lineIndex) => (
+      lineIndex === index ? { ...line, unitPrice: nextValue } : line
+    )));
+  };
+
+  const normalizeLineUnitPrice = index => {
+    const line = saleLines[index];
+    if (!line) return;
+
+    const rawPrice = String(line.unitPrice || '').trim();
+    if (!rawPrice) return;
+
+    if (!isValidMoneyText(rawPrice)) {
+      toast.error('Unit price must be a valid amount with up to 2 decimal places.');
+      return;
+    }
+
+    const parsedPrice = Number(rawPrice);
+    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
+      toast.error('Unit price must be greater than zero.');
+      return;
+    }
+
+    const normalizedPrice = parsedPrice.toFixed(2);
+    setSaleLines(prev => prev.map((currentLine, lineIndex) => (
+      lineIndex === index ? { ...currentLine, unitPrice: normalizedPrice } : currentLine
+    )));
+
+    if (!line.isManual) {
+      const selectedItem = getInventoryById(line.inventoryId);
+      const defaultPrice = Number(selectedItem?.defaultSellingPrice || 0);
+      if (defaultPrice > 0 && Math.abs(defaultPrice - parsedPrice) > 0.009) {
+        toast.info('Unit price adjusted for this sale.', {
+          id: `sales-price-adjusted-${line.inventoryId || index}`,
+          description: 'When saved, this price will become the item SRP in Inventory.'
+        });
+      }
+    }
   };
 
   const addLine = () => {
@@ -1489,6 +1563,9 @@ export function SalesModule({ user }) {
 
   const resetForm = () => {
     setCustomerType('walk_in');
+    setCustomerName('');
+    setCustomerTin('');
+    setCustomerAddress('');
     setPaymentMethod('cash');
     setDiscountType('none');
     setDiscountAmount('');
@@ -1497,7 +1574,6 @@ export function SalesModule({ user }) {
     setPaymentReference('');
     setPaymentConfirmed(false);
     setPaymentConfirmedAmount(null);
-    setRemarks('');
     setActualTransactionAt('');
     setBackdateReason('');
     setSaleLines([emptySaleLine()]);
@@ -1578,8 +1654,8 @@ export function SalesModule({ user }) {
           toast.error(`${line.itemName}: quantity sold must be a whole number greater than zero.`);
           return false;
         }
-        if (String(line.unitPrice || '').trim() === '' || !Number.isFinite(line.unitPrice) || line.unitPrice <= 0) {
-          toast.error(`${line.itemName}: unit price is required and must be greater than zero.`);
+        if (String(line.unitPrice || '').trim() === '' || !isValidMoneyText(line.unitPrice) || !Number.isFinite(Number(line.unitPrice)) || Number(line.unitPrice) <= 0) {
+          toast.error(`${line.itemName}: unit price must be a valid amount greater than zero.`);
           return false;
         }
         const existingInventoryItem = findInventoryItemByExactSalesName(line.itemName);
@@ -1616,10 +1692,30 @@ export function SalesModule({ user }) {
         return false;
       }
 
-      if (String(line.unitPrice || '').trim() === '' || !Number.isFinite(line.unitPrice) || line.unitPrice <= 0) {
-        toast.error(`${line.item.name}: unit price is required and must be greater than zero.`);
+      if (String(line.unitPrice || '').trim() === '' || !isValidMoneyText(line.unitPrice) || !Number.isFinite(Number(line.unitPrice)) || Number(line.unitPrice) <= 0) {
+        toast.error(`${line.item.name}: unit price must be a valid amount greater than zero.`);
         return false;
       }
+    }
+
+    if (customerName.trim().length > 160) {
+      toast.error('Registered name must be 160 characters or fewer.');
+      return false;
+    }
+
+    if (customerTin.trim().length > 80) {
+      toast.error('TIN must be 80 characters or fewer.');
+      return false;
+    }
+
+    if (customerTin.trim() && !/^[0-9-]+$/.test(customerTin.trim())) {
+      toast.error('TIN must contain numbers and dashes only.');
+      return false;
+    }
+
+    if (customerAddress.trim().length > 240) {
+      toast.error('Business address must be 240 characters or fewer.');
+      return false;
     }
 
     if (!discountOptions[discountType]) {
@@ -1710,7 +1806,10 @@ export function SalesModule({ user }) {
     try {
       const sale = await recordSale({
         customerType,
-        remarks,
+        customerName: customerName.trim() || 'C',
+        customerTin: customerTin.trim(),
+        customerAddress: customerAddress.trim() || 'C',
+        remarks: '',
         paymentMethod,
         discountType,
         discountAmount: safeDiscountAmount,
@@ -2218,6 +2317,36 @@ export function SalesModule({ user }) {
           color: #991b1b;
         }
 
+        .sales-history-detail-header {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 1rem 1.25rem;
+          align-items: start;
+          margin-bottom: 1.1rem;
+          padding-bottom: 1.05rem;
+          border-bottom: 1px solid #e2e8f0;
+        }
+
+        .sales-history-detail-actions {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 0.65rem;
+          min-width: 0;
+        }
+
+        .sales-history-detail-actions .sales-transaction-summary-button,
+        .sales-history-detail-actions .sales-cancel-sale-button {
+          min-height: 2.35rem;
+        }
+
+        .sales-history-status-badge {
+          min-height: 2.35rem;
+          border-radius: 999px;
+          padding: 0 1rem;
+        }
+
         .sales-cancel-dialog {
           width: min(100% - 2rem, 42rem);
           max-width: min(100% - 2rem, 42rem) !important;
@@ -2373,15 +2502,79 @@ export function SalesModule({ user }) {
         }
 
         .sales-receipt-paper {
-          width: min(100%, 22rem);
+          width: min(100%, 30rem);
           margin: 1rem auto 0;
-          border: 1px solid #e2e8f0;
-          border-radius: 0.85rem;
+          border: 1px solid #cbd5e1;
+          border-radius: 0.5rem;
           background: #ffffff;
           padding: 1rem;
           color: #0f172a;
-          font-family: "Courier New", monospace;
+          font-family: Arial, Helvetica, sans-serif;
           box-shadow: inset 0 -12px 20px rgba(15, 23, 42, 0.03);
+        }
+
+        .sales-receipt-preview-header {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 1rem;
+          align-items: start;
+          border-bottom: 2px solid #0f172a;
+          padding-bottom: 0.75rem;
+        }
+
+        .sales-receipt-preview-brand {
+          text-align: center;
+        }
+
+        .sales-receipt-preview-brand-name {
+          font-size: 1.05rem;
+          font-weight: 900;
+          line-height: 1.1;
+        }
+
+        .sales-receipt-preview-tin,
+        .sales-receipt-preview-address,
+        .sales-receipt-preview-contact {
+          margin-top: 0.15rem;
+          font-size: 0.68rem;
+          line-height: 1.2;
+        }
+
+        .sales-receipt-preview-tin,
+        .sales-receipt-preview-prop {
+          font-weight: 800;
+        }
+
+        .sales-receipt-preview-prop {
+          margin-top: 0.12rem;
+          font-size: 0.72rem;
+          line-height: 1.2;
+        }
+
+        .sales-receipt-preview-invoice {
+          color: #374151;
+          text-align: right;
+        }
+
+        .sales-receipt-preview-sales {
+          font-size: 0.72rem;
+          font-style: italic;
+          font-weight: 900;
+          line-height: 1;
+        }
+
+        .sales-receipt-preview-title {
+          margin-top: 0.15rem;
+          font-size: 1.45rem;
+          font-weight: 900;
+          line-height: 1;
+        }
+
+        .sales-receipt-preview-number {
+          margin-top: 0.5rem;
+          font-size: 0.72rem;
+          font-weight: 800;
+          white-space: nowrap;
         }
 
         .sales-receipt-divider {
@@ -2428,6 +2621,19 @@ export function SalesModule({ user }) {
         }
 
         @media (max-width: 640px) {
+          .sales-receipt-preview-header {
+            grid-template-columns: 1fr;
+            gap: 0.75rem;
+          }
+
+          .sales-receipt-preview-invoice {
+            text-align: center;
+          }
+
+          .sales-receipt-preview-number {
+            white-space: normal;
+          }
+
           .sales-cancel-icon {
             width: 3.1rem;
             height: 3.1rem;
@@ -2529,27 +2735,6 @@ export function SalesModule({ user }) {
           gap: 0.75rem;
           border-top: 1px solid #e2e8f0;
           padding-top: 1rem;
-        }
-
-        .sales-remarks-field {
-          display: grid;
-          gap: 0.55rem;
-        }
-
-        .sales-remarks-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 0.75rem;
-        }
-
-        .sales-remarks-input {
-          min-height: 5.25rem;
-          resize: vertical;
-          border-radius: 0.8rem;
-          background: #ffffff;
-          color: #111827;
-          line-height: 1.5;
         }
 
         .sales-stock-preview-item {
@@ -3295,6 +3480,43 @@ export function SalesModule({ user }) {
           gap: 0.85rem 1rem;
         }
 
+        .sales-invoice-customer-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.85rem 1rem;
+          margin-top: 1rem;
+          padding-top: 1rem;
+          border-top: 1px solid #e2e8f0;
+        }
+
+        .sales-invoice-address-field {
+          grid-column: 1 / -1;
+        }
+
+        .sales-invoice-input {
+          min-height: 3.25rem;
+          border-color: #e2e8f0;
+          background: #ffffff;
+          color: #0f172a;
+          font-weight: 600;
+        }
+
+        .sales-invoice-input::placeholder {
+          color: #94a3b8;
+          font-weight: 500;
+        }
+
+        .sales-invoice-input:hover {
+          border-color: #facc15;
+          box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.16);
+        }
+
+        .sales-invoice-input:focus,
+        .sales-invoice-input:focus-visible {
+          border-color: #facc15;
+          box-shadow: 0 0 0 4px rgba(250, 204, 21, 0.24);
+        }
+
         .sales-pos-field {
           display: grid;
           gap: 0.45rem;
@@ -3825,11 +4047,18 @@ export function SalesModule({ user }) {
           outline: none;
         }
 
-        .sales-cart-price-readonly {
+        .sales-cart-price-field {
+          display: inline-grid;
+          min-width: 5.55rem;
+          width: 5.55rem;
+          min-height: var(--sales-cart-control-height);
+        }
+
+        .sales-cart-price-input {
           display: inline-flex;
+          width: 100%;
           height: var(--sales-cart-control-height);
           min-height: var(--sales-cart-control-height);
-          min-width: 5.55rem;
           align-items: center;
           justify-content: center;
           box-sizing: border-box;
@@ -3841,7 +4070,26 @@ export function SalesModule({ user }) {
           font-size: 0.84rem;
           font-weight: 750;
           line-height: 1;
+          text-align: center;
           white-space: nowrap;
+          transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .sales-cart-price-input:hover {
+          border-color: #facc15;
+          background: #fffef0;
+        }
+
+        .sales-cart-price-input:focus {
+          outline: none;
+          border-color: #facc15;
+          background: #ffffff;
+          box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.28);
+        }
+
+        .sales-cart-price-input:disabled {
+          cursor: not-allowed;
+          opacity: 0.72;
         }
 
         .sales-cart-row-actions .sales-cart-remove-button {
@@ -4023,6 +4271,17 @@ export function SalesModule({ user }) {
             grid-template-columns: 1fr;
             row-gap: 0.75rem;
           }
+
+          .sales-history-detail-header {
+            grid-template-columns: 1fr;
+            gap: 0.85rem;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+          }
+
+          .sales-history-detail-actions {
+            justify-content: flex-start;
+          }
         }
 
         @media (max-width: 860px) {
@@ -4125,6 +4384,7 @@ export function SalesModule({ user }) {
 
           .sales-product-toolbar,
           .sales-pos-customer-bar,
+          .sales-invoice-customer-grid,
           .sales-pos-search-row {
             grid-template-columns: 1fr;
           }
@@ -4220,11 +4480,14 @@ export function SalesModule({ user }) {
             display: none;
           }
 
-          .sales-cart-price-readonly {
+          .sales-cart-price-field {
             width: 5.8rem;
+            min-width: 5.8rem;
+          }
+
+          .sales-cart-price-input {
             height: var(--sales-cart-control-height);
             min-height: var(--sales-cart-control-height);
-            min-width: 0;
             border-radius: var(--sales-cart-control-radius);
           }
 
@@ -4278,9 +4541,12 @@ export function SalesModule({ user }) {
               gap: 0.36rem;
             }
 
-            .sales-cart-price-readonly {
+            .sales-cart-price-field {
               width: 5rem;
               min-width: 5rem;
+            }
+
+            .sales-cart-price-input {
               padding: 0 0.42rem;
               font-size: 0.78rem;
             }
@@ -4334,14 +4600,18 @@ export function SalesModule({ user }) {
               display: contents;
             }
 
-            .sales-cart-price-readonly,
+            .sales-cart-price-field,
             .sales-cart-stock-after {
               min-width: 0;
+            }
+
+            .sales-cart-price-input,
+            .sales-cart-stock-after {
               padding: 0 0.38rem;
               font-size: 0.74rem;
             }
 
-            .sales-cart-price-readonly {
+            .sales-cart-price-field {
               grid-column: 2;
               width: 5.35rem;
             }
@@ -4370,8 +4640,11 @@ export function SalesModule({ user }) {
               gap: 0.3rem;
             }
 
-            .sales-cart-price-readonly {
+            .sales-cart-price-field {
               width: 4.75rem;
+            }
+
+            .sales-cart-price-input {
               font-size: 0.7rem;
             }
 
@@ -5085,6 +5358,46 @@ export function SalesModule({ user }) {
                       </div>
                     </div>
                   </div>
+                  <div className="sales-invoice-customer-grid" aria-label="Invoice customer details">
+                    <div className="sales-pos-field">
+                      <Label htmlFor="sale-customer-name">Registered Name, optional</Label>
+                      <Input
+                        id="sale-customer-name"
+                        value={customerName}
+                        maxLength={160}
+                        disabled={isSaving}
+                        onChange={event => setCustomerName(event.target.value)}
+                        placeholder="Leave blank to print C"
+                        className="sales-invoice-input"
+                      />
+                    </div>
+                    <div className="sales-pos-field">
+                      <Label htmlFor="sale-customer-tin">TIN, optional</Label>
+                      <Input
+                        id="sale-customer-tin"
+                        value={customerTin}
+                        maxLength={80}
+                        inputMode="numeric"
+                        pattern="[0-9-]*"
+                        disabled={isSaving}
+                        onChange={event => setCustomerTin(sanitizeTinInput(event.target.value))}
+                        placeholder="000-000-000-000"
+                        className="sales-invoice-input"
+                      />
+                    </div>
+                    <div className="sales-pos-field sales-invoice-address-field">
+                      <Label htmlFor="sale-customer-address">Business Address, optional</Label>
+                      <Input
+                        id="sale-customer-address"
+                        value={customerAddress}
+                        maxLength={240}
+                        disabled={isSaving}
+                        onChange={event => setCustomerAddress(event.target.value)}
+                        placeholder="Leave blank to print C"
+                        className="sales-invoice-input"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <div className="sales-form-section sales-checkout-section bg-slate-50/60">
@@ -5172,9 +5485,21 @@ export function SalesModule({ user }) {
                               </div>
                             </div>
                             <div className="sales-cart-secondary-controls">
-                              <span className="sales-cart-price-readonly" aria-label={`Unit price for ${displayName || 'non-inventory item'}`}>
-                                {formatCurrency(detail.unitPrice)}
-                              </span>
+                              <div className="sales-cart-price-field">
+                                <span className="sales-cart-control-label">Unit Price</span>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  className="sales-cart-price-input"
+                                  value={line.unitPrice}
+                                  placeholder="0.00"
+                                  disabled={isSaving}
+                                  onChange={event => updateLineUnitPrice(index, event.target.value)}
+                                  onBlur={() => normalizeLineUnitPrice(index)}
+                                  aria-label={`Unit price for ${displayName || 'non-inventory item'}`}
+                                  title="Edit the selling price for this sale"
+                                />
+                              </div>
                               <div className="sales-cart-status-actions">
                                 <span className={`sales-cart-stock-after${line.isManual ? ' sales-cart-stock-after-muted' : ''}`}>
                                   {line.isManual ? 'Not tracked' : `${remainingStock} left`}
@@ -5432,34 +5757,6 @@ export function SalesModule({ user }) {
                         <p className="sales-payment-helper text-red-700">Cash received is not enough for this sale.</p>
                       )}
                     </div>
-                  </div>
-                </div>
-
-                <div className="sales-form-section sales-checkout-section bg-slate-50/60">
-                  <div className="sales-section-heading">
-                    <span className="sales-section-icon">
-                      <ClipboardList className="h-5 w-5" />
-                    </span>
-                    <div>
-                      <h3 className="sales-section-title">Transaction Remarks</h3>
-                    </div>
-                  </div>
-                  <div className="sales-remarks-field">
-                    <div className="sales-remarks-header">
-                      <Label htmlFor="sale-remarks">Remarks, optional</Label>
-                      <span className="text-xs font-medium text-slate-700">
-                        {remarks.length} / {SALES_REMARKS_MAX_LENGTH}
-                      </span>
-                    </div>
-                    <Textarea
-                      id="sale-remarks"
-                      placeholder="Example: Daily walk-in sales encoded after checking receipts."
-                      maxLength={SALES_REMARKS_MAX_LENGTH}
-                      value={remarks}
-                      disabled={isSaving}
-                      onChange={event => setRemarks(event.target.value)}
-                      className="sales-remarks-input"
-                    />
                   </div>
                 </div>
 
@@ -5778,6 +6075,7 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
   const receiptVat = getReceiptVatBreakdown(sale);
   const hasTrackedItems = items.some(item => !isNonInventorySaleItem(item));
   const hasNonInventoryItems = items.some(isNonInventorySaleItem);
+  const branchAddress = getReceiptBranchAddress(sale?.branch);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -5810,20 +6108,37 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
           </DialogHeader>
 
           <div className="sales-receipt-paper" aria-label="Receipt preview">
-            <div className="text-center">
-              <p className="text-sm font-bold tracking-wide">E.M. CAYETANO TRADING</p>
-              <p className="text-xs text-slate-500">{sale?.branch || 'Manggahan Branch'}</p>
-              <p className="text-xs text-slate-500">TRANSACTION RECEIPT</p>
+            <div className="sales-receipt-preview-header">
+              <div className="sales-receipt-preview-brand">
+                <p className="sales-receipt-preview-brand-name">{RECEIPT_BUSINESS_INFO.businessName}</p>
+                <p className="sales-receipt-preview-tin">{RECEIPT_BUSINESS_INFO.tin}</p>
+                <p className="sales-receipt-preview-prop">{RECEIPT_BUSINESS_INFO.proprietor}</p>
+                <p className="sales-receipt-preview-address">
+                  {getReceiptAddressLines(branchAddress).map((line, index, lines) => (
+                    <React.Fragment key={line}>
+                      {line}{index < lines.length - 1 ? <br /> : null}
+                    </React.Fragment>
+                  ))}
+                </p>
+                <p className="sales-receipt-preview-contact">{RECEIPT_BUSINESS_INFO.contact}</p>
+              </div>
+              <div className="sales-receipt-preview-invoice">
+                <p className="sales-receipt-preview-sales">SALES</p>
+                <p className="sales-receipt-preview-title">INVOICE</p>
+                <p className="sales-receipt-preview-number">No.: {sale?.salesNumber || 'Sales record'}</p>
+              </div>
             </div>
             <div className="sales-receipt-divider" />
             <div className="space-y-1 text-xs leading-5 text-slate-700">
-              <p>Sale No: <strong>{sale?.salesNumber || 'Sales record'}</strong></p>
-              <p>Transaction Date: {formatDateTime(sale?.createdAt)}</p>
+              <p>Date: {formatDateTime(sale?.createdAt)}</p>
               {isBackdatedRecord(sale) && (
                 <p>Encoded Date: {formatDateTime(sale?.encodedAt)}</p>
               )}
               <p>Cashier: {sale?.soldByName || 'System'}</p>
               <p>Customer: {customerTypeLabels[sale?.customerType] || 'Walk-in Customer'}</p>
+              <p>Registered Name: {getReceiptCustomerName(sale)}</p>
+              <p>TIN: {getReceiptCustomerTin(sale)}</p>
+              <p>Business Address: {getReceiptCustomerAddress(sale)}</p>
             </div>
             <div className="sales-receipt-divider" />
             <div>
@@ -6199,7 +6514,7 @@ function HistoryDetail({ icon, label, value }) {
       </span>
       <div className="min-w-0">
         <span className="block text-sm font-medium text-slate-700">{label}</span>
-        <strong className="mt-1 block truncate text-base text-slate-900">{value}</strong>
+        <strong className="mt-1 block break-words text-base text-slate-900">{value}</strong>
       </div>
     </div>
   );
@@ -6209,12 +6524,12 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
   const isCancelled = sale.status === 'cancelled';
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="sales-history-detail-header">
         <div>
           <h3 className="text-xl font-bold text-slate-900">{sale.salesNumber}</h3>
           <p className="sales-history-meta mt-2 text-sm text-slate-700">
             <CalendarDays className="h-4 w-4 text-slate-500" />
-            <span>Transaction Date: {formatDateTime(sale.createdAt)}</span>
+            <span>Date: {formatDateTime(sale.createdAt)}</span>
           </p>
           {isBackdatedRecord(sale) && (
             <p className="sales-history-meta mt-1 text-sm text-amber-700">
@@ -6223,7 +6538,7 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
             </p>
           )}
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="sales-history-detail-actions">
           <Button
             type="button"
             variant="outline"
@@ -6245,7 +6560,7 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
               Cancel Sale
             </Button>
           )}
-          <Badge className={`h-9 rounded-full px-4 capitalize ${isCancelled ? 'bg-red-100 text-red-700 hover:bg-red-100' : 'bg-green-100 text-green-700 hover:bg-green-100'}`}>
+          <Badge className={`sales-history-status-badge capitalize ${isCancelled ? 'bg-red-100 text-red-700 hover:bg-red-100' : 'bg-green-100 text-green-700 hover:bg-green-100'}`}>
             {isCancelled ? <X className="h-4 w-4" /> : <CheckCircle className="h-4 w-4" />}
             {sale.status || 'completed'}
           </Badge>
@@ -6271,6 +6586,9 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
       <div className="grid gap-4 sm:grid-cols-2">
         <HistoryDetail icon={<User className="h-5 w-5" />} label="Customer Type" value={customerTypeLabels[sale.customerType] || 'Walk-in Customer'} />
         <HistoryDetail icon={<User className="h-5 w-5" />} label="Sold By" value={sale.soldByName || 'System'} />
+        <HistoryDetail icon={<ClipboardList className="h-5 w-5" />} label="Registered Name" value={getReceiptCustomerName(sale)} />
+        <HistoryDetail icon={<ClipboardList className="h-5 w-5" />} label="TIN" value={getReceiptCustomerTin(sale) || 'Blank'} />
+        <HistoryDetail icon={<ClipboardList className="h-5 w-5" />} label="Business Address" value={getReceiptCustomerAddress(sale)} />
         <HistoryDetail icon={<PackageCheck className="h-5 w-5" />} label="Total Quantity" value={`${sale.totalQuantity} item${sale.totalQuantity === 1 ? '' : 's'}`} />
         <HistoryDetail icon={<Coins className="h-5 w-5" />} label="Subtotal" value={formatCurrency(sale.subtotalAmount ?? sale.totalAmount)} />
         <HistoryDetail icon={<Tag className="h-5 w-5" />} label={getDiscountLabel(sale)} value={formatCurrency(sale.discountAmount)} />

@@ -286,38 +286,6 @@ const areLikelyDuplicateInventoryNames = (leftName, rightName) => {
 };
 const isWholeNumberText = value => /^\d+$/.test(String(value ?? "").trim());
 const isDecimalNumberText = value => /^\d+(?:\.\d{1,2})?$/.test(String(value ?? "").trim());
-const WSP_CODE_DIGITS = {
-  Q: "1",
-  U: "2",
-  I: "3",
-  C: "4",
-  K: "5",
-  E: "6",
-  P: "7",
-  O: "8",
-  X: "9",
-  Y: "0"
-};
-const formatPesoAmount = value => `P${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const sanitizeWspCodeInput = value => String(value ?? "").toUpperCase().replace(/[^QUICKEPOXYS]/g, "");
-const decodeWspCode = value => {
-  const code = sanitizeWspCodeInput(value);
-  if (!code) return { code, value: "", error: "" };
-
-  let decoded = "";
-  for (const letter of code) {
-    if (letter === "S") {
-      if (!decoded) {
-        return { code, value: "", error: "S can only repeat a previous WSP digit." };
-      }
-      decoded += decoded[decoded.length - 1];
-    } else {
-      decoded += WSP_CODE_DIGITS[letter];
-    }
-  }
-
-  return { code, value: Number(decoded), error: "" };
-};
 const notifyNumbersOnly = (fieldName, toastId) => {
   toast.warning(`${fieldName} accepts numbers only.`, {
     id: toastId,
@@ -477,7 +445,6 @@ export function InventoryModule({
     category: "",
     supplierName: "",
     defaultSellingPrice: "",
-    wspCode: "",
     costPrice: "",
     reorderLevel: "",
     leadTimeDays: "",
@@ -500,12 +467,11 @@ export function InventoryModule({
     stockStatusFilter !== "all";
   const canShowInventoryActions =
     canPerformInventoryMovement(user?.role) || canManageInventory(user?.role);
-  const canViewCostPrice = canManageInventory(user?.role);
   const canEditReorderPlanning = canManageInventory(user?.role);
   const canViewReorderPlanning =
     canEditReorderPlanning || canPerformInventoryMovement(user?.role);
   const inventoryTableColumnCount =
-    8 + (canViewCostPrice ? 1 : 0) + (canViewReorderPlanning ? 1 : 0) + (canShowInventoryActions ? 1 : 0);
+    8 + (canViewReorderPlanning ? 1 : 0) + (canShowInventoryActions ? 1 : 0);
   const markInventoryFiltersManual = () => {
     setIsDashboardTemporaryInventoryFilterActive(false);
   };
@@ -557,7 +523,6 @@ export function InventoryModule({
     category: "",
     supplierName: "",
     defaultSellingPrice: "",
-    wspCode: "",
     costPrice: "",
     quantity: "",
     reorderLevel: "10", // Default manual threshold
@@ -857,10 +822,6 @@ export function InventoryModule({
         return mergeSort(filteredInventory, (a, b) => (a.supplierName || '').localeCompare(b.supplierName || '') * direction);
       case 'srp':
         return mergeSort(filteredInventory, (a, b) => compareOptionalNumber(a, b, item => item.defaultSellingPrice, direction));
-      case 'wsp':
-        return canViewCostPrice
-          ? mergeSort(filteredInventory, (a, b) => (a.wspCode || '').localeCompare(b.wspCode || '') * direction)
-          : filteredInventory;
       case 'quantity':
         return mergeSort(filteredInventory, (a, b) => ((a.quantity ?? 0) - (b.quantity ?? 0)) * direction);
       case 'status':
@@ -1058,7 +1019,6 @@ export function InventoryModule({
       category: "",
       supplierName: "",
       defaultSellingPrice: "",
-      wspCode: "",
       costPrice: "",
       quantity: "",
       reorderLevel: "10",
@@ -1212,7 +1172,6 @@ export function InventoryModule({
       newItem.category.trim() !== "" ||
       newItem.supplierName.trim() !== "" ||
       newItem.defaultSellingPrice.trim() !== "" ||
-      newItem.wspCode.trim() !== "" ||
       newItem.costPrice.trim() !== "" ||
       newItem.quantity !== "" ||
       newItem.reorderLevel !== "10" ||
@@ -1237,7 +1196,6 @@ export function InventoryModule({
       normalizeCategory(editItem.category) !== normalizeCategory(selectedItem.category) ||
       editItem.supplierName.trim() !== (selectedItem.supplierName || "") ||
       String(editItem.defaultSellingPrice || "") !== String(selectedItem.defaultSellingPrice ?? "") ||
-      String(editItem.wspCode || "") !== String(selectedItem.wspCode ?? "") ||
       String(editItem.costPrice || "") !== String(selectedItem.costPrice ?? "") ||
       String(editItem.reorderLevel) !== String(selectedItem.reorderLevel) ||
       String(editItem.leadTimeDays || "") !== String(selectedItem.leadTimeDays ?? "") ||
@@ -1279,7 +1237,6 @@ export function InventoryModule({
       supplierName: "",
       defaultSellingPrice: "",
       reorderLevel: "",
-      wspCode: "",
       costPrice: "",
       leadTimeDays: "",
       safetyStock: ""
@@ -1622,7 +1579,6 @@ export function InventoryModule({
       category: normalizeCategory(item.category) || item.category || "",
       supplierName,
       defaultSellingPrice: item.defaultSellingPrice === null || item.defaultSellingPrice === undefined || item.defaultSellingPrice === "" ? "" : String(item.defaultSellingPrice),
-      wspCode: item.wspCode || "",
       costPrice: item.costPrice === null || item.costPrice === undefined || item.costPrice === "" ? "" : String(item.costPrice),
       reorderLevel: String(item.reorderLevel ?? 10),
       leadTimeDays: item.leadTimeDays === null || item.leadTimeDays === undefined || item.leadTimeDays === "" ? "" : String(item.leadTimeDays),
@@ -1688,14 +1644,7 @@ export function InventoryModule({
       toast.error("Default Selling Price must be greater than zero.");
       return;
     }
-    const decodedWsp = decodeWspCode(newItem.wspCode);
-    if (canViewCostPrice && decodedWsp.error) {
-      toast.error("Invalid WSP Code", { description: decodedWsp.error });
-      return;
-    }
-    const costPrice = canViewCostPrice
-      ? (decodedWsp.value !== "" ? decodedWsp.value : (newItem.costPrice || ""))
-      : "";
+    const costPrice = newItem.costPrice || "";
     if (isNaN(quantity) || quantity < 0) {
       toast.error("Please enter a valid quantity.");
       return;
@@ -1801,7 +1750,6 @@ export function InventoryModule({
         category: normalizeCategory(newItem.category),
         supplierName: newItem.supplierName.trim().replace(/\s+/g, " "),
         defaultSellingPrice,
-        wspCode: canViewCostPrice ? decodedWsp.code : "",
         costPrice,
         quantity,
         reorderLevel,
@@ -2141,12 +2089,9 @@ export function InventoryModule({
       toast.error("Default Selling Price must be greater than zero.");
       return;
     }
-    const decodedWsp = decodeWspCode(editItem.wspCode);
-    if (canViewCostPrice && decodedWsp.error) {
-      toast.error("Invalid WSP Code", { description: decodedWsp.error });
-      return;
-    }
-    const costPrice = canViewCostPrice && decodedWsp.value !== "" ? decodedWsp.value : "";
+    const costPrice = selectedItem.costPrice === null || selectedItem.costPrice === undefined || selectedItem.costPrice === ""
+      ? ""
+      : selectedItem.costPrice;
 
     if (!cleanName || !canonicalCategory) {
       toast.error("Please provide a valid item name and category.");
@@ -2275,7 +2220,6 @@ export function InventoryModule({
         category: canonicalCategory,
         supplierName: editItem.supplierName.trim().replace(/\s+/g, " "),
         defaultSellingPrice,
-        wspCode: canViewCostPrice ? decodedWsp.code : selectedItem.wspCode || "",
         costPrice,
         quantity: selectedItem.quantity,
         reorderLevel,
@@ -2485,41 +2429,6 @@ export function InventoryModule({
               Optional. This price will automatically appear as the Unit Price when the item is selected in Sales Recording.
             </p>
           </div>
-
-          {canViewCostPrice && (
-            <div className="inventory-add-field space-y-1.5">
-              <Label
-                htmlFor="edit-wsp-code"
-                className="font-semibold text-slate-950"
-                style={{ display: "block", marginBottom: "8px", fontSize: "14px", lineHeight: "1.25" }}
-              >
-                Encoded WSP
-              </Label>
-              <Input
-                id="edit-wsp-code"
-                type="text"
-                value={editItem.wspCode}
-                onChange={e => setEditItem({
-                  ...editItem,
-                  wspCode: sanitizeWspCodeInput(e.target.value)
-                })}
-                placeholder="e.g., USPU"
-                className="border-slate-300 bg-white text-slate-950"
-                style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
-              />
-              <p className="text-slate-700" style={{ fontSize: "12px" }}>
-                Decoded Cost / Puhunan: {
-                  decodeWspCode(editItem.wspCode).error
-                    ? decodeWspCode(editItem.wspCode).error
-                    : decodeWspCode(editItem.wspCode).value !== ""
-                      ? formatPesoAmount(decodeWspCode(editItem.wspCode).value)
-                      : editItem.costPrice
-                        ? `${formatPesoAmount(editItem.costPrice)} saved from older cost data`
-                        : "Not set"
-                }
-              </p>
-            </div>
-          )}
 
           {renderAddSectionHeader("Stock Level and Alert Threshold")}
 
@@ -4046,39 +3955,7 @@ export function InventoryModule({
     style: {
       fontSize: "12px"
     }
-  }, "Optional. This price will automatically appear as the Unit Price when the item is selected in Sales Recording.")), canViewCostPrice && /*#__PURE__*/React.createElement("div", {
-    className: "inventory-add-field space-y-1.5"
-  }, /*#__PURE__*/React.createElement(Label, {
-    htmlFor: "cost-price",
-    className: "font-semibold text-slate-950",
-    style: {
-      display: "block",
-      marginBottom: "8px",
-      fontSize: "14px",
-      lineHeight: "1.25"
-    }
-  }, "Encoded WSP"), /*#__PURE__*/React.createElement(Input, {
-    id: "wsp-code",
-    type: "text",
-    value: newItem.wspCode,
-    onChange: e => setNewItem({
-      ...newItem,
-      wspCode: sanitizeWspCodeInput(e.target.value)
-    }),
-    placeholder: "e.g., USPU",
-    className: "border-slate-300 bg-white text-slate-950",
-    style: {
-      height: "42px",
-      borderRadius: "10px",
-      fontSize: "14px",
-      padding: "0 14px"
-    }
-  }), /*#__PURE__*/React.createElement("p", {
-    className: "text-slate-700",
-    style: {
-      fontSize: "12px"
-    }
-  }, "Decoded Cost / Puhunan: ", decodeWspCode(newItem.wspCode).error ? decodeWspCode(newItem.wspCode).error : decodeWspCode(newItem.wspCode).value !== "" ? formatPesoAmount(decodeWspCode(newItem.wspCode).value) : "Not set")), renderAddSectionHeader("Stock Level and Alert Threshold"), /*#__PURE__*/React.createElement("div", {
+  }, "Optional. This price will automatically appear as the Unit Price when the item is selected in Sales Recording.")), renderAddSectionHeader("Stock Level and Alert Threshold"), /*#__PURE__*/React.createElement("div", {
     className: "inventory-add-field space-y-1.5"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "quantity",
@@ -4378,9 +4255,7 @@ export function InventoryModule({
     className: "w-[190px]"
   }, renderSortButton('supplier', 'Supplier')), /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[130px] text-right"
-  }, renderSortButton('srp', 'SRP', 'right')), canViewCostPrice && /*#__PURE__*/React.createElement(TableHead, {
-    className: "w-[130px] text-right"
-  }, renderSortButton('wsp', 'WSP Code', 'right')), /*#__PURE__*/React.createElement(TableHead, {
+  }, renderSortButton('srp', 'SRP', 'right')), /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[120px] text-right"
   }, renderSortButton('quantity', 'Quantity', 'right')), /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[150px]"
@@ -4408,9 +4283,7 @@ export function InventoryModule({
     className: "font-mono text-sm align-middle"
   }, item.itemCode || item.id), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, null, item.supplierName || "Unassigned"), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-right font-medium text-slate-900"
-  }, item.defaultSellingPrice ? `P${Number(item.defaultSellingPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "No price"), canViewCostPrice && /*#__PURE__*/React.createElement(TableCell, {
-    className: "text-right font-medium text-slate-900"
-  }, item.wspCode || "Not set"), /*#__PURE__*/React.createElement(TableCell, {
+  }, item.defaultSellingPrice ? `P${Number(item.defaultSellingPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "No price"), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-right"
   }, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
     className: getStatusBadgeClass(getComputedStockStatus(item))
@@ -4466,7 +4339,7 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement("div", {
     className: "inventory-mobile-sortbar",
     "aria-label": "Sort inventory items"
-  }, [["id", "Code"], ["name", "Name"], ["category", "Category"], ["supplier", "Supplier"], ["srp", "SRP"], ...(canViewCostPrice ? [["wsp", "WSP Code"]] : []), ["quantity", "Qty"], ["status", "Status"], ["date", "Updated"]].map(([column, label]) => /*#__PURE__*/React.createElement(Button, {
+  }, [["id", "Code"], ["name", "Name"], ["category", "Category"], ["supplier", "Supplier"], ["srp", "SRP"], ["quantity", "Qty"], ["status", "Status"], ["date", "Updated"]].map(([column, label]) => /*#__PURE__*/React.createElement(Button, {
     key: column,
     type: "button",
     variant: "outline",

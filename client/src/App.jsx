@@ -1115,14 +1115,32 @@ function MobileSidebarDrawer({
   );
 }
 
+const SIDEBAR_ACTIVE_BG = "#FF6B00";
+const SIDEBAR_ACTIVE_TEXT = "#FFFFFF";
+const SIDEBAR_ACTIVE_RING = "rgba(255, 107, 0, 0.38)";
+const SIDEBAR_ACTIVE_SHADOW = "0 10px 22px rgba(255, 107, 0, 0.24)";
+
 function MobileNavItem({ icon, label, active, onClick, badge }) {
   return (
     <button
       type="button"
-      className={`box-border flex min-h-12 w-full max-w-full items-center gap-3 rounded-xl px-3 text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-[#FFFF00] focus:ring-offset-2 ${
-        active ? "bg-[#FFFF00] text-black shadow-md" : "text-gray-700 hover:bg-gray-100 hover:text-gray-900"
+      className={`box-border flex min-h-12 w-full max-w-full items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${
+        active ? "shadow-md" : "text-gray-700 hover:bg-gray-100 hover:text-gray-900"
       }`}
-      style={{ width: "100%", maxWidth: "100%" }}
+      style={{
+        width: "100%",
+        maxWidth: "100%",
+        ...(active
+          ? {
+              backgroundColor: SIDEBAR_ACTIVE_BG,
+              color: SIDEBAR_ACTIVE_TEXT,
+              boxShadow: SIDEBAR_ACTIVE_SHADOW,
+              "--tw-ring-color": SIDEBAR_ACTIVE_RING,
+            }
+          : {
+              "--tw-ring-color": SIDEBAR_ACTIVE_RING,
+            }),
+      }}
       onClick={onClick}
     >
       <span className="flex h-8 w-8 shrink-0 items-center justify-center">{icon}</span>
@@ -1177,6 +1195,23 @@ function NavItem({ icon, label, active, onClick, badge, collapsed = false }) {
     fontSize: collapsedBadgeLabel.length === 1 ? "10px" : "9px",
     lineHeight: "1",
   };
+  const activeStyle = active
+    ? {
+        backgroundColor: collapsed ? undefined : SIDEBAR_ACTIVE_BG,
+        color: SIDEBAR_ACTIVE_TEXT,
+        boxShadow: collapsed ? undefined : SIDEBAR_ACTIVE_SHADOW,
+        "--tw-ring-color": SIDEBAR_ACTIVE_RING,
+      }
+    : {
+        "--tw-ring-color": SIDEBAR_ACTIVE_RING,
+      };
+  const collapsedActiveStyle = collapsed && active
+    ? {
+        backgroundColor: SIDEBAR_ACTIVE_BG,
+        color: SIDEBAR_ACTIVE_TEXT,
+        boxShadow: "0 8px 18px rgba(255, 107, 0, 0.22)",
+      }
+    : undefined;
 
   return (
     <button
@@ -1184,17 +1219,19 @@ function NavItem({ icon, label, active, onClick, badge, collapsed = false }) {
       onClick={onClick}
       title={collapsed ? label : undefined}
       className={`
-        relative w-full flex items-center overflow-visible rounded-lg transition-all
+        relative w-full flex items-center overflow-visible rounded-lg transition-colors duration-150
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2
         ${collapsed ? "h-10 justify-center px-0 py-0" : "gap-3 px-3 py-2.5"}
         ${
           active
             ? collapsed
-              ? "text-black"
-              : "bg-[#FFFF00] text-black shadow-md"
+              ? ""
+              : "shadow-md"
             : "text-gray-700 hover:bg-gray-100 hover:text-gray-900"
         }
         ${collapsed ? "hover:bg-gray-50" : ""}
       `}
+      style={activeStyle}
     >
       {collapsed && active && (
         <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-[#FF0000]" aria-hidden="true" />
@@ -1203,9 +1240,10 @@ function NavItem({ icon, label, active, onClick, badge, collapsed = false }) {
         className={`
           relative flex shrink-0 items-center justify-center overflow-visible transition-all
           ${collapsed ? "h-9 w-9 rounded-xl" : ""}
-          ${collapsed && active ? "bg-[#FFFF00] text-black shadow-sm" : ""}
+          ${collapsed && active ? "shadow-sm" : ""}
           ${collapsed && !active && hasBadge ? "bg-white shadow-sm ring-1 ring-gray-100" : ""}
         `}
+        style={collapsedActiveStyle}
       >
         <span className="relative grid h-5 w-5 place-items-center overflow-visible">
           {icon}

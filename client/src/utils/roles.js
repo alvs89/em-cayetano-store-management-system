@@ -9,7 +9,7 @@ export const ROLE_OPTIONS = [
   {
     value: ROLE_VALUES.ADMIN,
     label: "Admin / Manager",
-    description: "Owner or trusted manager access for users, reports, audit trail, maintenance, WSP, and full inventory control.",
+    description: "Owner or trusted manager access for users, reports, audit trail, maintenance, and full inventory control.",
   },
   {
     value: ROLE_VALUES.CASHIER,

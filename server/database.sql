@@ -48,7 +48,6 @@ CREATE TABLE IF NOT EXISTS products (
     category VARCHAR(50) NOT NULL,
     supplier_name VARCHAR(120),
     default_selling_price NUMERIC(12,2),
-    wsp_code VARCHAR(60),
     cost_price NUMERIC(12,2),
     created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')
 );
@@ -99,6 +98,9 @@ CREATE TABLE IF NOT EXISTS sales_transactions (
     sales_number VARCHAR(40) UNIQUE NOT NULL,
     branch VARCHAR(50) NOT NULL,
     customer_type VARCHAR(40) DEFAULT 'walk_in' CHECK (customer_type IN ('walk_in', 'sister_company', 'hardware_reseller', 'regular', 'contractor')),
+    customer_name VARCHAR(160) NOT NULL DEFAULT 'C',
+    customer_tin VARCHAR(80),
+    customer_address VARCHAR(240) NOT NULL DEFAULT 'C',
     total_quantity INTEGER NOT NULL DEFAULT 0,
     subtotal_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
     discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -206,7 +208,6 @@ CREATE TABLE IF NOT EXISTS archived_inventory (
     status VARCHAR(20) DEFAULT 'In Stock',
     supplier_name VARCHAR(120),
     default_selling_price NUMERIC(12,2),
-    wsp_code VARCHAR(60),
     cost_price NUMERIC(12,2),
     last_updated TIMESTAMP,
     archived_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila'),
@@ -239,7 +240,17 @@ CREATE TABLE IF NOT EXISTS backup_logs (
     created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')
 );
 
--- 13. SYSTEM LOGS TABLE
+-- 13. BRANCH SETTINGS TABLE
+-- Stores branch-level dashboard business targets.
+CREATE TABLE IF NOT EXISTS branch_settings (
+    branch VARCHAR(50) PRIMARY KEY,
+    daily_sales_target NUMERIC(12,2),
+    updated_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+    updated_by_name TEXT,
+    updated_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')
+);
+
+-- 14. SYSTEM LOGS TABLE
 -- Stores operational and security events for maintenance checks.
 CREATE TABLE IF NOT EXISTS system_logs (
     id SERIAL PRIMARY KEY,
@@ -257,7 +268,7 @@ CREATE INDEX IF NOT EXISTS idx_system_logs_cleanup
 ON system_logs (created_at)
 WHERE is_security = false AND severity IN ('debug', 'info');
 
--- 14. INITIAL SEED DATA
+-- 15. INITIAL SEED DATA
 -- Creates the first admin account placeholder for initial setup.
 -- Replace password_hash with a real bcrypt hash before using this SQL directly,
 -- or run reset-admin.js with ADMIN_RESET_PASSWORD configured.
