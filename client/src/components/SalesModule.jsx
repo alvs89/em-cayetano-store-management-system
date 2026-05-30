@@ -43,6 +43,28 @@ const OFFICIAL_SALES_CATEGORIES = [
   'Other'
 ];
 const VAGUE_NON_INVENTORY_NAMES = new Set(['other', 'others', 'misc', 'miscellaneous']);
+const normalizeSalesInventoryIdentityName = value =>
+  String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[“”]/g, '"')
+    .replace(/[’']/g, '')
+    .replace(/(\d+(?:\/\d+)?)\s*"/g, '$1 in')
+    .replace(/\bby\b/g, 'x')
+    .replace(/(\d)\s*(?:x|×|\*)\s*(\d)/gi, '$1x$2')
+    .replace(/([a-z])-([a-z])/g, '$1 $2')
+    .replace(/(\d+)\s*\/\s*(\d+)/g, '$1/$2')
+    .replace(/#\s*(\d+)/g, '#$1')
+    .replace(/[^a-z0-9#./-]+/g, ' ')
+    .replace(/(\d)([a-z]+)/g, '$1 $2')
+    .replace(/([a-z]+)(\d)/g, '$1 $2')
+    .replace(/(\d)\s*[x×]\s*(\d)/gi, '$1x$2')
+    .replace(/(\d+x\d+)\s*x\s*(\d)/gi, '$1x$2')
+    .split(' ')
+    .filter(Boolean)
+    .join(' ');
+
 const toTransactionDateInputValue = value => {
   if (!value) return '';
   const date = new Date(value);
@@ -545,6 +567,7 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
           }
           .meta-row {
             display: flex;
+            flex-wrap: wrap;
             justify-content: space-between;
             align-items: end;
             padding: 0 22px;
@@ -570,18 +593,26 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
             line-height: 1;
           }
           .date-box {
-            width: 38%;
+            flex: 1 1 62mm;
+            max-width: 78mm;
             border: 1px solid #111827;
             display: grid;
-            grid-template-columns: 72px 1fr;
+            grid-template-columns: minmax(30mm, 36%) minmax(0, 1fr);
             min-height: 34px;
           }
           .date-box strong,
           .date-box span {
+            min-width: 0;
             padding: 9px 10px;
+            overflow-wrap: anywhere;
+            word-break: normal;
           }
           .date-box strong {
             border-right: 1px solid #111827;
+            line-height: 1.15;
+          }
+          .date-box span {
+            line-height: 1.25;
           }
           .sold-to {
             margin: 0 22px;
@@ -862,7 +893,6 @@ export function SalesModule({ user }) {
   const [saleLines, setSaleLines] = useState([emptySaleLine()]);
   const [isSaving, setIsSaving] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [isSaveConfirmOpen, setIsSaveConfirmOpen] = useState(false);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isNonInventoryDialogOpen, setIsNonInventoryDialogOpen] = useState(false);
   const [nonInventoryDraft, setNonInventoryDraft] = useState(DEFAULT_NON_INVENTORY_DRAFT);
@@ -880,8 +910,12 @@ export function SalesModule({ user }) {
   const [historyPeriod, setHistoryPeriod] = useState('all');
   const [selectedHistorySaleId, setSelectedHistorySaleId] = useState('');
   const [isClearItemsConfirmOpen, setIsClearItemsConfirmOpen] = useState(false);
-  const [isSelectedItemsReviewOpen, setIsSelectedItemsReviewOpen] = useState(false);
   const canCancelSales = isAdminRole(user?.role);
+  const findInventoryItemByExactSalesName = itemName => {
+    const normalizedItemName = normalizeSalesInventoryIdentityName(itemName);
+    if (!normalizedItemName) return null;
+    return inventory.find(item => normalizeSalesInventoryIdentityName(item.name) === normalizedItemName) || null;
+  };
 
   const handleActualTransactionAtChange = value => {
     setActualTransactionAt(value);
@@ -1023,8 +1057,6 @@ export function SalesModule({ user }) {
     };
   });
   const cartLines = selectedLineDetails.filter(line => line.isManual ? line.itemName : (line.inventoryId && line.item));
-  const hasSelectedTrackedItems = cartLines.some(line => !line.isManual);
-  const hasSelectedNonInventoryItems = cartLines.some(line => line.isManual);
 
   const totalQuantity = selectedLineDetails.reduce((sum, line) => sum + (Number.isFinite(line.quantity) ? line.quantity : 0), 0);
   const subtotalAmount = selectedLineDetails.reduce((sum, line) => sum + (Number.isFinite(line.subtotal) ? line.subtotal : 0), 0);
@@ -1313,6 +1345,17 @@ export function SalesModule({ user }) {
       return;
     }
 
+    const existingInventoryItem = findInventoryItemByExactSalesName(itemName);
+    if (existingInventoryItem) {
+      const isOutOfStock = Number(existingInventoryItem.quantity || 0) <= 0 || existingInventoryItem.status === 'Out of Stock';
+      toast.error('This item already exists in Inventory', {
+        description: isOutOfStock
+          ? `"${existingInventoryItem.name}" is currently out of stock. Use Stock In or Purchase Entry before selling it, instead of adding it as non-inventory.`
+          : `"${existingInventoryItem.name}" is an inventory item. Add it from Select Items so stock is deducted correctly.`
+      });
+      return;
+    }
+
     const preparedLine = {
       ...emptySaleLine(),
       isManual: true,
@@ -1539,6 +1582,16 @@ export function SalesModule({ user }) {
           toast.error(`${line.itemName}: unit price is required and must be greater than zero.`);
           return false;
         }
+        const existingInventoryItem = findInventoryItemByExactSalesName(line.itemName);
+        if (existingInventoryItem) {
+          const isOutOfStock = Number(existingInventoryItem.quantity || 0) <= 0 || existingInventoryItem.status === 'Out of Stock';
+          toast.error(`${line.itemName} already exists in Inventory`, {
+            description: isOutOfStock
+              ? 'This tracked item is out of stock. Record Stock In or Purchase Entry first before selling it.'
+              : 'Add this item from Select Items so inventory stock is deducted correctly.'
+          });
+          return false;
+        }
         continue;
       }
 
@@ -1694,16 +1747,6 @@ export function SalesModule({ user }) {
     }
   };
 
-  const handleSaveSaleRequest = () => {
-    if (!validateSale()) return;
-    setIsSaveConfirmOpen(true);
-  };
-
-  const confirmSaveSale = () => {
-    setIsSaveConfirmOpen(false);
-    handleRecordSale();
-  };
-
   const handleDownloadSaleSummary = sale => {
     downloadSaleTransactionSummary(sale);
     toast.success('Transaction receipt downloaded.');
@@ -1747,8 +1790,12 @@ export function SalesModule({ user }) {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 md:p-8">
+    <div className="sales-screen bg-gray-50 p-4 md:p-8">
       <style>{`
+        .sales-screen {
+          min-height: 0;
+        }
+
         .sales-grid {
           display: grid;
           grid-template-columns: minmax(0, 1fr) minmax(340px, 410px);
@@ -2054,6 +2101,22 @@ export function SalesModule({ user }) {
           width: 1rem;
           height: 1rem;
           color: #64748b;
+        }
+
+        .sales-readonly-price {
+          display: flex;
+          min-height: 2.75rem;
+          align-items: center;
+          justify-content: flex-end;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.65rem;
+          background: #f8fafc;
+          padding: 0 0.85rem;
+          color: #0f172a;
+          font-size: 0.95rem;
+          font-weight: 750;
+          line-height: 1.25rem;
+          white-space: nowrap;
         }
 
         .sales-payment-warning {
@@ -2395,8 +2458,21 @@ export function SalesModule({ user }) {
         }
 
         .sales-checkout-card .sales-customer-grid {
-          grid-template-columns: 1fr;
-          gap: 0.8rem;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.85rem 1rem;
+        }
+
+        .sales-payment-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.85rem 1rem;
+          align-items: start;
+        }
+
+        .sales-payment-field {
+          display: grid;
+          gap: 0.5rem;
+          min-width: 0;
         }
 
         .sales-checkout-card .sales-summary-grid {
@@ -2793,39 +2869,6 @@ export function SalesModule({ user }) {
           line-height: 1.25rem;
         }
 
-        .sales-confirm-sale-summary {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 0.65rem;
-          margin-top: 1rem;
-        }
-
-        .sales-confirm-sale-summary-item {
-          border: 1px solid #e2e8f0;
-          border-radius: 0.75rem;
-          background: #f8fafc;
-          padding: 0.75rem;
-        }
-
-        .sales-confirm-sale-summary-label {
-          display: block;
-          color: #64748b;
-          font-size: 0.72rem;
-          font-weight: 700;
-          line-height: 1rem;
-          text-transform: uppercase;
-        }
-
-        .sales-confirm-sale-summary-value {
-          display: block;
-          margin-top: 0.2rem;
-          color: #0f172a;
-          font-size: 0.95rem;
-          font-weight: 800;
-          line-height: 1.25rem;
-          overflow-wrap: break-word;
-        }
-
         .sales-confirm-clear-button {
           transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
         }
@@ -2856,145 +2899,6 @@ export function SalesModule({ user }) {
           min-height: 2.35rem;
           border-radius: 0.7rem;
           font-weight: 700;
-        }
-
-        .sales-selected-items-dialog {
-          width: min(100% - 2rem, 48rem);
-          max-width: min(100% - 2rem, 48rem) !important;
-          border-radius: 1rem;
-          overflow: hidden;
-        }
-
-        .sales-selected-items-dialog-content {
-          display: flex;
-          max-height: calc(100dvh - 2rem);
-          flex-direction: column;
-        }
-
-        .sales-selected-items-dialog-header {
-          border-bottom: 1px solid #e2e8f0;
-          padding: 1.25rem 1.35rem 1rem;
-        }
-
-        .sales-selected-items-dialog-title {
-          display: flex;
-          align-items: center;
-          gap: 0.85rem;
-        }
-
-        .sales-selected-items-dialog-icon {
-          display: inline-flex;
-          width: 2.75rem;
-          height: 2.75rem;
-          flex-shrink: 0;
-          align-items: center;
-          justify-content: center;
-          border-radius: 0.85rem;
-          background: #eff6ff;
-          color: #2563eb;
-        }
-
-        .sales-selected-items-dialog-body {
-          display: grid;
-          gap: 0.75rem;
-          overflow-y: auto;
-          padding: 1rem 1.35rem;
-        }
-
-        .sales-selected-items-review-row {
-          display: grid;
-          grid-template-columns: auto minmax(0, 1fr);
-          gap: 0.85rem;
-          border: 1px solid #e2e8f0;
-          border-radius: 0.9rem;
-          background: #ffffff;
-          padding: 0.85rem;
-        }
-
-        .sales-selected-items-review-number {
-          display: inline-flex;
-          width: 2rem;
-          height: 2rem;
-          align-items: center;
-          justify-content: center;
-          border-radius: 999px;
-          background: #f8fafc;
-          color: #0f172a;
-          font-size: 0.82rem;
-          font-weight: 800;
-        }
-
-        .sales-selected-items-review-main {
-          min-width: 0;
-        }
-
-        .sales-selected-items-review-title {
-          color: #0f172a;
-          font-size: 0.98rem;
-          font-weight: 800;
-          line-height: 1.35;
-          word-break: break-word;
-        }
-
-        .sales-selected-items-review-meta {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 0.35rem 0.55rem;
-          margin-top: 0.25rem;
-          color: #111827;
-          font-size: 0.82rem;
-          line-height: 1.35;
-        }
-
-        .sales-selected-items-review-grid {
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 0.55rem;
-          margin-top: 0.75rem;
-        }
-
-        .sales-selected-items-review-detail {
-          border: 1px solid #e2e8f0;
-          border-radius: 0.7rem;
-          background: #f8fafc;
-          padding: 0.55rem 0.65rem;
-        }
-
-        .sales-selected-items-review-label {
-          display: block;
-          color: #475569;
-          font-size: 0.68rem;
-          font-weight: 800;
-          letter-spacing: 0.02em;
-          line-height: 1rem;
-          text-transform: uppercase;
-        }
-
-        .sales-selected-items-review-value {
-          display: block;
-          margin-top: 0.1rem;
-          color: #0f172a;
-          font-size: 0.88rem;
-          font-weight: 800;
-          line-height: 1.2rem;
-          overflow-wrap: break-word;
-        }
-
-        .sales-selected-items-dialog-footer {
-          display: flex;
-          align-items: center;
-          justify-content: flex-end;
-          gap: 0.75rem;
-          border-top: 1px solid #e2e8f0;
-          padding: 0.9rem 1.35rem 1.15rem;
-        }
-
-        .sales-selected-items-dialog-summary {
-          margin-right: auto;
-          color: #0f172a;
-          font-size: 0.88rem;
-          font-weight: 700;
-          line-height: 1.35;
         }
 
         .sales-non-inventory-dialog {
@@ -3203,13 +3107,13 @@ export function SalesModule({ user }) {
 
         .sales-pos-layout {
           display: grid;
-          grid-template-columns: minmax(0, 1.42fr) minmax(360px, 0.92fr);
+          grid-template-columns: minmax(0, 1.12fr) minmax(420px, 0.98fr);
           gap: 1rem;
           align-items: stretch;
         }
 
         .sales-grid {
-          grid-template-columns: minmax(0, 1.45fr) minmax(360px, 0.82fr);
+          grid-template-columns: minmax(0, 1.08fr) minmax(440px, 0.96fr);
           align-items: stretch;
         }
 
@@ -3307,7 +3211,7 @@ export function SalesModule({ user }) {
 
         .sales-product-list {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+          grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
           gap: 0.75rem;
           align-content: start;
           align-items: start;
@@ -3387,8 +3291,8 @@ export function SalesModule({ user }) {
         }
 
         .sales-checkout-card .sales-pos-customer-bar {
-          grid-template-columns: 1fr;
-          gap: 0.9rem;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.85rem 1rem;
         }
 
         .sales-pos-field {
@@ -3714,7 +3618,7 @@ export function SalesModule({ user }) {
 
         .sales-cart-list {
           display: grid;
-          gap: 0.55rem;
+          gap: 0.5rem;
           min-height: 0;
           max-height: min(24rem, 38vh);
           overflow-y: auto;
@@ -3741,24 +3645,36 @@ export function SalesModule({ user }) {
         }
 
         .sales-cart-row {
+          --sales-cart-control-height: 2.18rem;
+          --sales-cart-control-gap: 0.38rem;
+          --sales-cart-control-radius: 0.72rem;
+          container-type: inline-size;
           display: grid;
           grid-template-columns: minmax(0, 1fr) auto;
-          gap: 0.6rem;
+          gap: 0.28rem 0.6rem;
           border: 1px solid #e2e8f0;
-          border-radius: 0.9rem;
+          border-radius: 0.85rem;
           background: #ffffff;
-          padding: 0.7rem;
+          padding: 0.58rem 0.62rem;
+          transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .sales-cart-row:hover {
+          border-color: #cbd5e1;
+          background: #fdfdff;
+          box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
         }
 
         .sales-cart-main {
           min-width: 0;
+          align-self: start;
         }
 
         .sales-cart-title {
           color: #0f172a;
           font-size: 0.92rem;
           font-weight: 800;
-          line-height: 1.2rem;
+          line-height: 1.18rem;
           overflow-wrap: anywhere;
           white-space: normal;
         }
@@ -3767,49 +3683,85 @@ export function SalesModule({ user }) {
           display: flex;
           flex-wrap: wrap;
           gap: 0.35rem;
-          margin-top: 0.2rem;
+          margin-top: 0.18rem;
           color: #64748b;
           font-size: 0.75rem;
           line-height: 1.1rem;
         }
 
         .sales-cart-controls {
-          display: grid;
-          grid-template-columns: minmax(8rem, 0.95fr) minmax(0, 1.35fr);
+          display: flex;
+          width: 100%;
+          flex-wrap: wrap;
           grid-column: 1 / -1;
-          gap: 0.6rem;
+          gap: var(--sales-cart-control-gap);
           align-items: center;
-          margin-top: 0.55rem;
+          justify-content: flex-start;
+          margin-top: 0.35rem;
+          border-top: 1px solid #f1f5f9;
+          padding-top: 0.42rem;
         }
 
         .sales-cart-secondary-controls {
-          display: inline-grid;
-          grid-template-columns: minmax(8.5rem, 1fr) auto;
+          display: inline-flex;
+          width: auto;
+          flex-wrap: nowrap;
           align-items: center;
-          justify-self: stretch;
-          gap: 0.6rem;
+          justify-content: flex-start;
+          gap: var(--sales-cart-control-gap);
           min-width: 0;
-          width: 100%;
+        }
+
+        .sales-cart-status-actions {
+          display: inline-flex;
+          min-width: 0;
+          align-items: center;
+          justify-content: flex-start;
+          flex-wrap: wrap;
+          gap: var(--sales-cart-control-gap);
+        }
+
+        .sales-cart-stock-after {
+          display: inline-flex;
+          min-width: 4.9rem;
+          min-height: var(--sales-cart-control-height);
+          align-items: center;
+          justify-content: center;
+          border: 1px solid #bbf7d0;
+          border-radius: var(--sales-cart-control-radius);
+          background: #f0fdf4;
+          padding: 0 0.58rem;
+          color: #166534;
+          font-size: 0.76rem;
+          font-weight: 750;
+          line-height: 1;
+          white-space: nowrap;
+        }
+
+        .sales-cart-stock-after-muted {
+          border-color: #e2e8f0;
+          background: #f8fafc;
+          color: #64748b;
         }
 
         .sales-cart-row-actions {
           display: inline-flex;
           align-items: center;
           justify-content: flex-end;
-          gap: 0.5rem;
+          gap: var(--sales-cart-control-gap);
           white-space: nowrap;
         }
 
         .sales-cart-row-actions .sales-action-button {
           flex: 0 0 auto;
+          width: var(--sales-cart-control-height);
+          height: var(--sales-cart-control-height);
         }
 
         .sales-cart-quantity-field {
+          width: 6.45rem;
           min-width: 0;
-        }
-
-        .sales-cart-price-field {
-          min-width: 0;
+          max-width: 100%;
         }
 
         .sales-cart-control-label {
@@ -3818,8 +3770,10 @@ export function SalesModule({ user }) {
 
         .sales-qty-stepper {
           display: grid;
-          width: 100%;
-          grid-template-columns: 2.15rem minmax(2.75rem, 1fr) 2.15rem;
+          width: 6.45rem;
+          max-width: 100%;
+          min-height: var(--sales-cart-control-height);
+          grid-template-columns: 1.7rem minmax(2.05rem, 1fr) 1.7rem;
           align-items: center;
           overflow: hidden;
           border: 1px solid #cbd5e1;
@@ -3829,8 +3783,8 @@ export function SalesModule({ user }) {
 
         .sales-qty-stepper button {
           display: inline-flex;
-          width: 2.1rem;
-          height: 2.1rem;
+          width: 1.7rem;
+          height: calc(var(--sales-cart-control-height) - 0.08rem);
           align-items: center;
           justify-content: center;
           color: #0f172a;
@@ -3871,30 +3825,39 @@ export function SalesModule({ user }) {
           outline: none;
         }
 
-        .sales-cart-price-input {
-          height: 2.45rem;
-          width: 100%;
-          min-width: 0;
-          max-width: none;
-          border: 1px solid #cbd5e1;
-          border-radius: 0.7rem;
-          background: #ffffff;
-          color: #0f172a;
-          font-weight: 650;
-          text-align: right;
-          box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04);
-          transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
-        }
-
-        .sales-cart-price-input:hover {
-          border-color: #94a3b8;
+        .sales-cart-price-readonly {
+          display: inline-flex;
+          height: var(--sales-cart-control-height);
+          min-height: var(--sales-cart-control-height);
+          min-width: 5.55rem;
+          align-items: center;
+          justify-content: center;
+          box-sizing: border-box;
+          border: 1px solid #e2e8f0;
+          border-radius: var(--sales-cart-control-radius);
           background: #f8fafc;
+          padding: 0 0.62rem;
+          color: #0f172a;
+          font-size: 0.84rem;
+          font-weight: 750;
+          line-height: 1;
+          white-space: nowrap;
         }
 
-        .sales-cart-price-input:focus-visible {
-          border-color: #f4f400;
-          background: #ffffff;
-          box-shadow: 0 0 0 3px rgba(244, 244, 0, 0.28);
+        .sales-cart-row-actions .sales-cart-remove-button {
+          width: auto;
+          min-width: 5.05rem;
+          height: var(--sales-cart-control-height);
+          padding: 0 0.58rem;
+          gap: 0.32rem;
+        }
+
+        .sales-cart-remove-label {
+          display: inline;
+          font-size: 0.74rem;
+          font-weight: 750;
+          line-height: 1;
+          white-space: nowrap;
         }
 
         .sales-cart-edit-button:not(:disabled):hover,
@@ -3907,11 +3870,13 @@ export function SalesModule({ user }) {
         }
 
         .sales-cart-subtotal {
+          align-self: start;
           color: #0f172a;
           font-size: 0.95rem;
           font-weight: 850;
           line-height: 1.2rem;
           text-align: right;
+          white-space: nowrap;
         }
 
         .sales-cart-empty {
@@ -4018,6 +3983,11 @@ export function SalesModule({ user }) {
           }
 
           .sales-checkout-card .sales-customer-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .sales-payment-grid,
+          .sales-checkout-card .sales-pos-customer-bar {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
@@ -4194,26 +4164,29 @@ export function SalesModule({ user }) {
           }
 
           .sales-cart-controls {
-            grid-template-columns: minmax(7.75rem, 0.85fr) minmax(0, 1.15fr);
-            gap: 0.65rem;
-            align-items: end;
-            border-radius: 0.85rem;
-            background: #f8fafc;
-            padding: 0.65rem;
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            gap: 0.42rem;
+            align-items: center;
+            justify-content: stretch;
+            border-radius: 0;
+            background: transparent;
+            padding: 0.42rem 0 0;
           }
 
           .sales-cart-quantity-field {
-            display: grid;
-            gap: 0.3rem;
+            display: block;
+            width: 6.75rem;
             min-width: 0;
           }
 
           .sales-cart-controls .sales-qty-stepper {
-            width: 100%;
-            min-height: 2.7rem;
-            grid-template-columns: 2.35rem minmax(2.75rem, 1fr) 2.35rem;
+            width: 6.75rem;
+            max-width: 100%;
+            min-height: var(--sales-cart-control-height);
+            grid-template-columns: 1.7rem minmax(2.05rem, 1fr) 1.7rem;
             background: #ffffff;
-            border-radius: 0.8rem;
+            border-radius: var(--sales-cart-control-radius);
           }
 
           .sales-cart-controls .sales-qty-stepper input {
@@ -4225,40 +4198,58 @@ export function SalesModule({ user }) {
           }
 
           .sales-cart-secondary-controls {
+            display: inline-flex;
             width: 100%;
-            grid-template-columns: minmax(0, 1fr) auto;
-            justify-self: stretch;
-            gap: 0.55rem;
+            flex-wrap: nowrap;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 0.42rem;
+            min-width: 0;
           }
 
-          .sales-cart-price-field {
-            display: grid;
-            gap: 0.3rem;
+          .sales-cart-status-actions {
+            display: inline-flex;
+            align-items: center;
+            justify-content: flex-start;
+            flex-wrap: nowrap;
+            gap: 0.42rem;
+            min-width: 0;
           }
 
           .sales-cart-control-label {
-            display: block;
-            color: #64748b;
-            font-size: 0.72rem;
-            font-weight: 750;
-            line-height: 1rem;
-            text-align: left;
+            display: none;
           }
 
-          .sales-cart-price-input {
-            height: 2.7rem;
-            border-radius: 0.75rem;
+          .sales-cart-price-readonly {
+            width: 5.8rem;
+            height: var(--sales-cart-control-height);
+            min-height: var(--sales-cart-control-height);
+            min-width: 0;
+            border-radius: var(--sales-cart-control-radius);
+          }
+
+          .sales-cart-stock-after {
+            width: 5.8rem;
+            min-height: var(--sales-cart-control-height);
+            border-radius: var(--sales-cart-control-radius);
           }
 
           .sales-cart-row-actions {
             align-self: stretch;
-            align-items: end;
-            gap: 0.45rem;
+            align-items: center;
+            justify-content: flex-end;
+            gap: var(--sales-cart-control-gap);
           }
 
           .sales-cart-row-actions .sales-action-button {
-            height: 2.7rem;
-            width: 2.7rem;
+            height: var(--sales-cart-control-height);
+            width: var(--sales-cart-control-height);
+          }
+
+          .sales-cart-row-actions .sales-cart-remove-button {
+            width: auto;
+            min-width: 5.9rem;
+            height: var(--sales-cart-control-height);
           }
 
           .sales-cart-list {
@@ -4268,27 +4259,158 @@ export function SalesModule({ user }) {
 
           @media (max-width: 430px) {
             .sales-cart-controls {
-              grid-template-columns: 1fr;
+              display: grid;
+              grid-template-columns: auto minmax(0, 1fr);
+              gap: 0.36rem;
+            }
+
+            .sales-cart-quantity-field,
+            .sales-cart-controls .sales-qty-stepper {
+              width: 5.7rem;
             }
 
             .sales-cart-secondary-controls {
-              grid-template-columns: minmax(0, 1fr) auto;
+              display: inline-flex;
+              flex-wrap: nowrap;
+              justify-content: flex-start;
+              width: 100%;
+              min-width: 0;
+              gap: 0.36rem;
             }
 
-            .sales-selected-items-actions,
-            .sales-selected-items-review-grid {
-              grid-template-columns: 1fr;
+            .sales-cart-price-readonly {
+              width: 5rem;
+              min-width: 5rem;
+              padding: 0 0.42rem;
+              font-size: 0.78rem;
+            }
+
+            .sales-cart-status-actions {
+              grid-column: auto;
+              justify-content: flex-start;
+              flex-wrap: nowrap;
+              gap: 0.36rem;
+            }
+
+            .sales-cart-stock-after {
+              width: 5rem;
+              min-height: var(--sales-cart-control-height);
+              padding: 0 0.42rem;
+              font-size: 0.72rem;
+            }
+
+            .sales-cart-row-actions .sales-cart-remove-button {
+              width: var(--sales-cart-control-height);
+              min-width: var(--sales-cart-control-height);
+              padding: 0;
+            }
+
+            .sales-cart-remove-label {
+              display: none;
+            }
+          }
+
+          @container (max-width: 320px) {
+            .sales-cart-controls {
+              grid-template-columns: minmax(0, 1fr) auto;
+              gap: 0.36rem;
+              align-items: center;
+            }
+
+            .sales-cart-quantity-field,
+            .sales-cart-controls .sales-qty-stepper {
+              width: 100%;
+            }
+
+            .sales-cart-controls .sales-qty-stepper {
+              grid-template-columns: 1.7rem minmax(2.1rem, 1fr) 1.7rem;
+            }
+
+            .sales-cart-status-actions {
+              display: contents;
+            }
+
+            .sales-cart-secondary-controls {
+              display: contents;
+            }
+
+            .sales-cart-price-readonly,
+            .sales-cart-stock-after {
+              min-width: 0;
+              padding: 0 0.38rem;
+              font-size: 0.74rem;
+            }
+
+            .sales-cart-price-readonly {
+              grid-column: 2;
+              width: 5.35rem;
+            }
+
+            .sales-cart-stock-after {
+              grid-column: 1;
+              width: 100%;
+            }
+
+            .sales-cart-row-actions .sales-action-button,
+            .sales-cart-row-actions .sales-cart-remove-button {
+              width: var(--sales-cart-control-height);
+              min-width: var(--sales-cart-control-height);
+              height: var(--sales-cart-control-height);
+            }
+
+            .sales-cart-row-actions {
+              grid-column: 2;
+              justify-content: flex-end;
+              gap: 0.32rem;
+            }
+          }
+
+          @container (max-width: 270px) {
+            .sales-cart-controls {
+              gap: 0.3rem;
+            }
+
+            .sales-cart-price-readonly {
+              width: 4.75rem;
+              font-size: 0.7rem;
+            }
+
+            .sales-cart-stock-after {
+              font-size: 0.7rem;
+            }
+
+            .sales-cart-row-actions {
+              gap: 0.25rem;
+            }
+
+            .sales-cart-row-actions .sales-action-button,
+            .sales-cart-row-actions .sales-cart-remove-button {
+              width: 2rem;
+              min-width: 2rem;
+              height: 2rem;
             }
           }
 
           .sales-customer-grid,
-          .sales-summary-grid {
+          .sales-payment-grid {
             grid-template-columns: 1fr;
           }
 
-          .sales-checkout-card .sales-customer-grid,
-          .sales-checkout-card .sales-summary-grid {
+          .sales-checkout-card .sales-pos-customer-bar,
+          .sales-checkout-card .sales-customer-grid {
             grid-template-columns: 1fr;
+          }
+
+          .sales-summary-grid,
+          .sales-checkout-card .sales-summary-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          @media (max-width: 360px) {
+            .sales-summary-grid,
+            .sales-checkout-card .sales-summary-grid {
+              grid-template-columns: 1fr;
+            }
           }
 
           .sales-stock-preview {
@@ -4302,10 +4424,6 @@ export function SalesModule({ user }) {
 
           .sales-page-toolbar {
             justify-content: stretch;
-          }
-
-          .sales-page-toolbar .sales-view-all-button {
-            width: 100%;
           }
 
           .sales-record-header {
@@ -4385,10 +4503,6 @@ export function SalesModule({ user }) {
             max-width: none;
           }
 
-          .sales-confirm-sale-summary {
-            grid-template-columns: 1fr;
-          }
-
           .sales-confirm-clear-actions {
             flex-direction: column-reverse;
             gap: 0.75rem;
@@ -4408,54 +4522,12 @@ export function SalesModule({ user }) {
 
           .sales-selected-items-actions {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: 1fr;
             justify-content: stretch;
             width: 100%;
           }
 
           .sales-selected-items-action {
-            width: 100%;
-          }
-
-          .sales-selected-items-dialog {
-            width: min(100% - 1.25rem, 30rem);
-            max-width: min(100% - 1.25rem, 30rem) !important;
-            border-radius: 0.9rem;
-          }
-
-          .sales-selected-items-dialog-header {
-            padding: 1rem 1rem 0.85rem;
-          }
-
-          .sales-selected-items-dialog-body {
-            padding: 0.85rem 1rem;
-          }
-
-          .sales-selected-items-review-row {
-            grid-template-columns: 1fr;
-            gap: 0.65rem;
-          }
-
-          .sales-selected-items-review-number {
-            width: 1.85rem;
-            height: 1.85rem;
-          }
-
-          .sales-selected-items-review-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
-
-          .sales-selected-items-dialog-footer {
-            align-items: stretch;
-            flex-direction: column;
-            padding: 0.85rem 1rem 1rem;
-          }
-
-          .sales-selected-items-dialog-summary {
-            margin-right: 0;
-          }
-
-          .sales-selected-items-dialog-footer button {
             width: 100%;
           }
 
@@ -4893,17 +4965,10 @@ export function SalesModule({ user }) {
                           />
                         </div>
                         <div className="space-y-2">
-                          <Label>Unit Price <span className="text-red-600">*</span></Label>
-                          <Input
-                            type="text"
-                            min="0"
-                            inputMode="decimal"
-                            pattern="^\\d*(\\.\\d{0,2})?$"
-                            placeholder="e.g., 250.00"
-                            value={line.unitPrice}
-                            disabled={isSaving}
-                            onChange={event => updateLine(index, 'unitPrice', sanitizePriceInput(event.target.value))}
-                          />
+                          <Label>Unit Price</Label>
+                          <div className="sales-readonly-price">
+                            {line.unitPrice ? formatCurrency(line.unitPrice) : 'Select item first'}
+                          </div>
                         </div>
                       </div>
 
@@ -5035,17 +5100,6 @@ export function SalesModule({ user }) {
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="sales-action-button sales-selected-items-action text-slate-700 hover:border-slate-400 hover:bg-slate-100 hover:text-slate-950"
-                        onClick={() => setIsSelectedItemsReviewOpen(true)}
-                        disabled={cartLines.length === 0}
-                      >
-                        <ClipboardList className="mr-2 h-4 w-4" />
-                        View All
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
                         className="sales-action-button sales-selected-items-action border-red-200 text-red-600 hover:border-red-500 hover:bg-red-50 hover:text-red-700"
                         onClick={handleClearSelectedItemsRequest}
                         disabled={isSaving || cartLines.length === 0}
@@ -5077,12 +5131,6 @@ export function SalesModule({ user }) {
                               <span>{line.isManual ? 'Non-Inventory' : selectedItem.itemCode || 'No item code'}</span>
                               <span>&middot;</span>
                               <span>{displayCategory || 'Uncategorized'}</span>
-                              {!line.isManual && (
-                                <>
-                                  <span>&middot;</span>
-                                  <span>{remainingStock} left after sale</span>
-                                </>
-                              )}
                             </div>
                           </div>
                           <div className="sales-cart-subtotal">
@@ -5124,46 +5172,41 @@ export function SalesModule({ user }) {
                               </div>
                             </div>
                             <div className="sales-cart-secondary-controls">
-                              <div className="sales-cart-price-field">
-                                <span className="sales-cart-control-label">Unit Price</span>
-                                <Input
-                                  type="text"
-                                  inputMode="decimal"
-                                  pattern="^\\d*(\\.\\d{0,2})?$"
-                                  className="sales-cart-price-input"
-                                  value={line.unitPrice}
-                                  placeholder="0.00"
-                                  disabled={isSaving}
-                                  onChange={event => updateLine(index, 'unitPrice', sanitizePriceInput(event.target.value))}
-                                  aria-label={`Unit price for ${displayName || 'non-inventory item'}`}
-                                />
-                              </div>
-                              <div className="sales-cart-row-actions">
-                                {line.isManual && (
+                              <span className="sales-cart-price-readonly" aria-label={`Unit price for ${displayName || 'non-inventory item'}`}>
+                                {formatCurrency(detail.unitPrice)}
+                              </span>
+                              <div className="sales-cart-status-actions">
+                                <span className={`sales-cart-stock-after${line.isManual ? ' sales-cart-stock-after-muted' : ''}`}>
+                                  {line.isManual ? 'Not tracked' : `${remainingStock} left`}
+                                </span>
+                                <div className="sales-cart-row-actions">
+                                  {line.isManual && (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="icon"
+                                      className="sales-action-button sales-cart-edit-button h-9 w-9 border-blue-200 text-blue-600"
+                                      onClick={() => openEditNonInventoryLine(index)}
+                                      disabled={isSaving}
+                                      title="Edit non-inventory item"
+                                      aria-label={`Edit ${displayName || 'non-inventory item'}`}
+                                    >
+                                      <Pencil className="h-4 w-4" />
+                                    </Button>
+                                  )}
                                   <Button
                                     type="button"
                                     variant="outline"
-                                    size="icon"
-                                    className="sales-action-button sales-cart-edit-button h-9 w-9 border-blue-200 text-blue-600"
-                                    onClick={() => openEditNonInventoryLine(index)}
+                                    size="sm"
+                                    className="sales-action-button sales-cart-remove-button h-9 border-red-200 text-red-600 hover:border-red-500 hover:bg-red-50 hover:text-red-700"
+                                    onClick={() => removeLine(index)}
                                     disabled={isSaving}
-                                    title="Edit non-inventory item"
-                                    aria-label={`Edit ${displayName || 'non-inventory item'}`}
+                                    aria-label={`Remove ${displayName || 'non-inventory item'}`}
                                   >
-                                    <Pencil className="h-4 w-4" />
+                                    <Trash2 className="h-4 w-4" />
+                                    <span className="sales-cart-remove-label">Remove</span>
                                   </Button>
-                                )}
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="icon"
-                                  className="sales-action-button h-9 w-9 border-red-200 text-red-600 hover:border-red-500 hover:bg-red-50 hover:text-red-700"
-                                  onClick={() => removeLine(index)}
-                                  disabled={isSaving}
-                                  aria-label={`Remove ${displayName || 'non-inventory item'}`}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
+                                </div>
                               </div>
                             </div>
                           </div>
@@ -5251,8 +5294,8 @@ export function SalesModule({ user }) {
                       <h3 className="sales-section-title">Payment Details</h3>
                     </div>
                   </div>
-                  <div className="sales-customer-grid">
-                    <div className="space-y-2">
+                  <div className="sales-payment-grid">
+                    <div className="sales-payment-field">
                       <Label htmlFor="payment-method">Payment Method</Label>
                       <Select value={paymentMethod} onValueChange={handlePaymentMethodChange}>
                         <SelectTrigger id="payment-method" className="sales-customer-control">
@@ -5266,7 +5309,7 @@ export function SalesModule({ user }) {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="space-y-2">
+                    <div className="sales-payment-field">
                       <Label htmlFor="discount-type">Discount</Label>
                       <Select value={discountType} onValueChange={handleDiscountTypeChange}>
                         <SelectTrigger id="discount-type" className="sales-customer-control">
@@ -5278,7 +5321,7 @@ export function SalesModule({ user }) {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="space-y-2">
+                    <div className="sales-payment-field">
                       <Label htmlFor="sale-discount">
                         {selectedDiscountOption.manual ? 'Manual Discount Amount' : 'Discount Amount'}
                       </Label>
@@ -5291,7 +5334,7 @@ export function SalesModule({ user }) {
                         disabled={isSaving || !selectedDiscountOption.manual}
                       />
                     </div>
-                    <div className="space-y-2">
+                    <div className="sales-payment-field">
                       <Label htmlFor="delivery-charge">Delivery Charge</Label>
                       <Input
                         id="delivery-charge"
@@ -5302,7 +5345,7 @@ export function SalesModule({ user }) {
                         disabled={isSaving}
                       />
                     </div>
-                    <div className="space-y-2">
+                    <div className="sales-payment-field">
                       <Label htmlFor="amount-received">Amount Received{paymentMethod === 'cash' ? '' : ', auto-recorded'}</Label>
                       <div className="sales-payment-input-row">
                         <Input
@@ -5328,7 +5371,7 @@ export function SalesModule({ user }) {
                     </div>
                     {needsPaymentConfirmation && (
                       <>
-                        <div className="space-y-2">
+                        <div className="sales-payment-field">
                           <Label htmlFor="payment-reference">Reference Number</Label>
                           <Input
                             id="payment-reference"
@@ -5339,7 +5382,7 @@ export function SalesModule({ user }) {
                             maxLength={120}
                           />
                         </div>
-                        <div className="space-y-2">
+                        <div className="sales-payment-field">
                           <Label>Payment Confirmation</Label>
                           <button
                             type="button"
@@ -5379,7 +5422,7 @@ export function SalesModule({ user }) {
                         </div>
                       </>
                     )}
-                    <div className="space-y-2">
+                    <div className="sales-payment-field">
                       <Label>Change</Label>
                       <div className={`sales-readonly-user ${paymentMethod === 'cash' && safeAmountReceived > 0 && safeAmountReceived < totalAmount ? 'sales-payment-warning' : ''}`}>
                         <Coins className="h-4 w-4" />
@@ -5448,7 +5491,7 @@ export function SalesModule({ user }) {
                   <Button
                     type="button"
                     className="sales-action-button sales-save-sale-button px-6 disabled:cursor-not-allowed"
-                    onClick={handleSaveSaleRequest}
+                    onClick={handleRecordSale}
                     disabled={isSaving}
                   >
                     {isSaving
@@ -5476,13 +5519,6 @@ export function SalesModule({ user }) {
         onAddAnother={() => confirmAddNonInventoryItem({ keepOpen: true })}
         isSaving={isSaving}
       />
-      <SelectedItemsReviewDialog
-        open={isSelectedItemsReviewOpen}
-        onOpenChange={setIsSelectedItemsReviewOpen}
-        lines={cartLines}
-        totalQuantity={totalQuantity}
-        subtotalAmount={subtotalAmount}
-      />
       <SalesHistoryDialog
         open={isHistoryOpen}
         onOpenChange={setIsHistoryOpen}
@@ -5503,19 +5539,6 @@ export function SalesModule({ user }) {
         onDownloadSummary={handleDownloadSaleSummary}
         onCancelSale={openCancelSaleDialog}
         canCancelSales={canCancelSales}
-      />
-
-      <ConfirmSaveSaleDialog
-        open={isSaveConfirmOpen}
-        onOpenChange={setIsSaveConfirmOpen}
-        onConfirm={confirmSaveSale}
-        isSaving={isSaving}
-        itemCount={cartLines.length}
-        totalQuantity={totalQuantity}
-        totalAmount={totalAmount}
-        paymentMethod={paymentMethod}
-        hasTrackedItems={hasSelectedTrackedItems}
-        hasNonInventoryItems={hasSelectedNonInventoryItems}
       />
 
       <ClearSalesFormDialog
@@ -5561,103 +5584,6 @@ export function SalesModule({ user }) {
         onStartNewSale={() => setCompletedSale(null)}
       />
     </div>
-  );
-}
-
-function SelectedItemsReviewDialog({ open, onOpenChange, lines, totalQuantity, subtotalAmount }) {
-  const visibleLines = Array.isArray(lines) ? lines : [];
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sales-selected-items-dialog border border-slate-200 bg-white p-0 shadow-2xl">
-        <div className="sales-selected-items-dialog-content">
-          <DialogHeader className="sales-selected-items-dialog-header text-left">
-            <div className="sales-selected-items-dialog-title">
-              <span className="sales-selected-items-dialog-icon">
-                <ClipboardList className="h-5 w-5" />
-              </span>
-              <div className="min-w-0">
-                <DialogTitle className="text-lg font-bold leading-tight text-slate-950">
-                  Selected Items
-                </DialogTitle>
-                <DialogDescription className="mt-1 text-sm leading-6 text-slate-700">
-                  Review all items currently included in this sale.
-                </DialogDescription>
-              </div>
-            </div>
-          </DialogHeader>
-
-          <div className="sales-selected-items-dialog-body">
-            {visibleLines.length === 0 ? (
-              <div className="sales-cart-empty">No selected items to review.</div>
-            ) : visibleLines.map((line, index) => {
-              const displayName = line.itemName || 'Non-inventory item';
-              const displayCategory = line.category || 'Uncategorized';
-              const displayCode = line.isManual ? 'Non-Inventory' : line.item?.itemCode || 'No item code';
-              const remainingStock = line.isManual
-                ? null
-                : Math.max(Number(line.item?.quantity || 0) - Number(line.quantity || 0), 0);
-
-              return (
-                <div key={`selected-items-review-${index}`} className="sales-selected-items-review-row">
-                  <span className="sales-selected-items-review-number">{index + 1}</span>
-                  <div className="sales-selected-items-review-main">
-                    <h4 className="sales-selected-items-review-title">{displayName}</h4>
-                    <div className="sales-selected-items-review-meta">
-                      <span>{displayCode}</span>
-                      <span>&middot;</span>
-                      <span>{displayCategory}</span>
-                      {line.isManual && (
-                        <>
-                          <span>&middot;</span>
-                          <span>Non-inventory item</span>
-                        </>
-                      )}
-                    </div>
-                    <div className="sales-selected-items-review-grid">
-                      <div className="sales-selected-items-review-detail">
-                        <span className="sales-selected-items-review-label">Quantity</span>
-                        <span className="sales-selected-items-review-value">
-                          {Number(line.quantity || 0).toLocaleString()}
-                        </span>
-                      </div>
-                      <div className="sales-selected-items-review-detail">
-                        <span className="sales-selected-items-review-label">Unit Price</span>
-                        <span className="sales-selected-items-review-value">{formatCurrency(line.unitPrice)}</span>
-                      </div>
-                      <div className="sales-selected-items-review-detail">
-                        <span className="sales-selected-items-review-label">Subtotal</span>
-                        <span className="sales-selected-items-review-value">{formatCurrency(line.subtotal)}</span>
-                      </div>
-                      <div className="sales-selected-items-review-detail">
-                        <span className="sales-selected-items-review-label">Stock After</span>
-                        <span className="sales-selected-items-review-value">
-                          {line.isManual ? 'Not tracked' : `${remainingStock} left`}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <DialogFooter className="sales-selected-items-dialog-footer">
-            <div className="sales-selected-items-dialog-summary">
-              {visibleLines.length} line{visibleLines.length === 1 ? '' : 's'} · {totalQuantity} unit{totalQuantity === 1 ? '' : 's'} · {formatCurrency(subtotalAmount)}
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="sales-action-button hover:bg-slate-100"
-              onClick={() => onOpenChange(false)}
-            >
-              Close
-            </Button>
-          </DialogFooter>
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 }
 
@@ -6020,92 +5946,6 @@ function ClearSalesFormDialog({
               onClick={onConfirm}
             >
               {confirmLabel}
-            </Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ConfirmSaveSaleDialog({
-  open,
-  onOpenChange,
-  onConfirm,
-  isSaving,
-  itemCount,
-  totalQuantity,
-  totalAmount,
-  paymentMethod,
-  hasTrackedItems,
-  hasNonInventoryItems
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sales-confirm-clear-dialog border border-slate-200 bg-white p-0 shadow-2xl">
-        <div className="sales-confirm-clear-content">
-          <DialogHeader className="text-left">
-            <div className="sales-confirm-clear-header">
-              <span className="sales-confirm-clear-icon">
-                <ReceiptText className="h-4 w-4" />
-              </span>
-              <div className="min-w-0">
-                <DialogTitle className="text-lg font-bold leading-tight text-slate-950">
-                  Save this sale?
-                </DialogTitle>
-              </div>
-            </div>
-          </DialogHeader>
-          <DialogDescription className="sales-confirm-clear-message">
-            Are you sure you want to save this sale? This will record the transaction, deduct tracked inventory items, and keep non-inventory items in sales records only.
-          </DialogDescription>
-          <div className="sales-confirm-sale-summary" aria-label="Sale summary">
-            <div className="sales-confirm-sale-summary-item">
-              <span className="sales-confirm-sale-summary-label">Items</span>
-              <span className="sales-confirm-sale-summary-value">
-                {itemCount} line{itemCount === 1 ? '' : 's'}
-              </span>
-            </div>
-            <div className="sales-confirm-sale-summary-item">
-              <span className="sales-confirm-sale-summary-label">Quantity</span>
-              <span className="sales-confirm-sale-summary-value">
-                {totalQuantity} unit{totalQuantity === 1 ? '' : 's'}
-              </span>
-            </div>
-            <div className="sales-confirm-sale-summary-item">
-              <span className="sales-confirm-sale-summary-label">Amount Due</span>
-              <span className="sales-confirm-sale-summary-value">{formatCurrency(totalAmount)}</span>
-            </div>
-            <div className="sales-confirm-sale-summary-item">
-              <span className="sales-confirm-sale-summary-label">Payment</span>
-              <span className="sales-confirm-sale-summary-value">{paymentMethodLabels[paymentMethod] || 'Cash'}</span>
-            </div>
-          </div>
-          <div className="sales-confirm-clear-info">
-            <Info className="h-4 w-4 shrink-0 text-blue-600" />
-            <span>
-              {hasTrackedItems
-                ? `Inventory stock will be updated after you confirm${hasNonInventoryItems ? '; non-inventory items stay sales-only.' : '.'}`
-                : 'This sale will be recorded without changing inventory stock.'}
-            </span>
-          </div>
-          <div className="sales-confirm-clear-actions">
-            <Button
-              type="button"
-              variant="outline"
-              className="sales-confirm-clear-button sales-confirm-clear-cancel h-10 min-w-[116px] bg-white"
-              onClick={() => onOpenChange(false)}
-              disabled={isSaving}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              className="sales-confirm-clear-button sales-confirm-clear-submit h-10 min-w-[116px] bg-[#FF0000] text-white"
-              onClick={onConfirm}
-              disabled={isSaving}
-            >
-              {isSaving ? 'Saving...' : 'Confirm Sale'}
             </Button>
           </div>
         </div>

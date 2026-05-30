@@ -14,6 +14,8 @@ const pool = new Pool({
 const BRANCHES = ['Manggahan', 'San Rafael'];
 
 const CATALOG = buildEmCayetanoCatalog();
+const PRESENTATION_NOW = new Date(2026, 4, 30, 14, 20, 0, 0);
+const PRESENTATION_YEAR = PRESENTATION_NOW.getFullYear();
 
 if (CATALOG.length === 0) {
   throw new Error('E.M. Cayetano product catalog is empty.');
@@ -139,14 +141,14 @@ const STOCK_OVERRIDES = new Map([
 ]);
 
 const philippineTimestamp = (daysAgo, hour = 8, minute = 0) => {
-  const date = new Date();
+  const date = new Date(PRESENTATION_NOW);
   date.setDate(date.getDate() - daysAgo);
   date.setHours(hour, minute, 0, 0);
-  return date;
+  return date > PRESENTATION_NOW ? new Date(PRESENTATION_NOW) : date;
 };
 
-const formatSalesNumber = sequence => `SALE-${new Date().getFullYear()}-${String(sequence).padStart(5, '0')}`;
-const formatPurchaseNumber = sequence => `PUR-${new Date().getFullYear()}-${String(sequence).padStart(5, '0')}`;
+const formatSalesNumber = sequence => `SALE-${PRESENTATION_YEAR}-${String(sequence).padStart(5, '0')}`;
+const formatPurchaseNumber = sequence => `PUR-${PRESENTATION_YEAR}-${String(sequence).padStart(5, '0')}`;
 
 const getDiscountDetails = (discountType, subtotalAmount, customAmount = 0) => {
   const normalizedType = String(discountType || 'none').trim().toLowerCase();
@@ -173,15 +175,9 @@ const getDiscountDetails = (discountType, subtotalAmount, customAmount = 0) => {
   return presets[normalizedType] || presets.none;
 };
 
-const computeStatus = (stock, minStock, leadTimeDays, safetyStock, averageDailySales) => {
-  const hasPlanning = [leadTimeDays, safetyStock, averageDailySales].every(value => value !== null && value !== undefined);
-  const recommended = hasPlanning
-    ? Math.ceil(Number(averageDailySales) * Number(leadTimeDays) + Number(safetyStock))
-    : null;
-  const threshold = recommended ?? minStock;
-
+const computeStatus = (stock, minStock) => {
   if (stock <= 0) return 'Out of Stock';
-  if (stock <= threshold) return 'Low Stock';
+  if (stock <= minStock) return 'Low Stock';
   return 'In Stock';
 };
 
@@ -202,7 +198,7 @@ const getPlan = (index, branch) => {
     leadTimeDays,
     safetyStock,
     averageDailySales,
-    status: computeStatus(stock, minStock, leadTimeDays, safetyStock, averageDailySales)
+    status: computeStatus(stock, minStock)
   };
 };
 
@@ -277,12 +273,25 @@ async function refreshDemoInventory() {
         stock_movements,
         archived_inventory,
         branch_inventory,
-        products,
-        audit_logs,
-        backup_logs,
-        system_logs
+        products
       RESTART IDENTITY
       CASCADE
+    `);
+
+    await client.query(`
+      DELETE FROM audit_logs
+      WHERE COALESCE(target_type, '') NOT IN ('user', 'users', 'account')
+        AND action NOT ILIKE '%USER%'
+        AND action NOT ILIKE '%ACCOUNT%'
+        AND action NOT ILIKE '%LOGIN%'
+        AND action NOT ILIKE '%PASSWORD%'
+        AND action NOT ILIKE '%OTP%'
+    `);
+
+    await client.query(`
+      UPDATE audit_logs
+      SET created_at = TIMESTAMP '2026-05-30 14:20:00'
+      WHERE created_at > TIMESTAMP '2026-05-30 14:20:00'
     `);
 
     const stockInMap = new Map(STOCK_IN_PLANS.map(plan => [`${plan.branch}|${plan.item}`, plan]));

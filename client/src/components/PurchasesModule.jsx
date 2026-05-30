@@ -162,6 +162,61 @@ const getPurchaseQuantity = purchase =>
 const normalizeSupplierForMatch = value =>
   String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
+const INVENTORY_STATUS_FILTER_OPTIONS = [
+  { value: 'all', label: 'All Status' },
+  { value: 'In Stock', label: 'In Stock' },
+  { value: 'Low Stock', label: 'Low Stock' },
+  { value: 'Out of Stock', label: 'Out of Stock' }
+];
+
+const getPurchaseInventoryStatus = item => {
+  if (item?.status) return item.status;
+  const quantity = Number(item?.quantity || 0);
+  const threshold = Number(item?.activeLowStockThreshold ?? item?.reorderLevel ?? 0);
+  if (quantity <= 0) return 'Out of Stock';
+  if (quantity <= threshold) return 'Low Stock';
+  return 'In Stock';
+};
+
+const getPurchaseReorderInfo = item => {
+  const quantity = Number(item?.quantity || 0);
+  const status = getPurchaseInventoryStatus(item);
+  const manualPoint = Number(item?.activeLowStockThreshold ?? item?.reorderLevel ?? 0);
+  const estimatedPoint = item?.recommendedReorderPoint === null || item?.recommendedReorderPoint === undefined
+    ? null
+    : Number(item.recommendedReorderPoint);
+  const suggestedFromData = Number(item?.suggestedOrderQuantity || 0);
+  const officialNeededQty = Math.max(Math.ceil(manualPoint - quantity), 0);
+  const recommendedNeededQty = Number.isFinite(estimatedPoint)
+    ? Math.max(Math.ceil(estimatedPoint - quantity), 0)
+    : 0;
+  const suggestedQty = Math.max(suggestedFromData, officialNeededQty, recommendedNeededQty);
+  const needsOfficialReorder = status === 'Out of Stock' || status === 'Low Stock';
+  const needsRecommendationReview = !needsOfficialReorder && recommendedNeededQty > 0;
+
+  if (!needsOfficialReorder && !needsRecommendationReview) {
+    return {
+      label: 'No Reorder',
+      tone: 'ok',
+      title: `Stock ${quantity}; manual low-stock threshold ${manualPoint || 0}.`
+    };
+  }
+
+  if (needsRecommendationReview) {
+    return {
+      label: suggestedQty > 0 ? `Review ${suggestedQty}` : 'Review',
+      tone: 'review',
+      title: `Supplier planning review. Stock status uses manual low-stock threshold ${manualPoint || 0}${Number.isFinite(estimatedPoint) ? `; suggested point ${estimatedPoint}` : ''}.`
+    };
+  }
+
+  return {
+    label: suggestedQty > 0 ? `Order ${suggestedQty}` : status === 'Out of Stock' ? 'Urgent' : 'Review',
+    tone: status === 'Out of Stock' ? 'urgent' : 'review',
+    title: `Reorder attention based on manual low-stock threshold ${manualPoint || 0}${Number.isFinite(estimatedPoint) ? `; suggested point ${estimatedPoint}` : ''}.`
+  };
+};
+
 export function PurchasesModule({ user }) {
   const { inventory, purchaseTransactions, recordPurchase } = useData();
   const [supplierName, setSupplierName] = useState('');
@@ -175,6 +230,7 @@ export function PurchasesModule({ user }) {
   const [purchaseLines, setPurchaseLines] = useState([emptyPurchaseLine()]);
   const [searchQuery, setSearchQuery] = useState('');
   const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState('all');
+  const [inventoryStatusFilter, setInventoryStatusFilter] = useState('all');
   const [inventorySort, setInventorySort] = useState('name_az');
   const [inventoryPage, setInventoryPage] = useState(1);
   const [isSaving, setIsSaving] = useState(false);
@@ -219,6 +275,9 @@ export function PurchasesModule({ user }) {
       const itemCategory = item.category || 'Uncategorized';
       const matchesCategory = inventoryCategoryFilter === 'all' || itemCategory === inventoryCategoryFilter;
       if (!matchesCategory) return false;
+      const itemStatus = getPurchaseInventoryStatus(item);
+      const matchesStatus = inventoryStatusFilter === 'all' || itemStatus === inventoryStatusFilter;
+      if (!matchesStatus) return false;
       if (selectedSupplier) {
         const itemSupplier = normalizeSupplierForMatch(item.supplierName);
         if (itemSupplier && itemSupplier !== selectedSupplier) return false;
@@ -254,7 +313,7 @@ export function PurchasesModule({ user }) {
       return aMatches - bMatches
         || String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' });
     });
-  }, [inventoryCategoryFilter, inventorySort, searchQuery, sortedInventory, supplierName, useSupplierFilter]);
+  }, [inventoryCategoryFilter, inventorySort, inventoryStatusFilter, searchQuery, sortedInventory, supplierName, useSupplierFilter]);
 
   const inventoryPageCount = Math.max(1, Math.ceil(filteredInventory.length / INVENTORY_PAGE_SIZE));
   const activeInventoryPage = Math.min(inventoryPage, inventoryPageCount);
@@ -281,7 +340,7 @@ export function PurchasesModule({ user }) {
 
   useEffect(() => {
     setInventoryPage(1);
-  }, [inventoryCategoryFilter, inventorySort, searchQuery]);
+  }, [inventoryCategoryFilter, inventorySort, inventoryStatusFilter, searchQuery]);
 
   useEffect(() => {
     if (inventoryPage > inventoryPageCount) {
@@ -1006,7 +1065,7 @@ export function PurchasesModule({ user }) {
 
         .purchase-details-layout {
           display: grid;
-          grid-template-columns: minmax(380px, 0.74fr) minmax(520px, 1.26fr);
+          grid-template-columns: minmax(360px, 0.68fr) minmax(620px, 1.32fr);
           gap: 1rem;
           align-items: stretch;
         }
@@ -1198,7 +1257,7 @@ export function PurchasesModule({ user }) {
 
         .purchase-find-controls {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(9.5rem, 0.42fr);
+          grid-template-columns: minmax(0, 1fr) minmax(9.5rem, 0.42fr) minmax(9.5rem, 0.42fr);
           gap: 0.65rem;
           margin-top: 0.85rem;
         }
@@ -1236,8 +1295,8 @@ export function PurchasesModule({ user }) {
         .purchase-inventory-head,
         .purchase-inventory-row {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) 105px 72px 40px;
-          gap: 0.65rem;
+          grid-template-columns: minmax(0, 1fr) 92px 64px 82px 40px;
+          gap: 0.55rem;
           align-items: center;
         }
 
@@ -1261,6 +1320,80 @@ export function PurchasesModule({ user }) {
           padding: 0.55rem 0.75rem;
           text-align: left;
           transition: background 140ms ease;
+        }
+
+        .purchase-inventory-item-meta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.25rem 0.45rem;
+          margin-top: 0.15rem;
+          color: #475569;
+          font-size: 0.75rem;
+          line-height: 1.15rem;
+        }
+
+        .purchase-mobile-only {
+          display: none;
+        }
+
+        .purchase-stock-badge {
+          display: inline-flex;
+          min-width: 2.15rem;
+          min-height: 1.6rem;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid #bbf7d0;
+          border-radius: 999px;
+          background: #dcfce7;
+          color: #166534;
+          font-size: 0.76rem;
+          font-weight: 800;
+          line-height: 1;
+        }
+
+        .purchase-stock-badge-low {
+          border-color: #fde68a;
+          background: #fef3c7;
+          color: #92400e;
+        }
+
+        .purchase-stock-badge-out {
+          border-color: #fecaca;
+          background: #fee2e2;
+          color: #991b1b;
+        }
+
+        .purchase-reorder-cell {
+          display: flex;
+          justify-content: center;
+        }
+
+        .purchase-reorder-badge {
+          display: inline-flex;
+          min-height: 1.9rem;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid #e2e8f0;
+          border-radius: 999px;
+          background: #f8fafc;
+          padding: 0 0.55rem;
+          color: #475569;
+          font-size: 0.72rem;
+          font-weight: 800;
+          line-height: 1;
+          white-space: nowrap;
+        }
+
+        .purchase-reorder-badge-review {
+          border-color: #fde68a;
+          background: #fffbeb;
+          color: #92400e;
+        }
+
+        .purchase-reorder-badge-urgent {
+          border-color: #fecaca;
+          background: #fef2f2;
+          color: #b91c1c;
         }
 
         .purchase-inventory-row:hover {
@@ -1877,8 +2010,13 @@ export function PurchasesModule({ user }) {
           }
 
           .purchase-inventory-category,
-          .purchase-inventory-stock {
+          .purchase-inventory-stock,
+          .purchase-reorder-cell {
             display: none;
+          }
+
+          .purchase-mobile-only {
+            display: inline;
           }
 
           .purchase-pagination {
@@ -2498,6 +2636,20 @@ export function PurchasesModule({ user }) {
                     </Select>
                   </div>
                   <div className="purchase-find-control">
+                    <Select value={inventoryStatusFilter} onValueChange={setInventoryStatusFilter}>
+                      <SelectTrigger className="h-10">
+                        <SelectValue placeholder="Filter status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {INVENTORY_STATUS_FILTER_OPTIONS.map(option => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="purchase-find-control">
                     <Select value={inventorySort} onValueChange={setInventorySort}>
                       <SelectTrigger className="h-10">
                         <SelectValue placeholder="Sort items" />
@@ -2518,21 +2670,46 @@ export function PurchasesModule({ user }) {
                     <span>Inventory Item</span>
                     <span>Category</span>
                     <span className="text-center">Stock</span>
+                    <span className="text-center">Reorder</span>
                     <span>Action</span>
                   </div>
                   {paginatedInventory.length === 0 ? (
                     <p className="px-4 py-8 text-center text-sm text-slate-600">No inventory items found.</p>
                   ) : paginatedInventory.map(item => {
                     const isAlreadySelected = purchaseLines.some(line => String(line.inventoryId) === String(item.id));
+                    const stockStatus = getPurchaseInventoryStatus(item);
+                    const reorderInfo = getPurchaseReorderInfo(item);
                     return (
                       <div key={item.id} className={`purchase-inventory-row${isAlreadySelected ? ' is-selected' : ''}`}>
                         <span className="min-w-0">
                           <span className="block truncate text-sm font-semibold text-slate-900">{item.name}</span>
-                          <span className="block truncate text-xs text-slate-700">{item.itemCode || 'No item code'}</span>
+                          <span className="purchase-inventory-item-meta">
+                            <span>{item.itemCode || 'No item code'}</span>
+                            <span className="purchase-mobile-only">&middot;</span>
+                            <span className="purchase-mobile-only">{item.category || 'Uncategorized'}</span>
+                            <span className="purchase-mobile-only">&middot;</span>
+                            <span className="purchase-mobile-only">{stockStatus}</span>
+                            <span className="purchase-mobile-only">&middot;</span>
+                            <span className="purchase-mobile-only">Reorder: {reorderInfo.label}</span>
+                          </span>
                         </span>
                         <span className="purchase-inventory-category truncate text-sm text-slate-700">{item.category}</span>
                         <span className="purchase-inventory-stock text-center">
-                          <Badge className="bg-green-50 text-green-700 hover:bg-green-50">{item.quantity}</Badge>
+                          <Badge className={stockStatus === 'Out of Stock'
+                            ? 'purchase-stock-badge purchase-stock-badge-out'
+                            : stockStatus === 'Low Stock'
+                              ? 'purchase-stock-badge purchase-stock-badge-low'
+                              : 'purchase-stock-badge'}>
+                            {item.quantity}
+                          </Badge>
+                        </span>
+                        <span className="purchase-reorder-cell">
+                          <span
+                            className={`purchase-reorder-badge purchase-reorder-badge-${reorderInfo.tone}`}
+                            title={reorderInfo.title}
+                          >
+                            {reorderInfo.label}
+                          </span>
                         </span>
                         <span className="flex justify-end">
                           <button

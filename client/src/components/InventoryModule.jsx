@@ -364,10 +364,10 @@ const formatOptionalDays = value => {
   return `${days} day${days === 1 ? "" : "s"}`;
 };
 const getReorderSupportMessage = item => {
-  if (!String(item?.supplierName || "").trim()) return "Cannot calculate supplier-based recommendation because no supplier is assigned.";
+  if (!String(item?.supplierName || "").trim()) return "Supplier planning value is unavailable because no supplier is assigned.";
   const recommended = getRecommendedReorderPoint(item);
   if (recommended === null) return "No supplier lead time set yet.";
-  return `Estimated Reorder Point: ${recommended} unit${recommended === 1 ? "" : "s"}.`;
+  return `Suggested reorder point: ${recommended} unit${recommended === 1 ? "" : "s"}.`;
 };
 const parsePlanningNumber = value => {
   if (value === null || value === undefined || value === "") return null;
@@ -378,7 +378,7 @@ const getEstimatedReorderPreview = ({ supplierName, averageDailySales, leadTimeD
   if (!String(supplierName || "").trim()) {
     return {
       value: null,
-      message: "Cannot calculate supplier-based recommendation because no supplier is assigned."
+      message: "Supplier planning value is unavailable because no supplier is assigned."
     };
   }
 
@@ -396,14 +396,14 @@ const getEstimatedReorderPreview = ({ supplierName, averageDailySales, leadTimeD
   if (leadTime === null || leadTime <= 0) {
     return {
       value: null,
-      message: "Enter Supplier Lead Time to preview the estimated reorder point."
+      message: "Enter Supplier Lead Time to preview the suggested reorder point."
     };
   }
 
   const estimate = Math.ceil(Math.max(0, sales ?? 0) * Math.max(0, leadTime) + Math.max(0, buffer));
   return {
     value: estimate,
-    message: `Estimated Reorder Point: ${estimate} unit${estimate === 1 ? "" : "s"}.`
+    message: `Suggested reorder point: ${estimate} unit${estimate === 1 ? "" : "s"}.`
   };
 };
 const getComputedStockStatus = item => {
@@ -1500,17 +1500,17 @@ export function InventoryModule({
         <div className="inventory-reorder-summary-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", flexWrap: "wrap" }}>
           <div>
             <p className="inventory-reorder-summary-label font-semibold text-slate-950" style={{ fontSize: "13px", lineHeight: "1.25" }}>
-              Estimated Reorder Point
+              Suggested Reorder Point
             </p>
             <p className="inventory-reorder-summary-value text-slate-950 font-bold" style={{ fontSize: "20px", lineHeight: "1.25", marginTop: "4px" }}>
-              {preview.value !== null ? `${preview.value} unit${preview.value === 1 ? "" : "s"}` : "Not ready yet"}
+              {preview.value !== null ? `${preview.value} unit${preview.value === 1 ? "" : "s"}` : "Needs Sales Data"}
             </p>
           </div>
         </div>
 
         <p className="inventory-reorder-summary-message text-slate-950 leading-relaxed" style={{ fontSize: "13px" }}>
           {preview.value !== null
-            ? "This is the suggested stock level where the item should be monitored for reorder."
+            ? "Stock status and alerts use the Manual Low-Stock Threshold."
             : preview.message}
         </p>
 
@@ -1587,7 +1587,7 @@ export function InventoryModule({
     return (
       <div className="inventory-reorder-compact text-sm leading-tight text-slate-950">
         <div className="font-semibold">
-          {preview.value !== null ? `${preview.value} units` : "Not ready"}
+          {preview.value !== null ? `${preview.value} units` : "Needs Sales Data"}
         </div>
         <div className="mt-1 text-xs text-slate-700">
           Lead: {leadTimeValue ? `${leadTimeValue}d` : "Not set"} · Safety: {safetyStockValue}
@@ -1717,6 +1717,31 @@ export function InventoryModule({
       normalizeDuplicateKeyPart(normalizeCategory(newItem.category)),
       currentBranch
     ].join("|");
+
+    const existingNameDuplicate = linearSearch(
+      inventory,
+      item =>
+        normalizeInventoryIdentityName(item.name) === normalizeInventoryIdentityName(cleanName) &&
+        normalizeDuplicateKeyPart(item.branch || user?.branch) === currentBranch
+    );
+    if (existingNameDuplicate) {
+      toast.error("Inventory item already exists", {
+        description: `"${existingNameDuplicate.name}" already exists under ${normalizeCategory(existingNameDuplicate.category)} (${existingNameDuplicate.status || "Active"}). Use Stock In if this is the same product${existingNameDuplicate.status === "Out of Stock" ? " because out-of-stock items are still active inventory records" : ""}.`
+      });
+
+      return;
+    }
+
+    const archivedNameDuplicate = linearSearch(
+      archivedInventory,
+      item =>
+        normalizeInventoryIdentityName(item.name) === normalizeInventoryIdentityName(cleanName) &&
+        normalizeDuplicateKeyPart(item.branch || user?.branch) === currentBranch
+    );
+    if (archivedNameDuplicate) {
+      setArchivedDuplicatePrompt(archivedNameDuplicate);
+      return;
+    }
 
     // Check for duplicate active item by normalized item identity + category + branch.
     const existingItem = linearSearch(inventory, item => buildDuplicateKey(item) === newItemDuplicateKey);
@@ -2150,6 +2175,33 @@ export function InventoryModule({
       normalizeDuplicateKeyPart(canonicalCategory),
       currentBranch
     ].join("|");
+    const activeNameDuplicate = linearSearch(
+      inventory,
+      item =>
+        item.id !== selectedItem.id &&
+        normalizeInventoryIdentityName(item.name) === normalizeInventoryIdentityName(cleanName) &&
+        normalizeDuplicateKeyPart(item.branch || user?.branch) === currentBranch
+    );
+    if (activeNameDuplicate) {
+      toast.error("Failed to update item", {
+        description: `"${activeNameDuplicate.name}" already exists under ${normalizeCategory(activeNameDuplicate.category)} (${activeNameDuplicate.status || "Active"}). Use that existing item if this is the same product.`
+      });
+      return;
+    }
+
+    const archivedNameDuplicate = linearSearch(
+      archivedInventory,
+      item =>
+        normalizeInventoryIdentityName(item.name) === normalizeInventoryIdentityName(cleanName) &&
+        normalizeDuplicateKeyPart(item.branch || user?.branch) === currentBranch
+    );
+    if (archivedNameDuplicate) {
+      toast.error("Failed to update item", {
+        description: "An archived item with the same name already exists. Please restore the archived item instead of creating a duplicate record."
+      });
+      return;
+    }
+
     const activeExactDuplicate = linearSearch(
       inventory,
       item => item.id !== selectedItem.id && buildDuplicateKey(item) === editedItemDuplicateKey
@@ -2549,7 +2601,7 @@ export function InventoryModule({
               style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
             />
             <p className="text-slate-700" style={{ fontSize: "12px" }}>
-              Optional buffer stock added to the estimated reorder point.
+              Optional buffer stock added to the suggested reorder point.
             </p>
           </div>
 
@@ -4157,7 +4209,7 @@ export function InventoryModule({
     style: {
       fontSize: "12px"
     }
-  }, "Optional buffer stock added to the estimated reorder point.")), renderAverageDailySalesDisplay(0), renderEstimatedReorderSummary({
+  }, "Optional buffer stock added to the suggested reorder point.")), renderAverageDailySalesDisplay(0), renderEstimatedReorderSummary({
     supplierName: newItem.supplierName,
     averageDailySales: 0,
     leadTimeDays: newItem.leadTimeDays,
@@ -4334,7 +4386,7 @@ export function InventoryModule({
     className: "w-[150px]"
   }, renderSortButton('status', 'Status')), canViewReorderPlanning && /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[150px]"
-  }, renderStaticHeaderLabel("Reorder Point")), /*#__PURE__*/React.createElement(TableHead, {
+  }, renderStaticHeaderLabel("Suggested Point")), /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[160px] text-right"
   }, renderSortButton('date', 'Last Updated', 'right')), canShowInventoryActions && /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[150px] pl-3 text-left"
@@ -4472,7 +4524,7 @@ export function InventoryModule({
     className: "inventory-mobile-field inventory-mobile-reorder-field"
   }, /*#__PURE__*/React.createElement("span", {
     className: "inventory-mobile-label"
-  }, "Reorder Point"), /*#__PURE__*/React.createElement("span", {
+  }, "Suggested Point"), /*#__PURE__*/React.createElement("span", {
     className: "inventory-mobile-value"
   }, renderReorderPlanningCompact(item)))), /*#__PURE__*/React.createElement("p", {
     className: "inventory-mobile-date"

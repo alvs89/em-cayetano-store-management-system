@@ -661,7 +661,7 @@ export function ReportsModule({
           (item.reorderReviewSuggested ? item.estimatedReorderPoint : getReportLowStockThreshold(item)) - Number(item.quantity || 0),
           0
         ),
-        reorderReviewLabel: item.reorderReviewSuggested ? 'Review' : item.status
+        reorderReviewLabel: item.reorderReviewSuggested ? 'For Review' : item.status
       }));
 
   const getReorderQuantityDraftKey = item => String(item?.id ?? item?.inventoryId ?? item?.itemCode ?? item?.name ?? '');
@@ -909,7 +909,7 @@ export function ReportsModule({
         .replace(/₱/g, 'PHP ')
         .replace(/₱/g, 'PHP ')
         .replace(/\u00a0/g, ' ')
-        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/\s+/g, ' ')
         .trim();
     const normalizePdfCell = value => Array.isArray(value)
       ? value.map(normalizePdfCell)
@@ -917,7 +917,7 @@ export function ReportsModule({
     const getPdfColumnAlignment = headerText => {
       const header = normalizePdfText(headerText).toLowerCase();
       if (
-        ['id', 'item code', 'movement id', 'sale no.', 'purchase no.', 'qty', 'qty sold', 'quantity', 'items', 'total units', 'low stock', 'out of stock', 'current', 'threshold', 'manual', 'est. point', 'suggested', 'suggested qty', 'suggest qty', 'reorder qty', 'order qty', 'lead time', 'qty needed', 'times sold', 'before/after', 'before -> after'].includes(header)
+        ['id', 'item code', 'movement id', 'sale no.', 'purchase no.', 'qty', 'qty sold', 'quantity', 'items', 'total units', 'low stock', 'out of stock', 'current', 'threshold', 'manual', 'manual limit', 'est. point', 'suggest point', 'suggested', 'suggested qty', 'suggest qty', 'reorder qty', 'order qty', 'lead time', 'qty needed', 'times sold', 'before/after', 'before -> after'].includes(header)
       ) {
         return 'center';
       }
@@ -1213,7 +1213,7 @@ export function ReportsModule({
       drawLabelValue('Supplier', selectedReorderSupplier || 'No supplier selected', 20, startY + 14);
 
       if (supplierGroups.length === 0) {
-        doc.text('No low-stock or out-of-stock items require supplier reorder review for the selected supplier.', 20, startY + 28);
+        doc.text('No items require supplier reorder review for the selected supplier.', 20, startY + 28);
       } else {
         let currentY = startY + 24;
         supplierGroups.forEach(group => {
@@ -1237,7 +1237,7 @@ export function ReportsModule({
           reportTable({
             startY: currentY + 12,
             tableWidth: pageWidth - pdfMargin * 2,
-            head: [['Item Code', 'Item', 'Category', 'Current', 'Threshold', 'Est. Point', 'Suggest Qty', 'Order Qty', 'Status']],
+            head: [['Item Code', 'Item', 'Category', 'Current', 'Manual\nLimit', 'Suggest\nPoint', 'Suggest\nQty', 'Order\nQty', 'Status']],
             body: group.items.map(item => [
               getDisplayItemCode(item),
               item.name,
@@ -1250,18 +1250,26 @@ export function ReportsModule({
               item.reorderReviewLabel
             ]),
             theme: 'striped',
-            headStyles: { fillColor: [71, 85, 105], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+            headStyles: {
+              fillColor: [71, 85, 105],
+              textColor: 255,
+              fontStyle: 'bold',
+              fontSize: 6.6,
+              overflow: 'linebreak',
+              minCellHeight: 8,
+              cellPadding: { top: 1.6, right: 0.8, bottom: 1.6, left: 0.8 }
+            },
             styles: { fontSize: 7, cellPadding: { top: 1.8, right: 1.3, bottom: 1.8, left: 1.3 } },
             columnStyles: {
               0: { cellWidth: 18 },
-              1: { cellWidth: 36, halign: 'left' },
-              2: { cellWidth: 22, halign: 'center' },
+              1: { cellWidth: 34, halign: 'left' },
+              2: { cellWidth: 20, halign: 'center' },
               3: { cellWidth: 13, halign: 'center' },
-              4: { cellWidth: 15, halign: 'center' },
-              5: { cellWidth: 14, halign: 'center' },
-              6: { cellWidth: 16, halign: 'center' },
-              7: { cellWidth: 16, halign: 'center' },
-              8: { cellWidth: 20, halign: 'center' }
+              4: { cellWidth: 18, halign: 'center' },
+              5: { cellWidth: 18, halign: 'center' },
+              6: { cellWidth: 18, halign: 'center' },
+              7: { cellWidth: 17, halign: 'center' },
+              8: { cellWidth: 14, halign: 'center' }
             },
             alternateRowStyles: { fillColor: [248, 250, 252] }
           });
@@ -2011,7 +2019,7 @@ export function ReportsModule({
         }
 
         .reports-supplier-reorder-table table {
-          min-width: 1120px;
+          min-width: 1160px;
           table-layout: fixed;
         }
 
@@ -2029,6 +2037,19 @@ export function ReportsModule({
         .reports-movement-desktop-table th,
         .reports-category-table th {
           background: #f8fafc;
+          white-space: normal;
+          overflow-wrap: break-word;
+          word-break: normal;
+          line-height: 1.25;
+        }
+
+        .reports-desktop-table td,
+        .reports-movement-desktop-table td,
+        .reports-category-table td {
+          white-space: normal;
+          overflow-wrap: anywhere;
+          word-break: normal;
+          line-height: 1.35;
         }
 
         .reports-supplier-reorder-table th {
@@ -2044,16 +2065,30 @@ export function ReportsModule({
         .reports-supplier-reorder-table td {
           padding: 12px 10px;
           vertical-align: middle;
+          white-space: normal;
+          overflow-wrap: anywhere;
+          word-break: normal;
         }
 
         .reports-supplier-reorder-table th:nth-child(1),
-        .reports-supplier-reorder-table td:nth-child(1) { width: 110px; }
+        .reports-supplier-reorder-table td:nth-child(1) {
+          width: 110px;
+          text-align: center;
+        }
 
         .reports-supplier-reorder-table th:nth-child(2),
-        .reports-supplier-reorder-table td:nth-child(2) { width: 220px; }
+        .reports-supplier-reorder-table td:nth-child(2) {
+          width: 280px;
+          min-width: 280px;
+          text-align: left;
+        }
 
         .reports-supplier-reorder-table th:nth-child(3),
-        .reports-supplier-reorder-table td:nth-child(3) { width: 120px; }
+        .reports-supplier-reorder-table td:nth-child(3) {
+          width: 120px;
+          min-width: 120px;
+          text-align: center;
+        }
 
         .reports-supplier-reorder-table th:nth-child(4),
         .reports-supplier-reorder-table td:nth-child(4),
@@ -2067,13 +2102,15 @@ export function ReportsModule({
         .reports-supplier-reorder-table td:nth-child(8),
         .reports-supplier-reorder-table th:nth-child(9),
         .reports-supplier-reorder-table td:nth-child(9) {
-          width: 92px;
+          width: 86px;
+          min-width: 86px;
           text-align: center;
         }
 
         .reports-supplier-reorder-table th:nth-child(10),
         .reports-supplier-reorder-table td:nth-child(10) {
-          width: 100px;
+          width: 120px;
+          min-width: 120px;
           text-align: center;
         }
 
@@ -2402,15 +2439,18 @@ export function ReportsModule({
         }
 
         .reports-convert-dialog {
-          width: min(620px, calc(100vw - 2rem));
-          max-width: min(620px, calc(100vw - 2rem)) !important;
+          width: min(820px, calc(100vw - 2rem));
+          max-width: min(820px, calc(100vw - 2rem)) !important;
           border-radius: 1rem;
           overflow: hidden;
         }
 
         .reports-convert-content {
           display: grid;
+          grid-template-rows: auto auto auto;
           gap: 1rem;
+          max-height: calc(100dvh - 2rem);
+          min-height: 0;
         }
 
         .reports-convert-header {
@@ -2435,6 +2475,9 @@ export function ReportsModule({
         .reports-convert-form {
           display: grid;
           gap: 0.9rem;
+          min-height: 0;
+          overflow-x: hidden;
+          overflow-y: visible;
           padding: 0 1.5rem 1.15rem;
         }
 
@@ -2462,10 +2505,18 @@ export function ReportsModule({
           display: flex;
           align-items: flex-start;
           gap: 0.65rem;
+          min-width: 0;
           border-radius: 0.75rem;
           padding: 0.75rem 0.85rem;
           font-size: 0.82rem;
           line-height: 1.4;
+        }
+
+        .reports-convert-summary span,
+        .reports-convert-warning p,
+        .reports-convert-warning strong {
+          min-width: 0;
+          overflow-wrap: anywhere;
         }
 
         .reports-convert-summary {
@@ -2484,13 +2535,43 @@ export function ReportsModule({
           margin-top: 0.45rem;
           display: grid;
           gap: 0.35rem;
+          max-height: min(8rem, 24vh);
+          overflow-x: auto;
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          padding-bottom: 0.1rem;
+          padding-right: 0.2rem;
+          scrollbar-gutter: stable;
         }
 
         .reports-convert-match {
+          display: block;
+          min-width: 36rem;
           border-radius: 0.55rem;
           background: rgba(255, 255, 255, 0.65);
           padding: 0.45rem 0.55rem;
           color: #334155;
+          line-height: 1.35;
+          white-space: nowrap;
+        }
+
+        .reports-convert-match-list::-webkit-scrollbar {
+          width: 8px;
+          height: 8px;
+        }
+
+        .reports-convert-match-list::-webkit-scrollbar-track {
+          background: rgba(255, 255, 255, 0.5);
+          border-radius: 999px;
+        }
+
+        .reports-convert-match-list::-webkit-scrollbar-thumb {
+          background: rgba(148, 163, 184, 0.7);
+          border-radius: 999px;
+        }
+
+        .reports-convert-match-list::-webkit-scrollbar-thumb:hover {
+          background: rgba(100, 116, 139, 0.85);
         }
 
         .reports-convert-check {
@@ -2504,6 +2585,13 @@ export function ReportsModule({
           color: #334155;
           font-size: 0.82rem;
           line-height: 1.4;
+        }
+
+        .reports-convert-check-inline {
+          margin-top: 0.55rem;
+          border-color: #fcd34d;
+          background: rgba(255, 255, 255, 0.75);
+          color: #334155;
         }
 
         .reports-convert-check input {
@@ -2748,8 +2836,7 @@ export function ReportsModule({
           .reports-convert-dialog {
             width: min(420px, calc(100vw - 1rem));
             max-width: min(420px, calc(100vw - 1rem)) !important;
-            max-height: 90vh;
-            overflow-y: auto;
+            overflow: hidden;
           }
 
           .reports-convert-header {
@@ -2766,6 +2853,14 @@ export function ReportsModule({
           .reports-convert-form {
             gap: 0.8rem;
             padding: 0 1rem 1rem;
+          }
+
+          .reports-convert-match-list {
+            max-height: min(6.5rem, 20vh);
+          }
+
+          .reports-convert-match {
+            min-width: 32rem;
           }
 
           .reports-convert-grid {
@@ -3233,7 +3328,7 @@ export function ReportsModule({
                 {renderReportsEmptyState({
                   icon: Package,
                   title: 'No reorder items found',
-                  message: `No current low-stock or out-of-stock items match${selectedCategory === 'all' ? '' : ` the ${selectedCategory} category`}${selectedReorderSupplier ? ` for ${selectedReorderSupplier}` : ''}.`
+                  message: `No current low-stock, out-of-stock, or supplier planning review items match${selectedCategory === 'all' ? '' : ` the ${selectedCategory} category`}${selectedReorderSupplier ? ` for ${selectedReorderSupplier}` : ''}.`
                 })}
               </CardContent>
             </Card>
@@ -3244,7 +3339,7 @@ export function ReportsModule({
                   <div className="min-w-0">
                     <CardTitle>Supplier Reorder List - {group.supplier}</CardTitle>
                     <CardDescription>
-                      {formatItemCount(group.itemCount)} needing reorder review - suggested quantity: {formatUnitCount(group.neededQuantity)}
+                      {formatItemCount(group.itemCount)} needing reorder review - stock status uses the manual low-stock threshold.
                     </CardDescription>
                   </div>
                   <div className="flex shrink-0 flex-wrap justify-end gap-2">
@@ -3263,8 +3358,8 @@ export function ReportsModule({
                         <TableHead>Item Name</TableHead>
                         <TableHead>Category</TableHead>
                         <TableHead>Current</TableHead>
-                        <TableHead>Threshold</TableHead>
-                        <TableHead>Est. Reorder Point</TableHead>
+                        <TableHead>Manual Limit</TableHead>
+                        <TableHead>Suggested Point</TableHead>
                         <TableHead>Lead Time</TableHead>
                         <TableHead>Suggested Qty</TableHead>
                         <TableHead>Reorder Qty</TableHead>
@@ -3293,7 +3388,7 @@ export function ReportsModule({
                           </TableCell>
                           <TableCell>
                             {item.reorderReviewSuggested ? (
-                              <Badge variant="outline">Review</Badge>
+                              <Badge variant="outline">For Review</Badge>
                             ) : (
                               <Badge className={getStockStatusBadgeClass(item.status)}>
                                 {item.status}
@@ -3315,15 +3410,15 @@ export function ReportsModule({
                           <p className="reports-record-meta">{item.category}</p>
                         </div>
                         {item.reorderReviewSuggested ? (
-                          <Badge variant="outline" className="shrink-0">Review</Badge>
+                          <Badge variant="outline" className="shrink-0">For Review</Badge>
                         ) : (
                           <Badge className={`shrink-0 ${getStockStatusBadgeClass(item.status)}`}>{item.status}</Badge>
                         )}
                       </div>
                       <div className="reports-record-grid reports-record-grid-four">
                         <div className="reports-record-stat"><span>Current</span><strong>{item.quantity}</strong></div>
-                        <div className="reports-record-stat"><span>Manual</span><strong>{item.lowStockThreshold}</strong></div>
-                        <div className="reports-record-stat"><span>Est. Point</span><strong>{item.estimatedReorderPoint === null ? '-' : item.estimatedReorderPoint}</strong></div>
+                        <div className="reports-record-stat"><span>Manual Limit</span><strong>{item.lowStockThreshold}</strong></div>
+                        <div className="reports-record-stat"><span>Suggested</span><strong>{item.estimatedReorderPoint === null ? '-' : item.estimatedReorderPoint}</strong></div>
                         <div className="reports-record-stat"><span>Lead Time</span><strong>{formatSupplierLeadTime(item)}</strong></div>
                         <div className="reports-record-stat"><span>Suggested</span><strong>{item.neededQuantity}</strong></div>
                         <div className="reports-record-stat reports-reorder-quantity-card-field">
@@ -3823,9 +3918,14 @@ export function ReportsModule({
                     <p className="mt-1">
                       Review these matches before converting. Exact matches are blocked to prevent duplicate inventory records.
                     </p>
-                    <div className="reports-convert-match-list">
-                      {[...conversionMatches.exact, ...conversionMatches.similar].slice(0, 3).map(match => (
-                        <div key={match.id} className="reports-convert-match">
+                    <div className="reports-convert-match-list" role="list" aria-label="Similar inventory items">
+                      {[...conversionMatches.exact, ...conversionMatches.similar].map(match => (
+                        <div
+                          key={match.id}
+                          className="reports-convert-match"
+                          role="listitem"
+                          title={`${match.name} - ${match.category || 'Uncategorized'} - ${formatUnitCount(match.quantity)}`}
+                        >
                           {match.name} • {match.category} • {formatUnitCount(match.quantity)}
                         </div>
                       ))}

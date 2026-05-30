@@ -54,17 +54,25 @@ async function verifyDemoInventory() {
       FROM branch_inventory
       WHERE status != CASE
         WHEN stock_level <= 0 THEN 'Out of Stock'
-        WHEN stock_level <= COALESCE(
-          CEIL(
-            CASE
-              WHEN average_daily_sales_mode = 'manual' THEN manual_average_daily_sales
-              ELSE average_daily_sales
-            END * lead_time_days + safety_stock
-          ),
-          min_stock_level
-        ) THEN 'Low Stock'
+        WHEN stock_level <= min_stock_level THEN 'Low Stock'
         ELSE 'In Stock'
       END
+    `);
+
+    const futureDatedRows = await getScalar(`
+      SELECT COUNT(*)::int AS count
+      FROM (
+        SELECT created_at FROM products
+        UNION ALL SELECT last_updated AS created_at FROM branch_inventory
+        UNION ALL SELECT created_at FROM stock_movements
+        UNION ALL SELECT created_at FROM sales_transactions
+        UNION ALL SELECT created_at FROM sales_items
+        UNION ALL SELECT created_at FROM purchase_transactions
+        UNION ALL SELECT created_at FROM purchase_items
+        UNION ALL SELECT archived_at AS created_at FROM archived_inventory
+        UNION ALL SELECT created_at FROM audit_logs
+      ) dated_records
+      WHERE created_at > TIMESTAMP '2026-05-30 14:20:00'
     `);
 
     const orphanSalesItems = await getScalar(`
@@ -139,7 +147,8 @@ async function verifyDemoInventory() {
       orphanInventory,
       invalidPaymentRecords,
       invalidSalesItemQuantities,
-      salesMovementMismatch
+      salesMovementMismatch,
+      futureDatedRows
     };
 
     console.log(JSON.stringify(result, null, 2));

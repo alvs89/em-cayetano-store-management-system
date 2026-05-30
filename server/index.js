@@ -1207,8 +1207,8 @@ function computeSuggestedOrderQuantity(row) {
     leadTimeDays: row.lead_time_days ?? row.leadTimeDays,
     safetyStock: row.safety_stock ?? row.safetyStock
   });
-  const planningThreshold = reorderPoint !== null ? reorderPoint : getEffectiveReorderThreshold(row);
-  return Math.max(0, planningThreshold - Number(row.stock_level || 0));
+  const advisoryPlanningPoint = reorderPoint !== null ? reorderPoint : getEffectiveReorderThreshold(row);
+  return Math.max(0, advisoryPlanningPoint - Number(row.stock_level || 0));
 }
 
 function normalizeAverageDailySalesMode(value) {
@@ -1715,6 +1715,23 @@ async function findSimilarActiveInventoryItem(client, { branch, name, category, 
   return null;
 }
 
+async function findExactActiveInventoryItemByName(client, { branch, name, excludeInventoryId = null }) {
+  const targetIdentityName = normalizeInventoryIdentityName(name);
+  if (!branch || !targetIdentityName) return null;
+
+  const result = await client.query(
+    `SELECT bi.inventory_id, p.name, p.category, bi.stock_level, bi.status
+     FROM branch_inventory bi
+     INNER JOIN products p ON p.product_id = bi.product_id
+     WHERE bi.branch = $1
+       AND ($2::int IS NULL OR bi.inventory_id <> $2::int)`,
+    [branch, excludeInventoryId]
+  );
+
+  const exactMatch = result.rows.find(row => normalizeInventoryIdentityName(row.name) === targetIdentityName);
+  return exactMatch ? { ...exactMatch, match_type: 'exact' } : null;
+}
+
 async function findSimilarArchivedInventoryItem(client, { branch, name, category }) {
   const targetIdentityName = normalizeInventoryIdentityName(name);
   const canonicalCategory = canonicalizeInventoryCategory(category);
@@ -1735,6 +1752,21 @@ async function findSimilarArchivedInventoryItem(client, { branch, name, category
   if (fuzzyMatch) return { ...fuzzyMatch, match_type: 'similar' };
 
   return null;
+}
+
+async function findExactArchivedInventoryItemByName(client, { branch, name }) {
+  const targetIdentityName = normalizeInventoryIdentityName(name);
+  if (!branch || !targetIdentityName) return null;
+
+  const result = await client.query(
+    `SELECT archived_inventory_id, name, category, stock_level, status
+     FROM archived_inventory
+     WHERE branch = $1`,
+    [branch]
+  );
+
+  const exactMatch = result.rows.find(row => normalizeInventoryIdentityName(row.name) === targetIdentityName);
+  return exactMatch ? { ...exactMatch, match_type: 'exact' } : null;
 }
 
 function mapInventoryRow(row, options = {}) {
@@ -4841,6 +4873,42 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: supplierQualityError });
     }
 
+    const activeExactNameDuplicate = await findExactActiveInventoryItemByName(client, {
+      branch: req.user.branch,
+      name: cleanName
+    });
+
+    if (activeExactNameDuplicate) {
+      await client.query('ROLLBACK');
+      await recordAuditLogSafely(pool, {
+        actorId: req.user.id,
+        targetId: activeExactNameDuplicate.inventory_id,
+        targetName: cleanName,
+        action: `BLOCKED_EXACT_ACTIVE_NAME_DUPLICATE: attempted "${cleanName}"`
+      });
+      return res.status(400).json({
+        error: `This product already exists in the current branch inventory: ${activeExactNameDuplicate.name} (${activeExactNameDuplicate.category}). Use Stock In if this is the same product, even if it is currently out of stock.`
+      });
+    }
+
+    const archivedExactNameDuplicate = await findExactArchivedInventoryItemByName(client, {
+      branch: req.user.branch,
+      name: cleanName
+    });
+
+    if (archivedExactNameDuplicate) {
+      await client.query('ROLLBACK');
+      await recordAuditLogSafely(pool, {
+        actorId: req.user.id,
+        targetId: archivedExactNameDuplicate.archived_inventory_id,
+        targetName: cleanName,
+        action: `BLOCKED_EXACT_ARCHIVED_NAME_DUPLICATE: attempted "${cleanName}"`
+      });
+      return res.status(400).json({
+        error: `An archived item with the same name already exists: ${archivedExactNameDuplicate.name} (${archivedExactNameDuplicate.category}). Restore the archived item instead of creating a duplicate record.`
+      });
+    }
+
     const stockLevel = parseNonNegativeInteger(stock_level, 'Stock level');
     const minStockLevel = parseNonNegativeInteger(min_stock_level, 'Manual low-stock threshold');
     const defaultSellingPrice = parseOptionalPositiveDecimal(default_selling_price, 'Default selling price', { max: 100000000 });
@@ -5620,6 +5688,43 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
 
     let reviewedSimilarDuplicate = null;
     if (identityChanged) {
+      const activeExactNameDuplicate = await findExactActiveInventoryItemByName(client, {
+        branch: req.user.branch,
+        name: cleanName,
+        excludeInventoryId: Number(id)
+      });
+
+      if (activeExactNameDuplicate) {
+        await client.query('ROLLBACK');
+        await recordAuditLogSafely(pool, {
+          actorId: req.user.id,
+          targetId: activeExactNameDuplicate.inventory_id,
+          targetName: cleanName,
+          action: `BLOCKED_EXACT_ACTIVE_NAME_DUPLICATE_EDIT: attempted "${cleanName}"`
+        });
+        return res.status(400).json({
+          error: `Another active inventory item already uses this name: ${activeExactNameDuplicate.name} (${activeExactNameDuplicate.category}). Use that existing item if this is the same product.`
+        });
+      }
+
+      const archivedExactNameDuplicate = await findExactArchivedInventoryItemByName(client, {
+        branch: req.user.branch,
+        name: cleanName
+      });
+
+      if (archivedExactNameDuplicate) {
+        await client.query('ROLLBACK');
+        await recordAuditLogSafely(pool, {
+          actorId: req.user.id,
+          targetId: archivedExactNameDuplicate.archived_inventory_id,
+          targetName: cleanName,
+          action: `BLOCKED_EXACT_ARCHIVED_NAME_DUPLICATE_EDIT: attempted "${cleanName}"`
+        });
+        return res.status(400).json({
+          error: `An archived item with the same name already exists: ${archivedExactNameDuplicate.name} (${archivedExactNameDuplicate.category}). Restore the archived item instead of creating a duplicate record.`
+        });
+      }
+
       const activeDuplicate = await findSimilarActiveInventoryItem(client, {
         branch: req.user.branch,
         name: cleanName,
