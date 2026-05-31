@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Minus, ReceiptText, Trash2, ShoppingCart, History, CheckCircle, Info, PackageCheck, AlertTriangle, TrendingUp, User, Coins, ClipboardList, Search, CalendarDays, Clock, Tag, Wallet, MessageSquareText, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Pencil } from 'lucide-react';
+import { Plus, Minus, ReceiptText, Trash2, ShoppingCart, History, CheckCircle, Info, PackageCheck, AlertTriangle, TrendingUp, User, Coins, ClipboardList, Search, CalendarDays, Clock, Tag, Wallet, MessageSquareText, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Pencil, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import jsPDF from 'jspdf';
 import { PageHeader } from './PageHeader';
@@ -13,7 +13,7 @@ import { Textarea } from './ui/textarea';
 import { Badge } from './ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { binarySearch, mergeSort } from '../utils/algorithms';
-import { isAdminRole } from '../utils/roles';
+import { canRecordSales, isAdminRole } from '../utils/roles';
 
 const emptySaleLine = () => ({
   inventoryId: '',
@@ -169,6 +169,28 @@ const formatDateTime = value => {
   return date.toLocaleString();
 };
 
+const formatHistoryDateParts = value => {
+  if (!value) {
+    return { date: 'No date recorded', time: '' };
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return { date: 'Invalid date', time: '' };
+  }
+  return {
+    date: date.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    }),
+    time: date.toLocaleTimeString(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit'
+    })
+  };
+};
+
 const formatReceiptDateOnly = value => {
   if (!value) return 'No date recorded';
   const date = new Date(value);
@@ -201,6 +223,15 @@ const getReceiptCustomerTin = sale => normalizeReceiptCustomerText(sale?.custome
 const getReceiptCustomerAddress = sale => normalizeReceiptCustomerText(sale?.customerAddress) || 'C';
 const getReceiptAddressLines = address => String(address || '').split(/\n+/).map(line => line.trim()).filter(Boolean);
 const formatReceiptAddressHtml = address => getReceiptAddressLines(address).map(escapeReceiptText).join('<br>');
+function isRefundSalesRecord(sale) {
+  return sale?.transactionType === 'refund'
+    || Number(sale?.totalAmount || 0) < 0
+    || Number(sale?.totalQuantity || 0) < 0
+    || (sale?.items || []).some(item => Number(item?.quantitySold || 0) < 0);
+}
+const getTransactionRecordLabel = sale => (isRefundSalesRecord(sale) ? 'Refund Record' : 'Sales Record');
+const getTransactionDocumentName = sale => (isRefundSalesRecord(sale) ? 'Refund Receipt' : 'Receipt');
+const getDisplayQuantity = value => Math.abs(Number(value || 0));
 const sanitizeTinInput = value => {
   const rawValue = String(value || '');
   const cleaned = rawValue.replace(/[^0-9-]/g, '');
@@ -217,7 +248,11 @@ const sanitizeTinInput = value => {
 const downloadSaleTransactionSummary = sale => {
   if (!sale) return;
 
-  const saleNumber = sale.salesNumber || 'Sales record';
+  const saleNumber = sale.salesNumber || getTransactionRecordLabel(sale);
+  const isRefund = isRefundSalesRecord(sale);
+  const documentName = getTransactionDocumentName(sale);
+  const documentPrefix = isRefund ? 'REFUND' : 'SALES';
+  const documentTitle = isRefund ? 'RECEIPT' : 'INVOICE';
   const items = sale.items || [];
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -262,8 +297,8 @@ const downloadSaleTransactionSummary = sale => {
   };
 
   doc.setProperties({
-    title: `${saleNumber} Receipt`,
-    subject: 'Sales transaction invoice-style receipt',
+    title: `${saleNumber} ${documentName}`,
+    subject: isRefund ? 'Customer refund transaction receipt' : 'Sales transaction invoice-style receipt',
     author: sale.soldByName || 'System',
     creator: 'E.M. Cayetano Trading POS-Integrated Inventory System'
   });
@@ -295,12 +330,17 @@ const downloadSaleTransactionSummary = sale => {
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(55, 65, 81);
   doc.setFontSize(10);
-  drawText('SALES', invoiceRightX, y + 3, { align: 'right' });
+  drawText(documentPrefix, invoiceRightX, y + 3, { align: 'right' });
   doc.setFontSize(23);
-  drawText('INVOICE', invoiceRightX, y + 14, { align: 'right' });
+  drawText(documentTitle, invoiceRightX, y + 14, { align: 'right' });
   doc.setTextColor(17, 24, 39);
   doc.setFontSize(11);
   drawText(`No.: ${saleNumber}`, invoiceRightX, y + 27, { align: 'right' });
+  if (isRefund && sale.referenceSalesNumber) {
+    doc.setFontSize(8);
+    drawText(`Original Sale: ${sale.referenceSalesNumber}`, invoiceRightX, y + 31, { align: 'right' });
+    doc.setFontSize(11);
+  }
   doc.setTextColor(17, 24, 39);
   doc.setLineWidth(0.45);
   const headerBottomY = receiptY + 46;
@@ -449,7 +489,7 @@ const downloadSaleTransactionSummary = sale => {
     });
   }
 
-  doc.save(`${saleNumber}_transaction_receipt.pdf`);
+  doc.save(`${saleNumber}_${isRefund ? 'refund_receipt' : 'transaction_receipt'}.pdf`);
 };
 
 const openReceiptPrintWindow = () => {
@@ -490,7 +530,14 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
   }
 
   const items = sale.items || [];
-  const saleNumber = escapeReceiptText(sale.salesNumber || 'Sales record');
+  const isRefund = isRefundSalesRecord(sale);
+  const saleNumber = escapeReceiptText(sale.salesNumber || getTransactionRecordLabel(sale));
+  const documentName = getTransactionDocumentName(sale);
+  const documentPrefix = isRefund ? 'REFUND' : 'SALES';
+  const documentTitle = isRefund ? 'RECEIPT' : 'INVOICE';
+  const originalSaleLine = isRefund && sale.referenceSalesNumber
+    ? `<div class="reference-number">Original Sale: ${escapeReceiptText(sale.referenceSalesNumber)}</div>`
+    : '';
   const minimumReceiptRows = 10;
   const itemRows = [
     ...items.map(item => `
@@ -499,7 +546,7 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
           ${escapeReceiptText(item.itemName || 'Inventory item')}
           ${isNonInventorySaleItem(item) ? '<br><small class="item-note">Non-Inventory</small>' : ''}
         </td>
-        <td class="center-cell">${escapeReceiptText(item.quantitySold || 0)}</td>
+        <td class="center-cell">${escapeReceiptText(getDisplayQuantity(item.quantitySold))}</td>
         <td class="amount-cell">${escapeReceiptText(formatCurrency(item.unitPrice))}</td>
         <td class="amount-cell">${escapeReceiptText(formatCurrency(item.subtotal))}</td>
       </tr>
@@ -526,7 +573,7 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
     <!doctype html>
     <html>
       <head>
-        <title>${saleNumber} Receipt</title>
+        <title>${saleNumber} ${escapeReceiptText(documentName)}</title>
         <style>
           @page { size: A4; margin: 0; }
           * { box-sizing: border-box; }
@@ -601,6 +648,13 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
             margin-top: 10px;
             color: #374151;
             font-size: 16px;
+            font-weight: 700;
+            text-align: right;
+          }
+          .reference-number {
+            margin-top: 5px;
+            color: #4b5563;
+            font-size: 11px;
             font-weight: 700;
             text-align: right;
           }
@@ -748,9 +802,10 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
               <div class="contact">${escapeReceiptText(RECEIPT_BUSINESS_INFO.contact)}</div>
             </div>
             <div class="invoice-block">
-              <div class="sales-label">SALES</div>
-              <div class="invoice-title">INVOICE</div>
+              <div class="sales-label">${escapeReceiptText(documentPrefix)}</div>
+              <div class="invoice-title">${escapeReceiptText(documentTitle)}</div>
               <div class="invoice-number">No.: ${saleNumber}</div>
+              ${originalSaleLine}
             </div>
           </header>
 
@@ -836,8 +891,18 @@ const getSalePrimaryItemText = sale => {
   if (!sale?.items?.length) return 'No item details recorded';
   const firstItem = sale.items[0];
   const extraCount = sale.items.length - 1;
-  return `${firstItem.itemName} (${firstItem.quantitySold})${extraCount > 0 ? `, +${extraCount} more` : ''}`;
+  const quantityLabel = isRefundSalesRecord(sale) ? 'refunded' : 'sold';
+  return `${firstItem.itemName} (${getDisplayQuantity(firstItem.quantitySold)} ${quantityLabel})${extraCount > 0 ? `, +${extraCount} more` : ''}`;
 };
+
+const getRemainingRefundQuantity = item =>
+  Math.max(0, Number(item?.quantitySold || 0) - Number(item?.refundedQuantity || 0));
+
+const getRemainingRefundAmount = item =>
+  Math.max(0, Number((Number(item?.subtotal || 0) - Number(item?.refundedAmount || 0)).toFixed(2)));
+
+const hasRefundedSaleItems = sale =>
+  (sale?.items || []).some(item => Number(item?.refundedQuantity || 0) > 0 || Number(item?.refundedAmount || 0) > 0);
 
 const notifyNumbersOnly = (fieldName, toastId) => {
   toast.warning(`${fieldName} accepts numbers only.`, {
@@ -901,7 +966,7 @@ const getSaleProductSearchText = item =>
   ].filter(Boolean).join(' '));
 
 export function SalesModule({ user }) {
-  const { inventory, salesTransactions, recordSale, cancelSale } = useData();
+  const { inventory, salesTransactions, recordSale, refundSale, cancelSale } = useData();
   const [customerType, setCustomerType] = useState('walk_in');
   const [customerName, setCustomerName] = useState('');
   const [customerTin, setCustomerTin] = useState('');
@@ -925,9 +990,15 @@ export function SalesModule({ user }) {
   const [nonInventorySessionCount, setNonInventorySessionCount] = useState(0);
   const [editingNonInventoryLineIndex, setEditingNonInventoryLineIndex] = useState(null);
   const [saleToCancel, setSaleToCancel] = useState(null);
+  const [saleToRefund, setSaleToRefund] = useState(null);
+  const [refundLines, setRefundLines] = useState([]);
+  const [refundReason, setRefundReason] = useState('');
+  const [refundActualTransactionAt, setRefundActualTransactionAt] = useState('');
+  const [refundBackdateReason, setRefundBackdateReason] = useState('');
   const [completedSale, setCompletedSale] = useState(null);
   const [cancelReason, setCancelReason] = useState('');
   const [isCancellingSale, setIsCancellingSale] = useState(false);
+  const [isRefundingSale, setIsRefundingSale] = useState(false);
   const [productSearch, setProductSearch] = useState('');
   const [productCategory, setProductCategory] = useState('all');
   const [productSort, setProductSort] = useState('name_az');
@@ -937,6 +1008,7 @@ export function SalesModule({ user }) {
   const [selectedHistorySaleId, setSelectedHistorySaleId] = useState('');
   const [isClearItemsConfirmOpen, setIsClearItemsConfirmOpen] = useState(false);
   const canCancelSales = isAdminRole(user?.role);
+  const canRefundSales = canRecordSales(user?.role);
   const findInventoryItemByExactSalesName = itemName => {
     const normalizedItemName = normalizeSalesInventoryIdentityName(itemName);
     if (!normalizedItemName) return null;
@@ -1862,6 +1934,160 @@ export function SalesModule({ user }) {
     setCancelReason('');
   };
 
+  const openRefundSaleDialog = sale => {
+    const refundableItems = (sale?.items || [])
+      .filter(item => Number(item.quantitySold || 0) > 0 && getRemainingRefundQuantity(item) > 0)
+      .map(item => ({
+        salesItemId: item.id,
+        itemName: item.itemName,
+        category: item.category,
+        isInventoryItem: item.isInventoryItem,
+        maxQuantity: getRemainingRefundQuantity(item),
+        maxAmount: getRemainingRefundAmount(item),
+        unitPrice: Number(item.unitPrice || 0),
+        quantity: '',
+        refundAmount: ''
+      }));
+
+    if (refundableItems.length === 0) {
+      toast.info('No refundable item quantity remains for this sale.');
+      return;
+    }
+
+    setSaleToRefund(sale);
+    setRefundLines(refundableItems);
+    setRefundReason('');
+    setRefundActualTransactionAt('');
+    setRefundBackdateReason('');
+  };
+
+  const closeRefundSaleDialog = () => {
+    if (isRefundingSale) return;
+    setSaleToRefund(null);
+    setRefundLines([]);
+    setRefundReason('');
+    setRefundActualTransactionAt('');
+    setRefundBackdateReason('');
+  };
+
+  const updateRefundLine = (salesItemId, field, value) => {
+    setRefundLines(prev => prev.map(line => {
+      if (String(line.salesItemId) !== String(salesItemId)) return line;
+
+      if (field === 'quantity') {
+        const quantityText = sanitizeWholeNumberInput(value, 'Refund quantity', 'sales-refund-quantity-numbers-only');
+        const quantity = Number(quantityText || 0);
+        const computedAmount = quantity > 0 ? Math.min(line.maxAmount, Number((quantity * line.unitPrice).toFixed(2))) : 0;
+        return {
+          ...line,
+          quantity: quantityText,
+          refundAmount: quantity > 0 ? computedAmount.toFixed(2) : ''
+        };
+      }
+
+      if (field === 'refundAmount') {
+        return {
+          ...line,
+          refundAmount: sanitizeDecimalInput(value, 'Refund amount', 'sales-refund-amount-numbers-only')
+        };
+      }
+
+      return line;
+    }));
+  };
+
+  const handleRefundActualTransactionAtChange = value => {
+    setRefundActualTransactionAt(value);
+    if (isPastTransactionDate(value)) {
+      toast.info('This refund will be saved as a backdated transaction.', {
+        description: 'Reports will use the refund date. Audit trail will keep the encoded date.'
+      });
+    }
+  };
+
+  const confirmRefundSale = async () => {
+    if (!saleToRefund) return;
+
+    const selectedRefundLines = refundLines
+      .map(line => ({
+        ...line,
+        quantityValue: Number(line.quantity || 0),
+        refundAmountValue: Number(line.refundAmount || 0)
+      }))
+      .filter(line => line.quantityValue > 0 || line.refundAmountValue > 0);
+
+    if (selectedRefundLines.length === 0) {
+      toast.error('Enter at least one refund quantity.');
+      return;
+    }
+
+    for (const line of selectedRefundLines) {
+      if (!Number.isInteger(line.quantityValue) || line.quantityValue <= 0) {
+        toast.error(`Refund quantity for ${line.itemName} must be a whole number greater than zero.`);
+        return;
+      }
+      if (line.quantityValue > line.maxQuantity) {
+        toast.error(`${line.itemName} has only ${line.maxQuantity} refundable unit${line.maxQuantity === 1 ? '' : 's'} remaining.`);
+        return;
+      }
+      if (!Number.isFinite(line.refundAmountValue) || line.refundAmountValue <= 0) {
+        toast.error(`Refund amount for ${line.itemName} must be greater than zero.`);
+        return;
+      }
+      if (line.refundAmountValue > line.maxAmount + 0.009) {
+        toast.error(`Refund amount for ${line.itemName} cannot exceed ${formatCurrency(line.maxAmount)}.`);
+        return;
+      }
+    }
+
+    const cleanReason = refundReason.trim();
+    if (cleanReason.length < 5) {
+      toast.error('Enter a clear refund reason before continuing.');
+      return;
+    }
+
+    if (refundActualTransactionAt) {
+      const selectedDate = new Date(refundActualTransactionAt);
+      if (Number.isNaN(selectedDate.getTime())) {
+        toast.error('Refund transaction date must be valid.');
+        return;
+      }
+      if (selectedDate.getTime() > Date.now() + 60 * 1000) {
+        toast.error('Refund transaction date cannot be in the future.');
+        return;
+      }
+    }
+
+    setIsRefundingSale(true);
+    try {
+      const refundRecord = await refundSale({
+        saleId: saleToRefund.id,
+        refundReason: cleanReason,
+        actualTransactionAt: refundActualTransactionAt || '',
+        backdateReason: isPastTransactionDate(refundActualTransactionAt) ? refundBackdateReason.trim() : '',
+        items: selectedRefundLines.map(line => ({
+          salesItemId: line.salesItemId,
+          quantity: line.quantityValue,
+          refundAmount: Number(line.refundAmountValue.toFixed(2))
+        }))
+      });
+      toast.success('Refund recorded and stock restored.', {
+        description: `${refundRecord?.salesNumber || refundRecord?.sales_number || 'Refund record'} was saved.`
+      });
+      setSaleToRefund(null);
+      setRefundLines([]);
+      setRefundReason('');
+      setRefundActualTransactionAt('');
+      setRefundBackdateReason('');
+    } catch (err) {
+      toast.error('Failed to record refund', {
+        description: err?.response?.data?.error || err.message || 'No inventory was restored.'
+      });
+    } finally {
+      setIsRefundingSale(false);
+    }
+  };
+
   const confirmCancelSale = async () => {
     const cleanReason = cancelReason.trim();
     if (!saleToCancel) return;
@@ -2318,33 +2544,202 @@ export function SalesModule({ user }) {
         }
 
         .sales-history-detail-header {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) auto;
-          gap: 1rem 1.25rem;
-          align-items: start;
+          display: flex;
+          flex-direction: column;
+          gap: 0.95rem;
           margin-bottom: 1.1rem;
           padding-bottom: 1.05rem;
           border-bottom: 1px solid #e2e8f0;
         }
 
-        .sales-history-detail-actions {
+        .sales-history-detail-title-row {
           display: flex;
-          flex-wrap: wrap;
-          align-items: center;
-          justify-content: flex-end;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 1rem;
+          min-width: 0;
+        }
+
+        .sales-history-detail-label {
+          display: block;
+          color: #64748b;
+          font-size: 0.72rem;
+          font-weight: 800;
+          letter-spacing: 0.04em;
+          line-height: 1.2;
+          text-transform: uppercase;
+        }
+
+        .sales-history-detail-number {
+          margin-top: 0.25rem;
+          color: #0f172a;
+          font-size: clamp(1.1rem, 2vw, 1.35rem);
+          font-weight: 900;
+          line-height: 1.15;
+          overflow-wrap: anywhere;
+        }
+
+        .sales-history-detail-date-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
           gap: 0.65rem;
           min-width: 0;
         }
 
-        .sales-history-detail-actions .sales-transaction-summary-button,
-        .sales-history-detail-actions .sales-cancel-sale-button {
-          min-height: 2.35rem;
+        .sales-history-detail-date-card {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr) auto;
+          gap: 0.65rem;
+          align-items: center;
+          min-width: 0;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.75rem;
+          background: #f8fafc;
+          padding: 0.7rem 0.8rem;
+        }
+
+        .sales-history-detail-date-card-warning {
+          border-color: #fde68a;
+          background: #fffbeb;
+        }
+
+        .sales-history-detail-date-card span {
+          display: block;
+          color: #64748b;
+          font-size: 0.72rem;
+          font-weight: 800;
+          line-height: 1.15;
+          text-transform: uppercase;
+        }
+
+        .sales-history-detail-date-card strong {
+          display: block;
+          margin-top: 0.2rem;
+          color: #0f172a;
+          font-size: 0.93rem;
+          font-weight: 850;
+          line-height: 1.25;
+          overflow-wrap: anywhere;
+        }
+
+        .sales-history-detail-date-card em {
+          justify-self: end;
+          border: 1px solid #cbd5e1;
+          border-radius: 999px;
+          background: #ffffff;
+          color: #334155;
+          font-size: 0.78rem;
+          font-style: normal;
+          font-weight: 800;
+          line-height: 1;
+          padding: 0.45rem 0.6rem;
+          white-space: nowrap;
+        }
+
+        .sales-history-detail-actions {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(7.75rem, 1fr));
+          align-items: stretch;
+          gap: 0.55rem;
+          min-width: 0;
+        }
+
+        .sales-history-action-button {
+          min-height: 2.65rem;
+          justify-content: center;
+          gap: 0.5rem;
+          border-radius: 0.7rem;
+          font-size: 0.88rem;
+          font-weight: 850;
+          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 120ms ease;
+        }
+
+        .sales-history-action-button:hover,
+        .sales-history-action-button:focus-visible {
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+        }
+
+        .sales-history-action-button:active {
+          transform: translateY(1px);
+        }
+
+        .sales-history-action-button-disabled,
+        .sales-history-action-button-disabled:disabled {
+          cursor: not-allowed;
+          border-color: #e2e8f0;
+          background: #f8fafc;
+          color: #64748b;
+          opacity: 1;
+          box-shadow: none;
+          transform: none;
+        }
+
+        .sales-history-receipt-button {
+          border-color: #cbd5e1;
+          background: #ffffff;
+          color: #334155;
+        }
+
+        .sales-history-receipt-button:hover,
+        .sales-history-receipt-button:focus-visible {
+          border-color: #94a3b8;
+          background: #f8fafc;
+          color: #0f172a;
+        }
+
+        .sales-history-refund-button {
+          border-color: #cbd5e1;
+          background: #ffffff;
+          color: #334155;
+        }
+
+        .sales-history-refund-button:hover,
+        .sales-history-refund-button:focus-visible {
+          border-color: #94a3b8;
+          background: #f8fafc;
+          color: #0f172a;
+        }
+
+        .sales-history-cancel-button {
+          border-color: #fecaca;
+          background: #ffffff;
+          color: #b91c1c;
+        }
+
+        .sales-history-cancel-button:hover,
+        .sales-history-cancel-button:focus-visible {
+          border-color: #f87171;
+          background: #fef2f2;
+          color: #991b1b;
+        }
+
+        .sales-history-action-note {
+          display: flex;
+          align-items: flex-start;
+          gap: 0.55rem;
+          border: 1px solid #bfdbfe;
+          border-radius: 0.75rem;
+          background: #eff6ff;
+          color: #1e3a8a;
+          padding: 0.7rem 0.8rem;
+          font-size: 0.8rem;
+          line-height: 1.45;
+        }
+
+        .sales-history-action-note svg {
+          margin-top: 0.05rem;
+          flex-shrink: 0;
+          color: #2563eb;
         }
 
         .sales-history-status-badge {
-          min-height: 2.35rem;
+          min-height: 2.55rem;
+          flex-shrink: 0;
           border-radius: 999px;
           padding: 0 1rem;
+          gap: 0.45rem;
+          font-weight: 850;
+          white-space: nowrap;
         }
 
         .sales-cancel-dialog {
@@ -2464,6 +2859,619 @@ export function SalesModule({ user }) {
           .sales-cancel-actions button {
             width: 100%;
             min-height: 2.75rem;
+          }
+        }
+
+        .sales-refund-dialog {
+          width: min(100% - 2rem, 74rem);
+          max-width: min(100% - 2rem, 74rem) !important;
+          height: min(92dvh, 48rem);
+          max-height: min(92dvh, 48rem);
+          overflow: hidden;
+          border-radius: 1rem;
+        }
+
+        .sales-refund-content {
+          display: flex;
+          min-height: 0;
+          height: 100%;
+          max-height: min(92dvh, 48rem);
+          flex-direction: column;
+          background: #ffffff;
+        }
+
+        .sales-refund-header {
+          border-bottom: 1px solid #e5e7eb;
+          padding: 1.15rem 1.4rem 1rem;
+        }
+
+        .sales-refund-title-row {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 1rem;
+        }
+
+        .sales-refund-heading {
+          display: flex;
+          min-width: 0;
+          align-items: flex-start;
+          gap: 0.9rem;
+        }
+
+        .sales-refund-icon {
+          display: inline-flex;
+          width: 2.85rem;
+          height: 2.85rem;
+          flex-shrink: 0;
+          align-items: center;
+          justify-content: center;
+          border-radius: 0.85rem;
+          background: #fff1f2;
+          color: #ef0000;
+        }
+
+        .sales-refund-title {
+          color: #111827;
+          font-size: 1.18rem;
+          font-weight: 800;
+          line-height: 1.25;
+        }
+
+        .sales-refund-description {
+          margin-top: 0.45rem;
+          color: #475569;
+          font-size: 0.9rem;
+          line-height: 1.5;
+        }
+
+        .sales-refund-close-button {
+          display: inline-flex;
+          width: 2.55rem;
+          height: 2.55rem;
+          flex-shrink: 0;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.7rem;
+          background: #ffffff;
+          color: #334155;
+          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .sales-refund-close-button:hover,
+        .sales-refund-close-button:focus-visible {
+          border-color: #fecaca;
+          background: #fef2f2;
+          color: #dc2626;
+          box-shadow: 0 8px 18px rgba(220, 38, 38, 0.12);
+          outline: 0;
+        }
+
+        .sales-refund-close-button:disabled {
+          cursor: not-allowed;
+          opacity: 0.55;
+        }
+
+        .sales-refund-body {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(23rem, 27rem);
+          gap: 1.25rem;
+          flex: 1 1 auto;
+          min-height: 0;
+          overflow: hidden;
+          padding: 1rem 1.15rem;
+        }
+
+        .sales-refund-main {
+          display: flex;
+          flex-direction: column;
+          gap: 0.7rem;
+          height: 100%;
+          min-height: 0;
+          min-width: 0;
+          overflow: hidden;
+        }
+
+        .sales-refund-section-heading {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.75rem;
+          color: #111827;
+          font-size: 0.9rem;
+          font-weight: 850;
+          line-height: 1.25;
+        }
+
+        .sales-refund-section-heading strong {
+          flex-shrink: 0;
+          color: #64748b;
+          font-size: 0.78rem;
+          font-weight: 800;
+        }
+
+        .sales-refund-lines {
+          display: flex;
+          flex: 1 1 auto;
+          flex-direction: column;
+          gap: 0.85rem;
+          height: 100%;
+          min-height: 0;
+          min-width: 0;
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          padding: 0 0.35rem 0 0;
+          scrollbar-gutter: stable;
+        }
+
+        .sales-refund-lines::-webkit-scrollbar {
+          width: 0.55rem;
+        }
+
+        .sales-refund-lines::-webkit-scrollbar-track {
+          background: #f8fafc;
+          border-radius: 999px;
+        }
+
+        .sales-refund-lines::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 999px;
+        }
+
+        .sales-refund-lines::-webkit-scrollbar-thumb:hover {
+          background: #94a3b8;
+        }
+
+        .sales-refund-line-card {
+          display: flex;
+          flex: 0 0 auto;
+          flex-direction: column;
+          min-height: max-content;
+          overflow: hidden;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.55rem;
+          background: #ffffff;
+        }
+
+        .sales-refund-line-header {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 1rem;
+          align-items: center;
+          border-bottom: 1px solid #e5e7eb;
+          padding: 0.9rem 1rem;
+        }
+
+        .sales-refund-item-name {
+          color: #111827;
+          font-size: 0.96rem;
+          font-weight: 800;
+          line-height: 1.35;
+          overflow-wrap: anywhere;
+        }
+
+        .sales-refund-line-meta {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 0.35rem 0.55rem;
+          margin-top: 0.35rem;
+          color: #475569;
+          font-size: 0.82rem;
+          line-height: 1.35;
+        }
+
+        .sales-refund-line-meta span + span::before {
+          content: "";
+          display: inline-block;
+          width: 0.25rem;
+          height: 0.25rem;
+          margin-right: 0.55rem;
+          border-radius: 999px;
+          background: #94a3b8;
+          vertical-align: middle;
+        }
+
+        .sales-refund-limit-chip {
+          display: grid;
+          min-width: 4.3rem;
+          justify-items: center;
+          gap: 0.1rem;
+          border-radius: 0.55rem;
+          border-color: #e2e8f0;
+          background: #ffffff;
+          padding: 0.55rem 0.75rem;
+          color: #111827;
+          line-height: 1.15;
+        }
+
+        .sales-refund-limit-chip span {
+          color: #64748b;
+          font-size: 0.74rem;
+          font-weight: 650;
+        }
+
+        .sales-refund-limit-chip strong {
+          font-size: 0.9rem;
+          font-weight: 850;
+        }
+
+        .sales-refund-input-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 1rem;
+          flex: 0 0 auto;
+          min-height: 7.2rem;
+          padding: 0.95rem 1rem 1rem;
+        }
+
+        .sales-refund-field {
+          display: grid;
+          gap: 0.5rem;
+          min-width: 0;
+        }
+
+        .sales-refund-field label {
+          color: #111827;
+          font-size: 0.86rem;
+          font-weight: 750;
+          line-height: 1.25;
+        }
+
+        .sales-refund-input,
+        .sales-refund-textarea {
+          border-color: #d1d5db;
+          border-radius: 0.6rem;
+          background: #ffffff;
+          color: #111827;
+          font-weight: 650;
+        }
+
+        .sales-refund-input {
+          height: 2.65rem;
+          min-height: 2.65rem;
+        }
+
+        .sales-refund-input:disabled {
+          background: #f8fafc;
+          color: #94a3b8;
+          opacity: 1;
+        }
+
+        .sales-refund-textarea {
+          min-height: 4.85rem;
+          padding: 0.85rem 0.9rem;
+          font-weight: 500;
+          line-height: 1.5;
+          resize: vertical;
+        }
+
+        .sales-refund-input:hover,
+        .sales-refund-textarea:hover,
+        .sales-refund-input:focus-visible,
+        .sales-refund-textarea:focus-visible {
+          border-color: #94a3b8;
+        }
+
+        .sales-refund-helper {
+          color: #475569;
+          font-size: 0.76rem;
+          line-height: 1.45;
+        }
+
+        .sales-refund-date-grid {
+          margin-top: 0;
+        }
+
+        .sales-refund-date-note {
+          display: flex;
+          align-items: center;
+          gap: 0.55rem;
+          min-height: 2.15rem;
+          border: 1px solid #bfdbfe;
+          border-radius: 0.55rem;
+          background: #eff6ff;
+          color: #1e3a8a;
+          padding: 0.5rem 0.7rem;
+          font-size: 0.78rem;
+          line-height: 1.35;
+        }
+
+        .sales-refund-date-note svg {
+          flex-shrink: 0;
+          color: #2563eb;
+        }
+
+        .sales-refund-backdate-note {
+          display: grid;
+          gap: 0.55rem;
+          border: 1px solid #fcd34d;
+          border-radius: 0.75rem;
+          background: #fffbeb;
+          padding: 0.9rem;
+        }
+
+        .sales-refund-side {
+          display: flex;
+          min-width: 0;
+          flex-direction: column;
+          gap: 0.9rem;
+          align-self: start;
+        }
+
+        .sales-refund-side-form {
+          display: grid;
+          gap: 0.9rem;
+          min-width: 0;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.6rem;
+          background: #ffffff;
+          padding: 0.95rem;
+        }
+
+        .sales-refund-side-form .sales-refund-textarea {
+          min-height: 5.25rem;
+        }
+
+        .sales-refund-side-form .sales-refund-date-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          column-gap: 0.75rem;
+          row-gap: 0.75rem;
+        }
+
+        .sales-refund-side-form .actual-transaction-part-input {
+          height: 2.75rem;
+          min-height: 2.75rem;
+          padding: 0 0.75rem;
+        }
+
+        .sales-refund-summary {
+          align-self: stretch;
+          overflow: hidden;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.6rem;
+          background: #ffffff;
+        }
+
+        .sales-refund-summary-heading {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          border-bottom: 1px solid #e5e7eb;
+          background: linear-gradient(135deg, #fff1f2 0%, #ffffff 100%);
+          padding: 1rem;
+        }
+
+        .sales-refund-summary-icon {
+          display: inline-flex;
+          width: 2rem;
+          height: 2rem;
+          flex-shrink: 0;
+          align-items: center;
+          justify-content: center;
+          border-radius: 0.55rem;
+          background: #ffe4e6;
+          color: #ef0000;
+        }
+
+        .sales-refund-summary-heading h3 {
+          margin: 0;
+          color: #111827;
+          font-size: 0.96rem;
+          font-weight: 800;
+          line-height: 1.25;
+        }
+
+        .sales-refund-summary-heading p {
+          margin-top: 0.2rem;
+          color: #64748b;
+          font-size: 0.74rem;
+          font-weight: 650;
+        }
+
+        .sales-refund-summary-rows {
+          display: grid;
+          gap: 0.9rem;
+          padding: 1rem;
+        }
+
+        .sales-refund-summary-row,
+        .sales-refund-total-row {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 1rem;
+          color: #111827;
+        }
+
+        .sales-refund-summary-row span {
+          color: #334155;
+          font-size: 0.83rem;
+          line-height: 1.35;
+        }
+
+        .sales-refund-summary-row strong {
+          flex-shrink: 0;
+          font-size: 0.86rem;
+          font-weight: 850;
+          text-align: right;
+        }
+
+        .sales-refund-total-row {
+          border-top: 1px solid #e5e7eb;
+          padding: 1rem;
+        }
+
+        .sales-refund-total-row span {
+          font-size: 0.95rem;
+          font-weight: 850;
+        }
+
+        .sales-refund-total-row strong {
+          color: #dc0000;
+          font-size: 1.45rem;
+          font-weight: 900;
+          letter-spacing: 0;
+          text-align: right;
+        }
+
+        .sales-refund-actions {
+          display: flex;
+          justify-content: flex-end;
+          gap: 0.65rem;
+          border-top: 1px solid #e5e7eb;
+          padding: 0.75rem 1.15rem;
+        }
+
+        .sales-refund-actions button {
+          min-height: 2.55rem;
+          min-width: 5.25rem;
+          border-radius: 0.6rem;
+          font-weight: 800;
+        }
+
+        .sales-refund-confirm-button {
+          min-width: 8.75rem !important;
+          box-shadow: 0 10px 18px rgba(239, 0, 0, 0.18);
+        }
+
+        @media (max-width: 900px) {
+          .sales-refund-dialog {
+            width: min(100% - 1.25rem, 48rem);
+            max-width: min(100% - 1.25rem, 48rem) !important;
+            height: auto;
+          }
+
+          .sales-refund-body {
+            display: flex;
+            flex-direction: column;
+            grid-template-columns: 1fr;
+            flex: 0 1 auto;
+            align-items: stretch;
+            width: 100%;
+            min-width: 0;
+            overflow-y: auto;
+          }
+
+          .sales-refund-main {
+            order: 1;
+            flex: 0 0 auto;
+            width: 100%;
+            height: auto;
+            overflow: visible;
+          }
+
+          .sales-refund-side {
+            order: 2;
+            width: 100%;
+            align-self: stretch;
+          }
+
+          .sales-refund-summary {
+            width: 100%;
+            align-self: stretch;
+          }
+
+          .sales-refund-side-form {
+            width: 100%;
+          }
+
+          .sales-refund-lines {
+            display: flex;
+            flex: 0 0 clamp(18rem, 44dvh, 26rem);
+            width: 100%;
+            height: clamp(18rem, 44dvh, 26rem);
+            min-height: clamp(18rem, 44dvh, 26rem);
+            max-height: clamp(18rem, 44dvh, 26rem);
+            margin-bottom: 0.2rem;
+            overflow-y: auto;
+          }
+
+          .sales-refund-line-card {
+            width: 100%;
+          }
+        }
+
+        @media (max-width: 640px) {
+          .sales-refund-dialog {
+            height: auto;
+            max-height: calc(100dvh - 1rem);
+            border-radius: 0.9rem;
+          }
+
+          .sales-refund-content {
+            height: auto;
+            max-height: calc(100dvh - 1rem);
+          }
+
+          .sales-refund-header {
+            padding: 1rem;
+          }
+
+          .sales-refund-heading {
+            gap: 0.75rem;
+          }
+
+          .sales-refund-icon {
+            width: 2.55rem;
+            height: 2.55rem;
+          }
+
+          .sales-refund-title {
+            font-size: 1.05rem;
+          }
+
+          .sales-refund-description {
+            font-size: 0.84rem;
+          }
+
+          .sales-refund-body {
+            gap: 0.85rem;
+            padding: 0.85rem;
+            overflow-x: hidden;
+          }
+
+          .sales-refund-main {
+            gap: 0.8rem;
+          }
+
+          .sales-refund-lines {
+            flex-basis: clamp(16rem, 42dvh, 22rem);
+            height: clamp(16rem, 42dvh, 22rem);
+            min-height: clamp(16rem, 42dvh, 22rem);
+            max-height: clamp(16rem, 42dvh, 22rem);
+          }
+
+          .sales-refund-side-form {
+            padding: 0.85rem;
+          }
+
+          .sales-refund-side-form .sales-refund-date-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .sales-refund-line-header,
+          .sales-refund-input-grid {
+            grid-template-columns: 1fr;
+            gap: 0.85rem;
+            padding: 0.85rem;
+          }
+
+          .sales-refund-limit-chip {
+            width: max-content;
+            justify-items: start;
+          }
+
+          .sales-refund-actions {
+            flex-direction: column-reverse;
+            padding: 0.85rem;
+          }
+
+          .sales-refund-actions button,
+          .sales-refund-confirm-button {
+            width: 100%;
+            min-width: 0 !important;
           }
         }
 
@@ -4273,14 +5281,21 @@ export function SalesModule({ user }) {
           }
 
           .sales-history-detail-header {
-            grid-template-columns: 1fr;
             gap: 0.85rem;
             margin-bottom: 1rem;
             padding-bottom: 1rem;
           }
 
           .sales-history-detail-actions {
-            justify-content: flex-start;
+            grid-template-columns: 1fr;
+          }
+
+          .sales-history-detail-title-row {
+            align-items: flex-start;
+          }
+
+          .sales-history-detail-date-grid {
+            grid-template-columns: 1fr;
           }
         }
 
@@ -5834,7 +6849,9 @@ export function SalesModule({ user }) {
         selectedSale={selectedHistorySale}
         onSelectSale={saleId => setSelectedHistorySaleId(currentSaleId => currentSaleId === saleId ? '' : saleId)}
         onDownloadSummary={handleDownloadSaleSummary}
+        onRefundSale={openRefundSaleDialog}
         onCancelSale={openCancelSaleDialog}
+        canRefundSales={canRefundSales}
         canCancelSales={canCancelSales}
       />
 
@@ -5869,6 +6886,23 @@ export function SalesModule({ user }) {
         }}
         onConfirm={confirmCancelSale}
         isSubmitting={isCancellingSale}
+      />
+      <RefundSaleDialog
+        open={Boolean(saleToRefund)}
+        sale={saleToRefund}
+        lines={refundLines}
+        reason={refundReason}
+        actualTransactionAt={refundActualTransactionAt}
+        backdateReason={refundBackdateReason}
+        onReasonChange={setRefundReason}
+        onActualTransactionAtChange={handleRefundActualTransactionAtChange}
+        onBackdateReasonChange={setRefundBackdateReason}
+        onLineChange={updateRefundLine}
+        onOpenChange={open => {
+          if (!open) closeRefundSaleDialog();
+        }}
+        onConfirm={confirmRefundSale}
+        isSubmitting={isRefundingSale}
       />
       <CompletedSaleReceiptDialog
         open={Boolean(completedSale)}
@@ -6281,10 +7315,10 @@ function CancelSaleDialog({ open, sale, reason, onReasonChange, onOpenChange, on
               </span>
               <div className="sales-cancel-copy">
                 <DialogTitle className="text-lg font-bold leading-tight text-slate-950">
-                  Cancel this sale?
+                  Cancel entire sale?
                 </DialogTitle>
                 <DialogDescription className="sales-cancel-description text-sm leading-6">
-                  This will mark <span className="sales-cancel-sale-number">{sale?.salesNumber || 'this sales record'}</span> as cancelled and restore any tracked inventory quantities. This action will be recorded in the audit trail.
+                  This admin action voids <span className="sales-cancel-sale-number">{sale?.salesNumber || 'this sales record'}</span> and restores all tracked inventory from the original sale. Use Refund Items instead when a customer returns only selected items.
                 </DialogDescription>
               </div>
             </div>
@@ -6318,7 +7352,7 @@ function CancelSaleDialog({ open, sale, reason, onReasonChange, onOpenChange, on
               onClick={onConfirm}
               disabled={isSubmitting}
             >
-              {isSubmitting ? 'Cancelling...' : 'Cancel Sale and Restore Stock'}
+              {isSubmitting ? 'Cancelling...' : 'Cancel Entire Sale'}
             </Button>
           </DialogFooter>
         </div>
@@ -6327,6 +7361,241 @@ function CancelSaleDialog({ open, sale, reason, onReasonChange, onOpenChange, on
   );
 }
 
+function RefundSaleDialog({
+  open,
+  sale,
+  lines,
+  reason,
+  actualTransactionAt,
+  backdateReason,
+  onReasonChange,
+  onActualTransactionAtChange,
+  onBackdateReasonChange,
+  onLineChange,
+  onOpenChange,
+  onConfirm,
+  isSubmitting
+}) {
+  const selectedLines = (lines || []).filter(line => Number(line.quantity || 0) > 0 || Number(line.refundAmount || 0) > 0);
+  const refundTotal = selectedLines.reduce((sum, line) => sum + Number(line.refundAmount || 0), 0);
+  const refundQuantityTotal = selectedLines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+  const maxRefundTotal = (lines || []).reduce((sum, line) => sum + Number(line.maxAmount || 0), 0);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sales-refund-dialog border border-slate-200 bg-white p-0 shadow-2xl">
+        <div className="sales-refund-content">
+          <DialogHeader className="sales-refund-header text-left">
+            <div className="sales-refund-title-row">
+              <div className="sales-refund-heading">
+                <span className="sales-refund-icon">
+                  <RotateCcw className="h-5 w-5" />
+                </span>
+                <div className="min-w-0">
+                  <DialogTitle className="sales-refund-title">
+                    Record Customer Refund
+                  </DialogTitle>
+                  <DialogDescription className="sales-refund-description">
+                    Refund items from {sale?.salesNumber || 'this sale'}. Returned items will be added back to inventory.
+                  </DialogDescription>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="Close refund dialog"
+                className="sales-refund-close-button"
+                onClick={() => onOpenChange(false)}
+                disabled={isSubmitting}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          </DialogHeader>
+
+          <div className="sales-refund-body">
+            <div className="sales-refund-main">
+              <div className="sales-refund-section-heading">
+                <span>Refundable Items</span>
+                <strong>{(lines || []).length} item{(lines || []).length === 1 ? '' : 's'}</strong>
+              </div>
+              <div className="sales-refund-lines" role="region" aria-label="Refundable items">
+                {(lines || []).map(line => {
+                  const quantityValue = Number(line.quantity || 0);
+                  return (
+                    <div key={line.salesItemId} className="sales-refund-line-card">
+                      <div className="sales-refund-line-header">
+                        <div className="min-w-0">
+                          <p className="sales-refund-item-name">{line.itemName}</p>
+                          <p className="sales-refund-line-meta" hidden>
+                            {line.category || 'Uncategorized'} - {line.isInventoryItem ? 'Tracked inventory' : 'Non-inventory'} - {line.maxQuantity} refundable
+                          </p>
+                          <div className="sales-refund-line-meta" aria-label="Refund item details">
+                            <span>{line.category || 'Uncategorized'}</span>
+                            <span>{line.isInventoryItem ? 'Tracked inventory' : 'Non-inventory'}</span>
+                            <span>{line.maxQuantity} refundable</span>
+                          </div>
+                        </div>
+                        <Badge variant="outline" className="sales-refund-limit-chip">
+                          <span>Up to</span>
+                          <strong>{formatCurrency(line.maxAmount)}</strong>
+                        </Badge>
+                      </div>
+                      <div className="sales-refund-input-grid">
+                        <div className="sales-refund-field">
+                          <Label htmlFor={`refund-quantity-${line.salesItemId}`}>Refund Quantity</Label>
+                          <Input
+                            id={`refund-quantity-${line.salesItemId}`}
+                            inputMode="numeric"
+                            value={line.quantity}
+                            maxLength={6}
+                            disabled={isSubmitting}
+                            onChange={event => onLineChange(line.salesItemId, 'quantity', event.target.value)}
+                            placeholder="0"
+                            className="sales-refund-input"
+                          />
+                          <p className="sales-refund-helper">Enter the quantity of items being returned.</p>
+                        </div>
+                        <div className="sales-refund-field">
+                          <Label htmlFor={`refund-amount-${line.salesItemId}`}>Refund Amount</Label>
+                          <Input
+                            id={`refund-amount-${line.salesItemId}`}
+                            inputMode="decimal"
+                            value={line.refundAmount}
+                            disabled={isSubmitting || quantityValue <= 0}
+                            onChange={event => onLineChange(line.salesItemId, 'refundAmount', event.target.value)}
+                            placeholder="0.00"
+                            className="sales-refund-input"
+                          />
+                          <p className="sales-refund-helper">Calculated based on unit price and quantity.</p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="sales-refund-side">
+              <aside className="sales-refund-summary" aria-label="Refund summary">
+                <div className="sales-refund-summary-heading">
+                  <span className="sales-refund-summary-icon">
+                    <ReceiptText className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <h3>Refund Summary</h3>
+                    <p>{selectedLines.length || 0} selected item{selectedLines.length === 1 ? '' : 's'}</p>
+                  </div>
+                </div>
+                <div className="sales-refund-summary-rows">
+                  <div className="sales-refund-summary-row">
+                    <span>Refundable Amount (Up to)</span>
+                    <strong>{formatCurrency(maxRefundTotal)}</strong>
+                  </div>
+                  <div className="sales-refund-summary-row">
+                    <span>Refund Quantity</span>
+                    <strong>{refundQuantityTotal}</strong>
+                  </div>
+                  <div className="sales-refund-summary-row">
+                    <span>Refund Amount</span>
+                    <strong>{formatCurrency(refundTotal)}</strong>
+                  </div>
+                </div>
+                <div className="sales-refund-total-row">
+                  <span>Total Refund</span>
+                  <strong>-{formatCurrency(refundTotal)}</strong>
+                </div>
+              </aside>
+
+              <div className="sales-refund-side-form">
+                <div className="sales-refund-field">
+                  <Label htmlFor="refund-reason">Refund Reason</Label>
+                  <Textarea
+                    id="refund-reason"
+                    value={reason}
+                    onChange={event => onReasonChange(event.target.value.slice(0, 500))}
+                    placeholder="Example: Customer returned wrong size item."
+                    disabled={isSubmitting}
+                    required
+                    className="sales-refund-textarea"
+                  />
+                  <p className="sales-refund-helper">Provide a reason for this refund (required).</p>
+                </div>
+
+                <div className="sales-refund-field">
+                  <Label>Refund Transaction Date (optional)</Label>
+                  <div className="actual-transaction-split-grid sales-refund-date-grid">
+                    <div className="actual-transaction-split-field">
+                      <Label htmlFor="refund-actual-date" className="actual-transaction-split-label">Date</Label>
+                      <Input
+                        id="refund-actual-date"
+                        type="date"
+                        value={getDatePartFromDateTime(actualTransactionAt)}
+                        max={getCurrentDatePart()}
+                        disabled={isSubmitting}
+                        onChange={event => {
+                          const nextDate = event.target.value;
+                          onActualTransactionAtChange(nextDate ? combineActualTransactionDateTime(nextDate, getTimePartFromDateTime(actualTransactionAt) || getCurrentTimePart()) : '');
+                        }}
+                        className="actual-transaction-part-input"
+                      />
+                    </div>
+                    <div className="actual-transaction-split-field">
+                      <Label htmlFor="refund-actual-time" className="actual-transaction-split-label">Time</Label>
+                      <Input
+                        id="refund-actual-time"
+                        type="time"
+                        value={getTimePartFromDateTime(actualTransactionAt)}
+                        disabled={isSubmitting}
+                        onChange={event => {
+                          const nextTime = event.target.value;
+                          onActualTransactionAtChange(nextTime ? combineActualTransactionDateTime(getDatePartFromDateTime(actualTransactionAt) || getCurrentDatePart(), nextTime) : '');
+                        }}
+                        className="actual-transaction-part-input"
+                      />
+                    </div>
+                  </div>
+                  <div className="sales-refund-date-note">
+                    <Info className="h-4 w-4" />
+                    <span>If not set, the current date and time will be used.</span>
+                  </div>
+                  {isPastTransactionDate(actualTransactionAt) && (
+                    <div className="sales-refund-backdate-note">
+                      <p className="text-sm font-semibold text-amber-900">This refund will be saved as a backdated transaction.</p>
+                      <Label htmlFor="refund-backdate-reason">Backdate reason, optional</Label>
+                      <Input
+                        id="refund-backdate-reason"
+                        value={backdateReason}
+                        maxLength={240}
+                        disabled={isSubmitting}
+                        onChange={event => onBackdateReasonChange(event.target.value)}
+                        placeholder="Example: Encoded after outage"
+                        className="h-11 rounded-xl border-amber-200 bg-white text-slate-950"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="sales-refund-actions">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="sales-refund-confirm-button bg-[#FF0000] text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-70"
+              onClick={onConfirm}
+              disabled={isSubmitting || refundTotal <= 0}
+            >
+              {isSubmitting ? 'Recording...' : 'Record Refund'}
+            </Button>
+          </DialogFooter>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 function SalesHistoryDialog({
   open,
   onOpenChange,
@@ -6339,7 +7608,9 @@ function SalesHistoryDialog({
   selectedSale,
   onSelectSale,
   onDownloadSummary,
+  onRefundSale,
   onCancelSale,
+  canRefundSales,
   canCancelSales
 }) {
   return (
@@ -6419,6 +7690,7 @@ function SalesHistoryDialog({
               <div className="sales-history-list space-y-3">
                 {sales.map(sale => {
                   const isSelected = selectedSale?.id === sale.id;
+                  const isRefund = isRefundSalesRecord(sale);
 
                   return (
                     <button
@@ -6432,9 +7704,16 @@ function SalesHistoryDialog({
                           <p className="truncate text-base font-bold text-slate-900">
                             {sale.salesNumber || 'Sales record'}
                           </p>
+                          {isRefund && (
+                            <p className="mt-1 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-700">
+                              <RotateCcw className="h-3.5 w-3.5" />
+                              <span>Refund record</span>
+                              {sale.referenceSalesNumber && <span className="normal-case tracking-normal text-slate-600">for {sale.referenceSalesNumber}</span>}
+                            </p>
+                          )}
                           <p className="sales-history-meta mt-2 text-sm leading-5 text-slate-700">
                             <CalendarDays className="h-4 w-4 text-slate-500" />
-                            <span className="truncate">Transaction: {formatDateTime(sale.createdAt)}</span>
+                            <span className="truncate">{isRefund ? 'Refund' : 'Transaction'}: {formatDateTime(sale.createdAt)}</span>
                           </p>
                           {isBackdatedRecord(sale) && (
                             <p className="sales-history-meta mt-1 text-xs leading-5 text-amber-700">
@@ -6448,14 +7727,14 @@ function SalesHistoryDialog({
                           </p>
                           <p className="sales-history-meta mt-2 text-sm leading-5 text-slate-700">
                             <Tag className="h-4 w-4 text-slate-500" />
-                            <span className="line-clamp-2"><strong>Item: </strong>{getSalePrimaryItemText(sale)}</span>
+                            <span className="line-clamp-2"><strong>{isRefund ? 'Returned Item: ' : 'Item: '}</strong>{getSalePrimaryItemText(sale)}</span>
                           </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-4 text-right">
                           <div>
-                            <p className="text-base font-bold text-slate-900">{formatCurrency(sale.totalAmount)}</p>
+                            <p className={`text-base font-bold ${isRefund ? 'text-amber-700' : 'text-slate-900'}`}>{formatCurrency(sale.totalAmount)}</p>
                             <p className="mt-1 text-sm text-slate-700">
-                              {sale.totalQuantity} item{sale.totalQuantity === 1 ? '' : 's'}
+                              {getDisplayQuantity(sale.totalQuantity)} {isRefund ? 'refunded ' : ''}item{getDisplayQuantity(sale.totalQuantity) === 1 ? '' : 's'}
                             </p>
                           </div>
                           <span className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors ${
@@ -6473,7 +7752,9 @@ function SalesHistoryDialog({
                           <SalesHistoryDetailContent
                             sale={sale}
                             onDownloadSummary={onDownloadSummary}
+                            onRefundSale={onRefundSale}
                             onCancelSale={onCancelSale}
+                            canRefundSales={canRefundSales}
                             canCancelSales={canCancelSales}
                           />
                         </div>
@@ -6488,7 +7769,9 @@ function SalesHistoryDialog({
                   <SalesHistoryDetailContent
                     sale={selectedSale}
                     onDownloadSummary={onDownloadSummary}
+                    onRefundSale={onRefundSale}
                     onCancelSale={onCancelSale}
+                    canRefundSales={canRefundSales}
                     canCancelSales={canCancelSales}
                   />
                 ) : (
@@ -6520,50 +7803,130 @@ function HistoryDetail({ icon, label, value }) {
   );
 }
 
-function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canCancelSales }) {
+function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCancelSale, canRefundSales, canCancelSales }) {
   const isCancelled = sale.status === 'cancelled';
+  const isRefund = isRefundSalesRecord(sale);
+  const hasRefundActivity = hasRefundedSaleItems(sale);
+  const hasRefundableItems = !isRefund && !isCancelled && (sale.items || []).some(item => getRemainingRefundQuantity(item) > 0);
+  const canCancelThisSale = canCancelSales && !isCancelled && !isRefund && !hasRefundActivity;
+  const refundUnavailableText = isRefund
+    ? 'This record is already a refund'
+    : isCancelled
+      ? 'Cancelled sales cannot be refunded'
+      : 'No refundable quantity remains.';
+  const cancelHelpText = canCancelThisSale
+    ? 'Cancel Entire Sale is for voiding an incorrectly encoded sale. Use Refund for customer returns.'
+    : isRefund
+      ? 'Refund records are kept for audit and cannot be cancelled here.'
+      : hasRefundActivity
+        ? 'This sale already has refund activity, so cancellation is disabled to avoid restoring stock twice.'
+        : isCancelled
+          ? 'This sale is already cancelled.'
+          : 'Only Admin users can cancel an entire sale.';
+  const transactionDate = formatHistoryDateParts(sale.createdAt);
+  const encodedDate = formatHistoryDateParts(sale.encodedAt);
+  const recordLabel = getTransactionRecordLabel(sale);
+  const documentName = getTransactionDocumentName(sale);
   return (
     <div className="space-y-5">
       <div className="sales-history-detail-header">
-        <div>
-          <h3 className="text-xl font-bold text-slate-900">{sale.salesNumber}</h3>
-          <p className="sales-history-meta mt-2 text-sm text-slate-700">
+        <div className="sales-history-detail-title-row">
+          <div className="min-w-0">
+            <span className="sales-history-detail-label">{recordLabel}</span>
+            <h3 className="sales-history-detail-number">{sale.salesNumber}</h3>
+            {isRefund && sale.referenceSalesNumber && (
+              <p className="mt-1 text-sm font-medium text-slate-600">Original sale: {sale.referenceSalesNumber}</p>
+            )}
+          </div>
+          <Badge className={`sales-history-status-badge capitalize ${isCancelled ? 'bg-red-100 text-red-700 hover:bg-red-100' : isRefund ? 'bg-amber-100 text-amber-700 hover:bg-amber-100' : 'bg-green-100 text-green-700 hover:bg-green-100'}`}>
+            {isCancelled ? <X className="h-4 w-4" /> : isRefund ? <RotateCcw className="h-4 w-4" /> : <CheckCircle className="h-4 w-4" />}
+            {isRefund ? 'refund' : sale.status || 'completed'}
+          </Badge>
+        </div>
+
+        <div className="sales-history-detail-date-grid">
+          <div className="sales-history-detail-date-card">
             <CalendarDays className="h-4 w-4 text-slate-500" />
-            <span>Date: {formatDateTime(sale.createdAt)}</span>
-          </p>
+            <div className="min-w-0">
+              <span>Transaction Date</span>
+              <strong>{transactionDate.date}</strong>
+            </div>
+            {transactionDate.time && <em>{transactionDate.time}</em>}
+          </div>
           {isBackdatedRecord(sale) && (
-            <p className="sales-history-meta mt-1 text-sm text-amber-700">
+            <div className="sales-history-detail-date-card sales-history-detail-date-card-warning">
               <Clock className="h-4 w-4 text-amber-600" />
-              <span>Encoded Date: {formatDateTime(sale.encodedAt)}</span>
-            </p>
+              <div className="min-w-0">
+                <span>Encoded Date</span>
+                <strong>{encodedDate.date}</strong>
+              </div>
+              {encodedDate.time && <em>{encodedDate.time}</em>}
+            </div>
           )}
         </div>
+
         <div className="sales-history-detail-actions">
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="sales-transaction-summary-button"
+            className="sales-history-action-button sales-history-receipt-button"
             onClick={() => onDownloadSummary?.(sale)}
           >
             <Download className="h-4 w-4" />
-            Receipt
+              {documentName}
           </Button>
-          {canCancelSales && !isCancelled && (
+          {canRefundSales && hasRefundableItems ? (
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="sales-cancel-sale-button"
-              onClick={() => onCancelSale?.(sale)}
+              className="sales-history-action-button sales-history-refund-button"
+              onClick={() => onRefundSale?.(sale)}
+              title="Refund selected returned items and restore their stock."
             >
-              Cancel Sale
+              <RotateCcw className="h-4 w-4" />
+              Refund Items
+            </Button>
+          ) : canRefundSales ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="sales-history-action-button sales-history-refund-button sales-history-action-button-disabled"
+              disabled
+              title={refundUnavailableText}
+            >
+              <RotateCcw className="h-4 w-4" />
+              Refund Unavailable
+            </Button>
+          ) : null}
+          {canCancelThisSale && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="sales-history-action-button sales-history-cancel-button"
+              onClick={() => onCancelSale?.(sale)}
+              title="Cancel the entire sale and restore all tracked inventory from this transaction."
+            >
+              <X className="h-4 w-4" />
+              Cancel Entire Sale
             </Button>
           )}
-          <Badge className={`sales-history-status-badge capitalize ${isCancelled ? 'bg-red-100 text-red-700 hover:bg-red-100' : 'bg-green-100 text-green-700 hover:bg-green-100'}`}>
-            {isCancelled ? <X className="h-4 w-4" /> : <CheckCircle className="h-4 w-4" />}
-            {sale.status || 'completed'}
-          </Badge>
+        </div>
+
+        <div className="sales-history-action-note">
+          <Info className="h-4 w-4" />
+          <span>
+            {isRefund && sale.referenceSalesNumber
+              ? `This refund record is linked to original sale ${sale.referenceSalesNumber}.`
+              : hasRefundableItems
+                ? 'Refund Items handles returned items and creates a separate refund record.'
+                : refundUnavailableText}
+            {' '}
+            {cancelHelpText}
+          </span>
         </div>
       </div>
 
@@ -6585,19 +7948,19 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
 
       <div className="grid gap-4 sm:grid-cols-2">
         <HistoryDetail icon={<User className="h-5 w-5" />} label="Customer Type" value={customerTypeLabels[sale.customerType] || 'Walk-in Customer'} />
-        <HistoryDetail icon={<User className="h-5 w-5" />} label="Sold By" value={sale.soldByName || 'System'} />
+        <HistoryDetail icon={<User className="h-5 w-5" />} label={isRefund ? 'Processed By' : 'Sold By'} value={sale.soldByName || 'System'} />
         <HistoryDetail icon={<ClipboardList className="h-5 w-5" />} label="Registered Name" value={getReceiptCustomerName(sale)} />
         <HistoryDetail icon={<ClipboardList className="h-5 w-5" />} label="TIN" value={getReceiptCustomerTin(sale) || 'Blank'} />
         <HistoryDetail icon={<ClipboardList className="h-5 w-5" />} label="Business Address" value={getReceiptCustomerAddress(sale)} />
-        <HistoryDetail icon={<PackageCheck className="h-5 w-5" />} label="Total Quantity" value={`${sale.totalQuantity} item${sale.totalQuantity === 1 ? '' : 's'}`} />
-        <HistoryDetail icon={<Coins className="h-5 w-5" />} label="Subtotal" value={formatCurrency(sale.subtotalAmount ?? sale.totalAmount)} />
+        <HistoryDetail icon={<PackageCheck className="h-5 w-5" />} label={isRefund ? 'Refunded Quantity' : 'Total Quantity'} value={`${getDisplayQuantity(sale.totalQuantity)} item${getDisplayQuantity(sale.totalQuantity) === 1 ? '' : 's'}`} />
+        <HistoryDetail icon={<Coins className="h-5 w-5" />} label={isRefund ? 'Refund Subtotal' : 'Subtotal'} value={formatCurrency(sale.subtotalAmount ?? sale.totalAmount)} />
         <HistoryDetail icon={<Tag className="h-5 w-5" />} label={getDiscountLabel(sale)} value={formatCurrency(sale.discountAmount)} />
         <HistoryDetail icon={<PackageCheck className="h-5 w-5" />} label="Delivery Charge" value={formatCurrency(sale.deliveryCharge)} />
         <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="VAT 12%" value={formatCurrency(sale.vatAmount)} />
-        <HistoryDetail icon={<Wallet className="h-5 w-5" />} label="Amount Due" value={formatCurrency(sale.totalAmount)} />
-        <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="Payment Method" value={paymentMethodLabels[sale.paymentMethod] || 'Cash'} />
-        <HistoryDetail icon={<Coins className="h-5 w-5" />} label="Amount Received" value={formatCurrency(sale.amountReceived ?? sale.totalAmount)} />
-        <HistoryDetail icon={<Coins className="h-5 w-5" />} label="Change" value={formatCurrency(sale.changeAmount)} />
+        <HistoryDetail icon={<Wallet className="h-5 w-5" />} label={isRefund ? 'Refund Amount' : 'Amount Due'} value={formatCurrency(sale.totalAmount)} />
+        <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label={isRefund ? 'Refund Method' : 'Payment Method'} value={paymentMethodLabels[sale.paymentMethod] || 'Cash'} />
+        <HistoryDetail icon={<Coins className="h-5 w-5" />} label={isRefund ? 'Refund Released' : 'Amount Received'} value={formatCurrency(sale.amountReceived ?? sale.totalAmount)} />
+        {!isRefund && <HistoryDetail icon={<Coins className="h-5 w-5" />} label="Change" value={formatCurrency(sale.changeAmount)} />}
         {sale.paymentReference && (
           <HistoryDetail icon={<ClipboardList className="h-5 w-5" />} label="Payment Reference" value={sale.paymentReference} />
         )}
@@ -6611,7 +7974,7 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
 
       <div className="pb-2 pt-2">
         <div className="mb-2 flex items-center justify-between gap-3 py-1">
-          <h4 className="text-base font-semibold text-slate-900">Sold Items</h4>
+          <h4 className="text-base font-semibold text-slate-900">{isRefund ? 'Refunded Items' : 'Sold Items'}</h4>
           <span className="text-sm text-slate-700">{sale.items?.length || 0} line{sale.items?.length === 1 ? '' : 's'}</span>
         </div>
         <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
@@ -6623,6 +7986,11 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
                   {isNonInventorySaleItem(item) && (
                     <Badge variant="outline" className="bg-white text-slate-700">Non-Inventory</Badge>
                   )}
+                  {Number(item.refundedQuantity || 0) > 0 && (
+                    <Badge variant="outline" className="bg-amber-50 text-amber-700">
+                      {item.refundedQuantity} refunded
+                    </Badge>
+                  )}
                 </div>
                 <p className="mt-1 break-words text-xs leading-5 text-slate-700">
                   Category: {item.category || 'Uncategorized'}
@@ -6631,13 +7999,13 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onCancelSale, canC
               </div>
               <div className="flex flex-wrap justify-start gap-2 sm:justify-end">
                 <span className="inline-flex h-8 items-center rounded-full bg-white px-3 text-xs font-semibold text-slate-700">
-                  Qty Sold: {item.quantitySold}
+                  {isRefund ? 'Qty Refunded' : 'Qty Sold'}: {Math.abs(Number(item.quantitySold || 0))}
                 </span>
               </div>
             </div>
           ))}
           <div className="flex items-center justify-end gap-6 rounded-lg bg-slate-100 px-4 py-3 text-sm">
-            <span className="text-slate-700">Items Subtotal</span>
+            <span className="text-slate-700">{isRefund ? 'Refund Subtotal' : 'Items Subtotal'}</span>
             <strong className="whitespace-nowrap text-slate-900">{formatCurrency(sale.subtotalAmount ?? sale.totalAmount)}</strong>
           </div>
         </div>

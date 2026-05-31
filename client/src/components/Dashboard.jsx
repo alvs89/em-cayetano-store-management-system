@@ -62,9 +62,18 @@ const sanitizeMoneyInput = (value, fieldName, toastId) => {
   return nextValue;
 };
 
-const isToday = value => {
+const getLocalDateKey = (value = new Date()) => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const isToday = (value, todayKey = getLocalDateKey()) => {
   if (!value) return false;
-  return new Date(value).toDateString() === new Date().toDateString();
+  return getLocalDateKey(value) === todayKey;
 };
 
 const isThisMonth = value => {
@@ -120,6 +129,7 @@ export function Dashboard({
     itemId: '',
     physicalCount: ''
   });
+  const [todayKey, setTodayKey] = React.useState(() => getLocalDateKey());
   const [isQuotaDialogOpen, setIsQuotaDialogOpen] = React.useState(false);
   const [quotaForm, setQuotaForm] = React.useState('');
   const [isSavingQuota, setIsSavingQuota] = React.useState(false);
@@ -156,8 +166,39 @@ export function Dashboard({
     missingSupplierItems.length > 0 ? `${missingSupplierItems.length} missing supplier` : '',
     missingPriceItems.length > 0 ? `${missingPriceItems.length} missing SRP` : ''
   ].filter(Boolean);
-  const salesToday = (salesTransactions || []).filter(sale => sale.status !== 'cancelled' && isToday(sale.createdAt));
-  const stockMovementsToday = (stockMovements || []).filter(movement => isToday(movement.createdAt));
+  React.useEffect(() => {
+    let midnightTimer;
+
+    const syncTodayKey = () => {
+      setTodayKey(getLocalDateKey());
+    };
+
+    const scheduleNextMidnight = () => {
+      const now = new Date();
+      const nextMidnight = new Date(now);
+      nextMidnight.setDate(now.getDate() + 1);
+      nextMidnight.setHours(0, 0, 2, 0);
+      const delay = Math.max(1000, nextMidnight.getTime() - now.getTime());
+
+      midnightTimer = window.setTimeout(() => {
+        syncTodayKey();
+        scheduleNextMidnight();
+      }, delay);
+    };
+
+    scheduleNextMidnight();
+    window.addEventListener('focus', syncTodayKey);
+    document.addEventListener('visibilitychange', syncTodayKey);
+
+    return () => {
+      window.clearTimeout(midnightTimer);
+      window.removeEventListener('focus', syncTodayKey);
+      document.removeEventListener('visibilitychange', syncTodayKey);
+    };
+  }, []);
+
+  const salesToday = (salesTransactions || []).filter(sale => sale.status !== 'cancelled' && isToday(sale.createdAt, todayKey));
+  const stockMovementsToday = (stockMovements || []).filter(movement => isToday(movement.createdAt, todayKey));
   const completedSales = (salesTransactions || []).filter(sale => sale.status !== 'cancelled');
   const completedSalesThisMonth = completedSales.filter(sale => isThisMonth(sale.createdAt));
   const topSellingToday = getTopSellingItem(salesToday);
@@ -257,7 +298,7 @@ export function Dashboard({
     onNavigate('inventory', { preserveInventoryNavigationState: true });
   };
 
-  const getTodayDateKey = () => new Date().toISOString().slice(0, 10);
+  const getTodayDateKey = () => todayKey || getLocalDateKey();
 
   const openTargetReport = (reportType, options = {}) => {
     if (!canUseReports) return;

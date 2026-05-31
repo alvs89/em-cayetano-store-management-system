@@ -119,6 +119,8 @@ CREATE TABLE IF NOT EXISTS sales_transactions (
     payment_confirmed_by_name TEXT,
     payment_confirmed_at TIMESTAMP,
     status VARCHAR(20) DEFAULT 'completed' CHECK (status IN ('completed', 'cancelled')),
+    transaction_type VARCHAR(20) DEFAULT 'sale' CHECK (transaction_type IN ('sale', 'refund')),
+    reference_sales_transaction_id INT REFERENCES sales_transactions(sales_transaction_id) ON DELETE SET NULL,
     sold_by INT REFERENCES users(user_id) ON DELETE SET NULL,
     sold_by_name TEXT,
     remarks TEXT,
@@ -145,6 +147,7 @@ CREATE TABLE IF NOT EXISTS sales_items (
     subtotal NUMERIC(12,2) NOT NULL DEFAULT 0,
     previous_quantity INTEGER,
     new_quantity INTEGER,
+    refund_for_sales_item_id INT REFERENCES sales_items(sales_item_id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')
 );
 

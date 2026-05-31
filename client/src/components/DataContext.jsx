@@ -402,6 +402,9 @@ export function DataProvider({ children }) {
     paymentConfirmedBy: sale.payment_confirmed_by_name || '',
     paymentConfirmedAt: sale.payment_confirmed_at ? new Date(sale.payment_confirmed_at).toISOString() : '',
     status: sale.status || 'completed',
+    transactionType: sale.transaction_type || 'sale',
+    referenceSalesTransactionId: sale.reference_sales_transaction_id?.toString() ?? '',
+    referenceSalesNumber: sale.reference_sales_number || '',
     soldBy: sale.sold_by?.toString() ?? '',
     soldByName: sale.sold_by_name || '',
     remarks: sale.remarks || '',
@@ -424,6 +427,9 @@ export function DataProvider({ children }) {
       subtotal: Number(item.subtotal || 0),
       previousQuantity: item.previous_quantity === null || item.previous_quantity === undefined ? null : Number(item.previous_quantity || 0),
       newQuantity: item.new_quantity === null || item.new_quantity === undefined ? null : Number(item.new_quantity || 0),
+      refundForSalesItemId: item.refund_for_sales_item_id?.toString() ?? '',
+      refundedQuantity: Number(item.refunded_quantity || 0),
+      refundedAmount: Number(item.refunded_amount || 0),
       createdAt: item.created_at ? new Date(item.created_at).toISOString() : '',
     })),
   });
@@ -934,6 +940,39 @@ export function DataProvider({ children }) {
     }
   };
 
+  const refundSale = async ({ saleId, items, refundReason, actualTransactionAt, backdateReason }) => {
+    const token = localStorage.getItem("token");
+    try {
+      const res = await axios.post(
+        apiUrl(`/api/sales/${saleId}/refund`),
+        {
+          refund_reason: refundReason,
+          actual_transaction_at: actualTransactionAt,
+          backdate_reason: backdateReason,
+          items: items.map(item => ({
+            sales_item_id: item.salesItemId,
+            quantity: item.quantity,
+            refund_amount: item.refundAmount,
+          })),
+        },
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      await fetchInventory();
+      await fetchArchivedInventory();
+      await fetchStockMovements();
+      await fetchSalesTransactions();
+      await fetchPurchaseTransactions();
+      return mapSalesTransaction(res.data.sale || {});
+    } catch (err) {
+      await fetchInventory();
+      await fetchArchivedInventory();
+      await fetchStockMovements();
+      await fetchSalesTransactions();
+      await fetchPurchaseTransactions();
+      throw err;
+    }
+  };
+
   const recordPurchase = async ({ supplierName, documentType, documentNumber, paymentTerms, remarks, items, actualTransactionAt, backdateReason }) => {
     const token = localStorage.getItem("token");
     try {
@@ -1056,6 +1095,7 @@ export function DataProvider({ children }) {
         batchStockAdjustment,
         batchStockOut,
         recordSale,
+        refundSale,
         recordPurchase,
         cancelSale,
         archiveInventoryItem,

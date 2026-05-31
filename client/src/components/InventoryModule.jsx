@@ -38,6 +38,7 @@ const OFFICIAL_INVENTORY_CATEGORIES = [
 
 const STOCK_OUT_REASON_OPTIONS = [
   { value: "damaged", label: "Damaged", description: "Items removed because they can no longer be sold." },
+  { value: "supplier_return", label: "Supplier Return / Reject", description: "Defective items removed because they will be returned to the supplier." },
   { value: "expired", label: "Expired", description: "Items removed because they are past their usable date." },
   { value: "lost_missing", label: "Lost/Missing", description: "Items missing after checking actual stock." },
   { value: "manual_adjustment", label: "Manual Adjustment", description: "Stock corrected after a verified count." },
@@ -51,6 +52,8 @@ const STOCK_IN_REASON_OPTIONS = [
   { value: "delivery_received", label: "Delivery Received", description: "New stock received from a supplier or delivery." },
   { value: "purchase_received", label: "Purchase Received", description: "Stock added through a supplier purchase entry." },
   { value: "returned_item", label: "Returned Item", description: "Returned items added back after checking their condition." },
+  { value: "customer_refund", label: "Customer Refund", description: "Returned customer items added back after refund validation." },
+  { value: "supplier_replacement", label: "Supplier Replacement", description: "Replacement item received from supplier at no extra charge." },
   { value: "beginning_balance", label: "Beginning Balance", description: "Starting stock entered during setup or inventory reset." },
   { value: "manual_adjustment", label: "Manual Adjustment", description: "Stock corrected after a verified count." },
   { value: "found_stock", label: "Found Stock", description: "Items found during checking that were not reflected in the system." }

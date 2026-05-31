@@ -334,6 +334,8 @@ async function ensureSchema() {
       payment_confirmed_by_name TEXT,
       payment_confirmed_at TIMESTAMP,
       status VARCHAR(20) DEFAULT 'completed' CHECK (status IN ('completed', 'cancelled')),
+      transaction_type VARCHAR(20) DEFAULT 'sale' CHECK (transaction_type IN ('sale', 'refund')),
+      reference_sales_transaction_id INT REFERENCES sales_transactions(sales_transaction_id) ON DELETE SET NULL,
       sold_by INT REFERENCES users(user_id) ON DELETE SET NULL,
       sold_by_name TEXT,
       remarks TEXT,
@@ -362,6 +364,7 @@ async function ensureSchema() {
       subtotal NUMERIC(12,2) NOT NULL DEFAULT 0,
       previous_quantity INTEGER,
       new_quantity INTEGER,
+      refund_for_sales_item_id INT REFERENCES sales_items(sales_item_id) ON DELETE SET NULL,
       created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
     );
   `);
@@ -615,6 +618,27 @@ async function ensureSchema() {
   `);
   await pool.query(`
     ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS transaction_type VARCHAR(20) DEFAULT 'sale';
+  `);
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    DROP CONSTRAINT IF EXISTS sales_transactions_transaction_type_check;
+  `);
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD CONSTRAINT sales_transactions_transaction_type_check CHECK (transaction_type IN ('sale', 'refund'));
+  `);
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS reference_sales_transaction_id INT REFERENCES sales_transactions(sales_transaction_id) ON DELETE SET NULL;
+  `);
+  await pool.query(`
+    UPDATE sales_transactions
+    SET transaction_type = COALESCE(NULLIF(TRIM(transaction_type), ''), 'sale')
+    WHERE transaction_type IS NULL OR TRIM(transaction_type) = '';
+  `);
+  await pool.query(`
+    ALTER TABLE sales_transactions
     ADD COLUMN IF NOT EXISTS customer_name VARCHAR(160) NOT NULL DEFAULT 'C';
   `);
   await pool.query(`
@@ -778,6 +802,10 @@ async function ensureSchema() {
     ALTER TABLE sales_items
     ALTER COLUMN previous_quantity DROP NOT NULL,
     ALTER COLUMN new_quantity DROP NOT NULL;
+  `);
+  await pool.query(`
+    ALTER TABLE sales_items
+    ADD COLUMN IF NOT EXISTS refund_for_sales_item_id INT REFERENCES sales_items(sales_item_id) ON DELETE SET NULL;
   `);
 
   await pool.query(`
@@ -1576,6 +1604,10 @@ function parseOptionalNonNegativeDecimal(value, fieldName, { max = null } = {}) 
   return parseNonNegativeDecimal(value, fieldName, { max });
 }
 
+function formatCurrencyForLog(value) {
+  return `PHP ${Number(value || 0).toFixed(2)}`;
+}
+
 function parseOptionalPositiveDecimal(value, fieldName, { max = null } = {}) {
   const parsed = parseOptionalNonNegativeDecimal(value, fieldName, { max });
   if (parsed !== null && parsed <= 0) {
@@ -1824,6 +1856,7 @@ function mapSalesTransactionRow(row) {
   return {
     sales_transaction_id: row.sales_transaction_id,
     sales_number: row.sales_number,
+    reference_sales_number: row.reference_sales_number,
     branch: row.branch,
     customer_type: row.customer_type,
     customer_name: row.customer_name || 'C',
@@ -1847,6 +1880,8 @@ function mapSalesTransactionRow(row) {
     payment_confirmed_by_name: row.payment_confirmed_by_name,
     payment_confirmed_at: row.payment_confirmed_at,
     status: row.status,
+    transaction_type: row.transaction_type || 'sale',
+    reference_sales_transaction_id: row.reference_sales_transaction_id,
     sold_by: row.sold_by,
     sold_by_name: row.sold_by_name,
     remarks: row.remarks,
@@ -1876,6 +1911,9 @@ function mapSalesItemRow(row) {
     subtotal: row.subtotal,
     previous_quantity: row.previous_quantity,
     new_quantity: row.new_quantity,
+    refund_for_sales_item_id: row.refund_for_sales_item_id,
+    refunded_quantity: row.refunded_quantity,
+    refunded_amount: row.refunded_amount,
     created_at: row.created_at
   };
 }
@@ -1958,6 +1996,7 @@ function getDiscountDetails(discountType, subtotalAmount, customDiscountAmount =
 const STOCK_OUT_REASONS = new Map([
   ['sales', 'Sales'],
   ['damaged', 'Damaged'],
+  ['supplier_return', 'Supplier Return / Reject'],
   ['expired', 'Expired'],
   ['lost_missing', 'Lost/Missing'],
   ['manual_adjustment', 'Manual Adjustment'],
@@ -1969,6 +2008,8 @@ const STOCK_IN_REASONS = new Map([
   ['delivery_received', 'Delivery Received'],
   ['purchase_received', 'Purchase Received'],
   ['returned_item', 'Returned Item'],
+  ['customer_refund', 'Customer Refund'],
+  ['supplier_replacement', 'Supplier Replacement'],
   ['beginning_balance', 'Beginning Balance'],
   ['manual_adjustment', 'Manual Adjustment'],
   ['sales_cancellation', 'Cancellation'],
@@ -2066,15 +2107,27 @@ async function recordStockMovement(client, {
   );
 }
 
-async function generateSalesNumber(client) {
+async function generateSalesNumber(client, transactionType = 'sale') {
   const year = new Date().getFullYear();
+  const prefix = transactionType === 'refund' ? 'REFUND' : 'SALE';
   await client.query('LOCK TABLE sales_transactions IN EXCLUSIVE MODE');
+  if (prefix === 'REFUND') {
+    const result = await client.query(
+      `SELECT COALESCE(MAX(RIGHT(sales_number, 5)::int), 0) + 1 AS next_number
+       FROM sales_transactions
+       WHERE sales_number LIKE $1
+         AND RIGHT(sales_number, 5) ~ '^[0-9]{5}$'`,
+      [`${prefix}-${year}-%`]
+    );
+    const sequence = Number(result.rows[0]?.next_number || 1);
+    return `${prefix}-${year}-${String(sequence).padStart(5, '0')}`;
+  }
   const result = await client.query(
     `SELECT COALESCE(MAX(sales_transaction_id), 0) + 1 AS next_number
      FROM sales_transactions`
   );
   const sequence = Number(result.rows[0]?.next_number || 1);
-  return `SALE-${year}-${String(sequence).padStart(5, '0')}`;
+  return `${prefix}-${year}-${String(sequence).padStart(5, '0')}`;
 }
 
 async function generatePurchaseNumber(client) {
@@ -3802,6 +3855,7 @@ app.get('/api/sales', authenticate, async (req, res) => {
       `SELECT
          st.sales_transaction_id,
          st.sales_number,
+         reference_st.sales_number AS reference_sales_number,
          st.branch,
          st.customer_type,
          st.customer_name,
@@ -3825,6 +3879,8 @@ app.get('/api/sales', authenticate, async (req, res) => {
          st.payment_confirmed_by_name,
          st.payment_confirmed_at,
          st.status,
+         st.transaction_type,
+         st.reference_sales_transaction_id,
          st.sold_by,
          st.sold_by_name,
          st.remarks,
@@ -3850,6 +3906,27 @@ app.get('/api/sales', authenticate, async (req, res) => {
                'subtotal', si.subtotal,
                'previous_quantity', si.previous_quantity,
                'new_quantity', si.new_quantity,
+               'refund_for_sales_item_id', si.refund_for_sales_item_id,
+               'refunded_quantity', COALESCE((
+                 SELECT SUM(ABS(refund_si.quantity_sold))
+                 FROM sales_items refund_si
+                 INNER JOIN sales_transactions refund_st
+                   ON refund_st.sales_transaction_id = refund_si.sales_transaction_id
+                 WHERE refund_st.reference_sales_transaction_id = st.sales_transaction_id
+                   AND refund_st.transaction_type = 'refund'
+                   AND refund_st.status = 'completed'
+                   AND refund_si.refund_for_sales_item_id = si.sales_item_id
+               ), 0),
+               'refunded_amount', COALESCE((
+                 SELECT SUM(ABS(refund_si.subtotal))
+                 FROM sales_items refund_si
+                 INNER JOIN sales_transactions refund_st
+                   ON refund_st.sales_transaction_id = refund_si.sales_transaction_id
+                 WHERE refund_st.reference_sales_transaction_id = st.sales_transaction_id
+                   AND refund_st.transaction_type = 'refund'
+                   AND refund_st.status = 'completed'
+                   AND refund_si.refund_for_sales_item_id = si.sales_item_id
+               ), 0),
                'created_at', si.created_at
              )
              ORDER BY si.sales_item_id ASC
@@ -3857,10 +3934,12 @@ app.get('/api/sales', authenticate, async (req, res) => {
            '[]'::json
          ) AS items
        FROM sales_transactions st
+       LEFT JOIN sales_transactions reference_st
+         ON reference_st.sales_transaction_id = st.reference_sales_transaction_id
        LEFT JOIN sales_items si
          ON si.sales_transaction_id = st.sales_transaction_id
        WHERE st.branch = $1
-       GROUP BY st.sales_transaction_id
+       GROUP BY st.sales_transaction_id, reference_st.sales_number
        ORDER BY st.created_at DESC, st.sales_transaction_id DESC`,
       [req.user.branch]
     );
@@ -4378,6 +4457,423 @@ app.post('/api/sales', authenticate, async (req, res) => {
   }
 });
 
+app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
+  const salesTransactionId = Number(req.params.id);
+  const cleanReason = String(req.body?.refund_reason || req.body?.reason || '').trim().slice(0, 500);
+  const refundItems = Array.isArray(req.body?.items) ? req.body.items : [];
+
+  if (!canRecordSales(req.user)) {
+    return res.status(403).json({
+      error: 'Refund recording is available only to Admin / Manager and Cashier / Encoder accounts.'
+    });
+  }
+
+  if (!Number.isInteger(salesTransactionId) || salesTransactionId <= 0) {
+    return res.status(400).json({ error: 'Please select a valid sales record to refund.' });
+  }
+
+  if (cleanReason.length < 5) {
+    return res.status(400).json({ error: 'Please enter a clear refund reason.' });
+  }
+
+  if (refundItems.length === 0) {
+    return res.status(400).json({ error: 'Select at least one item to refund.' });
+  }
+
+  let transactionTiming;
+  try {
+    transactionTiming = getTransactionTiming(req.body);
+  } catch (err) {
+    return res.status(err.statusCode || 400).json({ error: err.message });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const saleResult = await client.query(
+      `SELECT *
+       FROM sales_transactions
+       WHERE sales_transaction_id = $1
+         AND branch = $2
+       FOR UPDATE`,
+      [salesTransactionId, req.user.branch]
+    );
+
+    if (saleResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Sales record was not found for this branch.' });
+    }
+
+    const originalSale = saleResult.rows[0];
+    if (originalSale.status === 'cancelled') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Cancelled sales cannot be refunded.' });
+    }
+
+    if ((originalSale.transaction_type || 'sale') === 'refund') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Refund records cannot be refunded again.' });
+    }
+
+    const originalItemsResult = await client.query(
+      `SELECT *
+       FROM sales_items
+       WHERE sales_transaction_id = $1
+       ORDER BY sales_item_id ASC`,
+      [salesTransactionId]
+    );
+
+    if (originalItemsResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'This sales record has no item lines to refund.' });
+    }
+
+    const refundedResult = await client.query(
+      `SELECT
+         si.refund_for_sales_item_id,
+         COALESCE(SUM(ABS(si.quantity_sold)), 0) AS refunded_quantity,
+         COALESCE(SUM(ABS(si.subtotal)), 0) AS refunded_amount
+       FROM sales_items si
+       INNER JOIN sales_transactions st
+         ON st.sales_transaction_id = si.sales_transaction_id
+       WHERE st.reference_sales_transaction_id = $1
+         AND st.transaction_type = 'refund'
+         AND st.status = 'completed'
+         AND si.refund_for_sales_item_id IS NOT NULL
+       GROUP BY si.refund_for_sales_item_id`,
+      [salesTransactionId]
+    );
+
+    const originalItemsById = new Map(originalItemsResult.rows.map(item => [Number(item.sales_item_id), item]));
+    const refundedByItemId = new Map(refundedResult.rows.map(row => [
+      Number(row.refund_for_sales_item_id),
+      {
+        quantity: Number(row.refunded_quantity || 0),
+        amount: Number(row.refunded_amount || 0)
+      }
+    ]));
+    const seenItemIds = new Set();
+    const preparedRefundLines = [];
+
+    for (const item of refundItems) {
+      const salesItemId = Number(item?.sales_item_id || item?.salesItemId);
+      if (!Number.isInteger(salesItemId) || salesItemId <= 0 || !originalItemsById.has(salesItemId)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'One selected refund item is not part of this sale.' });
+      }
+
+      if (seenItemIds.has(salesItemId)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Each refund item should appear only once.' });
+      }
+      seenItemIds.add(salesItemId);
+
+      const originalItem = originalItemsById.get(salesItemId);
+      const originalQuantity = Number(originalItem.quantity_sold || 0);
+      const originalSubtotal = Number(originalItem.subtotal || 0);
+      const alreadyRefunded = refundedByItemId.get(salesItemId) || { quantity: 0, amount: 0 };
+      const remainingQuantity = originalQuantity - alreadyRefunded.quantity;
+      const remainingAmount = Number((originalSubtotal - alreadyRefunded.amount).toFixed(2));
+      const refundQuantity = parseNonNegativeInteger(item?.quantity, 'Refund quantity');
+      const refundAmount = item?.refund_amount === undefined || item?.refund_amount === null || item?.refund_amount === ''
+        ? Number((refundQuantity * Number(originalItem.unit_price || 0)).toFixed(2))
+        : parseNonNegativeDecimal(item?.refund_amount, 'Refund amount', { max: 100000000 });
+
+      if (refundQuantity <= 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Refund quantity must be greater than zero.' });
+      }
+
+      if (refundQuantity > remainingQuantity) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: `${originalItem.item_name} has only ${remainingQuantity} refundable unit${remainingQuantity === 1 ? '' : 's'} remaining.`
+        });
+      }
+
+      if (refundAmount <= 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Refund amount must be greater than zero.' });
+      }
+
+      if (refundAmount > remainingAmount + 0.009) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: `Refund amount for ${originalItem.item_name} cannot exceed ${formatCurrencyForLog(remainingAmount)}.`
+        });
+      }
+
+      preparedRefundLines.push({
+        originalItem,
+        salesItemId,
+        refundQuantity,
+        refundAmount
+      });
+    }
+
+    let totalRefundQuantity = 0;
+    let totalRefundAmount = 0;
+    const insertedItems = [];
+    const restoredItems = [];
+    const stockRestoreDetails = [];
+
+    for (const line of preparedRefundLines) {
+      const { originalItem, refundQuantity, refundAmount, salesItemId } = line;
+      totalRefundQuantity += refundQuantity;
+      totalRefundAmount += refundAmount;
+
+      let previousQuantity = null;
+      let newQuantity = null;
+
+      if (originalItem.is_inventory_item !== false && originalItem.inventory_id) {
+        const inventoryResult = await client.query(
+          `SELECT
+             bi.inventory_id,
+             bi.product_id,
+             p.name,
+             p.category,
+             p.supplier_name,
+             p.default_selling_price,
+             bi.branch,
+             bi.stock_level,
+             bi.min_stock_level,
+             bi.lead_time_days,
+             bi.safety_stock,
+             bi.average_daily_sales,
+             bi.status,
+             bi.last_updated
+           FROM branch_inventory bi
+           INNER JOIN products p ON p.product_id = bi.product_id
+           WHERE bi.inventory_id = $1
+             AND bi.branch = $2
+           FOR UPDATE`,
+          [originalItem.inventory_id, req.user.branch]
+        );
+
+        if (inventoryResult.rowCount === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ error: `${originalItem.item_name} is no longer available in active inventory. Refund cannot restore stock safely.` });
+        }
+
+        const currentItem = inventoryResult.rows[0];
+        previousQuantity = Number(currentItem.stock_level || 0);
+        newQuantity = previousQuantity + refundQuantity;
+        const nextStatus = computeInventoryStatus(newQuantity, getEffectiveReorderThreshold(currentItem));
+
+        const updatedResult = await client.query(
+          `UPDATE branch_inventory
+           SET stock_level = $1,
+               status = $2,
+               last_updated = ${PHILIPPINE_NOW_SQL}
+           WHERE inventory_id = $3
+             AND branch = $4
+           RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
+          [newQuantity, nextStatus, originalItem.inventory_id, req.user.branch]
+        );
+
+        await recordStockMovement(client, {
+          inventoryId: originalItem.inventory_id,
+          productId: originalItem.product_id,
+          itemName: originalItem.item_name,
+          category: originalItem.category,
+          branch: originalItem.branch,
+          action: 'stock_in',
+          quantityChanged: refundQuantity,
+          previousQuantity,
+          newQuantity,
+          reason: 'customer_refund',
+          note: `Customer refund for ${originalSale.sales_number}. Reason: ${cleanReason}`,
+          actorId: req.user.id,
+          actualTransactionAt: transactionTiming.actualTransactionAt,
+          backdateReason: transactionTiming.backdateReason
+        });
+
+        await refreshAverageDailySalesForInventory(client, originalItem.inventory_id);
+
+        restoredItems.push({
+          ...updatedResult.rows[0],
+          name: currentItem.name,
+          category: currentItem.category,
+          supplier_name: currentItem.supplier_name,
+          default_selling_price: currentItem.default_selling_price,
+          lead_time_days: currentItem.lead_time_days,
+          safety_stock: currentItem.safety_stock,
+          average_daily_sales: currentItem.average_daily_sales
+        });
+
+        stockRestoreDetails.push({
+          inventoryId: originalItem.inventory_id,
+          itemName: originalItem.item_name,
+          quantity: refundQuantity,
+          previousQuantity,
+          newQuantity
+        });
+      }
+
+      line.previousQuantity = previousQuantity;
+      line.newQuantity = newQuantity;
+      line.refundSubtotal = Number((-refundAmount).toFixed(2));
+    }
+
+    const roundedRefundTotal = Number(totalRefundAmount.toFixed(2));
+    const negativeRefundTotal = Number((-roundedRefundTotal).toFixed(2));
+    const { vatableSales, vatAmount } = computeVatBreakdown(negativeRefundTotal);
+    const refundNumber = await generateSalesNumber(client, 'refund');
+    const encodedByName = req.user.fullName || req.user.username || 'System User';
+
+    const refundTransactionResult = await client.query(
+      `INSERT INTO sales_transactions (
+         sales_number,
+         branch,
+         customer_type,
+         customer_name,
+         customer_tin,
+         customer_address,
+         total_quantity,
+         subtotal_amount,
+         discount_amount,
+         discount_type,
+         discount_label,
+         delivery_charge,
+         vatable_sales,
+         vat_amount,
+         total_amount,
+         payment_method,
+         amount_received,
+         change_amount,
+         payment_reference,
+         payment_confirmed,
+         payment_confirmed_by,
+         payment_confirmed_by_name,
+         payment_confirmed_at,
+         status,
+         transaction_type,
+         reference_sales_transaction_id,
+         sold_by,
+         sold_by_name,
+         remarks,
+         created_at,
+         encoded_at,
+         backdate_reason
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 'none', 'Refund', 0, $9, $10, $11, $12, $13, 0, $14, true, $15, $16, ${PHILIPPINE_NOW_SQL}, 'completed', 'refund', $17, $18, $19, $20, COALESCE($21::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $22)
+       RETURNING *`,
+      [
+        refundNumber,
+        req.user.branch,
+        originalSale.customer_type,
+        originalSale.customer_name || 'C',
+        originalSale.customer_tin,
+        originalSale.customer_address || 'C',
+        -totalRefundQuantity,
+        negativeRefundTotal,
+        vatableSales,
+        vatAmount,
+        negativeRefundTotal,
+        originalSale.payment_method || 'cash',
+        negativeRefundTotal,
+        originalSale.payment_reference,
+        req.user.id,
+        encodedByName,
+        salesTransactionId,
+        req.user.id,
+        encodedByName,
+        `Refund for ${originalSale.sales_number}. Reason: ${cleanReason}`,
+        transactionTiming.actualTransactionAt,
+        transactionTiming.backdateReason
+      ]
+    );
+
+    const refundTransaction = refundTransactionResult.rows[0];
+
+    for (const line of preparedRefundLines) {
+      const { originalItem, refundQuantity, refundSubtotal, previousQuantity, newQuantity, salesItemId } = line;
+      const itemResult = await client.query(
+        `INSERT INTO sales_items (
+           sales_transaction_id,
+           item_type,
+           inventory_id,
+           product_id,
+           is_inventory_item,
+           item_name,
+           category,
+           branch,
+           quantity_sold,
+           unit_price,
+           subtotal,
+           previous_quantity,
+           new_quantity,
+           refund_for_sales_item_id,
+           created_at
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, COALESCE($15::timestamp, ${PHILIPPINE_NOW_SQL}))
+         RETURNING *`,
+        [
+          refundTransaction.sales_transaction_id,
+          originalItem.item_type || (originalItem.is_inventory_item === false ? 'non_inventory' : 'inventory'),
+          originalItem.inventory_id,
+          originalItem.product_id,
+          originalItem.is_inventory_item !== false,
+          originalItem.item_name,
+          originalItem.category,
+          originalItem.branch,
+          -refundQuantity,
+          originalItem.unit_price,
+          refundSubtotal,
+          previousQuantity,
+          newQuantity,
+          salesItemId,
+          transactionTiming.actualTransactionAt
+        ]
+      );
+      insertedItems.push(itemResult.rows[0]);
+    }
+
+    await recordAuditLog(client, {
+      actorId: req.user.id,
+      targetId: refundTransaction.sales_transaction_id,
+      targetName: refundNumber,
+      targetType: 'sales_transaction',
+      action: 'CREATE_SALES_REFUND',
+      reason: 'Customer Refund',
+      details: {
+        branch: req.user.branch,
+        originalSalesTransactionId: salesTransactionId,
+        originalSalesNumber: originalSale.sales_number,
+        refundNumber,
+        refundReason: cleanReason,
+        totalRefundQuantity,
+        totalRefundAmount: roundedRefundTotal,
+        stockRestoreDetails,
+        actualTransactionAt: refundTransaction.created_at,
+        encodedAt: refundTransaction.encoded_at,
+        backdateReason: transactionTiming.backdateReason
+      }
+    });
+
+    await client.query('COMMIT');
+
+    return res.status(201).json({
+      sale: mapSalesTransactionRow({
+        ...refundTransaction,
+        reference_sales_number: originalSale.sales_number,
+        items: insertedItems.map(mapSalesItemRow)
+      }),
+      products: restoredItems.map(mapInventoryRow)
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+    console.error('Refund sale error:', err);
+    return res.status(500).json({ error: 'Failed to record refund. No inventory was restored.' });
+  } finally {
+    client.release();
+  }
+});
+
 app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) => {
   const salesTransactionId = Number(req.params.id);
   const cleanReason = String(req.body?.cancel_reason || '').trim().slice(0, 500);
@@ -4412,6 +4908,27 @@ app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) =
     if (sale.status === 'cancelled') {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'This sales record has already been cancelled.' });
+    }
+
+    if ((sale.transaction_type || 'sale') === 'refund') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Refund records cannot be cancelled. Review the original sales record instead.' });
+    }
+
+    const refundActivityResult = await client.query(
+      `SELECT 1
+       FROM sales_transactions
+       WHERE reference_sales_transaction_id = $1
+         AND branch = $2
+         AND transaction_type = 'refund'
+         AND status = 'completed'
+       LIMIT 1`,
+      [salesTransactionId, req.user.branch]
+    );
+
+    if (refundActivityResult.rowCount > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'This sale already has refund activity. Use the refund workflow for additional returns instead of cancelling the entire sale.' });
     }
 
     const itemsResult = await client.query(
@@ -6717,18 +7234,20 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
         [scopeBranch]
       ),
       pool.query(
-        `SELECT sales_transaction_id, sales_number, branch, status, total_quantity, subtotal_amount, discount_amount, total_amount, payment_method, change_amount
+        `SELECT sales_transaction_id, sales_number, branch, status, transaction_type, total_quantity, subtotal_amount, discount_amount, total_amount, payment_method, change_amount
          FROM sales_transactions
          WHERE branch = $1
            AND (
-             total_quantity < 0
-             OR subtotal_amount < 0
+             (transaction_type <> 'refund' AND total_quantity < 0)
+             OR (transaction_type <> 'refund' AND subtotal_amount < 0)
              OR discount_amount < 0
-             OR total_amount < 0
+             OR (transaction_type <> 'refund' AND total_amount < 0)
+             OR (transaction_type = 'refund' AND total_amount >= 0)
              OR change_amount < 0
-             OR discount_amount > subtotal_amount
+             OR (transaction_type <> 'refund' AND discount_amount > subtotal_amount)
              OR payment_method NOT IN ('cash', 'gcash', 'bank_transfer', 'credit')
              OR status NOT IN ('completed', 'cancelled')
+             OR transaction_type NOT IN ('sale', 'refund')
              OR sales_number IS NULL
              OR TRIM(sales_number) = ''
            )`,
@@ -6741,9 +7260,11 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
            ON st.sales_transaction_id = si.sales_transaction_id
          WHERE st.branch = $1
            AND (
-             si.quantity_sold <= 0
+             (st.transaction_type <> 'refund' AND si.quantity_sold <= 0)
+             OR (st.transaction_type = 'refund' AND si.quantity_sold >= 0)
              OR si.unit_price < 0
-             OR si.subtotal < 0
+             OR (st.transaction_type <> 'refund' AND si.subtotal < 0)
+             OR (st.transaction_type = 'refund' AND si.subtotal >= 0)
              OR si.previous_quantity < 0
              OR si.new_quantity < 0
              OR si.item_type NOT IN ('inventory', 'non_inventory')
