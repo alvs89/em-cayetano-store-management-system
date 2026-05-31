@@ -1383,9 +1383,9 @@ export function SalesModule({ user }) {
       const selectedItem = getInventoryById(line.inventoryId);
       const defaultPrice = Number(selectedItem?.defaultSellingPrice || 0);
       if (defaultPrice > 0 && Math.abs(defaultPrice - parsedPrice) > 0.009) {
-        toast.info('Unit price adjusted for this sale.', {
+        toast.info('Unit price adjusted for this sale only.', {
           id: `sales-price-adjusted-${line.inventoryId || index}`,
-          description: 'When saved, this price will become the item SRP in Inventory.'
+          description: 'Inventory SRP will stay unchanged unless it is edited from Inventory.'
         });
       }
     }

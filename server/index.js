@@ -4097,7 +4097,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
     let subtotalAmount = 0;
     const saleLines = [];
     const updatedItems = [];
-    const priceAdjustments = [];
+    const salePriceOverrides = [];
 
     for (const [inventoryId, line] of aggregatedItems.entries()) {
       const currentResult = await client.query(
@@ -4142,26 +4142,18 @@ app.post('/api/sales', authenticate, async (req, res) => {
       const unitPrice = Number(line.unitPrice || 0);
       const subtotal = Number((quantitySold * unitPrice).toFixed(2));
       const defaultSellingPrice = Number(currentItem.default_selling_price || 0);
-      let updatedDefaultSellingPrice = currentItem.default_selling_price;
-      const shouldUpdateInventorySrp = defaultSellingPrice <= 0 || Math.abs(defaultSellingPrice - unitPrice) > 0.009;
-      if (shouldUpdateInventorySrp) {
-        priceAdjustments.push({
+      const hasTransactionPriceOverride = defaultSellingPrice > 0 && Math.abs(defaultSellingPrice - unitPrice) > 0.009;
+      if (hasTransactionPriceOverride) {
+        salePriceOverrides.push({
           inventoryId,
           productId: currentItem.product_id,
           itemName: currentItem.name,
-          previousInventorySrp: defaultSellingPrice > 0 ? defaultSellingPrice : null,
+          inventorySrp: defaultSellingPrice,
           soldUnitPrice: unitPrice,
-          difference: defaultSellingPrice > 0 ? Number((unitPrice - defaultSellingPrice).toFixed(2)) : null,
-          inventorySrpUpdated: true
+          difference: Number((unitPrice - defaultSellingPrice).toFixed(2)),
+          inventorySrpUpdated: false,
+          scope: 'sale_transaction_only'
         });
-        const priceUpdateResult = await client.query(
-          `UPDATE products
-           SET default_selling_price = $1
-           WHERE product_id = $2
-           RETURNING default_selling_price`,
-          [unitPrice, currentItem.product_id]
-        );
-        updatedDefaultSellingPrice = priceUpdateResult.rows[0]?.default_selling_price ?? unitPrice;
       }
       const newQuantity = previousQuantity - quantitySold;
       const nextStatus = computeInventoryStatus(newQuantity, getEffectiveReorderThreshold(currentItem));
@@ -4198,7 +4190,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
         name: currentItem.name,
         category: currentItem.category,
         supplier_name: currentItem.supplier_name,
-        default_selling_price: updatedDefaultSellingPrice,
+        default_selling_price: currentItem.default_selling_price,
         lead_time_days: currentItem.lead_time_days,
         safety_stock: currentItem.safety_stock,
         average_daily_sales: currentItem.average_daily_sales
@@ -4428,7 +4420,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
         paymentConfirmed: true,
         paymentConfirmedBy: soldByName,
         itemCount: insertedItems.length,
-        priceAdjustments,
+        salePriceOverrides,
         remarks: cleanRemarks,
         actualTransactionAt: salesTransaction.created_at,
         encodedAt: salesTransaction.encoded_at,

@@ -534,8 +534,12 @@ export function UserManagementModule() {
   };
 
   const copyTemporaryCredentials = async (credentials = createdAccountCredentials) => {
-    if (!credentials) return;
-    const credentialText = `Username: ${credentials.username}\nTemporary Password: ${credentials.temporaryPassword}`;
+    const selectedCredentials = credentials?.temporaryPassword ? credentials : createdAccountCredentials;
+    if (!selectedCredentials?.username || !selectedCredentials?.temporaryPassword) {
+      toast.error("Temporary credentials are not available to copy.");
+      return;
+    }
+    const credentialText = `Username: ${selectedCredentials.username}\nTemporary Password: ${selectedCredentials.temporaryPassword}`;
     try {
       await navigator.clipboard.writeText(credentialText);
       toast.success("Temporary credentials copied.");
@@ -2044,7 +2048,7 @@ export function UserManagementModule() {
               <Button type="button" variant="outline" onClick={() => setCreatedAccountCredentials(null)}>
                 Done
               </Button>
-              <Button type="button" onClick={copyTemporaryCredentials} className="bg-[#FF0000] text-white hover:bg-[#cc0000]">
+              <Button type="button" onClick={() => copyTemporaryCredentials()} className="bg-[#FF0000] text-white hover:bg-[#cc0000]">
                 <Copy className="mr-2 h-4 w-4" />
                 Copy Credentials
               </Button>
