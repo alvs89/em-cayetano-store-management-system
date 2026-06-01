@@ -31,11 +31,44 @@ const topicOptions = [
   { value: 'contact', label: 'Contact Support' },
 ];
 
-const supportEmail = 'emcayetano.system.support@gmail.com';
-const supportPhone = '+63 123 456 789';
-const supportPhoneInfo = 'Please contact the system administrator or store admin.';
+const supportEmail = 'emcayetanotrading@gmail.com';
+const supportTelephone = '8285-9611';
+const supportCellphone = '(0918) 930-6300';
 const mailtoHref = `mailto:${supportEmail}?subject=${encodeURIComponent('Help Request - E.M. Cayetano Inventory System')}&body=${encodeURIComponent('Hello, I need assistance with the inventory system. Issue:\n')}`;
-const telHref = `tel:${supportPhone.replace(/\s/g, '')}`;
+const telephoneHref = `tel:${supportTelephone.replace(/\D/g, '')}`;
+const cellphoneHref = `tel:${supportCellphone.replace(/\D/g, '')}`;
+
+// Official support channels displayed in the Help module. Keeping these values
+// in one list prevents the main card and full-view dialog from drifting apart.
+const supportContacts = [
+  {
+    id: 'email',
+    label: 'Email Support',
+    value: supportEmail,
+    helper: 'Send system concerns, access questions, or report details by email.',
+    href: mailtoHref,
+    Icon: Mail,
+    tone: 'email',
+  },
+  {
+    id: 'telephone',
+    label: 'Telephone Number',
+    value: supportTelephone,
+    helper: 'Use this landline number for store or office support.',
+    href: telephoneHref,
+    Icon: Phone,
+    tone: 'telephone',
+  },
+  {
+    id: 'cellphone',
+    label: 'Cellphone Number',
+    value: supportCellphone,
+    helper: 'Use this mobile number when cellphone contact is preferred.',
+    href: cellphoneHref,
+    Icon: Phone,
+    tone: 'cellphone',
+  },
+];
 
 const faqs = [
   {
@@ -239,6 +272,31 @@ function AdminBadge() {
   return <span className="help-admin-badge">Admin only</span>;
 }
 
+function SupportContactList({ showAction = false }) {
+  return (
+    <div className="help-contact-list" aria-label="Official support contact information">
+      {supportContacts.map(({ id, label, value, helper, href, Icon, tone }) => (
+        <div className={`help-contact-card help-contact-card-${tone}`} key={id}>
+          <div className={`help-contact-icon help-contact-icon-${tone}`}>
+            <Icon className="h-5 w-5" aria-hidden="true" />
+          </div>
+          <div className="help-contact-details">
+            <h3>{label}</h3>
+            <a href={href}>{value}</a>
+            <p>{helper}</p>
+          </div>
+        </div>
+      ))}
+
+      {showAction && (
+        <Button type="button" className="help-contact-action" asChild>
+          <a href={mailtoHref}>Contact Support</a>
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export function HelpModule({ user }) {
   const [query, setQuery] = useState('');
   const [topic, setTopic] = useState('all');
@@ -267,7 +325,16 @@ export function HelpModule({ user }) {
     return troubleshooting.filter(item => includesQuery(item, normalizedQuery, ['title', 'cause', 'solution']));
   }, [normalizedQuery]);
 
-  const contactMatches = !normalizedQuery || ['contact support', 'email support', 'phone support', supportEmail, supportPhone, supportPhoneInfo, 'system administrator', 'store admin']
+  const contactSearchValues = [
+    'contact support',
+    'support information',
+    'email support',
+    'telephone number',
+    'cellphone number',
+    'phone support',
+    ...supportContacts.flatMap(contact => [contact.label, contact.value, contact.helper])
+  ];
+  const contactMatches = !normalizedQuery || contactSearchValues
     .some(value => value.toLowerCase().includes(normalizedQuery));
 
   const showFaqs = (topic === 'all' || topic === 'faqs') && visibleFaqs.length > 0;
@@ -739,21 +806,27 @@ export function HelpModule({ user }) {
 
         .help-contact-card {
           display: grid;
-          grid-template-columns: 48px minmax(0, 1fr);
+          grid-template-columns: 44px minmax(0, 1fr);
           gap: 14px;
-          align-items: center;
+          align-items: start;
           border-radius: 10px;
           padding: 16px;
-          margin-top: 14px;
           min-width: 0;
         }
 
-        .help-contact-card-email {
+        .help-contact-list {
+          display: grid;
+          gap: 14px;
+          margin-top: 14px;
+        }
+
+        .help-contact-card-email,
+        .help-contact-card-telephone {
           border: 1px solid #e9d5ff;
           background: #faf5ff;
         }
 
-        .help-contact-card-phone {
+        .help-contact-card-cellphone {
           border: 1px solid #bbf7d0;
           background: #f0fdf4;
         }
@@ -765,6 +838,19 @@ export function HelpModule({ user }) {
           place-items: center;
           border-radius: 10px;
           background: #ffffff;
+        }
+
+        .help-contact-icon-email,
+        .help-contact-icon-telephone {
+          color: #7e22ce;
+        }
+
+        .help-contact-icon-cellphone {
+          color: #15803d;
+        }
+
+        .help-contact-details {
+          min-width: 0;
         }
 
         .help-contact-card h3 {
@@ -779,9 +865,14 @@ export function HelpModule({ user }) {
           margin-top: 5px;
           font-size: 13px;
           font-weight: 700;
+          color: #6d28d9;
           max-width: 100%;
           overflow-wrap: anywhere;
           word-break: break-word;
+        }
+
+        .help-contact-card-cellphone a {
+          color: #15803d;
         }
 
         .help-contact-card p {
@@ -789,6 +880,17 @@ export function HelpModule({ user }) {
           color: #111827;
           font-size: 12px;
           overflow-wrap: anywhere;
+        }
+
+        .help-contact-action {
+          margin-top: 2px;
+          width: fit-content;
+          background: #f97316;
+          color: #ffffff;
+        }
+
+        .help-contact-action:hover {
+          background: #ea580c;
         }
 
         .help-empty-state {
@@ -937,6 +1039,10 @@ export function HelpModule({ user }) {
           .help-contact-icon {
             height: 40px;
             width: 40px;
+          }
+
+          .help-contact-action {
+            width: 100%;
           }
         }
       `}</style>
@@ -1144,31 +1250,10 @@ export function HelpModule({ user }) {
                     icon={<Headphones className="h-5 w-5" />}
                     tone="purple"
                     title="Contact Support"
-                    subtitle="Need help using the system?"
+                    subtitle="Official support information for E.M. Cayetano Trading."
                   />
 
-                  <div className="help-contact-card help-contact-card-email">
-                    <div className="help-contact-icon text-purple-700">
-                      <Mail className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <h3>Email Support</h3>
-                      <a className="text-purple-700 hover:underline" href={mailtoHref}>{supportEmail}</a>
-                      <p>Response within 24 hours</p>
-                    </div>
-                  </div>
-
-                  <div className="help-contact-card help-contact-card-phone">
-                    <div className="help-contact-icon text-green-700">
-                      <Phone className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <h3>Phone Support</h3>
-                      <a className="font-semibold text-green-700 hover:underline" href={telHref}>{supportPhone}</a>
-                      <p>{supportPhoneInfo}</p>
-                      <p>Mon-Sat, 8:00 AM-5:00 PM</p>
-                    </div>
-                  </div>
+                  <SupportContactList />
                 </CardContent>
               </Card>
             )}
@@ -1235,32 +1320,7 @@ export function HelpModule({ user }) {
               ))}
 
               {fullView === 'contact' && (
-                <>
-                  <div className="help-contact-card help-contact-card-email">
-                    <div className="help-contact-icon text-purple-700">
-                      <Mail className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <h3>Email Support</h3>
-                      <a className="text-purple-700 hover:underline" href={mailtoHref}>{supportEmail}</a>
-                      <p>Response within 24 hours</p>
-                    </div>
-                  </div>
-                  <div className="help-contact-card help-contact-card-phone">
-                    <div className="help-contact-icon text-green-700">
-                      <Phone className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <h3>Phone Support</h3>
-                      <a className="font-semibold text-green-700 hover:underline" href={telHref}>{supportPhone}</a>
-                      <p>{supportPhoneInfo}</p>
-                      <p>Mon-Sat, 8:00 AM-5:00 PM</p>
-                    </div>
-                  </div>
-                  <Button type="button" className="bg-orange-500 text-white hover:bg-orange-600" asChild>
-                    <a href={mailtoHref}>Contact Support</a>
-                  </Button>
-                </>
+                <SupportContactList showAction />
               )}
             </div>
           </div>

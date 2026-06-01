@@ -877,9 +877,9 @@ function AppContent() {
         {renderScreenPane("dashboard", <Dashboard onNavigate={navigateTo} user={currentUser} activeBranch={activeBranch} />)}
         {renderScreenPane("inventory", <InventoryModule user={currentUser} onNavigate={navigateTo} />)}
         {canAccessScreen(currentUser.role, "archive") && renderScreenPane("archive", <ArchiveModule user={currentUser} />)}
-        {canAccessScreen(currentUser.role, "reports") && renderScreenPane("reports", <ReportsModule user={currentUser} />)}
+        {canAccessScreen(currentUser.role, "reports") && renderScreenPane("reports", <ReportsModule user={currentUser} onNavigate={navigateTo} />)}
         {canAccessScreen(currentUser.role, "sales") && renderScreenPane("sales", <SalesModule user={currentUser} />)}
-        {canAccessScreen(currentUser.role, "purchases") && renderScreenPane("purchases", <PurchasesModule user={currentUser} />)}
+        {canAccessScreen(currentUser.role, "purchases") && renderScreenPane("purchases", <PurchasesModule user={currentUser} onNavigate={navigateTo} />)}
         {isAdminRole(currentUser.role) && currentScreen === "maintenance" && (
           <MaintenanceModule onNavigate={navigateTo} user={currentUser} />
         )}

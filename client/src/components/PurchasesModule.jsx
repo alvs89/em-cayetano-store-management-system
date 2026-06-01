@@ -16,6 +16,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { mergeSort } from '../utils/algorithms';
 import { formatPurchaseDocumentLabel, formatPurchasePaymentTerms } from '../utils/format';
+import { createNumericInputGuards } from '../utils/numericInputGuards';
+import {
+  PURCHASE_DRAFT_EVENT,
+  clearPurchaseDraft,
+  loadPurchaseDraft,
+} from '../utils/purchaseDrafts';
 import {
   HARDWARE_SUPPLIER_OPTIONS,
   SUPPLIER_CUSTOM_VALUE,
@@ -219,7 +225,7 @@ const getPurchaseReorderInfo = item => {
   };
 };
 
-export function PurchasesModule({ user }) {
+export function PurchasesModule({ user, onNavigate }) {
   const { inventory, purchaseTransactions, recordPurchase } = useData();
   const [supplierName, setSupplierName] = useState('');
   const [supplierMode, setSupplierMode] = useState('listed');
@@ -241,9 +247,10 @@ export function PurchasesModule({ user }) {
   const [isConfirmPurchaseOpen, setIsConfirmPurchaseOpen] = useState(false);
   const [purchaseHistorySearch, setPurchaseHistorySearch] = useState('');
   const [selectedPurchaseId, setSelectedPurchaseId] = useState('');
-  const [highlightedLineIndex, setHighlightedLineIndex] = useState(null);
+  const [highlightedLineIndexes, setHighlightedLineIndexes] = useState([]);
   const [dismissedSupplierSuggestionKey, setDismissedSupplierSuggestionKey] = useState('');
   const [useSupplierFilter, setUseSupplierFilter] = useState(true);
+  const [availableDraft, setAvailableDraft] = useState(() => loadPurchaseDraft());
   const purchaseLinesScrollRef = useRef(null);
   const purchaseLineRefs = useRef({});
   const purchaseLineSelectRefs = useRef({});
@@ -351,15 +358,17 @@ export function PurchasesModule({ user }) {
   }, [inventoryPage, inventoryPageCount]);
 
   useEffect(() => {
-    if (highlightedLineIndex === null) return undefined;
+    if (highlightedLineIndexes.length === 0) return undefined;
 
-    const timeoutId = window.setTimeout(() => setHighlightedLineIndex(null), 1800);
+    const timeoutId = window.setTimeout(() => setHighlightedLineIndexes([]), 1800);
     let secondFrameId;
 
     const firstFrameId = window.requestAnimationFrame(() => {
       secondFrameId = window.requestAnimationFrame(() => {
-      const row = purchaseLineRefs.current[highlightedLineIndex];
-      const select = purchaseLineSelectRefs.current[highlightedLineIndex];
+      const firstHighlightedIndex = highlightedLineIndexes[0];
+      const lastHighlightedIndex = highlightedLineIndexes[highlightedLineIndexes.length - 1];
+      const row = purchaseLineRefs.current[lastHighlightedIndex];
+      const select = purchaseLineSelectRefs.current[firstHighlightedIndex];
       const scrollContainer = purchaseLinesScrollRef.current;
 
       if (scrollContainer) {
@@ -382,7 +391,7 @@ export function PurchasesModule({ user }) {
       window.cancelAnimationFrame(firstFrameId);
       if (secondFrameId) window.cancelAnimationFrame(secondFrameId);
     };
-  }, [highlightedLineIndex, purchaseLines.length]);
+  }, [highlightedLineIndexes, purchaseLines.length]);
 
   const getInventoryById = inventoryId =>
     inventory.find(item => String(item.id) === String(inventoryId));
@@ -477,6 +486,105 @@ export function PurchasesModule({ user }) {
 
     return null;
   })();
+
+  const getValidDraftLines = draft =>
+    (draft?.items || [])
+      .filter(item => getInventoryById(item.inventoryId) && Number(item.quantity || 0) > 0)
+      .map(item => ({
+        inventoryId: String(item.inventoryId),
+        quantity: String(Math.max(1, Math.floor(Number(item.quantity || 1)))),
+        unitCost: item.unitCost || ''
+      }));
+
+  const applyPurchaseDraft = (draft, options = {}) => {
+    if (!draft) return;
+    if (draft.branch && user?.branch && draft.branch !== user.branch) {
+      toast.warning('This purchase draft belongs to another branch.', {
+        description: `Draft branch: ${draft.branch}. Current branch: ${user.branch}.`
+      });
+      return;
+    }
+
+    const draftLines = getValidDraftLines(draft);
+    if (draftLines.length === 0) {
+      toast.warning('Purchase draft has no valid inventory items.', {
+        description: 'The items may have been archived, moved, or removed from the current branch.'
+      });
+      clearPurchaseDraft();
+      setAvailableDraft(null);
+      return;
+    }
+
+    setSupplierName(draft.supplierName || '');
+    setSupplierMode(isListedSupplier(draft.supplierName) ? 'listed' : 'custom');
+    setUseSupplierFilter(true);
+    setDismissedSupplierSuggestionKey('');
+    setRemarks('');
+    setPurchaseLines(draftLines);
+    setInventoryStatusFilter('all');
+    setSearchQuery('');
+    setInventoryPage(1);
+    setHighlightedLineIndexes(draftLines.map((_, index) => index));
+    clearPurchaseDraft();
+    setAvailableDraft(null);
+
+    if (!options.silent) {
+      toast.success('Purchase draft loaded.', {
+        description: `${draftLines.length} reorder item${draftLines.length === 1 ? '' : 's'} added to the receiving worksheet.`
+      });
+    }
+  };
+
+  const dismissPurchaseDraft = () => {
+    clearPurchaseDraft();
+    setAvailableDraft(null);
+    toast.info('Purchase draft dismissed.');
+  };
+
+  const navigateToSupplierReorderReport = () => {
+    localStorage.setItem('reports_target_type', 'supplier-reorder');
+    if (availableDraft?.supplierName) {
+      localStorage.setItem('reports_target_supplier', availableDraft.supplierName);
+    }
+    window.dispatchEvent(new CustomEvent('reports-target-view', {
+      detail: {
+        reportType: 'supplier-reorder',
+        supplier: availableDraft?.supplierName || ''
+      }
+    }));
+    onNavigate?.('reports');
+  };
+
+  useEffect(() => {
+    const handleDraftUpdate = event => {
+      setAvailableDraft(event.detail || loadPurchaseDraft());
+    };
+
+    window.addEventListener(PURCHASE_DRAFT_EVENT, handleDraftUpdate);
+    return () => window.removeEventListener(PURCHASE_DRAFT_EVENT, handleDraftUpdate);
+  }, []);
+
+  useEffect(() => {
+    const applyEntryTarget = () => {
+      setIsPurchaseHistoryOpen(false);
+      setPurchaseHistorySearch('');
+      setSelectedPurchaseId('');
+    };
+
+    if (localStorage.getItem('purchase_entry_target') === 'true') {
+      applyEntryTarget();
+      localStorage.removeItem('purchase_entry_target');
+    }
+
+    const handleEntryTarget = () => {
+      applyEntryTarget();
+      localStorage.removeItem('purchase_entry_target');
+    };
+
+    window.addEventListener('purchase-entry-target-view', handleEntryTarget);
+    return () => window.removeEventListener('purchase-entry-target-view', handleEntryTarget);
+  }, []);
+
   const isInventorySelectedInOtherLine = (inventoryId, currentIndex) =>
     purchaseLines.some((line, lineIndex) =>
       lineIndex !== currentIndex && String(line.inventoryId) === String(inventoryId)
@@ -567,7 +675,7 @@ export function PurchasesModule({ user }) {
   const addLine = () => {
     setPurchaseLines(prev => {
       const nextIndex = prev.length;
-      setHighlightedLineIndex(nextIndex);
+      setHighlightedLineIndexes([nextIndex]);
       return [...prev, emptyPurchaseLine()];
     });
     toast.success('Blank line added. Please complete the item details.');
@@ -581,7 +689,7 @@ export function PurchasesModule({ user }) {
     if (!item || isSaving) return;
     const existingIndex = purchaseLines.findIndex(line => String(line.inventoryId) === String(item.id));
     if (existingIndex >= 0) {
-      setHighlightedLineIndex(existingIndex);
+      setHighlightedLineIndexes([existingIndex]);
       toast.info('This item has already been added. Adjust the quantity in Current Purchase.', {
         id: `purchase-item-already-added-${item.id}`
       });
@@ -597,10 +705,10 @@ export function PurchasesModule({ user }) {
     setPurchaseLines(prev => {
       const emptyIndex = prev.findIndex(line => !line.inventoryId && !line.quantity && !line.unitCost);
       if (emptyIndex >= 0) {
-        setHighlightedLineIndex(emptyIndex);
+        setHighlightedLineIndexes([emptyIndex]);
         return prev.map((line, lineIndex) => lineIndex === emptyIndex ? preparedLine : line);
       }
-      setHighlightedLineIndex(prev.length);
+      setHighlightedLineIndexes([prev.length]);
       return [...prev, preparedLine];
     });
     toast.success(`${item.name} added to the current purchase.`);
@@ -1117,6 +1225,64 @@ export function PurchasesModule({ user }) {
           gap: 0.65rem;
           border-top: 1px solid #e2e8f0;
           padding-top: 0.9rem;
+        }
+
+        .purchase-draft-banner {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) max-content;
+          align-items: center;
+          gap: 0.85rem;
+          margin-bottom: 0.85rem;
+          border: 1px solid #bbf7d0;
+          border-radius: 12px;
+          background: #f0fdf4;
+          padding: 0.8rem 0.9rem;
+          box-shadow: inset 3px 0 0 #22c55e;
+        }
+
+        .purchase-draft-copy {
+          min-width: 0;
+        }
+
+        .purchase-draft-title {
+          margin: 0 0 0.2rem;
+          color: #14532d;
+          font-size: 0.85rem;
+          font-weight: 850;
+          line-height: 1.25;
+        }
+
+        .purchase-draft-text {
+          margin: 0;
+          color: #334155;
+          font-size: 0.78rem;
+          line-height: 1.4;
+        }
+
+        .purchase-draft-text strong {
+          color: #0f172a;
+          font-weight: 800;
+        }
+
+        .purchase-draft-actions {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          gap: 0.45rem;
+        }
+
+        .purchase-draft-load {
+          border: 1px solid #15803d;
+          background: #16a34a;
+          color: #ffffff;
+          font-weight: 750;
+        }
+
+        .purchase-draft-load:hover,
+        .purchase-draft-load:focus-visible {
+          border-color: #166534;
+          background: #15803d;
+          color: #ffffff;
         }
 
         .purchase-confirm-dialog {
@@ -2037,8 +2203,34 @@ export function PurchasesModule({ user }) {
 
           .purchase-header-actions {
             width: 100%;
-            display: grid;
+            justify-content: flex-start;
+            gap: 0.5rem;
+          }
+
+          .purchase-header-actions button {
+            width: auto;
+            min-width: 0;
+            min-height: 2.25rem;
+            padding-left: 0.8rem;
+            padding-right: 0.8rem;
+          }
+
+          .purchase-draft-banner {
             grid-template-columns: 1fr;
+            align-items: stretch;
+            padding: 0.75rem;
+          }
+
+          .purchase-draft-actions {
+            justify-content: flex-start;
+            gap: 0.45rem;
+          }
+
+          .purchase-draft-actions button {
+            width: auto;
+            min-height: 2.15rem;
+            padding-left: 0.8rem;
+            padding-right: 0.8rem;
           }
 
           .purchase-current-footer {
@@ -2785,6 +2977,46 @@ export function PurchasesModule({ user }) {
               </div>
             </CardHeader>
             <CardContent className="purchase-card-content">
+              {availableDraft && (
+                <div className="purchase-draft-banner">
+                  <div className="purchase-draft-copy">
+                    <p className="purchase-draft-title">Supplier reorder draft ready</p>
+                    <p className="purchase-draft-text">
+                      {availableDraft.items?.length || 0} item{(availableDraft.items?.length || 0) === 1 ? '' : 's'} from <strong>{availableDraft.supplierName || 'selected supplier'}</strong> can be loaded into this worksheet.
+                    </p>
+                  </div>
+                  <div className="purchase-draft-actions">
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="purchase-draft-load"
+                      onClick={() => applyPurchaseDraft(availableDraft)}
+                      disabled={isSaving}
+                    >
+                      <PackagePlus className="mr-2 h-4 w-4" />
+                      Load Draft
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={navigateToSupplierReorderReport}
+                      disabled={isSaving}
+                    >
+                      Review Report
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={dismissPurchaseDraft}
+                      disabled={isSaving}
+                    >
+                      Dismiss
+                    </Button>
+                  </div>
+                </div>
+              )}
               <div ref={purchaseLinesScrollRef} className="purchase-scroll purchase-lines-wrap">
                 <Table className="purchase-lines-table">
                   <TableHeader>
@@ -2812,7 +3044,7 @@ export function PurchasesModule({ user }) {
                               delete purchaseLineRefs.current[index];
                             }
                           }}
-                          className={highlightedLineIndex === index ? 'purchase-line-highlight' : ''}
+                          className={highlightedLineIndexes.includes(index) ? 'purchase-line-highlight' : ''}
                         >
                           <TableCell data-label="#" className="font-semibold text-slate-900">{index + 1}</TableCell>
                           <TableCell data-label="Inventory Item">
@@ -2857,7 +3089,12 @@ export function PurchasesModule({ user }) {
                                 inputMode="numeric"
                                 pattern="[0-9]*"
                                 value={line.quantityInput}
-                                onChange={event => updateLineQuantity(index, event.target.value)}
+                                {...createNumericInputGuards({
+                                  mode: 'whole',
+                                  fieldName: 'Quantity received',
+                                  toastId: `purchase-line-${index + 1}-quantity-entry`,
+                                  onChange: event => updateLineQuantity(index, event.target.value),
+                                })}
                                 onBlur={event => validateLineQuantityOnBlur(index, event.target.value)}
                                 placeholder="0"
                                 disabled={isSaving}
@@ -2889,7 +3126,12 @@ export function PurchasesModule({ user }) {
                                 type="text"
                                 inputMode="decimal"
                                 value={line.unitCostInput}
-                                onChange={event => updateLineUnitCost(index, event.target.value)}
+                                {...createNumericInputGuards({
+                                  mode: 'decimal',
+                                  fieldName: 'Unit cost',
+                                  toastId: `purchase-line-${index + 1}-unit-cost-entry`,
+                                  onChange: event => updateLineUnitCost(index, event.target.value),
+                                })}
                                 onBlur={event => validateLineUnitCostOnBlur(index, event.target.value)}
                                 placeholder="0"
                                 disabled={isSaving}

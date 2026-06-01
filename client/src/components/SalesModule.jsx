@@ -15,6 +15,7 @@ import { Textarea } from './ui/textarea';
 import { Badge } from './ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { binarySearch, mergeSort } from '../utils/algorithms';
+import { createNumericInputGuards } from '../utils/numericInputGuards';
 import { canRecordSales, isAdminRole } from '../utils/roles';
 
 const emptySaleLine = () => ({
@@ -1048,6 +1049,28 @@ export function SalesModule({ user }) {
 
     window.addEventListener('sales-history-target-view', handleHistoryTarget);
     return () => window.removeEventListener('sales-history-target-view', handleHistoryTarget);
+  }, []);
+
+  useEffect(() => {
+    const applyEntryTarget = () => {
+      localStorage.removeItem('sales_history_target_period');
+      setIsHistoryOpen(false);
+      setHistorySearch('');
+      setSelectedHistorySaleId('');
+    };
+
+    if (localStorage.getItem('sales_entry_target') === 'true') {
+      applyEntryTarget();
+      localStorage.removeItem('sales_entry_target');
+    }
+
+    const handleEntryTarget = () => {
+      applyEntryTarget();
+      localStorage.removeItem('sales_entry_target');
+    };
+
+    window.addEventListener('sales-entry-target-view', handleEntryTarget);
+    return () => window.removeEventListener('sales-entry-target-view', handleEntryTarget);
   }, []);
 
   const activeInventory = useMemo(
@@ -6484,10 +6507,15 @@ export function SalesModule({ user }) {
                                   inputMode="numeric"
                                   value={line.quantity}
                                   disabled={isSaving}
-                                  onChange={event => updateLineQuantity(
-                                    index,
-                                    sanitizeWholeNumberInput(event.target.value, 'Quantity sold', 'sales-quantity-numbers-only')
-                                  )}
+                                  {...createNumericInputGuards({
+                                    mode: 'whole',
+                                    fieldName: 'Quantity sold',
+                                    toastId: 'sales-cart-quantity-entry',
+                                    onChange: event => updateLineQuantity(
+                                      index,
+                                      sanitizeWholeNumberInput(event.target.value, 'Quantity sold', 'sales-quantity-numbers-only')
+                                    ),
+                                  })}
                                   aria-label={`Quantity sold for ${displayName || 'non-inventory item'}`}
                                 />
                                 <button
@@ -6511,7 +6539,12 @@ export function SalesModule({ user }) {
                                   value={line.unitPrice}
                                   placeholder="0.00"
                                   disabled={isSaving}
-                                  onChange={event => updateLineUnitPrice(index, event.target.value)}
+                                  {...createNumericInputGuards({
+                                    mode: 'decimal',
+                                    fieldName: 'Unit price',
+                                    toastId: 'sales-cart-unit-price-entry',
+                                    onChange: event => updateLineUnitPrice(index, event.target.value),
+                                  })}
                                   onBlur={() => normalizeLineUnitPrice(index)}
                                   aria-label={`Unit price for ${displayName || 'non-inventory item'}`}
                                   title="Edit the selling price for this sale"

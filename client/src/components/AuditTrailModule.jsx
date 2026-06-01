@@ -6,6 +6,7 @@ import axios from 'axios';
 import { ArrowRight, CalendarDays, Clock, Database, Eye, RefreshCw, Search, ShieldCheck } from 'lucide-react';
 import { apiUrl } from '../utils/api';
 import { formatDateTime } from '../utils/format';
+import { getStockMovementReasonLabel } from '../utils/stockMovementReasons';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -93,9 +94,12 @@ const formatCustomerType = value => {
   return customerTypes[String(value || '').toLowerCase()] || formatFieldLabel(value) || 'None';
 };
 
+const isMovementReasonField = key => String(key || '').replace(/[_\s-]/g, '').toLowerCase() === 'movementreason';
+
 const formatDetailValue = (value, key = '') => {
   if (value === null || value === undefined || value === '') return 'None';
   if (String(key || '').toLowerCase() === 'customertype') return formatCustomerType(value);
+  if (isMovementReasonField(key)) return getStockMovementReasonLabel(value);
   if (['actualtransactionat', 'encodedat', 'transactiondate', 'encodeddate'].includes(String(key || '').replace(/[_\s-]/g, '').toLowerCase())) {
     return formatDateTime(value);
   }

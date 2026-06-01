@@ -2983,7 +2983,15 @@ app.post('/api/auth/send-otp', async (req, res) => {
     const rateLimitKey = normalizeOtpRateLimitIdentifier('username', user.username);
     const rateLimit = checkOtpRateLimit(rateLimitKey);
     if (!rateLimit.allowed) {
-      return res.status(429).json(rateLimit);
+      const existingExpiry = user.login_otp_expires ? new Date(user.login_otp_expires) : null;
+      const existingExpiresAt = existingExpiry && !Number.isNaN(existingExpiry.getTime())
+        ? existingExpiry.toISOString()
+        : undefined;
+      return res.status(429).json({
+        ...rateLimit,
+        expiresAt: existingExpiresAt,
+        serverTime: Date.now()
+      });
     }
 
     const issuedAt = Date.now();

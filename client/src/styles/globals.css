@@ -702,9 +702,9 @@ input.actual-transaction-part-input[data-slot="input"]:focus-visible {
 }
 
 #root :is([data-slot="select-item"], [data-slot="dropdown-menu-item"], [data-slot="command-item"]):not([data-disabled]):not([aria-disabled="true"]):is(:hover, :focus, :focus-visible, [data-highlighted], [data-state="checked"]) {
-  background-color: #fffbeb;
+  background-color: #f8fafc;
   color: #111827;
-  box-shadow: inset 3px 0 0 var(--emc-interactive-yellow);
+  box-shadow: inset 3px 0 0 #cbd5e1;
 }
 
 #root :is(
@@ -740,9 +740,9 @@ input.actual-transaction-part-input[data-slot="input"]:focus-visible {
   [class*="guide-row"],
   [class*="trouble-row"]
 ):not(button):not(a):not(:disabled):not([aria-disabled="true"]):not([class*="sales-"]):not(.purchase-inventory-row):is(:hover, :focus-visible, [data-state="open"], [data-active="true"], [aria-selected="true"]) {
-  border-color: var(--emc-interactive-border);
-  background-color: var(--emc-interactive-yellow-wash);
-  box-shadow: var(--emc-interactive-shadow);
+  border-color: #cbd5e1;
+  background-color: #ffffff;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
 }
 
 #root .auth-screen-shell,

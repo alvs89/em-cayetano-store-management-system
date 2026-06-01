@@ -55,6 +55,57 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
     }
   }, [branch, username, password, branchHintShown]);
 
+  const continueToTwoFactor = (loginData, otpData = {}, { reusedExistingCode = false } = {}) => {
+    const challengeUsername = String(loginData.username || username || '').trim();
+    const challengeEmail = loginData.email || '';
+    if (!challengeUsername) return;
+    const serverTime = otpData.serverTime || Date.now();
+    const expiresAt = otpData.expiresAt || new Date(Date.now() + 120000).toISOString();
+    const resendCooldownKey = `otp_2fa_resend_available_at_${challengeUsername.toLowerCase()}`;
+    const resendExhaustedKey = `${resendCooldownKey}_exhausted`;
+
+    // Persist the active challenge so accidental navigation does not strand a valid OTP.
+    localStorage.setItem('otp_2fa_issued_at', serverTime.toString());
+    localStorage.setItem('otp_2fa_expires_at', expiresAt);
+    localStorage.removeItem('otp_issued_at');
+    localStorage.removeItem('otp_expires_at');
+
+    if (otpData.retryAfterSeconds) {
+      localStorage.setItem(
+        resendCooldownKey,
+        (Date.now() + Number(otpData.retryAfterSeconds || 60) * 1000).toString()
+      );
+    }
+    if (otpData.remainingAttempts === 0) {
+      localStorage.setItem(resendExhaustedKey, 'true');
+    } else {
+      localStorage.removeItem(resendExhaustedKey);
+    }
+
+    localStorage.setItem('temp_username', challengeUsername);
+    localStorage.setItem('temp_email', challengeEmail);
+    localStorage.setItem('temp_branch_selected', branch);
+
+    if (reusedExistingCode) {
+      toast.info('A verification code was already sent. Please enter the latest code from your email.', {
+        id: 'login-existing-otp-challenge',
+        classNames: {
+          toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+        },
+      });
+    }
+
+    if (typeof onNavigateTo2FA === 'function') {
+      onNavigateTo2FA({
+        username: challengeUsername,
+        email: challengeEmail,
+        branch,
+      });
+    } else {
+      navigate('/2fa');
+    }
+  };
+
   // Submit credentials; on success either receive token or trigger 2FA flow
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -92,35 +143,18 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
       }
 
       if (response.data.require2fa) {
-        const otpResponse = await axios.post(apiUrl('/api/auth/send-otp'), { username });
-        const serverTime = otpResponse.data.serverTime || Date.now();
-        const expiresAt = otpResponse.data.expiresAt || new Date(Date.now() + 120000).toISOString();
-        localStorage.setItem('otp_2fa_issued_at', serverTime.toString());
-        localStorage.setItem('otp_2fa_expires_at', expiresAt);
-        localStorage.removeItem('otp_issued_at');
-        localStorage.removeItem('otp_expires_at');
-        const resendCooldownKey = `otp_2fa_resend_available_at_${username.toLowerCase()}`;
-        const resendExhaustedKey = `${resendCooldownKey}_exhausted`;
-        localStorage.setItem(
-          resendCooldownKey,
-          (Date.now() + Number(otpResponse.data.retryAfterSeconds || 60) * 1000).toString()
-        );
-        if (otpResponse.data.remainingAttempts === 0) {
-          localStorage.setItem(resendExhaustedKey, 'true');
-        } else {
-          localStorage.removeItem(resendExhaustedKey);
-        }
-        localStorage.setItem('temp_username', response.data.username);
-        localStorage.setItem('temp_email', response.data.email);
-        localStorage.setItem('temp_branch_selected', branch);
-        if (typeof onNavigateTo2FA === 'function') {
-          onNavigateTo2FA({
-            username: response.data.username,
-            email: response.data.email,
-            branch,
-          });
-        } else {
-          navigate('/2fa');
+        try {
+          const otpResponse = await axios.post(apiUrl('/api/auth/send-otp'), { username });
+          continueToTwoFactor(response.data, otpResponse.data);
+        } catch (otpError) {
+          const otpStatus = otpError.response?.status;
+          const otpMessage = otpError.response?.data?.error || otpError.response?.data?.message || '';
+          const hasActiveCode = otpStatus === 429 && otpMessage.toLowerCase().includes('already sent');
+          if (hasActiveCode) {
+            continueToTwoFactor(response.data, otpError.response?.data, { reusedExistingCode: true });
+            return;
+          }
+          throw otpError;
         }
       }
 

@@ -20,6 +20,13 @@ import { useData } from "./DataContext";
 import { PageHeader } from "./PageHeader";
 import { canManageInventory, canPerformInventoryMovement } from "../utils/roles";
 import {
+  MANUAL_STOCK_IN_REASON_OPTIONS,
+  MANUAL_STOCK_OUT_REASON_OPTIONS,
+  STOCK_IN_REASON_OPTIONS,
+  getStockInReasonLabel,
+  getStockOutReasonLabel,
+} from "../utils/stockMovementReasons";
+import {
   HARDWARE_SUPPLIER_OPTIONS,
   SUPPLIER_CUSTOM_VALUE,
   getSupplierSelectValue,
@@ -37,36 +44,6 @@ const OFFICIAL_INVENTORY_CATEGORIES = [
   "Paints",
   "Other"
 ];
-
-const STOCK_OUT_REASON_OPTIONS = [
-  { value: "damaged", label: "Damaged", description: "Items removed because they can no longer be sold." },
-  { value: "supplier_return", label: "Supplier Return / Reject", description: "Defective items removed because they will be returned to the supplier." },
-  { value: "expired", label: "Expired", description: "Items removed because they are past their usable date." },
-  { value: "lost_missing", label: "Lost/Missing", description: "Items missing after checking actual stock." },
-  { value: "manual_adjustment", label: "Manual Adjustment", description: "Stock corrected after a verified count." },
-  { value: "branch_transfer", label: "Branch Transfer", description: "Items moved to another branch." }
-];
-
-const getStockOutReasonLabel = value =>
-  STOCK_OUT_REASON_OPTIONS.find(option => option.value === value)?.label || "";
-
-const STOCK_IN_REASON_OPTIONS = [
-  { value: "delivery_received", label: "Delivery Received", description: "New stock received from a supplier or delivery." },
-  { value: "purchase_received", label: "Purchase Received", description: "Stock added through a supplier purchase entry." },
-  { value: "returned_item", label: "Returned Item", description: "Returned items added back after checking their condition." },
-  { value: "customer_refund", label: "Customer Refund", description: "Returned customer items added back after refund validation." },
-  { value: "supplier_replacement", label: "Supplier Replacement", description: "Replacement item received from supplier at no extra charge." },
-  { value: "beginning_balance", label: "Beginning Balance", description: "Starting stock entered during setup or inventory reset." },
-  { value: "manual_adjustment", label: "Manual Adjustment", description: "Stock corrected after a verified count." },
-  { value: "found_stock", label: "Found Stock", description: "Items found during checking that were not reflected in the system." }
-];
-
-const MANUAL_STOCK_IN_REASON_OPTIONS = STOCK_IN_REASON_OPTIONS.filter(
-  option => option.value !== "delivery_received" && option.value !== "purchase_received"
-);
-
-const getStockInReasonLabel = value =>
-  STOCK_IN_REASON_OPTIONS.find(option => option.value === value)?.label || "";
 
 const ARCHIVE_REASON_OPTIONS = [
   { value: "discontinued", label: "Discontinued" },
@@ -4584,7 +4561,9 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement(Label, {
     className: "text-xs font-semibold text-slate-700"
   }, "Quantity to Add"), /*#__PURE__*/React.createElement(Input, {
-    type: "number",
+    type: "text",
+    inputMode: "numeric",
+    "data-validation-label": "Batch Stock Adjustment Quantity",
     min: "1",
     value: row.quantity,
     onChange: e => updateBatchStockAdjustmentRow(
@@ -4755,7 +4734,7 @@ export function InventoryModule({
     }
   }, /*#__PURE__*/React.createElement(SelectValue, {
     placeholder: "Select why these stocks are being removed"
-  })), /*#__PURE__*/React.createElement(SelectContent, null, STOCK_OUT_REASON_OPTIONS.map(option => /*#__PURE__*/React.createElement(SelectItem, {
+  })), /*#__PURE__*/React.createElement(SelectContent, null, MANUAL_STOCK_OUT_REASON_OPTIONS.map(option => /*#__PURE__*/React.createElement(SelectItem, {
     key: option.value,
     value: option.value
   }, option.label))))), /*#__PURE__*/React.createElement("div", {
@@ -4793,7 +4772,9 @@ export function InventoryModule({
     }, /*#__PURE__*/React.createElement(Label, {
       className: "text-xs font-semibold text-slate-700"
     }, "Quantity"), /*#__PURE__*/React.createElement(Input, {
-      type: "number",
+      type: "text",
+      inputMode: "numeric",
+      "data-validation-label": "Batch Stock Out Quantity",
       min: "1",
       max: selectedBatchItem?.quantity || undefined,
       value: row.quantity,
@@ -5021,7 +5002,9 @@ export function InventoryModule({
     }
   }, "Quantity to Add"), /*#__PURE__*/React.createElement(Input, {
     id: "stock-in-amount",
-    type: "number",
+    type: "text",
+    inputMode: "numeric",
+    "data-validation-label": "Stock In Quantity",
     value: stockAmount,
     onChange: e => setStockAmount(sanitizeWholeNumberInput(e.target.value, "Stock In Quantity", "stock-in-quantity-numbers-only")),
     placeholder: "0",
@@ -5210,7 +5193,9 @@ export function InventoryModule({
     }
   }, "Quantity to Remove"), /*#__PURE__*/React.createElement(Input, {
     id: "stock-out-amount",
-    type: "number",
+    type: "text",
+    inputMode: "numeric",
+    "data-validation-label": "Stock Out Quantity",
     value: stockAmount,
     onChange: e => setStockAmount(sanitizeWholeNumberInput(e.target.value, "Stock Out Quantity", "stock-out-quantity-numbers-only")),
     placeholder: "0",
@@ -5246,7 +5231,7 @@ export function InventoryModule({
     }
   }, /*#__PURE__*/React.createElement(SelectValue, {
     placeholder: "Select why this stock is being removed"
-  })), /*#__PURE__*/React.createElement(SelectContent, null, STOCK_OUT_REASON_OPTIONS.map(option => /*#__PURE__*/React.createElement(SelectItem, {
+  })), /*#__PURE__*/React.createElement(SelectContent, null, MANUAL_STOCK_OUT_REASON_OPTIONS.map(option => /*#__PURE__*/React.createElement(SelectItem, {
     key: option.value,
     value: option.value
   }, option.label)))), stockOutReason && /*#__PURE__*/React.createElement("p", {
@@ -5255,7 +5240,7 @@ export function InventoryModule({
       fontSize: "12px",
       lineHeight: "1.35"
     }
-  }, STOCK_OUT_REASON_OPTIONS.find(option => option.value === stockOutReason)?.description)
+  }, MANUAL_STOCK_OUT_REASON_OPTIONS.find(option => option.value === stockOutReason)?.description)
   ), renderActualTransactionDateFields({
     idPrefix: "stock-out",
     value: stockActualTransactionAt,

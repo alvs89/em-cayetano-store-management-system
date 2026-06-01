@@ -5,13 +5,13 @@ import {
   Activity,
   AlertTriangle,
   ArrowRight,
+  CalendarDays,
   ClipboardCheck,
   FileText,
   Home,
   Package,
   PackagePlus,
   ReceiptText,
-  Search,
   Target,
   Truck,
   Users
@@ -78,12 +78,25 @@ const isToday = (value, todayKey = getLocalDateKey()) => {
   return getLocalDateKey(value) === todayKey;
 };
 
-const isThisMonth = value => {
-  if (!value) return false;
-  const date = new Date(value);
-  const now = new Date();
-  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
+const parseLocalDateKey = value => {
+  const [year, month, day] = String(value || '').split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  return Number.isNaN(date.getTime()) ? new Date() : date;
 };
+
+const getOffsetDateKey = (value, dayOffset) => {
+  const date = parseLocalDateKey(value);
+  date.setDate(date.getDate() + dayOffset);
+  return getLocalDateKey(date);
+};
+
+const DASHBOARD_SALES_PERIOD_OPTIONS = [
+  { value: 'today', label: 'Today' },
+  { value: 'week', label: 'This Week' },
+  { value: 'month', label: 'This Month' },
+  { value: 'year', label: 'This Year' },
+  { value: 'day', label: 'Selected Day' }
+];
 
 const isNonInventorySaleItem = item =>
   item?.isInventoryItem === false || item?.itemType === 'non_inventory' || item?.item_type === 'non_inventory';
@@ -121,6 +134,19 @@ const getTopSellingItem = sales => {
   return Array.from(grouped.values()).sort((a, b) => b.quantity - a.quantity || a.itemName.localeCompare(b.itemName))[0] || null;
 };
 
+const getSalesUnits = sales =>
+  (sales || []).reduce((sum, sale) => (
+    sum + (sale.items || []).reduce((itemSum, item) => itemSum + Number(item.quantitySold || item.quantity || 0), 0)
+  ), 0);
+
+const getComparisonDirection = (current, previous) => {
+  if (previous <= 0 && current <= 0) return 'neutral';
+  if (previous <= 0) return 'up';
+  if (current > previous) return 'up';
+  if (current < previous) return 'down';
+  return 'neutral';
+};
+
 export function Dashboard({
   onNavigate,
   user,
@@ -135,6 +161,9 @@ export function Dashboard({
   const [isQuotaDialogOpen, setIsQuotaDialogOpen] = React.useState(false);
   const [quotaForm, setQuotaForm] = React.useState('');
   const [isSavingQuota, setIsSavingQuota] = React.useState(false);
+  const [salesPeriod, setSalesPeriod] = React.useState('today');
+  const [selectedSalesDate, setSelectedSalesDate] = React.useState(() => getLocalDateKey());
+  const [selectedComparisonDate, setSelectedComparisonDate] = React.useState(() => getOffsetDateKey(getLocalDateKey(), -1));
 
   const {
     inventory,
@@ -199,22 +228,121 @@ export function Dashboard({
     };
   }, []);
 
+  const getDashboardSalesBounds = (period = salesPeriod, dateKey = selectedSalesDate) => {
+    const now = parseLocalDateKey(todayKey);
+    const selectedDate = parseLocalDateKey(dateKey || todayKey);
+    const anchorDate = period === 'day' ? selectedDate : now;
+    const start = new Date(anchorDate);
+    const end = new Date(anchorDate);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+
+    if (period === 'week') {
+      start.setDate(anchorDate.getDate() - anchorDate.getDay());
+      end.setTime(start.getTime());
+      end.setDate(start.getDate() + 6);
+      end.setHours(23, 59, 59, 999);
+    } else if (period === 'month') {
+      start.setDate(1);
+      end.setFullYear(anchorDate.getFullYear(), anchorDate.getMonth() + 1, 0);
+      end.setHours(23, 59, 59, 999);
+    } else if (period === 'year') {
+      start.setFullYear(anchorDate.getFullYear(), 0, 1);
+      end.setFullYear(anchorDate.getFullYear(), 11, 31);
+      end.setHours(23, 59, 59, 999);
+    }
+
+    return { start, end };
+  };
+
+  const getPreviousDashboardSalesBounds = () => {
+    const { start, end } = getDashboardSalesBounds();
+    const previousStart = new Date(start);
+    const previousEnd = new Date(end);
+
+    if (salesPeriod === 'week') {
+      previousStart.setDate(start.getDate() - 7);
+      previousEnd.setDate(end.getDate() - 7);
+    } else if (salesPeriod === 'month') {
+      previousStart.setMonth(start.getMonth() - 1, 1);
+      previousEnd.setFullYear(previousStart.getFullYear(), previousStart.getMonth() + 1, 0);
+      previousEnd.setHours(23, 59, 59, 999);
+    } else if (salesPeriod === 'year') {
+      previousStart.setFullYear(start.getFullYear() - 1, 0, 1);
+      previousEnd.setFullYear(start.getFullYear() - 1, 11, 31);
+      previousEnd.setHours(23, 59, 59, 999);
+    } else if (salesPeriod === 'day') {
+      const comparisonDate = parseLocalDateKey(selectedComparisonDate || getOffsetDateKey(selectedSalesDate || todayKey, -1));
+      previousStart.setTime(comparisonDate.getTime());
+      previousStart.setHours(0, 0, 0, 0);
+      previousEnd.setTime(comparisonDate.getTime());
+      previousEnd.setHours(23, 59, 59, 999);
+    } else {
+      previousStart.setDate(start.getDate() - 1);
+      previousEnd.setDate(end.getDate() - 1);
+    }
+
+    return { start: previousStart, end: previousEnd };
+  };
+
+  const formatDashboardSalesRange = () => {
+    const { start, end } = getDashboardSalesBounds();
+    const sameDay = getLocalDateKey(start) === getLocalDateKey(end);
+    if (sameDay) {
+      return start.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    }
+    const sameYear = start.getFullYear() === end.getFullYear();
+    const startLabel = start.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: sameYear ? undefined : 'numeric'
+    });
+    const endLabel = end.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
+    return `${startLabel} – ${endLabel}`;
+  };
+
+  const formatDashboardDateLabel = dateKey =>
+    parseLocalDateKey(dateKey).toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric'
+    });
+
+  const isSaleInDashboardPeriod = sale => {
+    const saleDate = new Date(sale.createdAt);
+    if (Number.isNaN(saleDate.getTime())) return false;
+    const { start, end } = getDashboardSalesBounds();
+    return saleDate >= start && saleDate <= end;
+  };
+
+  const isSaleInPreviousDashboardPeriod = sale => {
+    const saleDate = new Date(sale.createdAt);
+    if (Number.isNaN(saleDate.getTime())) return false;
+    const { start, end } = getPreviousDashboardSalesBounds();
+    return saleDate >= start && saleDate <= end;
+  };
+
   const salesToday = (salesTransactions || []).filter(sale => sale.status !== 'cancelled' && isToday(sale.createdAt, todayKey));
   const stockMovementsToday = (stockMovements || []).filter(movement => isToday(movement.createdAt, todayKey));
   const completedSales = (salesTransactions || []).filter(sale => sale.status !== 'cancelled');
-  const completedSalesThisMonth = completedSales.filter(sale => isThisMonth(sale.createdAt));
-  const topSellingToday = getTopSellingItem(salesToday);
-  const topSellingThisMonth = getTopSellingItem(completedSalesThisMonth);
+  const dashboardSales = completedSales.filter(isSaleInDashboardPeriod);
+  const previousDashboardSales = completedSales.filter(isSaleInPreviousDashboardPeriod);
+  const topSellingDashboardPeriod = getTopSellingItem(dashboardSales);
   const overallSalesAmount = completedSales.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0);
   const salesTodayAmount = salesToday.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0);
+  const dashboardSalesAmount = dashboardSales.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0);
+  const previousDashboardSalesAmount = previousDashboardSales.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0);
   const dailySalesTarget = Number(systemSummary?.dailySalesTarget || 0);
   const hasDailySalesTarget = Number.isFinite(dailySalesTarget) && dailySalesTarget > 0;
   const quotaProgress = hasDailySalesTarget
     ? Math.min(100, Math.round((salesTodayAmount / dailySalesTarget) * 100))
     : 0;
-  const salesTodayQuantity = salesToday.reduce((sum, sale) => (
-    sum + (sale.items || []).reduce((itemSum, item) => itemSum + Number(item.quantitySold || item.quantity || 0), 0)
-  ), 0);
+  const dashboardSalesQuantity = getSalesUnits(dashboardSales);
+  const previousDashboardSalesQuantity = getSalesUnits(previousDashboardSales);
   const stockInTodayCount = stockMovementsToday.filter(movement => String(movement.action || '').toLowerCase() === 'stock in').length;
   const stockOutTodayCount = stockMovementsToday.filter(movement => String(movement.action || '').toLowerCase() === 'stock out').length;
   const unitsMovedToday = stockMovementsToday.reduce((sum, movement) => sum + Number(movement.quantityChanged || 0), 0);
@@ -236,6 +364,73 @@ export function Dashboard({
     : null;
 
   const formatUnitLabel = value => Number(value) === 1 ? 'unit' : 'units';
+  const salesPeriodLabel = DASHBOARD_SALES_PERIOD_OPTIONS.find(option => option.value === salesPeriod)?.label || 'Selected Period';
+  const salesPeriodRangeLabel = formatDashboardSalesRange();
+  const previousPeriodName = {
+    today: 'yesterday',
+    week: 'previous week',
+    month: 'previous month',
+    year: 'previous year',
+    day: formatDashboardDateLabel(selectedComparisonDate || getOffsetDateKey(selectedSalesDate || todayKey, -1))
+  }[salesPeriod] || 'previous period';
+  const formatComparison = (current, previous, {
+    percentage = true,
+    emptyLabel = 'No sales',
+    unitSingular = 'item',
+    unitPlural = 'items'
+  } = {}) => {
+    const direction = getComparisonDirection(Number(current || 0), Number(previous || 0));
+    if (previous <= 0 && current <= 0) {
+      return { direction: 'neutral', label: `${emptyLabel} in ${previousPeriodName}` };
+    }
+    if (previous <= 0) {
+      return { direction: 'up', label: `New activity compared with ${previousPeriodName}` };
+    }
+
+    const difference = Number(current || 0) - Number(previous || 0);
+    if (difference === 0) {
+      return { direction: 'neutral', label: `No change compared with ${previousPeriodName}` };
+    }
+
+    if (percentage) {
+      const percent = Math.abs((difference / previous) * 100);
+      return {
+        direction,
+        label: `${direction === 'up' ? 'Up' : 'Down'} ${percent.toLocaleString(undefined, {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 1
+        })}% compared with ${previousPeriodName}`
+      };
+    }
+
+    const absoluteDifference = Math.abs(difference);
+    const unitLabel = absoluteDifference === 1 ? unitSingular : unitPlural;
+    return {
+      direction,
+      label: `${direction === 'up' ? 'Up' : 'Down'} ${absoluteDifference.toLocaleString()} ${unitLabel} compared with ${previousPeriodName}`
+    };
+  };
+  const salesAmountComparison = formatComparison(dashboardSalesAmount, previousDashboardSalesAmount);
+  const unitsSoldComparison = formatComparison(dashboardSalesQuantity, previousDashboardSalesQuantity, {
+    percentage: false,
+    emptyLabel: 'No units sold',
+    unitSingular: 'unit',
+    unitPlural: 'units'
+  });
+  const salesReportTarget = {
+    today: { period: 'daily', date: todayKey },
+    week: { period: 'weekly', date: todayKey },
+    month: { period: 'monthly', date: todayKey },
+    day: { period: 'daily', date: selectedSalesDate || todayKey }
+  }[salesPeriod];
+
+  const openDashboardSalesReport = () => {
+    if (canUseReports && salesReportTarget) {
+      openTargetReport('sales-movements', salesReportTarget);
+      return;
+    }
+    if (canUseSales) openSalesHistory(salesPeriod === 'today' ? 'today' : 'all');
+  };
 
   const openQuotaDialog = () => {
     if (!isAdmin) return;
@@ -329,6 +524,21 @@ export function Dashboard({
     onNavigate('sales');
   };
 
+  const openSalesEntry = () => {
+    if (!canUseSales) return;
+    localStorage.removeItem('sales_history_target_period');
+    localStorage.setItem('sales_entry_target', 'true');
+    window.dispatchEvent(new CustomEvent('sales-entry-target-view'));
+    onNavigate('sales');
+  };
+
+  const openPurchaseEntry = () => {
+    if (!canUsePurchases) return;
+    localStorage.setItem('purchase_entry_target', 'true');
+    window.dispatchEvent(new CustomEvent('purchase-entry-target-view'));
+    onNavigate('purchases');
+  };
+
   const openAlertsTab = tab => {
     localStorage.setItem('alerts_target_tab', tab);
     localStorage.setItem('alerts_scroll_to_top', 'true');
@@ -401,14 +611,14 @@ export function Dashboard({
       action: canUseSales ? () => openSalesHistory('all') : undefined
     },
     isAdmin && {
-      label: 'Top Item This Month',
-      value: topSellingThisMonth ? topSellingThisMonth.quantity : 0,
-      detail: topSellingThisMonth
-        ? `${topSellingThisMonth.itemName}${topSellingThisMonth.isManual ? ' (Non-inventory)' : ''}`
-        : 'No sales recorded yet',
+      label: 'Best Seller',
+      value: topSellingDashboardPeriod ? `${topSellingDashboardPeriod.quantity} sold` : 'None',
+      detail: topSellingDashboardPeriod
+        ? `${topSellingDashboardPeriod.itemName}${topSellingDashboardPeriod.isManual ? ' - non-inventory item' : ''}`
+        : 'No item sales in this view',
       icon: Package,
       tone: 'green',
-      action: canUseReports ? () => openTargetReport('sales-movements', { period: 'monthly' }) : undefined
+      action: canUseReports || canUseSales ? openDashboardSalesReport : undefined
     },
     ...stockStatusCards
   ].filter(Boolean);
@@ -440,16 +650,13 @@ export function Dashboard({
     }
   ] : [
     {
-      label: "Today's Sales",
-      value: formatCurrency(salesTodayAmount),
-      detail: `${salesToday.length} transaction${salesToday.length === 1 ? '' : 's'} today`,
+      label: 'Sales for View',
+      value: formatCurrency(dashboardSalesAmount),
+      detail: `${dashboardSales.length} transaction${dashboardSales.length === 1 ? '' : 's'} for ${salesPeriodRangeLabel}`,
       icon: ReceiptText,
       tone: 'blue',
-      action: canUseReports
-        ? () => openTargetReport('sales-movements', { period: 'daily' })
-        : canUseSales
-          ? () => openSalesHistory('today')
-          : undefined
+      comparison: salesAmountComparison,
+      action: canUseReports || canUseSales ? openDashboardSalesReport : undefined
     },
     (isAdmin || isCashier || canUseSales) && {
       label: 'Daily Quota',
@@ -463,14 +670,14 @@ export function Dashboard({
       action: isAdmin ? openQuotaDialog : undefined
     },
     isCashier && {
-      label: 'Top Item Today',
-      value: topSellingToday ? topSellingToday.quantity : 0,
-      detail: topSellingToday
-        ? `${topSellingToday.itemName}${topSellingToday.isManual ? ' (Non-inventory)' : ''}`
-        : 'No sales recorded yet',
+      label: 'Best Seller',
+      value: topSellingDashboardPeriod ? `${topSellingDashboardPeriod.quantity} sold` : 'None',
+      detail: topSellingDashboardPeriod
+        ? `${topSellingDashboardPeriod.itemName}${topSellingDashboardPeriod.isManual ? ' - non-inventory item' : ''}`
+        : 'No item sales in this view',
       icon: Package,
       tone: 'green',
-      action: canUseSales ? () => openSalesHistory('today') : undefined
+      action: canUseReports || canUseSales ? openDashboardSalesReport : undefined
     },
     (isAdmin || isInventoryStaff) && {
       label: 'Stock Movements',
@@ -481,29 +688,32 @@ export function Dashboard({
       action: canUseReports ? () => openTargetReport('movements', { period: 'daily' }) : undefined
     },
     (isAdmin || isInventoryStaff) && {
-      label: 'Items Sold Today',
-      value: salesTodayQuantity,
-      detail: `${formatUnitLabel(salesTodayQuantity)} from completed sales`,
+      label: 'Units Sold',
+      value: dashboardSalesQuantity,
+      detail: `${formatUnitLabel(dashboardSalesQuantity).replace(/^./, char => char.toUpperCase())} sold in this view`,
       icon: Package,
       tone: 'purple',
-      action: canUseReports ? () => openTargetReport('sales-movements', { period: 'daily' }) : undefined
+      comparison: unitsSoldComparison,
+      action: canUseReports || canUseSales ? openDashboardSalesReport : undefined
     }
   ].filter(Boolean);
 
+  // Quick actions intentionally open task-specific workflows, filtered views,
+  // or dialogs instead of duplicating the sidebar's module navigation.
   const quickActions = [
     canUseSales && {
       label: 'Record Sale',
-      detail: 'Sales/Data Entry',
+      detail: 'Start checkout',
       icon: ReceiptText,
       tone: 'blue',
-      action: () => onNavigate('sales')
+      action: openSalesEntry
     },
     canUsePurchases && {
-      label: 'Purchase Entry',
-      detail: 'Supplier delivery',
+      label: 'Receive Delivery',
+      detail: 'Supplier receiving',
       icon: Truck,
       tone: 'green',
-      action: () => onNavigate('purchases')
+      action: openPurchaseEntry
     },
     canUseInventoryMovement && {
       label: 'Stock In',
@@ -533,19 +743,40 @@ export function Dashboard({
       tone: 'purple',
       action: () => openInventoryAction('add-item')
     },
-    canUseReports && {
-      label: isInventoryStaff ? 'Reorder Report' : 'Reports',
-      detail: isInventoryStaff ? 'Supplier needs' : 'Business records',
+    canUseReports && isInventoryStaff && {
+      label: 'Supplier Reorder',
+      detail: 'Prepare restock list',
       icon: FileText,
       tone: 'emerald',
-      action: () => openTargetReport(isInventoryStaff ? 'supplier-reorder' : 'summary')
+      action: () => openTargetReport('supplier-reorder')
     },
-    canAccessScreen(role, 'inventory') && {
-      label: 'Inventory',
-      detail: 'Stock list',
-      icon: Search,
+    canUseReports && !isInventoryStaff && {
+      label: "Today's Summary",
+      detail: 'Sales report view',
+      icon: FileText,
+      tone: 'emerald',
+      action: () => openTargetReport('sales-movements', { period: 'daily', date: todayKey })
+    },
+    canUseSales && {
+      label: 'Recent Sales',
+      detail: "Today's transactions",
+      icon: ReceiptText,
       tone: 'blue',
-      action: () => onNavigate('inventory')
+      action: () => openSalesHistory('today')
+    },
+    canUseSales && canAccessScreen(role, 'inventory') && !canUseInventoryMovement && {
+      label: 'Check Stock',
+      detail: 'Available items',
+      icon: Package,
+      tone: 'green',
+      action: () => openInventoryStatus('In Stock')
+    },
+    !canUseSales && canAccessScreen(role, 'inventory') && {
+      label: 'Review Low Stock',
+      detail: `${lowStockItems.length} below threshold`,
+      icon: AlertTriangle,
+      tone: lowStockItems.length > 0 ? 'amber' : 'green',
+      action: () => openInventoryStatus('Low Stock')
     }
   ].filter(Boolean);
 
@@ -691,7 +922,7 @@ export function Dashboard({
 
         .dashboard-panel-subtitle {
           margin-top: 3px;
-          color: #64748b;
+          color: #111827;
           font-size: 13px;
           font-weight: 500;
           line-height: 1.35;
@@ -704,6 +935,73 @@ export function Dashboard({
           padding: 12px;
         }
 
+        .dashboard-sales-filter-panel {
+          padding: 14px 16px;
+        }
+
+        .dashboard-sales-filter-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(16rem, 0.36fr);
+          gap: 16px;
+          align-items: center;
+        }
+
+        .dashboard-sales-filter-row.is-date-mode {
+          grid-template-columns: minmax(0, 1fr) minmax(11.5rem, 0.24fr) minmax(11rem, 0.22fr) minmax(11rem, 0.22fr);
+        }
+
+        .dashboard-sales-filter-copy {
+          min-width: 0;
+          align-self: center;
+        }
+
+        .dashboard-sales-filter-title {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: #111827;
+          font-size: 16px;
+          font-weight: 850;
+          line-height: 1.25;
+        }
+
+        .dashboard-sales-filter-detail {
+          margin-top: 4px;
+          color: #111827;
+          font-size: 13px;
+          font-weight: 600;
+          line-height: 1.35;
+        }
+
+        .dashboard-sales-filter-field {
+          display: grid;
+          gap: 6px;
+          min-width: 0;
+          width: 100%;
+        }
+
+        .dashboard-sales-filter-label {
+          color: #111827;
+          font-size: 12px;
+          font-weight: 800;
+        }
+
+        .dashboard-sales-filter-control,
+        .dashboard-sales-filter-date {
+          height: 42px;
+          border-color: #cbd5e1;
+          border-radius: 10px;
+          background: #ffffff;
+        }
+
+        .dashboard-sales-filter-date {
+          width: 100%;
+          padding: 0 12px;
+          color: #111827;
+          font-size: 14px;
+          font-weight: 650;
+        }
+
         .dashboard-admin-summary-grid {
           grid-template-columns: repeat(4, minmax(0, 1fr));
         }
@@ -714,7 +1012,7 @@ export function Dashboard({
 
         .dashboard-summary-card {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) 46px;
+          grid-template-columns: minmax(0, 1fr) auto;
           gap: 14px;
           align-items: start;
           min-height: 96px;
@@ -725,6 +1023,10 @@ export function Dashboard({
           padding: 12px 14px;
           text-align: left;
           transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .dashboard-summary-body {
+          min-width: 0;
         }
 
         .dashboard-summary-card:hover {
@@ -750,7 +1052,7 @@ export function Dashboard({
         }
 
         .dashboard-summary-label {
-          color: #475569;
+          color: #111827;
           font-size: 13px;
           font-weight: 700;
         }
@@ -767,15 +1069,41 @@ export function Dashboard({
 
         .dashboard-summary-detail {
           margin-top: 6px;
-          color: #64748b;
+          color: #111827;
           font-size: 12px;
           font-weight: 600;
           line-height: 1.3;
-          display: -webkit-box;
-          overflow: hidden;
-          -webkit-box-orient: vertical;
-          -webkit-line-clamp: 2;
           overflow-wrap: anywhere;
+        }
+
+        .dashboard-summary-comparison {
+          display: inline-flex;
+          grid-column: 1 / -1;
+          width: max-content;
+          max-width: min(100%, 42rem);
+          margin-top: 7px;
+          border-radius: 14px;
+          padding: 5px 10px;
+          font-size: 11px;
+          font-weight: 800;
+          line-height: 1.25;
+          overflow-wrap: anywhere;
+          white-space: normal;
+        }
+
+        .comparison-up {
+          background: #dcfce7;
+          color: #166534;
+        }
+
+        .comparison-down {
+          background: #fee2e2;
+          color: #991b1b;
+        }
+
+        .comparison-neutral {
+          background: #f1f5f9;
+          color: #111827;
         }
 
         .dashboard-summary-icon {
@@ -791,6 +1119,7 @@ export function Dashboard({
 
         .dashboard-summary-progress {
           display: block;
+          grid-column: 1 / -1;
           width: 100%;
           height: 7px;
           margin-top: 10px;
@@ -847,7 +1176,7 @@ export function Dashboard({
 
         .dashboard-quota-description {
           margin-top: 6px;
-          color: #475569;
+          color: #111827;
           font-size: 14px;
           line-height: 1.5;
         }
@@ -904,7 +1233,7 @@ export function Dashboard({
 
         .dashboard-quota-summary-label {
           display: block;
-          color: #64748b;
+          color: #111827;
           font-size: 12px;
           font-weight: 700;
           line-height: 1.2;
@@ -1137,10 +1466,10 @@ export function Dashboard({
         .dashboard-action-grid {
           display: grid;
           grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 10px;
+          gap: 12px;
           padding: 12px;
           align-items: stretch;
-          grid-auto-rows: 92px;
+          grid-auto-rows: minmax(112px, auto);
         }
 
         .dashboard-inventory-summary-panel .dashboard-summary-grid,
@@ -1159,13 +1488,14 @@ export function Dashboard({
           justify-content: space-between;
           gap: 12px;
           border: 1px solid #dbe3ef;
-          border-radius: 10px;
+          border-radius: 14px;
           background: #ffffff;
           width: 100%;
-          min-height: 92px;
-          padding: 11px;
+          min-height: 112px;
+          padding: 13px;
           text-align: left;
-          transition: background-color 160ms ease, border-color 160ms ease;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+          transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
         }
 
         .dashboard-action-button {
@@ -1174,21 +1504,24 @@ export function Dashboard({
 
         .dashboard-action-button:hover,
         .dashboard-attention-button:hover {
-          border-color: #fca5a5;
-          background: #fff7f7;
+          border-color: #cbd5e1;
+          background: #ffffff;
+          box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+          transform: translateY(-1px);
         }
 
         .dashboard-action-left {
-          display: flex;
-          align-items: center;
-          gap: 11px;
+          display: grid;
+          grid-template-columns: 38px minmax(0, 1fr);
+          gap: 12px;
           min-width: 0;
+          align-items: start;
         }
 
         .dashboard-action-icon {
           display: inline-flex;
-          width: 36px;
-          height: 36px;
+          width: 38px;
+          height: 38px;
           align-items: center;
           justify-content: center;
           flex-shrink: 0;
@@ -1197,20 +1530,25 @@ export function Dashboard({
           color: #334155;
         }
 
+        .dashboard-action-copy {
+          display: grid;
+          min-width: 0;
+          gap: 5px;
+        }
+
         .dashboard-action-title,
         .dashboard-attention-title {
           color: #111827;
-          font-size: 14px;
-          font-weight: 800;
-          line-height: 1.2;
+          font-size: 15px;
+          font-weight: 850;
+          line-height: 1.18;
         }
 
         .dashboard-action-detail {
-          margin-top: 3px;
-          color: #64748b;
+          color: #111827;
           font-size: 12px;
           font-weight: 600;
-          line-height: 1.25;
+          line-height: 1.3;
         }
 
         .dashboard-attention-list {
@@ -1293,7 +1631,7 @@ export function Dashboard({
 
         .dashboard-attention-detail {
           margin-top: 2px;
-          color: #64748b;
+          color: #111827;
           font-size: 11px;
           font-weight: 600;
           line-height: 1.2;
@@ -1320,7 +1658,7 @@ export function Dashboard({
           border-radius: 10px;
           background: #f8fafc;
           padding: 16px;
-          color: #64748b;
+          color: #111827;
           font-size: 14px;
           font-weight: 600;
           text-align: center;
@@ -1356,6 +1694,18 @@ export function Dashboard({
         @media (max-width: 1120px) {
           .dashboard-summary-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .dashboard-sales-filter-row {
+            grid-template-columns: 1fr minmax(14rem, 0.42fr);
+          }
+
+          .dashboard-sales-filter-row.is-date-mode {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+
+          .dashboard-sales-filter-copy {
+            grid-column: 1 / -1;
           }
 
           .dashboard-operations-grid {
@@ -1408,6 +1758,19 @@ export function Dashboard({
             padding: 12px;
           }
 
+          .dashboard-sales-filter-panel {
+            padding: 12px;
+          }
+
+          .dashboard-sales-filter-row {
+            grid-template-columns: 1fr;
+            gap: 10px;
+          }
+
+          .dashboard-sales-filter-row.is-date-mode {
+            grid-template-columns: 1fr;
+          }
+
           .dashboard-summary-grid,
           .dashboard-action-grid,
           .dashboard-attention-list {
@@ -1415,7 +1778,7 @@ export function Dashboard({
           }
 
           .dashboard-summary-card {
-            grid-template-columns: minmax(0, 1fr) 38px;
+            grid-template-columns: minmax(0, 1fr) auto;
             min-height: 88px;
             padding: 10px;
           }
@@ -1426,7 +1789,7 @@ export function Dashboard({
 
           .dashboard-action-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
-            grid-auto-rows: 86px;
+            grid-auto-rows: minmax(108px, auto);
           }
 
           .dashboard-operations-grid {
@@ -1442,14 +1805,14 @@ export function Dashboard({
           }
 
           .dashboard-action-grid {
-            grid-auto-rows: 78px;
+            grid-auto-rows: minmax(102px, auto);
           }
         }
       `}</style>
 
       <PageHeader
         title="Dashboard"
-        subtitle="Simple daily overview for"
+        subtitle="Branch operations overview for"
         icon={<Home className="h-8 w-8" />}
         userName={user.fullName}
         userBranch={activeBranch || user.branch}
@@ -1458,6 +1821,65 @@ export function Dashboard({
       />
 
       <div className={`dashboard-content ${isCashier ? 'dashboard-content-cashier' : ''}`}>
+        {!isInventoryStaff && (
+          <section className="dashboard-panel dashboard-sales-filter-panel" aria-label="Sales view filter">
+            <div className={`dashboard-sales-filter-row ${salesPeriod === 'day' ? 'is-date-mode' : ''}`}>
+              <div className="dashboard-sales-filter-copy">
+                <h2 className="dashboard-sales-filter-title">
+                  <CalendarDays className="h-4 w-4 text-blue-600" />
+                  Sales View
+                </h2>
+                <p className="dashboard-sales-filter-detail">
+                  Showing {salesPeriodLabel.toLowerCase()} sales for {salesPeriodRangeLabel}.
+                </p>
+              </div>
+              <div className="dashboard-sales-filter-field">
+                <Label htmlFor="dashboard-sales-period" className="dashboard-sales-filter-label">Period</Label>
+                <Select value={salesPeriod} onValueChange={setSalesPeriod}>
+                  <SelectTrigger id="dashboard-sales-period" className="dashboard-sales-filter-control">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DASHBOARD_SALES_PERIOD_OPTIONS.map(option => (
+                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {salesPeriod === 'day' && (
+                <div className="dashboard-sales-filter-field">
+                  <Label htmlFor="dashboard-sales-date" className="dashboard-sales-filter-label">Sales Date</Label>
+                  <Input
+                    id="dashboard-sales-date"
+                    type="date"
+                    value={selectedSalesDate}
+                    max={todayKey}
+                    onChange={event => {
+                      const nextDate = event.target.value || todayKey;
+                      setSelectedSalesDate(nextDate);
+                      setSelectedComparisonDate(getOffsetDateKey(nextDate, -1));
+                    }}
+                    className="dashboard-sales-filter-date"
+                  />
+                </div>
+              )}
+              {salesPeriod === 'day' && (
+                <div className="dashboard-sales-filter-field">
+                  <Label htmlFor="dashboard-compare-date" className="dashboard-sales-filter-label">Compare With</Label>
+                  <Input
+                    id="dashboard-compare-date"
+                    type="date"
+                    value={selectedComparisonDate}
+                    max={todayKey}
+                    onChange={event => setSelectedComparisonDate(event.target.value || getOffsetDateKey(selectedSalesDate || todayKey, -1))}
+                    className="dashboard-sales-filter-date"
+                  />
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
         <section className={`dashboard-panel ${isInventoryStaff ? 'dashboard-inventory-summary-panel' : ''} ${isAdmin ? 'dashboard-admin-summary-panel' : ''}`} aria-label="Quick summary numbers">
           <div className="dashboard-panel-header">
             <div className="min-w-0">
@@ -1603,19 +2025,19 @@ export function Dashboard({
 
             <div className="dashboard-count-preview">
               <div className="dashboard-count-preview-row">
-                <span className="text-sm font-medium text-slate-600">Quantity in System</span>
+                <span className="text-sm font-medium text-slate-950">Quantity in System</span>
                 <span className="text-sm font-semibold text-slate-900">
                   {selectedCountItem ? `${selectedCountItem.quantity} ${formatUnitLabel(selectedCountItem.quantity)}` : 'No item selected'}
                 </span>
               </div>
               <div className="dashboard-count-preview-row">
-                <span className="text-sm font-medium text-slate-600">Actual Counted Quantity</span>
+                <span className="text-sm font-medium text-slate-950">Actual Counted Quantity</span>
                 <span className="text-sm font-semibold text-slate-900">
                   {hasValidPhysicalCount ? `${physicalCountValue} ${formatUnitLabel(physicalCountValue)}` : hasPhysicalCountEntry ? 'Whole number required' : 'Not entered'}
                 </span>
               </div>
               <div className="dashboard-count-preview-row">
-                <span className="text-sm font-medium text-slate-600">Stock Difference</span>
+                <span className="text-sm font-medium text-slate-950">Stock Difference</span>
                 <span className={`text-sm font-semibold ${stockCountVariance > 0 ? 'text-green-700' : stockCountVariance < 0 ? 'text-red-700' : 'text-slate-900'}`}>
                   {stockCountVariance === null
                     ? 'Complete item and count'
@@ -1663,25 +2085,32 @@ function SummaryCard({
   icon: Icon,
   tone,
   progress,
+  comparison,
   action
 }) {
   const progressValue = Number(progress);
   const hasProgress = Number.isFinite(progressValue);
+  const comparisonDirection = comparison?.direction || 'neutral';
   const content = (
     <>
-      <span className="min-w-0">
+      <span className="dashboard-summary-body">
         <span className="dashboard-summary-label block">{label}</span>
         <span className="dashboard-summary-value block">{value}</span>
         <span className="dashboard-summary-detail block">{detail}</span>
-        {hasProgress && (
-          <span className="dashboard-summary-progress" aria-hidden="true">
-            <span className="dashboard-summary-progress-fill" style={{ width: `${Math.max(0, Math.min(100, progressValue))}%` }} />
-          </span>
-        )}
       </span>
       <span className="dashboard-summary-icon">
         <Icon className="h-5 w-5" />
       </span>
+      {comparison?.label && (
+        <span className={`dashboard-summary-comparison comparison-${comparisonDirection}`}>
+          {comparison.label}
+        </span>
+      )}
+      {hasProgress && (
+        <span className="dashboard-summary-progress" aria-hidden="true">
+          <span className="dashboard-summary-progress-fill" style={{ width: `${Math.max(0, Math.min(100, progressValue))}%` }} />
+        </span>
+      )}
     </>
   );
 
@@ -1709,7 +2138,7 @@ function ActionButton({
         <span className="dashboard-action-icon">
           <Icon className="h-5 w-5" />
         </span>
-        <span className="min-w-0">
+        <span className="dashboard-action-copy">
           <span className="dashboard-action-title block">{label}</span>
           <span className="dashboard-action-detail block">{detail}</span>
         </span>

@@ -59,24 +59,37 @@ export function HeaderTimeBadge({ userBranch }) {
   const timestampLabel = hasDateTimeError
     ? 'Date/time unavailable'
     : `${locationLabel} \u00B7 ${dateLabel} \u00B7 ${timeLabel}`;
+  const dateTimeLabel = hasDateTimeError ? 'Date/time unavailable' : `${dateLabel} \u00B7 ${timeLabel}`;
 
   return (
     <>
       <style>{`
         .page-header-time-badge {
+          display: grid;
+          gap: 0.2rem;
           max-width: min(100%, 42rem);
           color: #172033;
-          font-size: 0.88rem;
-          font-weight: 700;
-          line-height: 1.35;
           text-align: right;
           text-shadow: 0 1px 1px rgba(255, 255, 255, 0.55);
         }
 
-        .page-header-time-primary {
+        .page-header-branch-label,
+        .page-header-date-time-label {
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
+        }
+
+        .page-header-branch-label {
+          font-size: 0.95rem;
+          font-weight: 850;
+          line-height: 1.25;
+        }
+
+        .page-header-date-time-label {
+          font-size: 0.84rem;
+          font-weight: 650;
+          line-height: 1.3;
         }
 
         @media (max-width: 920px) {
@@ -89,10 +102,19 @@ export function HeaderTimeBadge({ userBranch }) {
 
         @media (max-width: 640px) {
           .page-header-time-badge {
-            font-size: 0.78rem;
+            gap: 0.16rem;
           }
 
-          .page-header-time-primary {
+          .page-header-branch-label {
+            font-size: 0.82rem;
+          }
+
+          .page-header-date-time-label {
+            font-size: 0.76rem;
+          }
+
+          .page-header-branch-label,
+          .page-header-date-time-label {
             display: -webkit-box;
             overflow: hidden;
             white-space: normal;
@@ -102,7 +124,8 @@ export function HeaderTimeBadge({ userBranch }) {
         }
       `}</style>
       <div className="page-header-time-badge" aria-label="Current branch date and time" title={timestampLabel}>
-        <div className="page-header-time-primary">{timestampLabel}</div>
+        <div className="page-header-branch-label">{locationLabel}</div>
+        <div className="page-header-date-time-label">{dateTimeLabel}</div>
       </div>
     </>
   );

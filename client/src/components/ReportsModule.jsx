@@ -20,6 +20,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { PageHeader } from './PageHeader';
 import { formatDateTime, formatPurchaseDocumentLabel, formatPurchasePaymentTerms } from '../utils/format';
+import { getStockMovementReasonLabel } from '../utils/stockMovementReasons';
 import { canAccessReportType, getDefaultReportTypeForRole, getReportTypeOptionsForRole, isAdminRole } from '../utils/roles';
 import {
   HARDWARE_SUPPLIER_OPTIONS,
@@ -28,6 +29,7 @@ import {
   isListedSupplier,
   sanitizeSupplierInput,
 } from '../utils/suppliers';
+import { buildPurchaseDraftFromReorderGroup, savePurchaseDraft } from '../utils/purchaseDrafts';
 
 const isBackdatedRecord = record => {
   if (!record?.createdAt || !record?.encodedAt) return false;
@@ -40,7 +42,8 @@ const isBackdatedRecord = record => {
 const formatEncodedDate = record => isBackdatedRecord(record) ? formatDateTime(record.encodedAt) : '-';
 
 export function ReportsModule({
-  user
+  user,
+  onNavigate
 }) {
   const {
     inventory,
@@ -54,8 +57,11 @@ export function ReportsModule({
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [reportPeriod, setReportPeriod] = useState('daily');
   const [selectedReportDate, setSelectedReportDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [customStartDate, setCustomStartDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [customEndDate, setCustomEndDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [selectedReorderSupplier, setSelectedReorderSupplier] = useState('');
   const [reorderQuantities, setReorderQuantities] = useState({});
+  const [reorderSelections, setReorderSelections] = useState({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [reviewItem, setReviewItem] = useState(null);
   const [conversionDraft, setConversionDraft] = useState({
@@ -84,7 +90,7 @@ export function ReportsModule({
       setIsRefreshing(false);
     }, 500);
     return () => clearTimeout(timer);
-  }, [reportPeriod, selectedReportDate]);
+  }, [reportPeriod, selectedReportDate, customStartDate, customEndDate]);
 
   useEffect(() => {
     if (!canAccessReportType(user?.role, reportType)) {
@@ -101,7 +107,7 @@ export function ReportsModule({
   };
 
   useEffect(() => {
-    const applyTargetReport = ({ reportType: nextReportType, category = 'all', period, date } = {}) => {
+    const applyTargetReport = ({ reportType: nextReportType, category = 'all', period, date, supplier } = {}) => {
       if (!nextReportType) return;
       const safeReportType = canAccessReportType(user?.role, nextReportType)
         ? nextReportType
@@ -111,11 +117,14 @@ export function ReportsModule({
       }
       setReportType(safeReportType);
       setSelectedCategory(categoryFilterReportTypes.includes(safeReportType) ? (category || 'all') : 'all');
-      if (['daily', 'weekly', 'monthly'].includes(period)) {
+      if (['daily', 'weekly', 'monthly', 'custom'].includes(period)) {
         setReportPeriod(period);
       }
       if (date && /^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
         setSelectedReportDate(date);
+      }
+      if (safeReportType === 'supplier-reorder' && supplier) {
+        setSelectedReorderSupplier(supplier);
       }
     };
 
@@ -125,12 +134,14 @@ export function ReportsModule({
         reportType: storedReportType,
         category: localStorage.getItem('reports_target_category') || 'all',
         period: localStorage.getItem('reports_target_period') || undefined,
-        date: localStorage.getItem('reports_target_date') || undefined
+        date: localStorage.getItem('reports_target_date') || undefined,
+        supplier: localStorage.getItem('reports_target_supplier') || undefined
       });
       localStorage.removeItem('reports_target_type');
       localStorage.removeItem('reports_target_category');
       localStorage.removeItem('reports_target_period');
       localStorage.removeItem('reports_target_date');
+      localStorage.removeItem('reports_target_supplier');
     }
 
     const handleTargetReport = event => {
@@ -139,6 +150,7 @@ export function ReportsModule({
       localStorage.removeItem('reports_target_category');
       localStorage.removeItem('reports_target_period');
       localStorage.removeItem('reports_target_date');
+      localStorage.removeItem('reports_target_supplier');
     };
 
     window.addEventListener('reports-target-view', handleTargetReport);
@@ -151,7 +163,23 @@ export function ReportsModule({
     return Number.isNaN(date.getTime()) ? new Date() : date;
   };
 
+  const getDateFromKey = value => {
+    const [year, month, day] = String(value || '').split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    return Number.isNaN(date.getTime()) ? new Date() : date;
+  };
+
   const getReportPeriodBounds = () => {
+    if (reportPeriod === 'custom') {
+      const startDate = getDateFromKey(customStartDate || selectedReportDate);
+      const endDate = getDateFromKey(customEndDate || customStartDate || selectedReportDate);
+      const start = new Date(startDate <= endDate ? startDate : endDate);
+      const end = new Date(startDate <= endDate ? endDate : startDate);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      return { start, end };
+    }
+
     const selectedDate = getSelectedDate();
     const start = new Date(selectedDate);
     start.setHours(0, 0, 0, 0);
@@ -172,6 +200,32 @@ export function ReportsModule({
     return { start, end };
   };
 
+  const getPreviousReportPeriodBounds = () => {
+    const { start, end } = getReportPeriodBounds();
+    const previousStart = new Date(start);
+    const previousEnd = new Date(end);
+
+    if (reportPeriod === 'weekly') {
+      previousStart.setDate(start.getDate() - 7);
+      previousEnd.setDate(end.getDate() - 7);
+    } else if (reportPeriod === 'monthly') {
+      previousStart.setMonth(start.getMonth() - 1, 1);
+      previousEnd.setFullYear(previousStart.getFullYear(), previousStart.getMonth() + 1, 0);
+      previousEnd.setHours(23, 59, 59, 999);
+    } else if (reportPeriod === 'custom') {
+      const durationMs = Math.max(0, end.getTime() - start.getTime());
+      previousEnd.setTime(start.getTime() - 1);
+      previousStart.setTime(previousEnd.getTime() - durationMs);
+      previousStart.setHours(0, 0, 0, 0);
+      previousEnd.setHours(23, 59, 59, 999);
+    } else {
+      previousStart.setDate(start.getDate() - 1);
+      previousEnd.setDate(end.getDate() - 1);
+    }
+
+    return { start: previousStart, end: previousEnd };
+  };
+
   const isMovementInReportPeriod = movement => {
     const movementDate = new Date(movement.createdAt);
     if (Number.isNaN(movementDate.getTime())) return false;
@@ -187,6 +241,7 @@ export function ReportsModule({
   };
 
   const openReportDatePicker = () => {
+    if (reportPeriod === 'custom') return;
     const input = reportDateInputRef.current;
     if (!input) return;
     if (typeof input.showPicker === 'function') {
@@ -205,6 +260,12 @@ export function ReportsModule({
       day: 'numeric',
       year: 'numeric'
     };
+    if (reportPeriod === 'custom') {
+      const { start, end } = getReportPeriodBounds();
+      const sameDay = start.toDateString() === end.toDateString();
+      if (sameDay) return start.toLocaleDateString('en-US', options);
+      return `${start.toLocaleDateString('en-US', options)} – ${end.toLocaleDateString('en-US', options)}`;
+    }
     if (reportPeriod === 'daily') {
       return selectedDate.toLocaleDateString('en-US', options);
     } else if (reportPeriod === 'weekly') {
@@ -228,6 +289,20 @@ export function ReportsModule({
         year: 'numeric'
       });
     }
+  };
+
+  const formatReportPeriodDate = date =>
+    date.toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric'
+    });
+
+  const getReportPeriodLabel = () => {
+    if (isInventorySnapshotReport) return null;
+
+    const { start, end } = getReportPeriodBounds();
+    return `${formatReportPeriodDate(start)} – ${formatReportPeriodDate(end)}`;
   };
 
   // 🔍 Filter inventory by category using Linear Search Algorithm
@@ -562,12 +637,17 @@ export function ReportsModule({
       .reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
   };
 
-  const getFilteredSalesTransactions = () =>
-    reportSalesTransactions.filter(sale => {
+  const getSalesTransactionsForBounds = ({ start, end }) =>
+    (salesTransactions || []).filter(sale => {
+      const saleDate = new Date(sale.createdAt);
+      if (Number.isNaN(saleDate.getTime()) || saleDate < start || saleDate > end) return false;
       if (sale.status === 'cancelled') return false;
       if (selectedCategory === 'all') return true;
       return (sale.items || []).some(item => item.category === selectedCategory);
     });
+
+  const getFilteredSalesTransactions = () =>
+    getSalesTransactionsForBounds(getReportPeriodBounds());
 
   const getSalesMovementRows = () =>
     getFilteredSalesTransactions().flatMap(sale =>
@@ -597,8 +677,8 @@ export function ReportsModule({
   const getSalesMovementUnits = () =>
     getSalesMovementRows().reduce((sum, movement) => sum + Number(movement.quantityChanged || 0), 0);
 
-  const getSalesFinancialSummary = () => {
-    const sales = getFilteredSalesTransactions().filter(sale => getTrackedSaleItemsForReport(sale).length > 0);
+  const getSalesFinancialSummary = (sourceSales = getFilteredSalesTransactions()) => {
+    const sales = sourceSales.filter(sale => getTrackedSaleItemsForReport(sale).length > 0);
 
     return sales.reduce((summary, sale) => {
       const saleSubtotal = Number(sale.subtotalAmount ?? sale.totalAmount ?? 0);
@@ -630,6 +710,170 @@ export function ReportsModule({
       nonCashTransactions: 0
     });
   };
+
+  const getSalesUnitsForTransactions = (sourceSales = getFilteredSalesTransactions()) =>
+    sourceSales.reduce((sum, sale) => (
+      sum + getTrackedSaleItemsForReport(sale).reduce((itemSum, item) => (
+        itemSum + Number(item.quantitySold || item.quantity || 0)
+      ), 0)
+    ), 0);
+
+  const getSalesComparisonSummary = () => {
+    const currentSales = getFilteredSalesTransactions();
+    const previousSales = getSalesTransactionsForBounds(getPreviousReportPeriodBounds());
+    const currentFinancials = getSalesFinancialSummary(currentSales);
+    const previousFinancials = getSalesFinancialSummary(previousSales);
+
+    return {
+      current: {
+        amountDue: currentFinancials.amountDue,
+        transactions: currentFinancials.transactionCount,
+        unitsSold: getSalesUnitsForTransactions(currentSales)
+      },
+      previous: {
+        amountDue: previousFinancials.amountDue,
+        transactions: previousFinancials.transactionCount,
+        unitsSold: getSalesUnitsForTransactions(previousSales)
+      }
+    };
+  };
+
+  const formatCompactComparisonDate = date =>
+    date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
+
+  const formatCompactComparisonRange = ({ start, end }) => {
+    if (start.toDateString() === end.toDateString()) {
+      return formatCompactComparisonDate(start);
+    }
+
+    const sameMonth = start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear();
+    if (sameMonth) {
+      return `${start.toLocaleDateString('en-US', { month: 'short' })} ${start.getDate()}–${end.getDate()}, ${end.getFullYear()}`;
+    }
+
+    const sameYear = start.getFullYear() === end.getFullYear();
+    if (sameYear) {
+      return `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}–${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${end.getFullYear()}`;
+    }
+
+    return `${formatCompactComparisonDate(start)}–${formatCompactComparisonDate(end)}`;
+  };
+
+  const getInclusivePeriodDays = ({ start, end }) => {
+    const startDay = new Date(start);
+    const endDay = new Date(end);
+    startDay.setHours(0, 0, 0, 0);
+    endDay.setHours(0, 0, 0, 0);
+    return Math.max(1, Math.round((endDay.getTime() - startDay.getTime()) / 86400000) + 1);
+  };
+
+  const getPreviousPeriodLabel = () => {
+    if (reportPeriod === 'custom') {
+      return formatCompactComparisonRange(getPreviousReportPeriodBounds());
+    }
+
+    return {
+      daily: 'previous day',
+      weekly: 'previous week',
+      monthly: 'previous month'
+    }[reportPeriod] || 'previous period';
+  };
+
+  const getComparisonSummaryDescription = () => {
+    if (reportPeriod !== 'custom') {
+      return 'Compares this report period with the previous period for quick business review.';
+    }
+
+    const currentBounds = getReportPeriodBounds();
+    const previousBounds = getPreviousReportPeriodBounds();
+    const dayCount = getInclusivePeriodDays(currentBounds);
+    return `Selected: ${formatCompactComparisonRange(currentBounds)}. Compared with the previous ${dayCount} ${dayCount === 1 ? 'day' : 'days'}: ${formatCompactComparisonRange(previousBounds)}.`;
+  };
+
+  const formatReportComparison = (current, previous, {
+    percentage = true,
+    emptyLabel = 'No activity',
+    unitSingular = 'item',
+    unitPlural = 'items'
+  } = {}) => {
+    const safeCurrent = Number(current || 0);
+    const safePrevious = Number(previous || 0);
+    const previousLabel = getPreviousPeriodLabel();
+
+    if (safePrevious <= 0 && safeCurrent <= 0) {
+      return { direction: 'neutral', label: `${emptyLabel} in ${previousLabel}` };
+    }
+    if (safePrevious <= 0) {
+      return { direction: 'up', label: `New activity compared with ${previousLabel}` };
+    }
+
+    const difference = safeCurrent - safePrevious;
+    if (difference === 0) {
+      return { direction: 'neutral', label: `No change compared with ${previousLabel}` };
+    }
+
+    if (percentage) {
+      const percentageChange = formatPercentage(Math.abs((difference / safePrevious) * 100));
+      return {
+        direction: difference > 0 ? 'up' : 'down',
+        label: `${difference > 0 ? 'Up' : 'Down'} ${percentageChange} compared with ${previousLabel}`
+      };
+    }
+
+    const absoluteDifference = Math.abs(difference);
+    const unitLabel = absoluteDifference === 1 ? unitSingular : unitPlural;
+    return {
+      direction: difference > 0 ? 'up' : 'down',
+      label: `${difference > 0 ? 'Up' : 'Down'} ${absoluteDifference.toLocaleString()} ${unitLabel} compared with ${previousLabel}`
+    };
+  };
+
+  // Aggregates tracked sales lines into management-friendly product rankings.
+  const getTopSellingProducts = (limit = 10) => {
+    const groupedProducts = new Map();
+
+    getFilteredSalesTransactions().forEach(sale => {
+      getTrackedSaleItemsForReport(sale).forEach(item => {
+        const quantity = Number(item.quantitySold || item.quantity || 0);
+        const revenue = Number(item.subtotal || 0);
+        const itemName = String(item.itemName || item.name || '').trim();
+        if (!itemName || quantity <= 0) return;
+
+        const key = item.inventoryId
+          ? `inventory:${item.inventoryId}`
+          : `product:${item.productId || `${itemName.toLowerCase()}|${String(item.category || 'Other').toLowerCase()}`}`;
+        const existing = groupedProducts.get(key) || {
+          itemName,
+          category: item.category || 'Other',
+          quantitySold: 0,
+          revenue: 0
+        };
+        existing.quantitySold += quantity;
+        existing.revenue += revenue;
+        groupedProducts.set(key, existing);
+      });
+    });
+
+    const allRankedProducts = Array.from(groupedProducts.values())
+      .sort((a, b) => b.quantitySold - a.quantitySold || b.revenue - a.revenue || a.itemName.localeCompare(b.itemName));
+    const totalRevenue = allRankedProducts.reduce((sum, item) => sum + Number(item.revenue || 0), 0);
+
+    return allRankedProducts.slice(0, limit).map((item, index) => ({
+      ...item,
+      rank: index + 1,
+      revenueShare: totalRevenue > 0 ? (Number(item.revenue || 0) / totalRevenue) * 100 : 0
+    }));
+  };
+
+  const formatPercentage = value =>
+    `${Number(value || 0).toLocaleString(undefined, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 1
+    })}%`;
 
   const getFilteredPurchaseTransactions = () =>
     reportPurchaseTransactions.filter(purchase => purchase.status !== 'cancelled');
@@ -667,6 +911,29 @@ export function ReportsModule({
       }));
 
   const getReorderQuantityDraftKey = item => String(item?.id ?? item?.inventoryId ?? item?.itemCode ?? item?.name ?? '');
+
+  const isReorderItemSelected = item => reorderSelections[getReorderQuantityDraftKey(item)] !== false;
+
+  const getSelectedReorderItems = group =>
+    (group?.items || []).filter(item => isReorderItemSelected(item) && getPreparedReorderQuantity(item) > 0);
+
+  const setGroupReorderSelection = (group, selected) => {
+    setReorderSelections(prev => {
+      const next = { ...prev };
+      (group?.items || []).forEach(item => {
+        next[getReorderQuantityDraftKey(item)] = selected;
+      });
+      return next;
+    });
+  };
+
+  const toggleReorderItemSelection = item => {
+    const key = getReorderQuantityDraftKey(item);
+    setReorderSelections(prev => ({
+      ...prev,
+      [key]: prev[key] === false
+    }));
+  };
 
   const getPreparedReorderQuantity = item => {
     const key = getReorderQuantityDraftKey(item);
@@ -723,6 +990,30 @@ export function ReportsModule({
   };
 
   const getSelectedSupplierReorderGroup = () => getSupplierReorderGroups()[0] || null;
+
+  const handleGeneratePurchaseDraft = group => {
+    const selectedItems = getSelectedReorderItems(group);
+    const purchaseDraft = buildPurchaseDraftFromReorderGroup({
+      supplier: group?.supplier,
+      items: selectedItems,
+      getPreparedQuantity: getPreparedReorderQuantity,
+      branch: user?.branch,
+      user,
+    });
+
+    if (!purchaseDraft.supplierName || purchaseDraft.items.length === 0) {
+      toast.warning('No purchase draft was created.', {
+        description: 'Select at least one reorder item with a quantity greater than zero.'
+      });
+      return;
+    }
+
+    savePurchaseDraft(purchaseDraft);
+    toast.success('Purchase draft prepared.', {
+      description: `${purchaseDraft.items.length} item${purchaseDraft.items.length === 1 ? '' : 's'} from ${purchaseDraft.supplierName} are ready in Purchases.`
+    });
+    onNavigate?.('purchases');
+  };
 
   useEffect(() => {
     if (reportType !== 'supplier-reorder') return;
@@ -803,17 +1094,22 @@ export function ReportsModule({
   const getReportMetrics = () => {
     if (reportType === 'movements' || reportType === 'sales-movements') {
       const movementSummary = getStockMovementSummary();
+      if (reportType === 'sales-movements') {
+        return [
+          { label: 'Quantity Sold', value: getSalesMovementUnits(), icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
+          { label: 'Amount Due', value: formatCurrency(getSalesFinancialSummary().amountDue), icon: <Wallet className="w-8 h-8 text-amber-500" />, color: 'border-l-amber-500' },
+          { label: 'Discounts', value: formatCurrency(getSalesFinancialSummary().discount), icon: <Tag className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
+        ];
+      }
+
       return [
-        { label: reportType === 'sales-movements' ? 'Sales Transactions' : 'Movements', value: reportType === 'sales-movements' ? getSalesFinancialSummary().transactionCount : getFilteredMovements({ salesOnly: false }).length, icon: <RefreshCw className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
-        { label: reportType === 'sales-movements' ? 'Quantity Sold' : 'Stock In Units', value: reportType === 'sales-movements' ? getSalesMovementUnits() : movementSummary.stockInUnits, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
-        { label: reportType === 'sales-movements' ? 'Amount Due' : 'Stock Out Units', value: reportType === 'sales-movements' ? formatCurrency(getSalesFinancialSummary().amountDue) : movementSummary.stockOutUnits, icon: reportType === 'sales-movements' ? <Wallet className="w-8 h-8 text-amber-500" /> : <AlertTriangle className="w-8 h-8 text-red-500" />, color: reportType === 'sales-movements' ? 'border-l-amber-500' : movementSummary.stockOutUnits > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
-        { label: reportType === 'sales-movements' ? 'Discounts' : 'Categories', value: reportType === 'sales-movements' ? formatCurrency(getSalesFinancialSummary().discount) : new Set(getFilteredMovements({ salesOnly: false }).map(movement => movement.category)).size, icon: reportType === 'sales-movements' ? <Tag className="w-8 h-8 text-violet-500" /> : <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
+        { label: 'Stock In Units', value: movementSummary.stockInUnits, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
+        { label: 'Stock Out Units', value: movementSummary.stockOutUnits, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: movementSummary.stockOutUnits > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
       ];
     }
 
     if (reportType === 'purchases') {
       return [
-        { label: 'Purchase Entries', value: getPurchaseSummary().entryCount, icon: <FileText className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
         { label: 'Quantity Received', value: getPurchaseSummary().totalQuantity, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
         { label: 'Total Purchases', value: formatCurrency(getPurchaseSummary().totalAmount), icon: <Wallet className="w-8 h-8 text-amber-500" />, color: 'border-l-amber-500' },
         { label: 'Suppliers', value: new Set(getFilteredPurchaseTransactions().map(purchase => purchase.supplierName)).size, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
@@ -823,19 +1119,17 @@ export function ReportsModule({
     if (reportType === 'supplier-reorder') {
       const selectedGroup = getSelectedSupplierReorderGroup();
       const reorderItems = selectedGroup?.items || [];
-      const preparedQuantity = reorderItems.reduce((sum, item) => sum + getPreparedReorderQuantity(item), 0);
+      const selectedItems = getSelectedReorderItems(selectedGroup);
+      const preparedQuantity = selectedItems.reduce((sum, item) => sum + getPreparedReorderQuantity(item), 0);
       return [
-        { label: 'Items to Reorder', value: reorderItems.length, icon: <Package className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
         { label: 'Suggested Qty', value: reorderItems.reduce((sum, item) => sum + Number(item.neededQuantity || 0), 0), icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
         { label: 'Reorder Qty', value: preparedQuantity, icon: <PackagePlus className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
-        { label: 'Out of Stock', value: reorderItems.filter(item => item.status === 'Out of Stock').length, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: reorderItems.some(item => item.status === 'Out of Stock') ? 'border-l-red-500' : 'border-l-slate-300' },
       ];
     }
 
     if (reportType === 'untracked-sales') {
       const untrackedItems = getUntrackedSalesItems();
       return [
-        { label: 'Manual Item Groups', value: untrackedItems.length, icon: <FileText className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
         { label: 'Qty Sold', value: untrackedItems.reduce((sum, item) => sum + Number(item.totalQuantity || 0), 0), icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
         { label: 'Manual Sales', value: formatCurrency(untrackedItems.reduce((sum, item) => sum + Number(item.totalSalesAmount || 0), 0)), icon: <Wallet className="w-8 h-8 text-amber-500" />, color: 'border-l-amber-500' },
         { label: 'Repeat Items', value: untrackedItems.filter(item => Number(item.timesSold || 0) > 1).length, icon: <PackagePlus className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
@@ -845,27 +1139,28 @@ export function ReportsModule({
     if (reportType === 'low-stock') {
       const lowStockRows = getLowStockItems();
       return [
-        { label: 'Attention Items', value: lowStockRows.length, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: lowStockRows.length > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
         { label: 'Out of Stock', value: lowStockRows.filter(item => item.status === 'Out of Stock').length, icon: <Package className="w-8 h-8 text-rose-500" />, color: 'border-l-rose-500' },
         { label: 'Low Stock', value: lowStockRows.filter(item => item.status === 'Low Stock').length, icon: <TrendingUp className="w-8 h-8 text-amber-500" />, color: 'border-l-amber-500' },
-        { label: 'Categories', value: new Set(lowStockRows.map(item => item.category)).size, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
       ];
     }
 
     if (reportType === 'detailed') {
       const filtered = getFilteredInventory();
       return [
-        { label: 'Displayed Items', value: filtered.length, icon: <Package className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
         { label: 'Displayed Units', value: filtered.reduce((sum, item) => sum + Number(item.quantity || 0), 0), icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
-        { label: 'Categories', value: new Set(filtered.map(item => item.category)).size, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
         { label: 'Needs Attention', value: filtered.filter(item => item.status === 'Low Stock' || item.status === 'Out of Stock').length, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: filtered.some(item => item.status === 'Low Stock' || item.status === 'Out of Stock') ? 'border-l-red-500' : 'border-l-slate-300' },
+      ];
+    }
+
+    if (reportType === 'category') {
+      return [
+        { label: 'Stock Needs Attention', value: attentionItems, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: attentionItems > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
       ];
     }
 
     return [
       { label: 'Total Items', value: totalItems, icon: <Package className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
       { label: 'Total Units', value: totalQuantity, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
-      { label: 'Categories', value: categories.length, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
       { label: 'Stock Needs Attention', value: attentionItems, icon: <AlertTriangle className="w-8 h-8 text-red-500" />, color: attentionItems > 0 ? 'border-l-red-500' : 'border-l-slate-300' },
     ];
   };
@@ -1058,14 +1353,21 @@ export function ReportsModule({
 
     let startY = 42;
     if (reportType !== 'supplier-reorder') {
+      const reportPeriodLabel = getReportPeriodLabel();
       // Report Info
       doc.setFontSize(10);
       drawLabelValue('Report Type', getReportTypeLabel(), pdfMargin, 40);
-      drawLabelValue('Generated', `${currentDate} ${currentTime}`, pdfMargin, 46);
-      drawLabelValue('Branch', user.branch, pdfMargin, 52);
-      drawLabelValue('Generated by', user.fullName, pdfMargin, 58);
-      doc.line(pdfMargin, 62, pageRight, 62);
-      startY = 70;
+      let reportInfoY = 46;
+      if (reportPeriodLabel) {
+        drawLabelValue('Report Period', reportPeriodLabel, pdfMargin, reportInfoY);
+        reportInfoY += 6;
+      }
+      drawLabelValue('Generated', `${currentDate} ${currentTime}`, pdfMargin, reportInfoY);
+      drawLabelValue('Branch', user.branch, pdfMargin, reportInfoY + 6);
+      drawLabelValue('Generated by', user.fullName, pdfMargin, reportInfoY + 12);
+      const separatorY = reportInfoY + 16;
+      doc.line(pdfMargin, separatorY, pageRight, separatorY);
+      startY = separatorY + 8;
     }
     if (reportType === 'summary') {
       // Summary Statistics
@@ -1216,14 +1518,16 @@ export function ReportsModule({
       doc.setFontSize(11);
       drawLabelValue('SUPPLIER', supplierName || 'No supplier selected', 20, startY + 10, { fontSize: 11 });
       drawLabelValue('BRANCH', user.branch, 20, startY + 18, { fontSize: 11 });
+      drawLabelValue('SELECTED ITEMS', supplierGroups.reduce((sum, group) => sum + getSelectedReorderItems(group).length, 0), 20, startY + 26, { fontSize: 11 });
 
       if (supplierGroups.length === 0) {
         doc.setFontSize(9);
         doc.setFont('helvetica', 'normal');
-        doc.text('No items require supplier reorder review for the selected supplier.', 20, startY + 32);
+        doc.text('No items require supplier reorder review for the selected supplier.', 20, startY + 40);
       } else {
-        let currentY = startY + 30;
+        let currentY = startY + 38;
         supplierGroups.forEach((group, index) => {
+          const selectedItems = getSelectedReorderItems(group);
           if (currentY > pageHeight - 42) {
             doc.addPage();
             currentY = 20;
@@ -1236,11 +1540,18 @@ export function ReportsModule({
           } else if (index > 0) {
             currentY += 4;
           }
+          if (selectedItems.length === 0) {
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'normal');
+            doc.text('No selected items for this supplier.', 20, currentY);
+            currentY += 10;
+            return;
+          }
           reportTable({
             startY: currentY,
             tableWidth: pageWidth - pdfMargin * 2,
             head: [['Item Name', 'Quantity to Order']],
-            body: group.items.map(item => [
+            body: selectedItems.map(item => [
               item.name,
               String(getPreparedReorderQuantity(item))
             ]),
@@ -1416,6 +1727,8 @@ export function ReportsModule({
       const isSalesMovementReport = reportType === 'sales-movements';
       const movements = isSalesMovementReport ? getSalesMovementRows() : getFilteredMovements({ salesOnly: false });
       const salesSummary = getSalesFinancialSummary();
+      const salesComparison = isSalesMovementReport ? getSalesComparisonSummary() : null;
+      const topSellingProducts = isSalesMovementReport ? getTopSellingProducts(10) : [];
       const movementSummary = getStockMovementSummary();
       doc.setFontSize(12);
       doc.setFont('helvetica', 'bold');
@@ -1446,6 +1759,89 @@ export function ReportsModule({
           isSalesMovementReport ? startY + 44 : startY + 38
         );
       } else {
+        let movementTableStartY = isSalesMovementReport ? startY + 42 : startY + 34;
+        if (isSalesMovementReport && salesComparison) {
+          const amountDueComparison = formatReportComparison(
+            salesComparison.current.amountDue,
+            salesComparison.previous.amountDue
+          );
+          const transactionComparison = formatReportComparison(
+            salesComparison.current.transactions,
+            salesComparison.previous.transactions,
+            {
+              percentage: false,
+              emptyLabel: 'No transactions',
+              unitSingular: 'transaction',
+              unitPlural: 'transactions'
+            }
+          );
+          const unitsComparison = formatReportComparison(
+            salesComparison.current.unitsSold,
+            salesComparison.previous.unitsSold,
+            {
+              percentage: false,
+              emptyLabel: 'No units sold',
+              unitSingular: 'unit',
+              unitPlural: 'units'
+            }
+          );
+
+          doc.setFontSize(10);
+          doc.setFont('helvetica', 'bold');
+          doc.text('PREVIOUS PERIOD COMPARISON', 20, movementTableStartY);
+          doc.setFontSize(8);
+          doc.setFont('helvetica', 'normal');
+          drawLabelValueSegments([
+            { label: 'Amount Due', value: amountDueComparison.label },
+            { label: 'Transactions', value: transactionComparison.label },
+            { label: 'Units Sold', value: unitsComparison.label }
+          ], 20, movementTableStartY + 6, { fontSize: 8 });
+          movementTableStartY += 18;
+        }
+        if (isSalesMovementReport && topSellingProducts.length > 0) {
+          doc.setFontSize(10);
+          doc.setFont('helvetica', 'bold');
+          doc.text('TOP-SELLING PRODUCTS', 20, movementTableStartY);
+          reportTable({
+            startY: movementTableStartY + 5,
+            head: [['Rank', 'Product', 'Category', 'Qty Sold', 'Sales', 'Sales Share']],
+            body: topSellingProducts.map(product => [
+              `#${product.rank}`,
+              product.itemName,
+              product.category,
+              String(product.quantitySold),
+              formatCurrency(product.revenue),
+              formatPercentage(product.revenueShare)
+            ]),
+            theme: 'striped',
+            headStyles: {
+              fillColor: [22, 101, 52],
+              textColor: 255,
+              fontStyle: 'bold'
+            },
+            styles: {
+              fontSize: 7.5,
+              cellPadding: 1.7
+            },
+            alternateRowStyles: {
+              fillColor: [240, 253, 244]
+            },
+            columnStyles: {
+              0: { cellWidth: 14, halign: 'center' },
+              1: { cellWidth: 62 },
+              2: { cellWidth: 28 },
+              3: { cellWidth: 18, halign: 'center' },
+              4: { cellWidth: 26, halign: 'right' },
+              5: { cellWidth: 18, halign: 'center' }
+            }
+          });
+          movementTableStartY = doc.lastAutoTable.finalY + 9;
+          doc.setFontSize(10);
+          doc.setFont('helvetica', 'bold');
+          doc.text('DETAILED SALES STOCK DEDUCTIONS', 20, movementTableStartY);
+          movementTableStartY += 5;
+        }
+
         const movementData = movements.map(movement => {
           const sharedColumns = [
             formatDateTime(movement.createdAt),
@@ -1467,32 +1863,41 @@ export function ReportsModule({
           : ['Transaction Date', 'Encoded Date', 'Item', 'Category', 'Action', 'Reason', 'Qty', 'Before/After', 'Handled By'];
         const movementColumnStyles = isSalesMovementReport
           ? {
-              0: { cellWidth: 18 },
-              1: { cellWidth: 24 },
-              2: { cellWidth: 24 },
-              3: { cellWidth: 35 },
-              4: { cellWidth: 18 },
-              5: { cellWidth: 16 },
-              6: { cellWidth: 18 },
-              7: { cellWidth: 11 },
-              8: { cellWidth: 18 },
-              9: { cellWidth: 18 }
+              0: { cellWidth: 22 },
+              1: { cellWidth: 28 },
+              2: { cellWidth: 26 },
+              3: { cellWidth: 48 },
+              4: { cellWidth: 22 },
+              5: { cellWidth: 20 },
+              6: { cellWidth: 24 },
+              7: { cellWidth: 14 },
+              8: { cellWidth: 25 },
+              9: { cellWidth: 28 }
             }
           : {
-              0: { cellWidth: 25 },
-              1: { cellWidth: 25 },
-              2: { cellWidth: 40 },
-              3: { cellWidth: 20 },
-              4: { cellWidth: 17 },
-              5: { cellWidth: 25 },
+              0: { cellWidth: 30 },
+              1: { cellWidth: 26 },
+              2: { cellWidth: 56 },
+              3: { cellWidth: 24 },
+              4: { cellWidth: 21 },
+              5: { cellWidth: 34 },
               6: { cellWidth: 12 },
-              7: { cellWidth: 20 },
-              8: { cellWidth: 18 }
+              7: { cellWidth: 24 },
+              8: { cellWidth: 30 }
             };
+        const movementTableWidth = Object.values(movementColumnStyles)
+          .reduce((total, style) => total + Number(style.cellWidth || 0), 0);
+        const movementTableLeft = Math.max(pdfMargin, (pageWidth - movementTableWidth) / 2);
+        const movementTableRight = Math.max(pdfMargin, pageWidth - movementTableLeft - movementTableWidth);
         reportTable({
-          startY: isSalesMovementReport ? startY + 42 : startY + 34,
+          startY: movementTableStartY,
           head: [movementHead],
           body: movementData,
+          tableWidth: movementTableWidth,
+          margin: {
+            left: movementTableLeft,
+            right: movementTableRight
+          },
           theme: 'striped',
           headStyles: {
             fillColor: [71, 85, 105],
@@ -1540,31 +1945,12 @@ export function ReportsModule({
     return 'Adjustment';
   };
 
-  const getMovementReasonLabel = reason => {
-    const labels = {
-      delivery_received: 'Delivery Received',
-      purchase_received: 'Purchase Received',
-      returned_item: 'Returned Item',
-      beginning_balance: 'Beginning Balance',
-      found_stock: 'Found Stock',
-      sales_cancellation: 'Cancellation',
-      sales: 'Sales',
-      damaged: 'Damaged',
-      expired: 'Expired',
-      lost_missing: 'Lost/Missing',
-      manual_adjustment: 'Manual Adjustment',
-      branch_transfer: 'Branch Transfer',
-      correction: 'Correction'
-    };
-    return labels[reason] || '-';
-  };
-
   const getMovementReasonDisplay = movement => {
     const note = String(movement?.note || '').toLowerCase();
     if (movement?.reason === 'correction' && note.includes('cancelled sales transaction')) {
       return 'Cancellation';
     }
-    return getMovementReasonLabel(movement?.reason);
+    return getStockMovementReasonLabel(movement?.reason, movement?.action);
   };
 
   const getPaymentMethodLabel = method => {
@@ -1761,16 +2147,16 @@ export function ReportsModule({
         }
 
         .reports-pos-summary-copy p {
-          max-width: 720px;
+          max-width: min(100%, 860px);
           text-align: right;
           font-size: 0.84rem;
           line-height: 1.45;
-          color: #64748b;
+          color: #111827;
         }
 
         .reports-pos-summary-grid {
           display: grid;
-          grid-template-columns: minmax(150px, 0.9fr) minmax(150px, 0.9fr) minmax(260px, 1.25fr);
+          grid-template-columns: minmax(150px, 0.85fr) minmax(260px, 1.15fr);
           gap: 0;
           overflow: hidden;
           border: 1px solid #e2e8f0;
@@ -1802,7 +2188,7 @@ export function ReportsModule({
           font-size: 0.7rem;
           line-height: 1.2;
           font-weight: 800;
-          color: #64748b;
+          color: #111827;
           letter-spacing: 0;
           text-transform: uppercase;
         }
@@ -1841,13 +2227,195 @@ export function ReportsModule({
         }
 
         .reports-pos-payment-count span {
-          color: #64748b;
+          color: #111827;
           font-size: 0.64rem;
         }
 
         .reports-pos-payment-count strong {
           margin-top: 0.15rem;
           font-size: 1.08rem;
+        }
+
+        .reports-comparison-summary {
+          display: grid;
+          gap: 0.65rem;
+          margin-bottom: 1rem;
+          border: 1px solid #e2e8f0;
+          border-radius: 1rem;
+          background: #ffffff;
+          padding: 0.75rem 0.85rem;
+          box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+        }
+
+        .reports-comparison-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 0.65rem;
+        }
+
+        .reports-comparison-item {
+          display: flex;
+          min-height: 116px;
+          flex-direction: column;
+          align-items: flex-start;
+          min-width: 0;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.85rem;
+          background: #f8fafc;
+          padding: 0.75rem;
+        }
+
+        .reports-comparison-item span {
+          display: block;
+          color: #111827;
+          font-size: 0.68rem;
+          font-weight: 800;
+          line-height: 1.2;
+          text-transform: uppercase;
+        }
+
+        .reports-comparison-item strong {
+          display: block;
+          margin-top: 0.25rem;
+          color: #0f172a;
+          font-size: clamp(1.05rem, 1.35vw, 1.3rem);
+          font-weight: 850;
+          line-height: 1.2;
+          overflow-wrap: anywhere;
+        }
+
+        .reports-comparison-badge {
+          display: inline-flex;
+          width: max-content;
+          max-width: 100%;
+          margin-top: 0.55rem;
+          border-radius: 14px;
+          padding: 0.35rem 0.65rem;
+          font-size: 0.68rem;
+          font-style: normal;
+          font-weight: 800;
+          line-height: 1.25;
+          overflow-wrap: anywhere;
+          white-space: normal;
+        }
+
+        .reports-comparison-badge.comparison-up {
+          background: #dcfce7;
+          color: #166534;
+        }
+
+        .reports-comparison-badge.comparison-down {
+          background: #fee2e2;
+          color: #991b1b;
+        }
+
+        .reports-comparison-badge.comparison-neutral {
+          background: #f1f5f9;
+          color: #111827;
+        }
+
+        .reports-top-products-summary {
+          display: grid;
+          gap: 0.65rem;
+          margin-bottom: 1rem;
+          border: 1px solid #e2e8f0;
+          border-radius: 1rem;
+          background: #ffffff;
+          padding: 0.75rem 0.85rem;
+          box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+        }
+
+        .reports-top-products-table {
+          overflow-x: auto;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.9rem;
+        }
+
+        .reports-top-products-table table {
+          min-width: 760px;
+        }
+
+        .reports-top-products-table th {
+          background: #f8fafc;
+          color: #111827;
+          font-size: 0.72rem;
+          font-weight: 800;
+          text-transform: uppercase;
+        }
+
+        .reports-top-products-table td,
+        .reports-top-products-table th {
+          padding: 0.7rem 0.85rem;
+          vertical-align: middle;
+        }
+
+        .reports-rank-badge {
+          border-color: #cbd5e1;
+          background: #f8fafc;
+          color: #334155;
+          font-weight: 800;
+        }
+
+        .reports-top-products-mobile {
+          display: none;
+        }
+
+        .reports-top-product-card {
+          display: grid;
+          gap: 0.65rem;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.85rem;
+          background: #ffffff;
+          padding: 0.75rem;
+        }
+
+        .reports-top-product-heading {
+          display: flex;
+          min-width: 0;
+          align-items: flex-start;
+          gap: 0.65rem;
+        }
+
+        .reports-top-product-heading h4 {
+          color: #0f172a;
+          font-size: 0.9rem;
+          font-weight: 800;
+          line-height: 1.25;
+          overflow-wrap: anywhere;
+        }
+
+        .reports-top-product-heading p {
+          margin-top: 0.18rem;
+          color: #111827;
+          font-size: 0.78rem;
+          line-height: 1.3;
+        }
+
+        .reports-top-product-stats {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 0.45rem;
+        }
+
+        .reports-top-product-stats span {
+          min-width: 0;
+          border-radius: 0.7rem;
+          background: #f8fafc;
+          padding: 0.55rem;
+          color: #111827;
+          font-size: 0.68rem;
+          font-weight: 800;
+          text-transform: uppercase;
+        }
+
+        .reports-top-product-stats strong {
+          display: block;
+          margin-top: 0.2rem;
+          color: #0f172a;
+          font-size: 0.82rem;
+          line-height: 1.2;
+          overflow-wrap: anywhere;
+          text-transform: none;
         }
 
         .reports-help-label {
@@ -1919,6 +2487,89 @@ export function ReportsModule({
           display: none;
         }
 
+        .reports-period-control-row {
+          display: grid;
+          grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+          gap: 1rem;
+          align-items: end;
+          --reports-period-control-height: 46px;
+          --reports-period-control-radius: 0.75rem;
+          --reports-period-control-x: 0.95rem;
+        }
+
+        .reports-period-control-row.is-custom-range {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .reports-period-select-field {
+          display: grid;
+          gap: 0.45rem;
+          min-width: 0;
+        }
+
+        .reports-custom-range-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          grid-column: span 2;
+          gap: 1rem;
+        }
+
+        .reports-custom-date-field {
+          display: grid;
+          gap: 0.45rem;
+          min-width: 0;
+        }
+
+        .reports-custom-date-label {
+          color: #475569;
+          font-size: 0.75rem;
+          font-weight: 800;
+          line-height: 1.25;
+          cursor: pointer;
+        }
+
+        .reports-period-control-row [data-reports-control] {
+          width: 100%;
+          height: var(--reports-period-control-height);
+          min-height: var(--reports-period-control-height);
+          box-sizing: border-box;
+          border: 1px solid #d1d5db;
+          border-radius: var(--reports-period-control-radius);
+          background: #ffffff;
+          padding: 0 var(--reports-period-control-x);
+          color: #172033;
+          font-size: 0.875rem;
+          font-weight: 700;
+          line-height: 1.2;
+          align-items: center;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+          transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+        }
+
+        .reports-period-control-row button[data-reports-control] {
+          display: flex;
+        }
+
+        .reports-custom-date-input {
+          appearance: none;
+          -webkit-appearance: none;
+          cursor: pointer;
+          outline: none;
+        }
+
+        .reports-period-control-row [data-reports-control]:hover {
+          border-color: #facc15;
+          background: #ffffff;
+        }
+
+        .reports-period-control-row [data-reports-control]:focus,
+        .reports-period-control-row [data-reports-control]:focus-visible {
+          border-color: #f59e0b;
+          background: #ffffff;
+          box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
+          outline: none;
+        }
+
         @media (hover: none), (pointer: coarse) {
           .reports-help-trigger,
           .reports-help-trigger:hover,
@@ -1953,7 +2604,7 @@ export function ReportsModule({
           background: #f8fafc;
           padding: 34px 22px;
           text-align: center;
-          color: #64748b;
+          color: #111827;
         }
 
         .reports-empty-icon {
@@ -1964,7 +2615,7 @@ export function ReportsModule({
           justify-content: center;
           border-radius: 16px;
           background: #ffffff;
-          color: #475569;
+          color: #111827;
           box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
         }
 
@@ -1983,6 +2634,17 @@ export function ReportsModule({
           line-height: 1.55;
         }
 
+        .reports-metric-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+          gap: 1rem;
+          margin-bottom: 1.25rem;
+        }
+
+        .reports-metric-card {
+          min-width: 0;
+        }
+
         .reports-data-card {
           overflow: hidden;
           border-color: #e2e8f0;
@@ -1994,6 +2656,10 @@ export function ReportsModule({
         }
 
         .reports-data-card [data-slot='card-content'] {
+          min-width: 0;
+        }
+
+        .reports-category-analysis-card {
           min-width: 0;
         }
 
@@ -2016,14 +2682,74 @@ export function ReportsModule({
           min-width: 720px;
         }
 
+        .reports-desktop-table [data-slot='table-container'],
+        .reports-movement-desktop-table [data-slot='table-container'],
+        .reports-category-table [data-slot='table-container'],
+        .reports-top-products-table [data-slot='table-container'] {
+          overflow: visible;
+        }
+
         .reports-supplier-reorder-table table {
-          min-width: 1160px;
+          min-width: 1080px;
           table-layout: fixed;
+        }
+
+        .reports-reorder-card-actions {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 0.5rem;
+        }
+
+        .reports-reorder-select-cell {
+          text-align: center;
+        }
+
+        .reports-reorder-checkbox {
+          width: 1rem;
+          height: 1rem;
+          accent-color: #16a34a;
+          cursor: pointer;
+        }
+
+        .reports-reorder-selection-action {
+          min-height: 2.25rem;
+          border-color: #cbd5e1;
+          background: #ffffff;
+          color: #334155;
+          font-weight: 700;
+          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .reports-reorder-selection-action:hover,
+        .reports-reorder-selection-action:focus-visible {
+          border-color: #93c5fd;
+          background: #eff6ff;
+          color: #1d4ed8;
+          box-shadow: 0 6px 14px rgba(37, 99, 235, 0.12);
+        }
+
+        .reports-generate-draft-button {
+          min-height: 2.25rem;
+          border: 1px solid #15803d;
+          background: #16a34a;
+          color: #ffffff;
+          font-weight: 750;
+          box-shadow: 0 8px 18px rgba(22, 163, 74, 0.16);
+        }
+
+        .reports-generate-draft-button:hover,
+        .reports-generate-draft-button:focus-visible {
+          border-color: #166534;
+          background: #15803d;
+          color: #ffffff;
         }
 
         .reports-desktop-table thead,
         .reports-movement-desktop-table thead,
-        .reports-category-table thead {
+        .reports-category-table thead,
+        .reports-top-products-table thead {
           position: sticky;
           top: 0;
           z-index: 5;
@@ -2033,7 +2759,11 @@ export function ReportsModule({
 
         .reports-desktop-table th,
         .reports-movement-desktop-table th,
-        .reports-category-table th {
+        .reports-category-table th,
+        .reports-top-products-table th {
+          position: sticky;
+          top: 0;
+          z-index: 6;
           background: #f8fafc;
           white-space: normal;
           overflow-wrap: break-word;
@@ -2070,26 +2800,31 @@ export function ReportsModule({
 
         .reports-supplier-reorder-table th:nth-child(1),
         .reports-supplier-reorder-table td:nth-child(1) {
-          width: 110px;
+          width: 56px;
+          min-width: 56px;
           text-align: center;
         }
 
         .reports-supplier-reorder-table th:nth-child(2),
         .reports-supplier-reorder-table td:nth-child(2) {
-          width: 280px;
-          min-width: 280px;
-          text-align: left;
+          width: 92px;
+          text-align: center;
         }
 
         .reports-supplier-reorder-table th:nth-child(3),
         .reports-supplier-reorder-table td:nth-child(3) {
-          width: 120px;
-          min-width: 120px;
-          text-align: center;
+          width: 300px;
+          min-width: 300px;
+          text-align: left;
         }
 
         .reports-supplier-reorder-table th:nth-child(4),
-        .reports-supplier-reorder-table td:nth-child(4),
+        .reports-supplier-reorder-table td:nth-child(4) {
+          width: 92px;
+          min-width: 92px;
+          text-align: center;
+        }
+
         .reports-supplier-reorder-table th:nth-child(5),
         .reports-supplier-reorder-table td:nth-child(5),
         .reports-supplier-reorder-table th:nth-child(6),
@@ -2099,16 +2834,18 @@ export function ReportsModule({
         .reports-supplier-reorder-table th:nth-child(8),
         .reports-supplier-reorder-table td:nth-child(8),
         .reports-supplier-reorder-table th:nth-child(9),
-        .reports-supplier-reorder-table td:nth-child(9) {
-          width: 86px;
-          min-width: 86px;
+        .reports-supplier-reorder-table td:nth-child(9),
+        .reports-supplier-reorder-table th:nth-child(10),
+        .reports-supplier-reorder-table td:nth-child(10) {
+          width: 72px;
+          min-width: 72px;
           text-align: center;
         }
 
-        .reports-supplier-reorder-table th:nth-child(10),
-        .reports-supplier-reorder-table td:nth-child(10) {
-          width: 120px;
-          min-width: 120px;
+        .reports-supplier-reorder-table th:nth-child(11),
+        .reports-supplier-reorder-table td:nth-child(11) {
+          width: 96px;
+          min-width: 96px;
           text-align: center;
         }
 
@@ -2155,6 +2892,20 @@ export function ReportsModule({
           box-shadow: 0 10px 20px rgba(15, 23, 42, 0.07);
         }
 
+        #root .reports-reorder-record-card,
+        #root .reports-reorder-record-card:hover,
+        #root .reports-reorder-record-card:active,
+        #root .reports-reorder-record-card:focus,
+        #root .reports-reorder-record-card:focus-visible,
+        #root .reports-reorder-record-card:focus-within,
+        #root .reports-reorder-record-card[data-active='true'],
+        #root .reports-reorder-record-card[data-state='open'],
+        #root .reports-reorder-record-card[aria-selected='true'] {
+          border-color: #e2e8f0;
+          background: #ffffff;
+          box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05);
+        }
+
         .reports-record-top {
           display: flex;
           align-items: flex-start;
@@ -2163,9 +2914,16 @@ export function ReportsModule({
           margin-bottom: 10px;
         }
 
+        .reports-reorder-mobile-title {
+          display: flex;
+          min-width: 0;
+          align-items: flex-start;
+          gap: 0.65rem;
+        }
+
         .reports-record-code {
           margin-bottom: 3px;
-          color: #64748b;
+          color: #111827;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
           font-size: 12px;
           line-height: 1.2;
@@ -2182,7 +2940,7 @@ export function ReportsModule({
 
         .reports-record-meta {
           margin-top: 4px;
-          color: #64748b;
+          color: #111827;
           font-size: 12px;
           line-height: 1.35;
           overflow-wrap: anywhere;
@@ -2208,7 +2966,7 @@ export function ReportsModule({
         .reports-record-stat span {
           display: block;
           margin-bottom: 4px;
-          color: #64748b;
+          color: #111827;
           font-size: 10px;
           font-weight: 800;
           line-height: 1.2;
@@ -2292,7 +3050,7 @@ export function ReportsModule({
           margin-top: 0.75rem;
           border-top: 1px solid #e2e8f0;
           padding-top: 0.7rem;
-          color: #64748b;
+          color: #111827;
           font-size: 0.78rem;
           line-height: 1.45;
           overflow-wrap: anywhere;
@@ -2300,7 +3058,7 @@ export function ReportsModule({
 
         .reports-purchase-remarks-cell {
           max-width: 14rem;
-          color: #475569;
+          color: #111827;
           font-size: 0.82rem;
           line-height: 1.35;
           overflow-wrap: anywhere;
@@ -2373,7 +3131,7 @@ export function ReportsModule({
         .reports-movement-stat span {
           display: block;
           margin-bottom: 4px;
-          color: #64748b;
+          color: #111827;
           font-size: 10px;
           font-weight: 800;
           line-height: 1.2;
@@ -2400,7 +3158,7 @@ export function ReportsModule({
 
         .reports-movement-meta {
           margin-top: 3px;
-          color: #64748b;
+          color: #111827;
           font-size: 12px;
           line-height: 1.35;
         }
@@ -2638,6 +3396,16 @@ export function ReportsModule({
             padding: 13px;
           }
 
+          .reports-record-card,
+          .reports-record-card:hover,
+          .reports-record-card:active,
+          .reports-record-card:focus-within {
+            -webkit-tap-highlight-color: transparent;
+            border-color: #e2e8f0;
+            background: #ffffff;
+            box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05);
+          }
+
           .reports-desktop-table,
           .reports-movement-desktop-table,
           .reports-category-table {
@@ -2645,8 +3413,12 @@ export function ReportsModule({
           }
 
           .reports-pos-summary-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
             justify-content: stretch;
+          }
+
+          .reports-comparison-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
           }
 
           .reports-pos-summary-item {
@@ -2702,6 +3474,13 @@ export function ReportsModule({
           .reports-filter-row { gap: 10px; }
           .reports-page [data-reports-control],
           .reports-page [data-reports-date-pill] { min-height: 46px; border-radius: 12px; font-size: 14px; }
+
+          .reports-period-control-row,
+          .reports-period-control-row.is-custom-range {
+            grid-template-columns: 1fr;
+            gap: 10px;
+          }
+
           .reports-date-picker-pill {
             align-items: center;
             justify-content: space-between;
@@ -2744,7 +3523,40 @@ export function ReportsModule({
             overflow-wrap: anywhere;
           }
 
-          .reports-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+          .reports-custom-range-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 10px;
+          }
+
+          .reports-custom-date-field {
+            display: grid;
+            gap: 6px;
+            min-width: 0;
+          }
+
+          .reports-custom-date-label {
+            color: #475569;
+            font-size: 12px;
+            font-weight: 800;
+            cursor: pointer;
+          }
+
+          .reports-custom-date-input {
+            width: 100%;
+            height: 46px;
+            min-height: 46px;
+            border: 1px solid #d1d5db;
+            border-radius: 12px;
+            background: #ffffff;
+            padding: 0 12px;
+            color: #172033;
+            font-weight: 700;
+            cursor: pointer;
+            outline: none;
+          }
+
+          .reports-metric-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: 12px; margin-bottom: 16px; }
           .reports-metric-card [data-reports-metric-content] { padding: 14px; }
           .reports-metric-card [data-reports-metric-row] { align-items: center; gap: 8px; }
           .reports-metric-card p:first-child { font-size: 12px; line-height: 1.2; }
@@ -2801,24 +3613,49 @@ export function ReportsModule({
             line-height: 1.45;
           }
           .reports-pos-summary-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-columns: 1fr;
             gap: 0;
           }
           .reports-pos-summary-item {
-            border-right: 1px solid #e2e8f0;
+            border-right: 0;
             border-bottom: 1px solid #e2e8f0;
             min-height: 64px;
             padding: 9px 12px;
           }
-          .reports-pos-summary-item:nth-child(2n) { border-right: 0; }
-          .reports-pos-summary-item:nth-child(3) {
-            grid-column: 1 / -1;
-            border-right: 0;
-            border-bottom: 0;
-          }
+          .reports-pos-summary-item:last-child { border-bottom: 0; }
           .reports-pos-summary-item-due { box-shadow: inset 3px 0 0 #22c55e; }
           .reports-pos-summary-item span { font-size: 10px; }
           .reports-pos-summary-item strong { font-size: 14px; }
+
+          .reports-comparison-summary {
+            padding: 0.7rem;
+          }
+
+          .reports-comparison-grid {
+            grid-template-columns: 1fr;
+            gap: 0.55rem;
+          }
+
+          .reports-comparison-item {
+            padding: 0.65rem 0.75rem;
+          }
+
+          .reports-top-products-summary {
+            padding: 0.7rem;
+          }
+
+          .reports-top-products-table {
+            display: none;
+          }
+
+          .reports-top-products-mobile {
+            display: grid;
+            gap: 0.6rem;
+          }
+
+          .reports-top-product-stats {
+            grid-template-columns: 1fr;
+          }
           .reports-pos-payment-counts {
             grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 0;
@@ -2914,8 +3751,6 @@ export function ReportsModule({
             min-height: 58px;
             padding: 8px 12px;
           }
-          .reports-pos-summary-item:nth-child(3) { grid-column: auto; }
-          .reports-pos-summary-item:nth-last-child(-n + 2) { border-bottom: 1px solid #e2e8f0; }
           .reports-pos-summary-item:last-child { border-bottom: 0; }
           .reports-pos-payment-counts {
             grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2960,76 +3795,95 @@ export function ReportsModule({
         </CardHeader>
         <CardContent data-reports-config-content>
           <div className="reports-config-stack space-y-6">
-            {isInventorySnapshotReport ? (
-              <div className="reports-period-panel reports-scope-panel bg-gradient-to-br from-yellow-50 to-orange-50 p-6 rounded-xl border-2 border-[#FFFF00]/30 shadow-sm">
-                <div className="reports-period-label flex items-center gap-3 mb-3">
-                  <Package className="w-5 h-5 text-[#FF0000]" />
-                  <span className="font-semibold text-gray-900">Current Inventory Snapshot</span>
-                </div>
-                <p className="reports-scope-copy text-sm leading-6 text-slate-700">
-                  This report uses the latest inventory quantities and low-stock thresholds. Date filters are only used for sales, purchases, and stock movement activity reports.
-                </p>
-              </div>
-            ) : (
+            {!isInventorySnapshotReport && (
               <div className="reports-period-panel bg-gradient-to-br from-yellow-50 to-orange-50 p-6 rounded-xl border-2 border-[#FFFF00]/30 shadow-sm">
                 <div className="reports-period-label flex items-center gap-3 mb-3">
                   <Calendar className="w-5 h-5 text-[#FF0000]" />
                   <label className="font-semibold text-gray-900">Report Period:</label>
                 </div>
-                <div className="reports-filter-row flex flex-col md:flex-row gap-4">
-                  <div className="flex-1">
+                <div className={`reports-period-control-row ${reportPeriod === 'custom' ? 'is-custom-range' : ''}`}>
+                  <div className="reports-period-select-field">
+                    <label htmlFor="reports-period-select" className="reports-custom-date-label">Period</label>
                     <Select value={reportPeriod} onValueChange={value => setReportPeriod(value)}>
-                      <SelectTrigger data-reports-control className="bg-white border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm">
+                      <SelectTrigger id="reports-period-select" data-reports-control className="bg-white border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="daily">Daily</SelectItem>
                         <SelectItem value="weekly">Weekly</SelectItem>
                         <SelectItem value="monthly">Monthly</SelectItem>
+                        <SelectItem value="custom">Custom Range</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
-                  <div
-                    data-reports-date-pill
-                    className="reports-date-picker-pill flex-1 flex bg-white px-4 py-2 rounded-lg border border-gray-300 shadow-sm"
-                    role="button"
-                    tabIndex={0}
-                    onClick={openReportDatePicker}
-                    onKeyDown={event => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        openReportDatePicker();
-                      }
-                    }}
-                    aria-label={`Open date picker for ${reportPeriod} report date`}
-                  >
-                    <div className="flex min-w-0 flex-1 items-center gap-2">
-                      {isRefreshing ? (
-                        <RefreshCw className="w-4 h-4 shrink-0 text-[#FF0000] animate-spin" />
-                      ) : (
-                        <Calendar className="w-4 h-4 shrink-0 text-gray-600" />
-                      )}
-                      <span className={`reports-date-range-text text-sm text-gray-700 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
-                        {getDateRange()}
-                      </span>
+                  {reportPeriod === 'custom' ? (
+                    <div className="reports-custom-range-grid">
+                      <div className="reports-custom-date-field">
+                        <label htmlFor="reports-custom-start" className="reports-custom-date-label">Start Date</label>
+                        <Input
+                          id="reports-custom-start"
+                          data-reports-control
+                          type="date"
+                          value={customStartDate}
+                          onChange={event => setCustomStartDate(event.target.value)}
+                          className="reports-custom-date-input"
+                        />
+                      </div>
+                      <div className="reports-custom-date-field">
+                        <label htmlFor="reports-custom-end" className="reports-custom-date-label">End Date</label>
+                        <Input
+                          id="reports-custom-end"
+                          data-reports-control
+                          type="date"
+                          value={customEndDate}
+                          onChange={event => setCustomEndDate(event.target.value)}
+                          className="reports-custom-date-input"
+                        />
+                      </div>
                     </div>
-                    <input
-                      ref={reportDateInputRef}
-                      className="reports-date-picker-input"
-                      type="date"
-                      value={selectedReportDate}
-                      onClick={event => event.stopPropagation()}
-                      onChange={event => setSelectedReportDate(event.target.value)}
-                      aria-label={`Select ${reportPeriod} report date`}
-                    />
-                  </div>
+                  ) : (
+                    <div
+                      data-reports-date-pill
+                      className="reports-date-picker-pill flex-1 flex bg-white px-4 py-2 rounded-lg border border-gray-300 shadow-sm"
+                      role="button"
+                      tabIndex={0}
+                      onClick={openReportDatePicker}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          openReportDatePicker();
+                        }
+                      }}
+                      aria-label={`Open date picker for ${reportPeriod} report date`}
+                    >
+                      <div className="flex min-w-0 flex-1 items-center gap-2">
+                        {isRefreshing ? (
+                          <RefreshCw className="w-4 h-4 shrink-0 text-[#FF0000] animate-spin" />
+                        ) : (
+                          <Calendar className="w-4 h-4 shrink-0 text-gray-600" />
+                        )}
+                        <span className={`reports-date-range-text text-sm text-slate-950 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
+                          {getDateRange()}
+                        </span>
+                      </div>
+                      <input
+                        ref={reportDateInputRef}
+                        className="reports-date-picker-input"
+                        type="date"
+                        value={selectedReportDate}
+                        onClick={event => event.stopPropagation()}
+                        onChange={event => setSelectedReportDate(event.target.value)}
+                        aria-label={`Select ${reportPeriod} report date`}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
             <div className="reports-filter-row flex flex-col md:flex-row gap-4">
               <div className="flex-1">
-                <label className="text-sm font-medium mb-2 block text-gray-700">Report Type</label>
+                <label className="text-sm font-medium mb-2 block text-slate-950">Report Type</label>
                 <Select value={reportType} onValueChange={handleReportTypeChange}>
                   <SelectTrigger data-reports-control className="border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00]">
                     <SelectValue />
@@ -3045,7 +3899,7 @@ export function ReportsModule({
               </div>
               {reportUsesCategoryFilter && (
                 <div className="flex-1">
-                  <label className="text-sm font-medium mb-2 block text-gray-700">Filter by Category</label>
+                  <label className="text-sm font-medium mb-2 block text-slate-950">Filter by Category</label>
                   <Select value={selectedCategory} onValueChange={setSelectedCategory}>
                     <SelectTrigger data-reports-control className="border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00]">
                       <SelectValue />
@@ -3061,7 +3915,7 @@ export function ReportsModule({
               )}
               {reportType === 'supplier-reorder' && (
                 <div className="flex-1">
-                  <label className="text-sm font-medium mb-2 block text-gray-700">Supplier to Prepare</label>
+                  <label className="text-sm font-medium mb-2 block text-slate-950">Supplier to Prepare</label>
                   <Select
                     value={selectedReorderSupplier}
                     onValueChange={setSelectedReorderSupplier}
@@ -3085,13 +3939,13 @@ export function ReportsModule({
         </CardContent>
       </Card>
 
-      <div className={`reports-metric-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
+      <div className={`reports-metric-grid transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
         {getReportMetrics().map(metric => (
           <Card key={metric.label} className={`reports-metric-card border-l-4 ${metric.color}`}>
             <CardContent className="pt-6" data-reports-metric-content>
               <div className="flex items-center justify-between" data-reports-metric-row>
                 <div>
-                  <p className="text-sm text-slate-600 mb-1">{metric.label}</p>
+                  <p className="text-sm text-slate-950 mb-1">{metric.label}</p>
                   <p className="text-3xl font-bold text-slate-900">{metric.value}</p>
                 </div>
                 {metric.icon}
@@ -3337,13 +4191,33 @@ export function ReportsModule({
                   <div className="min-w-0">
                     <CardTitle>Supplier Reorder List - {group.supplier}</CardTitle>
                     <CardDescription>
-                      {formatItemCount(group.itemCount)} needing reorder review - stock status uses the manual low-stock threshold.
+                      {formatItemCount(group.itemCount)} needing reorder review - {getSelectedReorderItems(group).length} selected for draft.
                     </CardDescription>
                   </div>
-                  <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                  <div className="reports-reorder-card-actions">
                     {group.outOfStock > 0 && <Badge className={getStatusCountBadgeClass('Out of Stock')}>{group.outOfStock} Out of Stock</Badge>}
                     {group.lowStock > 0 && <Badge className={getStatusCountBadgeClass('Low Stock')}>{group.lowStock} Low Stock</Badge>}
                     {group.reviewSuggested > 0 && <Badge variant="outline">{group.reviewSuggested} For Review</Badge>}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="reports-reorder-selection-action"
+                      onClick={() => setGroupReorderSelection(group, getSelectedReorderItems(group).length !== group.items.length)}
+                    >
+                      {getSelectedReorderItems(group).length === group.items.length ? 'Clear Selection' : 'Select All'}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="reports-generate-draft-button"
+                      onClick={() => handleGeneratePurchaseDraft(group)}
+                      disabled={getSelectedReorderItems(group).length === 0}
+                      title="Prepare these reorder items as a purchase draft for review in Purchases"
+                    >
+                      <PackagePlus className="mr-2 h-4 w-4" />
+                      Generate Purchase Draft
+                    </Button>
                   </div>
                 </div>
               </CardHeader>
@@ -3352,6 +4226,7 @@ export function ReportsModule({
                   <Table>
                     <TableHeader>
                       <TableRow>
+                        <TableHead>Select</TableHead>
                         <TableHead>Item Code</TableHead>
                         <TableHead>Item Name</TableHead>
                         <TableHead>Category</TableHead>
@@ -3367,6 +4242,15 @@ export function ReportsModule({
                     <TableBody>
                       {group.items.map(item => (
                         <TableRow key={item.id}>
+                          <TableCell className="reports-reorder-select-cell">
+                            <input
+                              type="checkbox"
+                              className="reports-reorder-checkbox"
+                              checked={isReorderItemSelected(item)}
+                              onChange={() => toggleReorderItemSelection(item)}
+                              aria-label={`Include ${item.name} in purchase draft`}
+                            />
+                          </TableCell>
                           <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
                           <TableCell>{item.name}</TableCell>
                           <TableCell>{item.category}</TableCell>
@@ -3400,12 +4284,21 @@ export function ReportsModule({
                 </div>
                 <div className="reports-mobile-record-list">
                   {group.items.map(item => (
-                    <article key={item.id} className="reports-record-card">
+                    <article key={item.id} className="reports-record-card reports-reorder-record-card">
                       <div className="reports-record-top">
-                        <div className="min-w-0">
+                        <div className="reports-reorder-mobile-title">
+                          <input
+                            type="checkbox"
+                            className="reports-reorder-checkbox"
+                            checked={isReorderItemSelected(item)}
+                            onChange={() => toggleReorderItemSelection(item)}
+                            aria-label={`Include ${item.name} in purchase draft`}
+                          />
+                          <div className="min-w-0">
                           <p className="reports-record-code">{getDisplayItemCode(item)}</p>
                           <h4 className="reports-record-name">{item.name}</h4>
                           <p className="reports-record-meta">{item.category}</p>
+                          </div>
                         </div>
                         {item.reorderReviewSuggested ? (
                           <Badge variant="outline" className="shrink-0">For Review</Badge>
@@ -3733,39 +4626,150 @@ export function ReportsModule({
             ) : (
               <>
                 {reportType === 'sales-movements' && (
-                  <div className="reports-pos-summary">
-                    <div className="reports-pos-summary-copy">
-                      <h3>Sales Payment Summary</h3>
-                      <p>
-                        {selectedCategory === 'all'
-                          ? 'Tracked inventory sales for the selected period. Subtotal is before discounts; Amount Due is shown above after discounts.'
-                          : 'Tracked sales in this category only. Discounts are shared proportionally; Amount Due is shown above after discounts.'}
-                      </p>
-                    </div>
-                    <div className="reports-pos-summary-grid">
-                      <div className="reports-pos-summary-item">
-                        <span>Subtotal</span>
-                        <strong>{formatCurrency(getSalesFinancialSummary().subtotal)}</strong>
+                  <>
+                    <div className="reports-pos-summary">
+                      <div className="reports-pos-summary-copy">
+                        <h3>Sales Payment Summary</h3>
+                        <p>
+                          {selectedCategory === 'all'
+                            ? 'Tracked inventory sales for the selected period. Subtotal is before discounts; Amount Due is shown above after discounts.'
+                            : 'Tracked sales in this category only. Discounts are shared proportionally; Amount Due is shown above after discounts.'}
+                        </p>
                       </div>
-                      <div className="reports-pos-summary-item">
-                        <span>Discount</span>
-                        <strong>{formatCurrency(getSalesFinancialSummary().discount)}</strong>
-                      </div>
-                      <div className="reports-pos-summary-item">
-                        <span>Payment Mix (Transactions)</span>
-                        <div className="reports-pos-payment-counts">
-                          <div className="reports-pos-payment-count">
-                            <span>Cash</span>
-                            <strong>{getSalesFinancialSummary().cashTransactions}</strong>
-                          </div>
-                          <div className="reports-pos-payment-count">
-                            <span>Non-cash</span>
-                            <strong>{getSalesFinancialSummary().nonCashTransactions}</strong>
+                      <div className="reports-pos-summary-grid">
+                        <div className="reports-pos-summary-item">
+                          <span>Subtotal</span>
+                          <strong>{formatCurrency(getSalesFinancialSummary().subtotal)}</strong>
+                        </div>
+                        <div className="reports-pos-summary-item">
+                          <span>Payment Mix (Transactions)</span>
+                          <div className="reports-pos-payment-counts">
+                            <div className="reports-pos-payment-count">
+                              <span>Cash</span>
+                              <strong>{getSalesFinancialSummary().cashTransactions}</strong>
+                            </div>
+                            <div className="reports-pos-payment-count">
+                              <span>Non-cash</span>
+                              <strong>{getSalesFinancialSummary().nonCashTransactions}</strong>
+                            </div>
                           </div>
                         </div>
                       </div>
                     </div>
-                  </div>
+                    {(() => {
+                      const comparison = getSalesComparisonSummary();
+                      const amountDueComparison = formatReportComparison(
+                        comparison.current.amountDue,
+                        comparison.previous.amountDue
+                      );
+                      const transactionComparison = formatReportComparison(
+                        comparison.current.transactions,
+                        comparison.previous.transactions,
+                        {
+                          percentage: false,
+                          emptyLabel: 'No transactions',
+                          unitSingular: 'transaction',
+                          unitPlural: 'transactions'
+                        }
+                      );
+                      const unitsComparison = formatReportComparison(
+                        comparison.current.unitsSold,
+                        comparison.previous.unitsSold,
+                        {
+                          percentage: false,
+                          emptyLabel: 'No units sold',
+                          unitSingular: 'unit',
+                          unitPlural: 'units'
+                        }
+                      );
+
+                      return (
+                        <div className="reports-comparison-summary">
+                          <div className="reports-pos-summary-copy">
+                            <h3>Previous Period Comparison</h3>
+                            <p>{getComparisonSummaryDescription()}</p>
+                          </div>
+                          <div className="reports-comparison-grid">
+                            <div className="reports-comparison-item">
+                              <span>Amount Due</span>
+                              <strong>{formatCurrency(comparison.current.amountDue)}</strong>
+                              <em className={`reports-comparison-badge comparison-${amountDueComparison.direction}`}>
+                                {amountDueComparison.label}
+                              </em>
+                            </div>
+                            <div className="reports-comparison-item">
+                              <span>Transactions</span>
+                              <strong>{comparison.current.transactions}</strong>
+                              <em className={`reports-comparison-badge comparison-${transactionComparison.direction}`}>
+                                {transactionComparison.label}
+                              </em>
+                            </div>
+                            <div className="reports-comparison-item">
+                              <span>Units Sold</span>
+                              <strong>{comparison.current.unitsSold}</strong>
+                              <em className={`reports-comparison-badge comparison-${unitsComparison.direction}`}>
+                                {unitsComparison.label}
+                              </em>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    {getTopSellingProducts().length > 0 && (
+                      <div className="reports-top-products-summary">
+                        <div className="reports-pos-summary-copy">
+                          <h3>Top-Selling Products</h3>
+                          <p>Products are ranked by quantity sold for the selected report period.</p>
+                        </div>
+                        <div className="reports-top-products-table">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Rank</TableHead>
+                                <TableHead>Product</TableHead>
+                                <TableHead>Category</TableHead>
+                                <TableHead>Qty Sold</TableHead>
+                                <TableHead>Sales</TableHead>
+                                <TableHead>Sales Share</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {getTopSellingProducts().map(product => (
+                                <TableRow key={`${product.rank}-${product.itemName}-${product.category}`}>
+                                  <TableCell>
+                                    <Badge variant="outline" className="reports-rank-badge">#{product.rank}</Badge>
+                                  </TableCell>
+                                  <TableCell className="font-semibold text-slate-900">{product.itemName}</TableCell>
+                                  <TableCell>{product.category}</TableCell>
+                                  <TableCell className="font-semibold">{product.quantitySold}</TableCell>
+                                  <TableCell>{formatCurrency(product.revenue)}</TableCell>
+                                  <TableCell>{formatPercentage(product.revenueShare)}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                        <div className="reports-top-products-mobile">
+                          {getTopSellingProducts().map(product => (
+                            <article key={`${product.rank}-${product.itemName}-${product.category}-mobile`} className="reports-top-product-card">
+                              <div className="reports-top-product-heading">
+                                <Badge variant="outline" className="reports-rank-badge">#{product.rank}</Badge>
+                                <div className="min-w-0">
+                                  <h4>{product.itemName}</h4>
+                                  <p>{product.category}</p>
+                                </div>
+                              </div>
+                              <div className="reports-top-product-stats">
+                                <span>Qty Sold <strong>{product.quantitySold}</strong></span>
+                                <span>Sales <strong>{formatCurrency(product.revenue)}</strong></span>
+                                <span>Sales Share <strong>{formatPercentage(product.revenueShare)}</strong></span>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
                 <div className="reports-movement-desktop-table">
                   <Table>
@@ -4455,7 +5459,7 @@ export function ReportsModule({
     key: cat,
     value: cat
   }, cat))))))))), /*#__PURE__*/React.createElement("div", {
-    className: `reports-metric-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6 transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`
+    className: `reports-metric-grid transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`
   }, /*#__PURE__*/React.createElement(Card, {
     className: "reports-metric-card border-l-4 border-l-blue-500"
   }, /*#__PURE__*/React.createElement(CardContent, {
