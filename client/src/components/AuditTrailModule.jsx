@@ -1,3 +1,5 @@
+// Audit Trail module: displays traceable user and system activity for
+// accountability across inventory, sales, purchases, and maintenance actions.
 import React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';

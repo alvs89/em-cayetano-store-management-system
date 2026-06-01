@@ -1,3 +1,5 @@
+// Supplier options provide the official hardware supplier list used by purchase
+// entry, inventory maintenance, and reorder preparation workflows.
 export const SUPPLIER_CUSTOM_VALUE = "__custom_supplier__";
 
 export const HARDWARE_SUPPLIER_OPTIONS = [

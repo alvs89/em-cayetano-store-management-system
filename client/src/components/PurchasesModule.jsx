@@ -1,3 +1,5 @@
+// Purchases module: records delivered supplier items as receiving entries that
+// increase tracked branch inventory.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, Clock, FileText, PackagePlus, Plus, Minus, ReceiptText, RefreshCw, Search, Trash2, Truck, Wallet, X, History } from 'lucide-react';
 import { toast } from 'sonner';

@@ -1,3 +1,5 @@
+// Refreshes demo inventory records from the official catalog while preserving
+// the same schema and stock-status rules used by the running application.
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 
 const { Pool } = require('pg');

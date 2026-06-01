@@ -1,3 +1,5 @@
+// Item-code helpers generate stable, readable references for inventory and
+// archived records based on category and record identifiers.
 const CATEGORY_CODES = {
   Roofing: "ROF",
   "PVC Pipe / Fittings": "PVC",

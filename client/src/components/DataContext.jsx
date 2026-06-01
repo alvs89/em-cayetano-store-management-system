@@ -1,3 +1,5 @@
+// Shared data provider for inventory, sales, purchases, alerts, archives, and
+// audit-related state used throughout the store management system.
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
 import { apiUrl } from "../utils/api";

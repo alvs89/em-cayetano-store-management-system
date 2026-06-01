@@ -1,3 +1,5 @@
+// User Management module: lets administrators create, approve, update, and
+// deactivate system users while preserving role and branch controls.
 import React, { useEffect, useMemo, useState } from "react";
 import { ArrowUpDown, Copy, Edit, Info, KeyRound, Mail, MapPin, Plus, Search, User, UserCheck, UserX, Users } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";

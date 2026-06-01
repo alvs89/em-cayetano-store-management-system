@@ -1,3 +1,5 @@
+// Backend API server for authentication, inventory, sales, purchases, reports,
+// audit trail, backup/restore, and maintenance workflows.
 require('dotenv').config();
 
 const fs = require('fs');
@@ -2297,10 +2299,14 @@ function validateEmailAddress(value) {
   return null;
 }
 
+// Normalize password comparison inputs so policy checks are resilient to casing,
+// punctuation, and spacing differences in usernames, emails, and full names.
 function normalizePasswordComparison(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
+// Account-derived terms are blocked from passwords to reduce predictable
+// credentials without requiring staff to memorize overly complex rules.
 function getAccountPasswordTerms({ fullName, username, email } = {}) {
   const terms = [];
   const normalizedUsername = normalizePasswordComparison(username);
@@ -2698,6 +2704,8 @@ function toPhilippineTimestamp(value) {
 
 function checkOtpRateLimit(identifier) {
   const now = Date.now();
+  // Keep only requests inside the rolling window before evaluating both the
+  // total request cap and the shorter resend cooldown.
   const recentRequests = (otpRequestBuckets.get(identifier) || [])
     .filter(timestamp => now - timestamp < OTP_RATE_LIMIT_WINDOW_MS);
 
@@ -3156,6 +3164,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
            reset_otp_code = NULL,
            reset_otp_expires = NULL,
            must_change_password = false,
+           -- Bump token_version so any existing sessions are forced to sign in again.
            token_version = COALESCE(token_version, 0) + 1
        WHERE user_id = $2`,
       [newHash, user.user_id]

@@ -1,3 +1,4 @@
+// Alerts module: shows actionable stock and system notices for staff review.
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Bell, CheckCircle, Clock, Info, Package, X } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';

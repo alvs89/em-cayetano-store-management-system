@@ -1,3 +1,5 @@
+// Catalog seed data and parsing helpers for the demo inventory used by the
+// E.M. Cayetano Store Management System.
 const CATEGORY_HEADINGS = new Set([
   'ROOFING',
   'PVC PIPE / FITTINGS',

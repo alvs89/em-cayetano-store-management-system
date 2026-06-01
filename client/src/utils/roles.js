@@ -1,3 +1,5 @@
+// Role helpers centralize screen access and legacy role normalization so all
+// modules enforce the same Admin, Cashier, and Inventory Staff permissions.
 export const ROLE_VALUES = {
   ADMIN: "Admin",
   CASHIER: "Cashier",

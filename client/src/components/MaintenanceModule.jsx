@@ -1,3 +1,5 @@
+// Maintenance module: supports administrative system operations such as backup,
+// restore, log cleanup, and maintenance-related audit visibility.
 import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { API_BASE_URL } from '../utils/api';

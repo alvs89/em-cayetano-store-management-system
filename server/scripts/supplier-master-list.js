@@ -1,3 +1,5 @@
+// Master supplier reference list and matching helpers used by inventory,
+// purchase entry, and demo-data refresh scripts.
 const OFFICIAL_SUPPLIERS = [
   'ALVIN B LAVENTE',
   'AMULET MARKETING CORP',

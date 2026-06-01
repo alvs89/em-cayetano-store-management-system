@@ -1,3 +1,5 @@
+// Search module: provides cross-module lookup for inventory, transactions,
+// purchases, and archived records.
 import React, { useEffect, useState } from "react";
 import { ArrowRight, Box, BriefcaseBusiness, CalendarDays, ExternalLink, Filter, Package, Search, UserRound } from "lucide-react";
 import { linearSearchAll, sortByNameAsc, sortByNameDesc } from "../utils/algorithms";

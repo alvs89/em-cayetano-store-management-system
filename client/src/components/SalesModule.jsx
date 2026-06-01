@@ -1,3 +1,5 @@
+// Sales module: handles POS checkout, receipt/invoice printing, sales history,
+// refunds, and inventory deductions for tracked items.
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Minus, ReceiptText, Trash2, ShoppingCart, History, CheckCircle, Info, PackageCheck, AlertTriangle, TrendingUp, User, Coins, ClipboardList, Search, CalendarDays, Clock, Tag, Wallet, MessageSquareText, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Pencil, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';

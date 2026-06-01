@@ -1,3 +1,5 @@
+// Archive module: lets administrators review, restore, or manage records
+// removed from active inventory views.
 import React from 'react';
 import { useState } from "react";
 import { ArchiveRestore, Search, Filter, Archive, CheckCircle, Info, ArrowUpDown } from "lucide-react";

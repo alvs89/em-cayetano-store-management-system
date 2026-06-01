@@ -1,3 +1,5 @@
+// Administrative recovery script for resetting or recreating the seeded admin
+// account password from a controlled environment variable.
 require('dotenv').config();
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');

@@ -1,4 +1,5 @@
-﻿import React, { useMemo, useState } from 'react';
+// Help module: provides in-app guidance for common workflows and staff support.
+import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   BookOpen,

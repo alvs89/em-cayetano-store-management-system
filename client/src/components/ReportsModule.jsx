@@ -1,3 +1,5 @@
+// Reports module: prepares printable and exportable business reports for sales,
+// inventory, supplier reorder preparation, and operational review.
 import React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import { Download, Calendar, TrendingUp, Package, AlertTriangle, RefreshCw, FileText, Info, Wallet, Tag, PackagePlus, ShieldCheck } from 'lucide-react';

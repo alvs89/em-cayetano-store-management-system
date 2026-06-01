@@ -1,3 +1,5 @@
+// Formatting helpers keep dates, purchase terms, and document labels consistent
+// across reports, history views, and transaction screens.
 export const formatDateTime = value => {
   if (!value) return "No date available";
 

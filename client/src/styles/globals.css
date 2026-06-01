@@ -1,3 +1,4 @@
+/* Global design tokens and base styles for the E.M. Cayetano UI. */
 @custom-variant dark (&:is(.dark *));
 
 :root {

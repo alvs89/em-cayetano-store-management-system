@@ -1,3 +1,5 @@
+// Dashboard module: summarizes daily sales performance, inventory alerts, and
+// branch-level operational signals.
 import React from 'react';
 import {
   Activity,

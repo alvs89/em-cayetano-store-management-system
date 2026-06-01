@@ -1,5 +1,7 @@
 "use client";
 
+// Shared avatar primitives used for user identity indicators in navigation and
+// account-related UI.
 function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 import * as React from "react";
 import * as AvatarPrimitive from "@radix-ui/react-avatar@1.1.3";

@@ -1,3 +1,5 @@
+// Refreshes product supplier names from the master supplier list so catalog and
+// reorder workflows use consistent supplier references.
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 
 const { Pool } = require('pg');

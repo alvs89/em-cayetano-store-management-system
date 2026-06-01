@@ -1,4 +1,6 @@
-﻿import React from 'react';
+// Inventory module: manages branch stock records, stock-in/stock-out movements,
+// archive actions, and reorder-support values.
+import React from 'react';
 import { useState } from "react";
 import { Plus, Minus, Archive, Search, Filter, ArrowUpDown, AlertTriangle, Info, PackagePlus, PackageMinus, CheckCircle, Box, Pencil } from "lucide-react";
 import { linearSearch, linearSearchAll, mergeSort } from "../utils/algorithms";

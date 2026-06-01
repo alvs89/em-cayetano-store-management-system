@@ -1,3 +1,5 @@
+// Shared page header: keeps module titles, branch labels, and header actions
+// visually consistent across the application.
 import React, { useEffect, useState } from 'react';
 
 const getLocationLabel = userBranch => {

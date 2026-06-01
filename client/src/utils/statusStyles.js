@@ -1,3 +1,5 @@
+// Stock-status styling is centralized so inventory badges stay visually
+// consistent wherever stock state is displayed.
 export const getStockStatusBadgeClass = status => {
   const baseClass = "stock-status-badge";
 

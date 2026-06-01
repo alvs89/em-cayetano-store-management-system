@@ -1,6 +1,10 @@
+// Password policy helpers are shared with authentication forms so staff receive
+// immediate feedback before backend validation.
 export const PASSWORD_MIN_LENGTH = 8;
 export const PASSWORD_MAX_LENGTH = 64;
 
+// Keep this lightweight denylist synchronized with the backend so password
+// checks behave the same before and after form submission.
 const COMMON_PASSWORDS = new Set([
   '12345678',
   '123456789',
@@ -37,6 +41,8 @@ const COMMON_PASSWORDS = new Set([
 const normalizePasswordComparison = value =>
   String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 
+// Extract account-specific terms that should not appear inside a password.
+// This prevents easy guesses such as using the username, email name, or staff name.
 const getAccountTerms = ({ fullName, username, email } = {}) => {
   const terms = [];
   const normalizedUsername = normalizePasswordComparison(username);

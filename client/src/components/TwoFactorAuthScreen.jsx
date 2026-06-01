@@ -1,4 +1,5 @@
-// 2FA UI: collects OTP, verifies with backend, and finalizes login session.
+// Two-factor authentication screen: collects OTP, verifies it with the backend,
+// and finalizes the login session.
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';

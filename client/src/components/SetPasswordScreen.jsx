@@ -1,3 +1,5 @@
+// Set password screen: verifies the reset code, enforces password policy, and
+// completes password reset with the backend.
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import axios from 'axios';
@@ -56,8 +58,12 @@ const SetPasswordScreen = () => {
   const email = location.state?.email;
   const issuedAt = useRef(Number(location.state?.otpIssuedAt) || Date.now());
   const expiresAt = useRef(location.state?.otpExpiresAt ? new Date(location.state.otpExpiresAt).getTime() : (issuedAt.current + 120000));
+  // Align the countdown with the backend timestamp instead of trusting only
+  // the browser clock, which may be fast or slow on cashier workstations.
   const skewRef = useRef(issuedAt.current - Date.now());
   const timerIdRef = useRef(null);
+  // Store resend cooldowns per email so refreshing the screen cannot bypass
+  // the server-side OTP resend policy.
   const cooldownStorageKey = email ? `otp_password_resend_available_at_${email.toLowerCase()}` : 'otp_password_resend_available_at';
   const exhaustedStorageKey = `${cooldownStorageKey}_exhausted`;
 
@@ -252,7 +258,7 @@ const SetPasswordScreen = () => {
       const newExpires = resp.data.expiresAt ? new Date(resp.data.expiresAt).getTime() : serverTime + 120000;
       startResendCooldown(resp.data.retryAfterSeconds || 60, resp.data.remainingAttempts === 0);
 
-      // Update alignment refs for fresh countdown
+      // Update alignment refs for fresh countdown.
       issuedAt.current = serverTime;
       expiresAt.current = newExpires;
       skewRef.current = serverTime - Date.now();
@@ -260,7 +266,7 @@ const SetPasswordScreen = () => {
       const alignedNow = Date.now() + skewRef.current;
       setRemainingMs(newExpires - alignedNow);
 
-      // Clear input to avoid stale code entry
+      // Clear input to avoid stale code entry.
       setOtp('');
 
       toast.success(resp.data.message || 'Verification code sent. Please check your email.', {

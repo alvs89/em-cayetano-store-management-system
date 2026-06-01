@@ -1,4 +1,5 @@
-// Login UI: validates inputs, calls backend login, and kicks off 2FA.
+// Login screen: validates credentials, calls backend login, and starts the
+// two-factor verification flow when an OTP challenge is required.
 import axios from 'axios';
 import { useState, useEffect } from "react";
 import { Eye, EyeOff, Loader2, Lock, Store, User } from "lucide-react";

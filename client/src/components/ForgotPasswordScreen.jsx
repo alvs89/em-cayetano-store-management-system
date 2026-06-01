@@ -1,3 +1,5 @@
+// Forgot password screen: validates the user's email and requests a password
+// reset verification code from the backend.
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
@@ -33,6 +35,8 @@ const ForgotPasswordScreen = () => {
     setLoading(true);
     try {
       const response = await axios.post(apiUrl('/api/auth/forgot-password'), { email: cleanEmail });
+      // Carry server-issued timing details into the reset screen so countdowns
+      // remain aligned with backend expiry rules even if the client clock differs.
       const serverTime = response.data.serverTime || Date.now();
       const expiresAt = response.data.expiresAt || new Date(Date.now() + 120000).toISOString();
       navigate('/set-password', {

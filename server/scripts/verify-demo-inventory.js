@@ -1,3 +1,5 @@
+// Verifies demo inventory completeness and supplier/category consistency after
+// seeding or refresh operations.
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 
 const { Pool } = require('pg');

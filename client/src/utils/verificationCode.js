@@ -1,3 +1,5 @@
+// Verification-code helpers provide consistent numeric OTP input behavior and
+// validation feedback across authentication screens.
 import { toast } from 'sonner';
 
 export const VERIFICATION_CODE_LENGTH = 6;
@@ -7,6 +9,8 @@ const toastClassNames = {
   toast: 'rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900',
 };
 
+// Verification codes are always numeric; sanitizing in one helper keeps OTP
+// fields consistent across login, password reset, and future verification flows.
 export function sanitizeVerificationCode(value, maxLength = VERIFICATION_CODE_LENGTH) {
   return String(value || '').replace(/\D/g, '').slice(0, maxLength);
 }
@@ -44,6 +48,8 @@ export function handleVerificationCodePaste(event, currentValue, setValue, {
 
   event.preventDefault();
 
+  // Preserve the user's selected range when pasting, then sanitize the combined
+  // value so partial replacements behave like a normal text input.
   const input = event.currentTarget;
   const selectionStart = input.selectionStart ?? String(currentValue || '').length;
   const selectionEnd = input.selectionEnd ?? selectionStart;
