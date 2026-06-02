@@ -16,11 +16,11 @@ const pool = new Pool({
 const BRANCHES = ['Manggahan', 'San Rafael'];
 
 const CATALOG = buildEmCayetanoCatalog();
-const PRESENTATION_NOW = new Date(2026, 4, 30, 14, 20, 0, 0);
+const PRESENTATION_NOW = new Date();
 const PRESENTATION_YEAR = PRESENTATION_NOW.getFullYear();
 const SALES_INVOICE_DOCUMENT_TYPE = 'sales_invoice';
 const SALES_INVOICE_SEQUENCE_DIGITS = 6;
-const DEMO_OFFICIAL_INVOICE_START_NUMBER = 71101;
+const DEMO_OFFICIAL_INVOICE_START_NUMBER = 1;
 
 if (CATALOG.length === 0) {
   throw new Error('E.M. Cayetano product catalog is empty.');
@@ -46,6 +46,22 @@ const SALES_PLANS = [
   },
   {
     branch: 'Manggahan',
+    customerType: 'hardware_reseller',
+    paymentMethod: 'gcash',
+    paymentReference: 'GCASH-6531849207',
+    discountType: 'store_promo_5',
+    daysAgo: 0,
+    hour: 11,
+    minute: 5,
+    remarks: 'Reseller bought common plumbing fittings and electrical wire.',
+    items: [
+      ['PVC PIPE -- ORANGE 1/2', 4],
+      ['COUPLING -- ORANGE 2"', 5],
+      ['ROYU -- #14 (2.0) (per mtr)', 18]
+    ]
+  },
+  {
+    branch: 'Manggahan',
     customerType: 'contractor',
     paymentMethod: 'bank_transfer',
     paymentReference: 'BPI-EMC-20260522-1435',
@@ -62,6 +78,21 @@ const SALES_PLANS = [
   },
   {
     branch: 'Manggahan',
+    customerType: 'walk_in',
+    paymentMethod: 'cash',
+    cashTendered: 1500,
+    discountType: 'none',
+    daysAgo: 0,
+    hour: 16,
+    minute: 5,
+    remarks: 'Afternoon counter sale for paint and primer.',
+    items: [
+      ['BOYSEN - LATEX (STONE) -- B 701 FLAT LATEX WHT 1L', 1],
+      ['PRIMER -- B 310 RED OXIDE METAL PRIMER 1L', 2]
+    ]
+  },
+  {
+    branch: 'Manggahan',
     customerType: 'regular',
     paymentMethod: 'gcash',
     paymentReference: 'GCASH-8427195630',
@@ -74,6 +105,22 @@ const SALES_PLANS = [
       ['PVC PIPE -- ORANGE 1/2', 5],
       ['ELBOW 1/4 90deg -- ORANGE 2"', 8],
       ['COUPLING -- ORANGE 2"', 6]
+    ]
+  },
+  {
+    branch: 'Manggahan',
+    customerType: 'contractor',
+    paymentMethod: 'bank_transfer',
+    paymentReference: 'MBTC-EMC-20260601-0926',
+    discountType: 'bulk_project_10',
+    daysAgo: 1,
+    hour: 9,
+    minute: 26,
+    remarks: 'Repeat contractor order for roofing and lumber materials.',
+    items: [
+      ['LONG SPAN -- RED/GRN/BLU 8 - 5 grooves', 2],
+      ['COCO -- 2X2X8', 6],
+      ['C-PURLINS MANIPIS -- 2X3 9KG (9.2kg)', 2]
     ]
   },
   {
@@ -94,6 +141,22 @@ const SALES_PLANS = [
   },
   {
     branch: 'San Rafael',
+    customerType: 'regular',
+    paymentMethod: 'cash',
+    cashTendered: 2500,
+    discountType: 'none',
+    daysAgo: 0,
+    hour: 15,
+    minute: 25,
+    remarks: 'Regular customer bought roofing and electrical materials.',
+    items: [
+      ['CORRUGATED - RED/GRN -- RED/GREEN 10', 3],
+      ['ROYU -- #12 (3.5) (per mtr)', 8],
+      ['PANEL BOX -- 2BR', 1]
+    ]
+  },
+  {
+    branch: 'San Rafael',
     customerType: 'contractor',
     paymentMethod: 'bank_transfer',
     paymentReference: 'BDO-PO-20260520-1310',
@@ -106,6 +169,22 @@ const SALES_PLANS = [
       ['CORRUGATED (G.26) MANIPIS -- 8', 6],
       ['ANGLE BAR (3/16) MANIPIS -- 3/16 X 1 - Red', 4],
       ['STEEL MATTING -- #10 MANIPIS', 2]
+    ]
+  },
+  {
+    branch: 'San Rafael',
+    customerType: 'hardware_reseller',
+    paymentMethod: 'gcash',
+    paymentReference: 'GCASH-9182074451',
+    discountType: 'store_promo_5',
+    daysAgo: 1,
+    hour: 11,
+    minute: 50,
+    remarks: 'Hardware reseller replenished fast-moving plumbing items.',
+    items: [
+      ['PVC PIPE -- NELTEX 1', 5],
+      ['PVC PIPE -- ORANGE 1/2', 4],
+      ['ELBOW 1/4 90deg -- ORANGE 2"', 6]
     ]
   }
 ];
@@ -155,6 +234,25 @@ const philippineTimestamp = (daysAgo, hour = 8, minute = 0) => {
 const formatSalesNumber = sequence => `SALE-${PRESENTATION_YEAR}-${String(sequence).padStart(5, '0')}`;
 const formatOfficialInvoiceNumber = sequence => String(sequence).padStart(SALES_INVOICE_SEQUENCE_DIGITS, '0');
 const formatPurchaseNumber = sequence => `PUR-${PRESENTATION_YEAR}-${String(sequence).padStart(5, '0')}`;
+
+const calculateLineProfit = ({ quantity, unitPrice, unitCost }) => {
+  const quantitySold = Number(quantity || 0);
+  const cost = Number(unitCost || 0);
+  const subtotal = Number((quantitySold * Number(unitPrice || 0)).toFixed(2));
+  const costSubtotal = Number((quantitySold * cost).toFixed(2));
+  const grossProfit = Number((subtotal - costSubtotal).toFixed(2));
+  const profitMarginPercent = subtotal > 0
+    ? Number(((grossProfit / subtotal) * 100).toFixed(2))
+    : 0;
+
+  return {
+    unitCostAtSale: Number(cost.toFixed(2)),
+    subtotal,
+    costSubtotal,
+    grossProfit,
+    profitMarginPercent
+  };
+};
 
 const computeVatBreakdown = taxableAmount => {
   const grossAmount = Number(taxableAmount || 0);
@@ -281,12 +379,42 @@ async function refreshDemoInventory() {
       CREATE TABLE IF NOT EXISTS invoice_number_sequences (
         document_type VARCHAR(40) NOT NULL,
         invoice_year INTEGER NOT NULL,
+        branch VARCHAR(50) NOT NULL DEFAULT 'Manggahan',
         last_number INTEGER NOT NULL DEFAULT 0,
         updated_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila'),
-        PRIMARY KEY (document_type, invoice_year),
+        PRIMARY KEY (document_type, invoice_year, branch),
         CHECK (invoice_year BETWEEN 2000 AND 9999),
         CHECK (last_number >= 0)
       )
+    `);
+    await client.query(`
+      ALTER TABLE invoice_number_sequences
+      ADD COLUMN IF NOT EXISTS branch VARCHAR(50);
+    `);
+    await client.query(`
+      UPDATE invoice_number_sequences
+      SET branch = 'Manggahan'
+      WHERE branch IS NULL OR TRIM(branch) = '';
+    `);
+    await client.query(`
+      ALTER TABLE invoice_number_sequences
+      ALTER COLUMN branch SET NOT NULL;
+    `);
+    await client.query(`
+      ALTER TABLE invoice_number_sequences
+      DROP CONSTRAINT IF EXISTS invoice_number_sequences_pkey;
+    `);
+    await client.query(`
+      ALTER TABLE invoice_number_sequences
+      ADD CONSTRAINT invoice_number_sequences_pkey PRIMARY KEY (document_type, invoice_year, branch);
+    `);
+    await client.query(`
+      DROP INDEX IF EXISTS sales_transactions_official_invoice_number_unique;
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS sales_transactions_branch_official_invoice_number_unique
+      ON sales_transactions (branch, official_invoice_number)
+      WHERE official_invoice_number IS NOT NULL;
     `);
 
     await client.query(`
@@ -531,9 +659,13 @@ async function refreshDemoInventory() {
     }
 
     let salesSequence = 1;
+    const branchInvoiceSequences = new Map(BRANCHES.map(branch => [branch, DEMO_OFFICIAL_INVOICE_START_NUMBER]));
     for (const sale of SALES_PLANS) {
       const actor = await findActor(client, sale.branch);
       const saleTime = philippineTimestamp(sale.daysAgo, sale.hour, sale.minute);
+      const branchInvoiceSequence = branchInvoiceSequences.get(sale.branch) || DEMO_OFFICIAL_INVOICE_START_NUMBER;
+      const branchOfficialInvoiceNumber = formatOfficialInvoiceNumber(branchInvoiceSequence);
+      branchInvoiceSequences.set(sale.branch, branchInvoiceSequence + 1);
       const saleLines = sale.items.map(([itemName, quantity]) => {
         const inventory = inventoryByBranchAndName.get(`${sale.branch}|${itemName}`);
         if (!inventory) throw new Error(`Missing inventory row for ${sale.branch} - ${itemName}`);
@@ -542,14 +674,22 @@ async function refreshDemoInventory() {
         if (newQuantity < 0) throw new Error(`Not enough stock for sample sale: ${itemName}`);
         inventory.currentStock = newQuantity;
         const unitPrice = Number(inventory.price);
-        const subtotal = Number((quantity * unitPrice).toFixed(2));
+        const profit = calculateLineProfit({
+          quantity,
+          unitPrice,
+          unitCost: inventory.costPrice
+        });
         return {
           inventory,
           quantity,
           previousQuantity,
           newQuantity,
           unitPrice,
-          subtotal
+          subtotal: profit.subtotal,
+          unitCostAtSale: profit.unitCostAtSale,
+          costSubtotal: profit.costSubtotal,
+          grossProfit: profit.grossProfit,
+          profitMarginPercent: profit.profitMarginPercent
         };
       });
       const totalQuantity = saleLines.reduce((sum, line) => sum + line.quantity, 0);
@@ -577,11 +717,12 @@ async function refreshDemoInventory() {
            payment_method, amount_received, change_amount, payment_reference,
            payment_confirmed, payment_confirmed_by, payment_confirmed_by_name,
            payment_confirmed_at, status, sold_by, sold_by_name, remarks,
-           created_at, official_invoice_number
+           created_at, official_invoice_number, official_invoice_expected_number,
+           official_invoice_exception_reason
          )
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10, $11, $12,
                  $13, $14, $15, true, $16, $17, $18, 'completed',
-                 $19, $20, $21, $22, $23)
+                 $19, $20, $21, $22, $23, $24, NULL)
          RETURNING sales_transaction_id`,
         [
           formatSalesNumber(salesSequence),
@@ -606,7 +747,8 @@ async function refreshDemoInventory() {
           actor.full_name,
           sale.remarks,
           saleTime,
-          formatOfficialInvoiceNumber(DEMO_OFFICIAL_INVOICE_START_NUMBER + salesSequence - 1)
+          branchOfficialInvoiceNumber,
+          branchOfficialInvoiceNumber
         ]
       );
       salesSequence += 1;
@@ -616,10 +758,11 @@ async function refreshDemoInventory() {
         await client.query(
           `INSERT INTO sales_items (
              sales_transaction_id, inventory_id, product_id, item_name, category,
-             branch, quantity_sold, unit_price, subtotal, previous_quantity,
-             new_quantity, created_at
+             branch, quantity_sold, unit_price, unit_cost_at_sale, subtotal,
+             cost_subtotal, gross_profit, profit_margin_percent,
+             previous_quantity, new_quantity, created_at
            )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
           [
             salesTransactionId,
             line.inventory.inventoryId,
@@ -629,7 +772,11 @@ async function refreshDemoInventory() {
             line.inventory.branch,
             line.quantity,
             line.unitPrice,
+            line.unitCostAtSale,
             line.subtotal,
+            line.costSubtotal,
+            line.grossProfit,
+            line.profitMarginPercent,
             line.previousQuantity,
             line.newQuantity,
             saleTime
@@ -655,18 +802,22 @@ async function refreshDemoInventory() {
       }
     }
 
-    const lastOfficialInvoiceNumber = DEMO_OFFICIAL_INVOICE_START_NUMBER + salesSequence - 2;
-    if (lastOfficialInvoiceNumber >= DEMO_OFFICIAL_INVOICE_START_NUMBER) {
+    const branchInvoiceRanges = {};
+    for (const branch of BRANCHES) {
+      const nextSequence = branchInvoiceSequences.get(branch) || DEMO_OFFICIAL_INVOICE_START_NUMBER;
+      const lastBranchInvoiceNumber = nextSequence - 1;
+      branchInvoiceRanges[branch] = `${formatOfficialInvoiceNumber(DEMO_OFFICIAL_INVOICE_START_NUMBER)}–${formatOfficialInvoiceNumber(lastBranchInvoiceNumber)}`;
       await client.query(
-        `INSERT INTO invoice_number_sequences (document_type, invoice_year, last_number, updated_at)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (document_type, invoice_year) DO UPDATE
+        `INSERT INTO invoice_number_sequences (document_type, invoice_year, branch, last_number, updated_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (document_type, invoice_year, branch) DO UPDATE
          SET last_number = EXCLUDED.last_number,
              updated_at = EXCLUDED.updated_at`,
         [
           SALES_INVOICE_DOCUMENT_TYPE,
           PRESENTATION_YEAR,
-          lastOfficialInvoiceNumber,
+          branch,
+          lastBranchInvoiceNumber,
           philippineTimestamp(0, 17, 0)
         ]
       );
@@ -726,7 +877,7 @@ async function refreshDemoInventory() {
           productsCreated: productRows.length,
           branchInventoryRecords: inventoryRows.length,
           salesTransactionsCreated: SALES_PLANS.length,
-          officialInvoiceRange: `${formatOfficialInvoiceNumber(DEMO_OFFICIAL_INVOICE_START_NUMBER)}-${formatOfficialInvoiceNumber(lastOfficialInvoiceNumber)}`,
+          officialInvoiceRanges: branchInvoiceRanges,
           purchaseTransactionsCreated: purchaseSeedLines.length,
           archivedRecordsCreated: archiveCandidates.length,
           branches: BRANCHES

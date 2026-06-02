@@ -403,6 +403,11 @@ export function DataProvider({ children }) {
     officialInvoiceNumber: sale.transaction_type === 'refund'
       ? ''
       : resolveOfficialInvoiceNumber(sale.official_invoice_number, sale.sales_number),
+    officialInvoiceExpectedNumber: resolveOfficialInvoiceNumber(
+      sale.official_invoice_expected_number,
+      sale.official_invoice_expected_number
+    ),
+    officialInvoiceExceptionReason: sale.official_invoice_exception_reason || '',
     branch: sale.branch || '',
     customerType: sale.customer_type || 'walk_in',
     customerName: sale.customer_name || 'C',
@@ -451,7 +456,11 @@ export function DataProvider({ children }) {
       branch: item.branch || '',
       quantitySold: Number(item.quantity_sold || 0),
       unitPrice: Number(item.unit_price || 0),
+      unitCostAtSale: Number(item.unit_cost_at_sale || 0),
       subtotal: Number(item.subtotal || 0),
+      costSubtotal: Number(item.cost_subtotal || 0),
+      grossProfit: Number(item.gross_profit || 0),
+      profitMarginPercent: Number(item.profit_margin_percent || 0),
       previousQuantity: item.previous_quantity === null || item.previous_quantity === undefined ? null : Number(item.previous_quantity || 0),
       newQuantity: item.new_quantity === null || item.new_quantity === undefined ? null : Number(item.new_quantity || 0),
       refundForSalesItemId: item.refund_for_sales_item_id?.toString() ?? '',
@@ -927,13 +936,14 @@ export function DataProvider({ children }) {
     }
   };
 
-  const recordSale = async ({ officialInvoiceNumber, customerType, customerName, customerTin, customerAddress, items, remarks, paymentMethod, discountType, discountAmount, deliveryCharge, amountReceived, paymentReference, paymentConfirmed, actualTransactionAt, backdateReason }) => {
+  const recordSale = async ({ officialInvoiceNumber, invoiceSequenceExceptionReason, customerType, customerName, customerTin, customerAddress, items, remarks, paymentMethod, discountType, discountAmount, deliveryCharge, amountReceived, paymentReference, paymentConfirmed, actualTransactionAt, backdateReason }) => {
     const token = localStorage.getItem("token");
     try {
       const res = await axios.post(
         apiUrl("/api/sales"),
         {
           official_invoice_number: officialInvoiceNumber,
+          invoice_sequence_exception_reason: invoiceSequenceExceptionReason,
           customer_type: customerType,
           customer_name: customerName,
           customer_tin: customerTin,

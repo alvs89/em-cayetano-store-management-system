@@ -23,9 +23,10 @@ DROP TABLE IF EXISTS daily_operations CASCADE;
 CREATE TABLE IF NOT EXISTS invoice_number_sequences (
     document_type VARCHAR(40) NOT NULL,
     invoice_year INTEGER NOT NULL,
+    branch VARCHAR(50) NOT NULL,
     last_number INTEGER NOT NULL DEFAULT 0,
     updated_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila'),
-    PRIMARY KEY (document_type, invoice_year),
+    PRIMARY KEY (document_type, invoice_year, branch),
     CHECK (invoice_year BETWEEN 2000 AND 9999),
     CHECK (last_number >= 0)
 );
@@ -109,6 +110,8 @@ CREATE TABLE IF NOT EXISTS sales_transactions (
     sales_transaction_id SERIAL PRIMARY KEY,
     sales_number VARCHAR(40) UNIQUE NOT NULL,
     official_invoice_number VARCHAR(40),
+    official_invoice_expected_number VARCHAR(40),
+    official_invoice_exception_reason TEXT,
     branch VARCHAR(50) NOT NULL,
     customer_type VARCHAR(40) DEFAULT 'walk_in' CHECK (customer_type IN ('walk_in', 'sister_company', 'hardware_reseller', 'regular', 'contractor')),
     customer_name VARCHAR(160) NOT NULL DEFAULT 'C',
@@ -155,8 +158,8 @@ CREATE TABLE IF NOT EXISTS sales_transactions (
     )
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS sales_transactions_official_invoice_number_unique
-ON sales_transactions (official_invoice_number)
+CREATE UNIQUE INDEX IF NOT EXISTS sales_transactions_branch_official_invoice_number_unique
+ON sales_transactions (branch, official_invoice_number)
 WHERE official_invoice_number IS NOT NULL;
 
 -- 7. SALES ITEMS TABLE
@@ -173,7 +176,11 @@ CREATE TABLE IF NOT EXISTS sales_items (
     branch VARCHAR(50) NOT NULL,
     quantity_sold INTEGER NOT NULL,
     unit_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+    unit_cost_at_sale NUMERIC(12,2) NOT NULL DEFAULT 0,
     subtotal NUMERIC(12,2) NOT NULL DEFAULT 0,
+    cost_subtotal NUMERIC(12,2) NOT NULL DEFAULT 0,
+    gross_profit NUMERIC(12,2) NOT NULL DEFAULT 0,
+    profit_margin_percent NUMERIC(7,2) NOT NULL DEFAULT 0,
     previous_quantity INTEGER,
     new_quantity INTEGER,
     refund_for_sales_item_id INT REFERENCES sales_items(sales_item_id) ON DELETE SET NULL,

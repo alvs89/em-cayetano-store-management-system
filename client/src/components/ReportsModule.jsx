@@ -22,6 +22,7 @@ import { PageHeader } from './PageHeader';
 import { formatDateTime, formatPurchaseDocumentLabel, formatPurchasePaymentTerms } from '../utils/format';
 import { getStockMovementReasonLabel } from '../utils/stockMovementReasons';
 import { canAccessReportType, getDefaultReportTypeForRole, getReportTypeOptionsForRole, isAdminRole } from '../utils/roles';
+import { getProductProfitability, getProfitabilitySummary } from '../utils/profitability';
 import {
   HARDWARE_SUPPLIER_OPTIONS,
   SUPPLIER_CUSTOM_VALUE,
@@ -80,7 +81,7 @@ export function ReportsModule({
   const allowedReportTypes = React.useMemo(() => getReportTypeOptionsForRole(user?.role), [user?.role]);
   const defaultReportType = React.useMemo(() => getDefaultReportTypeForRole(user?.role), [user?.role]);
   const inventorySnapshotReportTypes = ['summary', 'detailed', 'low-stock', 'supplier-reorder', 'category'];
-  const categoryFilterReportTypes = ['detailed', 'low-stock', 'movements', 'sales-movements', 'supplier-reorder'];
+  const categoryFilterReportTypes = ['detailed', 'low-stock', 'movements', 'sales-movements', 'supplier-reorder', 'actual-earnings'];
   const isInventorySnapshotReport = inventorySnapshotReportTypes.includes(reportType);
   const reportUsesCategoryFilter = categoryFilterReportTypes.includes(reportType);
 
@@ -871,6 +872,21 @@ export function ReportsModule({
     }));
   };
 
+  const getEarningsSalesTransactions = () =>
+    getFilteredSalesTransactions().filter(sale => sale.status !== 'cancelled');
+
+  const getEarningsSummary = () =>
+    getProfitabilitySummary(getEarningsSalesTransactions());
+
+  const getEarningsProductRows = (limit = 12) =>
+    getProductProfitability(getEarningsSalesTransactions())
+      .filter(item => selectedCategory === 'all' || item.category === selectedCategory)
+      .slice(0, limit)
+      .map((item, index) => ({
+        ...item,
+        rank: index + 1
+      }));
+
   const formatPercentage = value =>
     `${Number(value || 0).toLocaleString(undefined, {
       minimumFractionDigits: 0,
@@ -1115,6 +1131,16 @@ export function ReportsModule({
         { label: 'Quantity Received', value: getPurchaseSummary().totalQuantity, icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
         { label: 'Total Purchases', value: formatCurrency(getPurchaseSummary().totalAmount), icon: <Wallet className="w-8 h-8 text-amber-500" />, color: 'border-l-amber-500' },
         { label: 'Suppliers', value: new Set(getFilteredPurchaseTransactions().map(purchase => purchase.supplierName)).size, icon: <Package className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
+      ];
+    }
+
+    if (reportType === 'actual-earnings') {
+      const earnings = getEarningsSummary();
+      return [
+        { label: 'Total Sales', value: formatCurrency(earnings.totalSales), icon: <Wallet className="w-8 h-8 text-blue-500" />, color: 'border-l-blue-500' },
+        { label: 'Cost of Goods Sold', value: formatCurrency(earnings.puhunanUsed), icon: <Package className="w-8 h-8 text-amber-500" />, color: 'border-l-amber-500' },
+        { label: 'Actual Profit', value: formatCurrency(earnings.actualProfit), icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: earnings.actualProfit >= 0 ? 'border-l-green-500' : 'border-l-red-500' },
+        { label: 'Profit Margin', value: formatPercentage(earnings.profitMargin), icon: <Tag className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
       ];
     }
 
@@ -1723,6 +1749,51 @@ export function ReportsModule({
             6: { cellWidth: 9 },
             7: { cellWidth: 24 },
             8: { cellWidth: 22 }
+          }
+        });
+      }
+    } else if (reportType === 'actual-earnings') {
+      const earnings = getEarningsSummary();
+      const products = getEarningsProductRows(20);
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text('ACTUAL EARNINGS REPORT', 20, startY);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      drawLabelValue('Total Sales', formatCurrency(earnings.totalSales), 20, startY + 8);
+      drawLabelValue('Cost of Goods Sold', formatCurrency(earnings.puhunanUsed), 20, startY + 14);
+      drawLabelValue('Actual Profit', formatCurrency(earnings.actualProfit), 20, startY + 20);
+      drawLabelValue('Profit Margin', formatPercentage(earnings.profitMargin), 20, startY + 26);
+
+      if (products.length === 0) {
+        doc.text('No completed sales with item lines found for this report period.', 20, startY + 40);
+      } else {
+        reportTable({
+          startY: startY + 38,
+          head: [['Rank', 'Product', 'Category', 'Qty Sold', 'Sales', 'Cost of Goods Sold', 'Actual Profit', 'Margin']],
+          body: products.map(product => [
+            `#${product.rank}`,
+            product.itemName,
+            product.category,
+            product.quantitySold.toLocaleString(),
+            formatCurrency(product.totalSales),
+            formatCurrency(product.puhunanUsed),
+            formatCurrency(product.actualProfit),
+            formatPercentage(product.profitMargin)
+          ]),
+          theme: 'striped',
+          headStyles: { fillColor: [22, 101, 52], textColor: 255, fontStyle: 'bold' },
+          styles: { fontSize: 7.5, cellPadding: 1.8 },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
+          columnStyles: {
+            0: { cellWidth: 12 },
+            1: { cellWidth: 42 },
+            2: { cellWidth: 28 },
+            3: { cellWidth: 14 },
+            4: { cellWidth: 23 },
+            5: { cellWidth: 24 },
+            6: { cellWidth: 24 },
+            7: { cellWidth: 15 }
           }
         });
       }
@@ -4111,6 +4182,76 @@ export function ReportsModule({
           </Card>
         ))}
       </div>
+
+      {reportType === 'actual-earnings' && (
+        <Card className={`reports-data-card transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
+          <CardHeader data-card-header>
+            <CardTitle>Actual Earnings</CardTitle>
+            <CardDescription>Sales less the cost of goods sold in the selected period.</CardDescription>
+          </CardHeader>
+          <CardContent data-card-content>
+            {getEarningsProductRows().length === 0 ? (
+              renderReportsEmptyState({
+                icon: Wallet,
+                title: 'No earnings data found',
+                message: 'Completed sales with item lines will appear here for the selected period.'
+              })
+            ) : (
+              <>
+                <div className="reports-top-products-table">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Rank</TableHead>
+                        <TableHead>Product</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Qty Sold</TableHead>
+                        <TableHead>Sales</TableHead>
+                        <TableHead>Cost of Goods Sold</TableHead>
+                        <TableHead>Actual Profit</TableHead>
+                        <TableHead>Margin</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {getEarningsProductRows().map(product => (
+                        <TableRow key={`${product.rank}-${product.itemName}-${product.category}`}>
+                          <TableCell><Badge variant="outline" className="reports-rank-badge">#{product.rank}</Badge></TableCell>
+                          <TableCell className="font-medium">{product.itemName}</TableCell>
+                          <TableCell>{product.category}</TableCell>
+                          <TableCell>{product.quantitySold.toLocaleString()}</TableCell>
+                          <TableCell>{formatCurrency(product.totalSales)}</TableCell>
+                          <TableCell>{formatCurrency(product.puhunanUsed)}</TableCell>
+                          <TableCell className={product.actualProfit >= 0 ? 'text-green-700 font-semibold' : 'text-red-700 font-semibold'}>{formatCurrency(product.actualProfit)}</TableCell>
+                          <TableCell>{formatPercentage(product.profitMargin)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="reports-top-products-mobile">
+                  {getEarningsProductRows().map(product => (
+                    <article key={`${product.rank}-${product.itemName}-${product.category}-earnings-mobile`} className="reports-top-product-card">
+                      <div className="reports-top-product-heading">
+                        <Badge variant="outline" className="reports-rank-badge">#{product.rank}</Badge>
+                        <div>
+                          <h4>{product.itemName}</h4>
+                          <p>{product.category}</p>
+                        </div>
+                      </div>
+                      <div className="reports-top-product-stats">
+                        <span>Sales <strong>{formatCurrency(product.totalSales)}</strong></span>
+                        <span>Cost <strong>{formatCurrency(product.puhunanUsed)}</strong></span>
+                        <span>Profit <strong>{formatCurrency(product.actualProfit)}</strong></span>
+                        <span>Margin <strong>{formatPercentage(product.profitMargin)}</strong></span>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {reportType === 'summary' && (
         <Card className={`reports-summary-card transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>

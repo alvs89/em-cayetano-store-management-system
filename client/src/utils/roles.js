@@ -34,6 +34,7 @@ export const REPORT_TYPE_OPTIONS = [
   { value: "category", label: "Category Analysis", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
   { value: "purchases", label: "Purchases", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
   { value: "movements", label: "Stock Movement History", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
+  { value: "actual-earnings", label: "Actual Earnings", roles: [ROLE_VALUES.ADMIN] },
   { value: "sales-movements", label: "Sales-Based Stock Movement", roles: [ROLE_VALUES.ADMIN] },
 ];
 

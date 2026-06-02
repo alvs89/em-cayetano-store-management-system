@@ -1,0 +1,99 @@
+const toNumber = value => {
+  const numberValue = Number(value || 0);
+  return Number.isFinite(numberValue) ? numberValue : 0;
+};
+
+const roundMoney = value => Number(toNumber(value).toFixed(2));
+
+export const getSaleLineProfit = (sale, item) => {
+  const lineSubtotal = roundMoney(item?.subtotal);
+  const saleSubtotal = roundMoney(sale?.subtotalAmount ?? sale?.subtotal_amount ?? sale?.totalAmount);
+  const discountAmount = roundMoney(sale?.discountAmount ?? sale?.discount_amount);
+  const discountShare = saleSubtotal === 0
+    ? 0
+    : roundMoney((lineSubtotal / saleSubtotal) * discountAmount);
+  const netSales = roundMoney(lineSubtotal - discountShare);
+  const storedCost = item?.costSubtotal ?? item?.cost_subtotal;
+  const costUsed = storedCost === null || storedCost === undefined
+    ? roundMoney(toNumber(item?.quantitySold ?? item?.quantity_sold) * toNumber(item?.unitCostAtSale ?? item?.unit_cost_at_sale))
+    : roundMoney(storedCost);
+  const actualProfit = roundMoney(netSales - costUsed);
+  const profitMargin = Math.abs(netSales) > 0
+    ? Number(((actualProfit / Math.abs(netSales)) * 100).toFixed(2))
+    : 0;
+
+  return {
+    grossSales: lineSubtotal,
+    discountShare,
+    netSales,
+    puhunanUsed: costUsed,
+    actualProfit,
+    profitMargin
+  };
+};
+
+export const getProfitabilitySummary = (sales = []) =>
+  (sales || []).reduce((summary, sale) => {
+    if (!sale || sale.status === 'cancelled') return summary;
+
+    (sale.items || []).forEach(item => {
+      const line = getSaleLineProfit(sale, item);
+      summary.totalSales = roundMoney(summary.totalSales + line.netSales);
+      summary.puhunanUsed = roundMoney(summary.puhunanUsed + line.puhunanUsed);
+      summary.actualProfit = roundMoney(summary.actualProfit + line.actualProfit);
+      summary.unitsSold += toNumber(item.quantitySold ?? item.quantity_sold);
+    });
+
+    return {
+      ...summary,
+      profitMargin: Math.abs(summary.totalSales) > 0
+        ? Number(((summary.actualProfit / Math.abs(summary.totalSales)) * 100).toFixed(2))
+        : 0
+    };
+  }, {
+    totalSales: 0,
+    puhunanUsed: 0,
+    actualProfit: 0,
+    profitMargin: 0,
+    unitsSold: 0
+  });
+
+export const getProductProfitability = (sales = []) => {
+  const groupedProducts = new Map();
+
+  (sales || []).forEach(sale => {
+    if (!sale || sale.status === 'cancelled') return;
+
+    (sale.items || []).forEach(item => {
+      const itemName = String(item.itemName || item.item_name || '').trim();
+      if (!itemName) return;
+
+      const key = item.inventoryId || item.inventory_id
+        ? `inventory:${item.inventoryId || item.inventory_id}`
+        : `item:${itemName.toLowerCase()}|${String(item.category || 'Other').toLowerCase()}`;
+      const existing = groupedProducts.get(key) || {
+        itemName,
+        category: item.category || 'Other',
+        quantitySold: 0,
+        totalSales: 0,
+        puhunanUsed: 0,
+        actualProfit: 0,
+        profitMargin: 0
+      };
+      const line = getSaleLineProfit(sale, item);
+
+      existing.quantitySold += toNumber(item.quantitySold ?? item.quantity_sold);
+      existing.totalSales = roundMoney(existing.totalSales + line.netSales);
+      existing.puhunanUsed = roundMoney(existing.puhunanUsed + line.puhunanUsed);
+      existing.actualProfit = roundMoney(existing.actualProfit + line.actualProfit);
+      existing.profitMargin = Math.abs(existing.totalSales) > 0
+        ? Number(((existing.actualProfit / Math.abs(existing.totalSales)) * 100).toFixed(2))
+        : 0;
+
+      groupedProducts.set(key, existing);
+    });
+  });
+
+  return Array.from(groupedProducts.values())
+    .sort((a, b) => b.actualProfit - a.actualProfit || b.totalSales - a.totalSales || a.itemName.localeCompare(b.itemName));
+};

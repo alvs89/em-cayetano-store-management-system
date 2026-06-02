@@ -8,12 +8,15 @@ import {
   CalendarDays,
   ClipboardCheck,
   FileText,
+  HelpCircle,
   Home,
   Package,
   PackagePlus,
   ReceiptText,
   Target,
+  TrendingUp,
   Truck,
+  Wallet,
   Users
 } from 'lucide-react';
 import { Badge } from './ui/badge';
@@ -22,10 +25,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from './ui/label';
 import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { toast } from 'sonner';
 import { useData } from './DataContext';
 import { PageHeader } from './PageHeader';
 import { canAccessScreen, canPerformInventoryMovement, canRecordSales, isAdminRole, normalizeRole, ROLE_VALUES } from '../utils/roles';
+import { getProfitabilitySummary } from '../utils/profitability';
 
 const formatCurrency = value =>
   new Intl.NumberFormat(undefined, {
@@ -360,10 +365,12 @@ export function Dashboard({
   const dashboardSales = completedSales.filter(isSaleInDashboardPeriod);
   const previousDashboardSales = completedSales.filter(isSaleInPreviousDashboardPeriod);
   const topSellingDashboardPeriod = getTopSellingItem(dashboardSales);
-  const overallSalesAmount = completedSales.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0);
+  const completedSalesAmount = completedSales.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0);
   const salesTodayAmount = salesToday.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0);
-  const dashboardSalesAmount = dashboardSales.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0);
-  const previousDashboardSalesAmount = previousDashboardSales.reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0);
+  const dashboardProfitSummary = getProfitabilitySummary(dashboardSales);
+  const previousDashboardProfitSummary = getProfitabilitySummary(previousDashboardSales);
+  const overallProfitSummary = getProfitabilitySummary(completedSales);
+  const overallSalesAmount = isAdmin ? overallProfitSummary.totalSales : completedSalesAmount;
   const dailySalesTarget = Number(systemSummary?.dailySalesTarget || 0);
   const hasDailySalesTarget = Number.isFinite(dailySalesTarget) && dailySalesTarget > 0;
   const quotaProgress = hasDailySalesTarget
@@ -449,7 +456,12 @@ export function Dashboard({
       label: `${direction === 'up' ? 'Up' : 'Down'} ${absoluteDifference.toLocaleString()} ${unitLabel} compared with ${previousPeriodName}`
     };
   };
-  const salesAmountComparison = formatComparison(dashboardSalesAmount, previousDashboardSalesAmount);
+  const salesAmountComparison = formatComparison(dashboardProfitSummary.totalSales, previousDashboardProfitSummary.totalSales);
+  const actualProfitComparison = formatComparison(
+    dashboardProfitSummary.actualProfit,
+    previousDashboardProfitSummary.actualProfit,
+    { emptyLabel: 'No profit' }
+  );
   const unitsSoldComparison = formatComparison(dashboardSalesQuantity, previousDashboardSalesQuantity, {
     percentage: false,
     emptyLabel: 'No units sold',
@@ -694,17 +706,36 @@ export function Dashboard({
     {
       label: 'Overall Sales',
       value: formatCurrency(overallSalesAmount),
+      helpText: 'Formula: add all completed invoice totals.',
       detail: `${completedSales.length} completed transaction${completedSales.length === 1 ? '' : 's'}`,
       icon: ReceiptText,
       tone: 'blue',
       action: canUseSales ? () => openSalesHistory('all') : undefined
     },
     isAdmin && {
+      label: 'Cost of Goods Sold',
+      value: formatCurrency(overallProfitSummary.puhunanUsed),
+      helpText: 'Formula: quantity sold x saved item cost.',
+      detail: 'Total cost of sold items',
+      icon: Wallet,
+      tone: 'amber',
+      action: canUseReports ? () => openTargetReport('actual-earnings') : undefined
+    },
+    isAdmin && {
+      label: 'Actual Profit',
+      value: formatCurrency(overallProfitSummary.actualProfit),
+      helpText: 'Formula: Overall Sales - Cost of Goods Sold.',
+      detail: `${overallProfitSummary.profitMargin.toLocaleString(undefined, { maximumFractionDigits: 1 })}% profit margin`,
+      icon: Wallet,
+      tone: overallProfitSummary.actualProfit >= 0 ? 'green' : 'red',
+      action: canUseReports ? () => openTargetReport('actual-earnings') : undefined
+    },
+    isAdmin && {
       label: 'Best Seller',
       value: topSellingDashboardPeriod ? `${topSellingDashboardPeriod.quantity} sold` : 'None',
       detail: topSellingDashboardPeriod
         ? `${topSellingDashboardPeriod.itemName}${topSellingDashboardPeriod.isManual ? ' - non-inventory item' : ''}`
-        : 'No item sales in this view',
+        : 'No item sales for selected dates',
       icon: Package,
       tone: 'green',
       action: canUseReports || canUseSales ? openDashboardSalesReport : undefined
@@ -739,13 +770,33 @@ export function Dashboard({
     }
   ] : [
     {
-      label: 'Sales for View',
-      value: formatCurrency(dashboardSalesAmount),
+      label: 'Sales Total',
+      value: formatCurrency(dashboardProfitSummary.totalSales),
+      helpText: 'Formula: add completed sales for selected dates.',
       detail: `${dashboardSales.length} transaction${dashboardSales.length === 1 ? '' : 's'} for ${salesPeriodRangeLabel}`,
       icon: ReceiptText,
       tone: 'blue',
       comparison: salesAmountComparison,
       action: canUseReports || canUseSales ? openDashboardSalesReport : undefined
+    },
+    isAdmin && {
+      label: 'Cost of Goods Sold',
+      value: formatCurrency(dashboardProfitSummary.puhunanUsed),
+      helpText: 'Formula: quantity sold for selected dates x saved item cost.',
+      detail: 'Cost of sold items for selected dates',
+      icon: Wallet,
+      tone: 'amber',
+      action: canUseReports ? () => openTargetReport('actual-earnings', salesReportTarget) : undefined
+    },
+    isAdmin && {
+      label: 'Actual Profit',
+      value: formatCurrency(dashboardProfitSummary.actualProfit),
+      helpText: 'Formula: selected sales - selected Cost of Goods Sold.',
+      detail: `${dashboardProfitSummary.profitMargin.toLocaleString(undefined, { maximumFractionDigits: 1 })}% profit margin`,
+      icon: TrendingUp,
+      tone: dashboardProfitSummary.actualProfit >= 0 ? 'green' : 'red',
+      comparison: actualProfitComparison,
+      action: canUseReports ? () => openTargetReport('actual-earnings', salesReportTarget) : undefined
     },
     (isAdmin || isCashier || canUseSales) && {
       label: 'Daily Quota',
@@ -763,13 +814,13 @@ export function Dashboard({
       value: topSellingDashboardPeriod ? `${topSellingDashboardPeriod.quantity} sold` : 'None',
       detail: topSellingDashboardPeriod
         ? `${topSellingDashboardPeriod.itemName}${topSellingDashboardPeriod.isManual ? ' - non-inventory item' : ''}`
-        : 'No item sales in this view',
+        : 'No item sales for selected dates',
       icon: Package,
       tone: 'green',
       action: canUseReports || canUseSales ? openDashboardSalesReport : undefined
     },
     (isAdmin || isInventoryStaff) && {
-      label: 'Stock Movements',
+      label: 'Stock Movements Today',
       value: stockMovementsToday.length,
       detail: 'Stock in/out records today',
       icon: Activity,
@@ -779,7 +830,7 @@ export function Dashboard({
     (isAdmin || isInventoryStaff) && {
       label: 'Units Sold',
       value: dashboardSalesQuantity,
-      detail: `${formatUnitLabel(dashboardSalesQuantity).replace(/^./, char => char.toUpperCase())} sold in this view`,
+      detail: `${formatUnitLabel(dashboardSalesQuantity).replace(/^./, char => char.toUpperCase())} sold for selected dates`,
       icon: Package,
       tone: 'purple',
       comparison: unitsSoldComparison,
@@ -841,7 +892,7 @@ export function Dashboard({
     },
     canUseReports && !isInventoryStaff && {
       label: "Today's Summary",
-      detail: 'Sales report view',
+      detail: 'Open sales report',
       icon: FileText,
       tone: 'emerald',
       action: () => openTargetReport('sales-movements', { period: 'daily', date: todayKey })
@@ -952,14 +1003,14 @@ export function Dashboard({
   );
 
   const operationsSection = (
-    <section className="dashboard-panel dashboard-operations-panel" aria-label="Today's operations">
+    <section className="dashboard-panel dashboard-operations-panel" aria-label="Selected date summary">
       <div className="dashboard-panel-header">
         <div className="min-w-0">
-          <h2 className="dashboard-panel-title">Today&apos;s Operations</h2>
-          <p className="dashboard-panel-subtitle">Same-day activity recorded in the system.</p>
+          <h2 className="dashboard-panel-title">Selected Date Summary</h2>
+          <p className="dashboard-panel-subtitle">Shows sales for the dates selected above. Daily quota and stock movement counts are for today.</p>
         </div>
       </div>
-      <div className="dashboard-summary-grid dashboard-operations-grid" style={{ '--dashboard-operation-count': operationsCards.length }}>
+      <div className="dashboard-summary-grid dashboard-operations-grid">
         {operationsCards.map(card => (
           <SummaryCard key={card.label} {...card} />
         ))}
@@ -1019,7 +1070,7 @@ export function Dashboard({
 
         .dashboard-summary-grid {
           display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
           gap: 10px;
           padding: 12px;
         }
@@ -1092,24 +1143,36 @@ export function Dashboard({
         }
 
         .dashboard-admin-summary-grid {
-          grid-template-columns: repeat(4, minmax(0, 1fr));
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-auto-rows: 1fr;
+        }
+
+        .dashboard-admin-summary-grid .dashboard-summary-card {
+          height: 100%;
+          min-height: 118px;
         }
 
         .dashboard-operations-grid {
-          grid-template-columns: repeat(var(--dashboard-operation-count, 3), minmax(0, 1fr));
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-auto-rows: 1fr;
+        }
+
+        .dashboard-operations-grid .dashboard-summary-card {
+          height: 100%;
+          min-height: 118px;
         }
 
         .dashboard-summary-card {
           display: grid;
           grid-template-columns: minmax(0, 1fr) auto;
-          gap: 14px;
+          gap: 10px;
           align-items: start;
-          min-height: 96px;
+          min-height: 86px;
           border: 1px solid #dbe3ef;
           border-left-width: 5px;
           border-radius: 10px;
           background: #ffffff;
-          padding: 12px 14px;
+          padding: 11px 12px;
           text-align: left;
           transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
         }
@@ -1122,6 +1185,10 @@ export function Dashboard({
           background: #f8fafc;
           border-color: #cbd5e1;
           box-shadow: 0 8px 18px rgba(15, 23, 42, 0.07);
+        }
+
+        .dashboard-summary-card[role="button"] {
+          cursor: pointer;
         }
 
         .summary-blue {
@@ -1142,24 +1209,73 @@ export function Dashboard({
 
         .dashboard-summary-label {
           color: #111827;
-          font-size: 13px;
+          font-size: 12px;
           font-weight: 700;
         }
 
         .dashboard-summary-value {
-          margin-top: 6px;
+          margin-top: 5px;
           color: #0f172a;
-          font-size: clamp(25px, 2.6vw, 34px);
+          font-size: clamp(21px, 1.9vw, 30px);
           line-height: 1;
           font-weight: 900;
           letter-spacing: 0;
           overflow-wrap: anywhere;
         }
 
+        .dashboard-summary-value-row {
+          display: inline-flex;
+          max-width: 100%;
+          align-items: center;
+          gap: 4px;
+          min-width: 0;
+        }
+
+        .dashboard-summary-help-button {
+          display: inline-flex;
+          width: 18px;
+          height: 18px;
+          align-items: center;
+          justify-content: center;
+          flex: 0 0 auto;
+          border: 1px solid #dbe3ef;
+          border-radius: 999px;
+          background: #ffffff;
+          color: #475569;
+          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .dashboard-summary-help-button:hover,
+        .dashboard-summary-help-button:focus-visible {
+          border-color: #93c5fd;
+          background: #eff6ff;
+          color: #2563eb;
+          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+          outline: 0;
+        }
+
+        .dashboard-summary-help-button svg {
+          width: 12px;
+          height: 12px;
+        }
+
+        .dashboard-summary-help-content {
+          max-width: min(190px, calc(100vw - 28px));
+          border: 1px solid #dbe3ef;
+          background: #0f172a;
+          color: #ffffff;
+          padding: 6px 8px;
+          font-size: 11px;
+          font-weight: 650;
+          line-height: 1.25;
+          text-align: left;
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.22);
+        }
+
         .dashboard-summary-detail {
-          margin-top: 6px;
+          margin-top: 5px;
           color: #111827;
-          font-size: 12px;
+          font-size: 11px;
           font-weight: 600;
           line-height: 1.3;
           overflow-wrap: anywhere;
@@ -1197,8 +1313,8 @@ export function Dashboard({
 
         .dashboard-summary-icon {
           display: inline-flex;
-          width: 46px;
-          height: 46px;
+          width: 40px;
+          height: 40px;
           align-items: center;
           justify-content: center;
           border-radius: 10px;
@@ -1561,13 +1677,16 @@ export function Dashboard({
           grid-auto-rows: minmax(112px, auto);
         }
 
-        .dashboard-inventory-summary-panel .dashboard-summary-grid,
-        .dashboard-inventory-actions-panel .dashboard-action-grid {
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-        }
-
         .dashboard-inventory-summary-panel .dashboard-summary-grid {
           grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .dashboard-inventory-summary-panel .dashboard-summary-card {
+          min-height: 96px;
+        }
+
+        .dashboard-inventory-actions-panel .dashboard-action-grid {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
         }
 
         .dashboard-action-button,
@@ -1893,7 +2012,9 @@ export function Dashboard({
         }
 
         @media (max-width: 1120px) {
-          .dashboard-summary-grid {
+          .dashboard-summary-grid,
+          .dashboard-admin-summary-grid,
+          .dashboard-inventory-summary-panel .dashboard-summary-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
@@ -1973,7 +2094,14 @@ export function Dashboard({
           }
 
           .dashboard-summary-grid,
-          .dashboard-action-grid,
+          .dashboard-admin-summary-grid,
+          .dashboard-operations-grid,
+          .dashboard-inventory-summary-panel .dashboard-summary-grid,
+          .dashboard-action-grid {
+            padding: 10px;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
           .dashboard-attention-list {
             padding: 10px;
           }
@@ -1986,6 +2114,23 @@ export function Dashboard({
 
           .dashboard-summary-value {
             font-size: clamp(21px, 6vw, 28px);
+          }
+
+          .dashboard-summary-help-button {
+            width: 17px;
+            height: 17px;
+          }
+
+          .dashboard-summary-help-button svg {
+            width: 11px;
+            height: 11px;
+          }
+
+          .dashboard-summary-help-content {
+            max-width: min(165px, calc(100vw - 24px));
+            padding: 5px 7px;
+            font-size: 10.5px;
+            line-height: 1.25;
           }
 
           .dashboard-stock-search-results {
@@ -2006,15 +2151,19 @@ export function Dashboard({
             grid-auto-rows: minmax(108px, auto);
           }
 
-          .dashboard-operations-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
         }
 
         @media (max-width: 430px) {
           .dashboard-summary-grid,
-          .dashboard-action-grid,
+          .dashboard-admin-summary-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
           .dashboard-operations-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .dashboard-action-grid {
             grid-template-columns: 1fr;
           }
 
@@ -2036,19 +2185,19 @@ export function Dashboard({
 
       <div className={`dashboard-content ${isCashier ? 'dashboard-content-cashier' : ''}`}>
         {!isInventoryStaff && (
-          <section className="dashboard-panel dashboard-sales-filter-panel" aria-label="Sales view filter">
+          <section className="dashboard-panel dashboard-sales-filter-panel" aria-label="Sales date filter">
             <div className={`dashboard-sales-filter-row ${salesPeriod === 'day' ? 'is-date-mode' : ''}`}>
               <div className="dashboard-sales-filter-copy">
                 <h2 className="dashboard-sales-filter-title">
                   <CalendarDays className="h-4 w-4 text-blue-600" />
-                  Sales View
+                  Sales Date Range
                 </h2>
                 <p className="dashboard-sales-filter-detail">
                   Showing {salesPeriodLabel.toLowerCase()} sales for {salesPeriodRangeLabel}.
                 </p>
               </div>
               <div className="dashboard-sales-filter-field">
-                <Label htmlFor="dashboard-sales-period" className="dashboard-sales-filter-label">Period</Label>
+                <Label htmlFor="dashboard-sales-period" className="dashboard-sales-filter-label">Date Range</Label>
                 <Select value={salesPeriod} onValueChange={setSalesPeriod}>
                   <SelectTrigger id="dashboard-sales-period" className="dashboard-sales-filter-control">
                     <SelectValue />
@@ -2339,6 +2488,7 @@ export function Dashboard({
 function SummaryCard({
   label,
   value,
+  helpText,
   detail,
   icon: Icon,
   tone,
@@ -2349,11 +2499,44 @@ function SummaryCard({
   const progressValue = Number(progress);
   const hasProgress = Number.isFinite(progressValue);
   const comparisonDirection = comparison?.direction || 'neutral';
+  const handleCardKeyDown = event => {
+    if (!action) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      action();
+    }
+  };
   const content = (
     <>
       <span className="dashboard-summary-body">
         <span className="dashboard-summary-label block">{label}</span>
-        <span className="dashboard-summary-value block">{value}</span>
+        <span className="dashboard-summary-value-row">
+          <span className="dashboard-summary-value block">{value}</span>
+          {helpText && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="dashboard-summary-help-button"
+                  aria-label={`${label}: ${helpText}`}
+                  onClick={event => event.stopPropagation()}
+                  onKeyDown={event => event.stopPropagation()}
+                >
+                  <HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent
+                side="top"
+                align="center"
+                sideOffset={8}
+                hideArrow
+                className="dashboard-summary-help-content"
+              >
+                {helpText}
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </span>
         <span className="dashboard-summary-detail block">{detail}</span>
       </span>
       <span className="dashboard-summary-icon">
@@ -2374,9 +2557,15 @@ function SummaryCard({
 
   if (action) {
     return (
-      <button type="button" className={`dashboard-summary-card summary-${tone}`} onClick={action}>
+      <div
+        role="button"
+        tabIndex={0}
+        className={`dashboard-summary-card summary-${tone}`}
+        onClick={action}
+        onKeyDown={handleCardKeyDown}
+      >
         {content}
-      </button>
+      </div>
     );
   }
 

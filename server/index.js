@@ -257,12 +257,34 @@ async function ensureSchema() {
     CREATE TABLE IF NOT EXISTS invoice_number_sequences (
       document_type VARCHAR(40) NOT NULL,
       invoice_year INTEGER NOT NULL,
+      branch VARCHAR(50) NOT NULL DEFAULT 'Manggahan',
       last_number INTEGER NOT NULL DEFAULT 0,
       updated_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
-      PRIMARY KEY (document_type, invoice_year),
+      PRIMARY KEY (document_type, invoice_year, branch),
       CHECK (invoice_year BETWEEN 2000 AND 9999),
       CHECK (last_number >= 0)
     );
+  `);
+  await pool.query(`
+    ALTER TABLE invoice_number_sequences
+    ADD COLUMN IF NOT EXISTS branch VARCHAR(50);
+  `);
+  await pool.query(`
+    UPDATE invoice_number_sequences
+    SET branch = 'Manggahan'
+    WHERE branch IS NULL OR TRIM(branch) = '';
+  `);
+  await pool.query(`
+    ALTER TABLE invoice_number_sequences
+    ALTER COLUMN branch SET NOT NULL;
+  `);
+  await pool.query(`
+    ALTER TABLE invoice_number_sequences
+    DROP CONSTRAINT IF EXISTS invoice_number_sequences_pkey;
+  `);
+  await pool.query(`
+    ALTER TABLE invoice_number_sequences
+    ADD CONSTRAINT invoice_number_sequences_pkey PRIMARY KEY (document_type, invoice_year, branch);
   `);
 
   await pool.query(`
@@ -350,6 +372,8 @@ async function ensureSchema() {
       sales_transaction_id SERIAL PRIMARY KEY,
       sales_number VARCHAR(40) UNIQUE NOT NULL,
       official_invoice_number VARCHAR(40),
+      official_invoice_expected_number VARCHAR(40),
+      official_invoice_exception_reason TEXT,
       branch VARCHAR(50) NOT NULL,
       customer_type VARCHAR(40) DEFAULT 'walk_in' CHECK (customer_type IN ('walk_in', 'sister_company', 'hardware_reseller', 'regular', 'contractor')),
       customer_name VARCHAR(160) NOT NULL DEFAULT 'C',
@@ -400,7 +424,11 @@ async function ensureSchema() {
       branch VARCHAR(50) NOT NULL,
       quantity_sold INTEGER NOT NULL,
       unit_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+      unit_cost_at_sale NUMERIC(12,2) NOT NULL DEFAULT 0,
       subtotal NUMERIC(12,2) NOT NULL DEFAULT 0,
+      cost_subtotal NUMERIC(12,2) NOT NULL DEFAULT 0,
+      gross_profit NUMERIC(12,2) NOT NULL DEFAULT 0,
+      profit_margin_percent NUMERIC(7,2) NOT NULL DEFAULT 0,
       previous_quantity INTEGER,
       new_quantity INTEGER,
       refund_for_sales_item_id INT REFERENCES sales_items(sales_item_id) ON DELETE SET NULL,
@@ -682,12 +710,24 @@ async function ensureSchema() {
   `);
   await pool.query(`
     ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS official_invoice_expected_number VARCHAR(40);
+  `);
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS official_invoice_exception_reason TEXT;
+  `);
+  await pool.query(`
+    DROP INDEX IF EXISTS sales_transactions_official_invoice_number_unique;
+  `);
+  await pool.query(`
+    ALTER TABLE sales_transactions
     DROP CONSTRAINT IF EXISTS sales_transactions_official_invoice_number_check;
   `);
   await pool.query(`
     WITH legacy_invoice_candidates AS (
       SELECT
         sales_transaction_id,
+        branch,
         RIGHT(
           CASE
             WHEN TRIM(COALESCE(official_invoice_number, '')) ~ '${LEGACY_SALES_INVOICE_NUMBER_PATTERN}'
@@ -713,8 +753,9 @@ async function ensureSchema() {
     unique_legacy_invoice_candidates AS (
       SELECT
         sales_transaction_id,
+        branch,
         legacy_invoice_number,
-        COUNT(*) OVER (PARTITION BY legacy_invoice_number) AS duplicate_count
+        COUNT(*) OVER (PARTITION BY branch, legacy_invoice_number) AS duplicate_count
       FROM legacy_invoice_candidates
     )
     UPDATE sales_transactions st
@@ -726,12 +767,14 @@ async function ensureSchema() {
         SELECT 1
         FROM sales_transactions existing_st
         WHERE existing_st.sales_transaction_id <> st.sales_transaction_id
+          AND existing_st.branch = st.branch
           AND existing_st.official_invoice_number = ulic.legacy_invoice_number
       );
   `);
   await pool.query(`
     WITH existing_max AS (
       SELECT
+        branch,
         COALESCE(
           MAX(
             CASE
@@ -745,11 +788,15 @@ async function ensureSchema() {
           ${SALES_INVOICE_START_NUMBER} - 1
         ) AS last_number
       FROM sales_transactions
+      WHERE transaction_type <> 'refund'
+      GROUP BY branch
     ),
     missing_sales AS (
       SELECT
         sales_transaction_id,
+        branch,
         ROW_NUMBER() OVER (
+          PARTITION BY branch
           ORDER BY COALESCE(created_at, ${PHILIPPINE_NOW_SQL}), sales_transaction_id
         ) AS invoice_sequence
       FROM sales_transactions
@@ -763,7 +810,7 @@ async function ensureSchema() {
     UPDATE sales_transactions st
     SET official_invoice_number = LPAD((em.last_number + ms.invoice_sequence)::text, ${SALES_INVOICE_SEQUENCE_DIGITS}, '0')
     FROM missing_sales ms
-    CROSS JOIN existing_max em
+    INNER JOIN existing_max em ON em.branch = ms.branch
     WHERE st.sales_transaction_id = ms.sales_transaction_id;
   `);
   await pool.query(`
@@ -773,8 +820,25 @@ async function ensureSchema() {
       AND official_invoice_number IS NOT NULL;
   `);
   await pool.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS sales_transactions_official_invoice_number_unique
-    ON sales_transactions (official_invoice_number)
+    UPDATE sales_transactions
+    SET official_invoice_expected_number = official_invoice_number
+    WHERE transaction_type <> 'refund'
+      AND official_invoice_expected_number IS NULL
+      AND official_invoice_number ~ '${SALES_INVOICE_NUMBER_PATTERN}';
+  `);
+  await pool.query(`
+    UPDATE sales_transactions
+    SET official_invoice_expected_number = NULL,
+        official_invoice_exception_reason = NULL
+    WHERE transaction_type = 'refund'
+      AND (
+        official_invoice_expected_number IS NOT NULL
+        OR official_invoice_exception_reason IS NOT NULL
+      );
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS sales_transactions_branch_official_invoice_number_unique
+    ON sales_transactions (branch, official_invoice_number)
     WHERE official_invoice_number IS NOT NULL;
   `);
   await pool.query(`
@@ -793,31 +857,41 @@ async function ensureSchema() {
     );
   `);
   await pool.query(`
-    INSERT INTO invoice_number_sequences (document_type, invoice_year, last_number, updated_at)
+    INSERT INTO invoice_number_sequences (document_type, invoice_year, branch, last_number, updated_at)
     SELECT
       '${SALES_INVOICE_DOCUMENT_TYPE}',
       EXTRACT(YEAR FROM ${PHILIPPINE_NOW_SQL})::int AS invoice_year,
+      branch,
       GREATEST(MAX(official_invoice_number::int), ${SALES_INVOICE_START_NUMBER} - 1) AS last_number,
       ${PHILIPPINE_NOW_SQL}
     FROM sales_transactions
     WHERE official_invoice_number ~ '${SALES_INVOICE_NUMBER_PATTERN}'
-    ON CONFLICT (document_type, invoice_year) DO UPDATE
+    GROUP BY branch
+    ON CONFLICT (document_type, invoice_year, branch) DO UPDATE
     SET last_number = GREATEST(invoice_number_sequences.last_number, EXCLUDED.last_number),
         updated_at = ${PHILIPPINE_NOW_SQL};
   `);
   await pool.query(`
-    INSERT INTO invoice_number_sequences (document_type, invoice_year, last_number, updated_at)
+    WITH known_branches AS (
+      SELECT DISTINCT branch
+      FROM users
+      WHERE branch IS NOT NULL AND TRIM(branch) <> ''
+      UNION
+      SELECT DISTINCT branch
+      FROM branch_inventory
+      WHERE branch IS NOT NULL AND TRIM(branch) <> ''
+      UNION
+      VALUES ('Manggahan'), ('San Rafael')
+    )
+    INSERT INTO invoice_number_sequences (document_type, invoice_year, branch, last_number, updated_at)
     SELECT
       '${SALES_INVOICE_DOCUMENT_TYPE}',
       EXTRACT(YEAR FROM ${PHILIPPINE_NOW_SQL})::int,
+      branch,
       ${SALES_INVOICE_START_NUMBER} - 1,
       ${PHILIPPINE_NOW_SQL}
-    WHERE NOT EXISTS (
-      SELECT 1
-      FROM invoice_number_sequences
-      WHERE document_type = '${SALES_INVOICE_DOCUMENT_TYPE}'
-        AND invoice_year = EXTRACT(YEAR FROM ${PHILIPPINE_NOW_SQL})::int
-    );
+    FROM known_branches
+    ON CONFLICT (document_type, invoice_year, branch) DO NOTHING;
   `);
   await pool.query(`
     ALTER TABLE sales_transactions
@@ -988,6 +1062,51 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE sales_items
     ADD COLUMN IF NOT EXISTS refund_for_sales_item_id INT REFERENCES sales_items(sales_item_id) ON DELETE SET NULL;
+  `);
+  await pool.query(`
+    ALTER TABLE sales_items
+    ADD COLUMN IF NOT EXISTS unit_cost_at_sale NUMERIC(12,2) NOT NULL DEFAULT 0;
+  `);
+  await pool.query(`
+    ALTER TABLE sales_items
+    ADD COLUMN IF NOT EXISTS cost_subtotal NUMERIC(12,2) NOT NULL DEFAULT 0;
+  `);
+  await pool.query(`
+    ALTER TABLE sales_items
+    ADD COLUMN IF NOT EXISTS gross_profit NUMERIC(12,2) NOT NULL DEFAULT 0;
+  `);
+  await pool.query(`
+    ALTER TABLE sales_items
+    ADD COLUMN IF NOT EXISTS profit_margin_percent NUMERIC(7,2) NOT NULL DEFAULT 0;
+  `);
+  await pool.query(`
+    UPDATE sales_items si
+    SET unit_cost_at_sale = COALESCE(p.cost_price, 0)
+    FROM products p
+    WHERE si.product_id = p.product_id
+      AND si.is_inventory_item = true
+      AND si.unit_cost_at_sale = 0
+      AND COALESCE(p.cost_price, 0) > 0;
+  `);
+  await pool.query(`
+    UPDATE sales_items
+    SET unit_cost_at_sale = unit_price
+    WHERE (is_inventory_item = false OR item_type = 'non_inventory' OR inventory_id IS NULL)
+      AND unit_cost_at_sale = 0
+      AND unit_price > 0;
+  `);
+  await pool.query(`
+    UPDATE sales_items
+    SET cost_subtotal = ROUND((quantity_sold * unit_cost_at_sale)::numeric, 2),
+        gross_profit = ROUND((subtotal - (quantity_sold * unit_cost_at_sale))::numeric, 2),
+        profit_margin_percent = CASE
+          WHEN ABS(subtotal) > 0
+            THEN ROUND(((subtotal - (quantity_sold * unit_cost_at_sale)) / ABS(subtotal) * 100)::numeric, 2)
+          ELSE 0
+        END
+    WHERE cost_subtotal = 0
+       OR gross_profit = 0
+       OR profit_margin_percent = 0;
   `);
 
   await pool.query(`
@@ -1529,6 +1648,12 @@ function cleanBackdateReason(value) {
   return cleaned.slice(0, 240) || null;
 }
 
+function cleanInvoiceSequenceExceptionReason(value) {
+  if (value === undefined || value === null) return null;
+  const cleaned = String(value).trim().replace(/\s+/g, ' ');
+  return cleaned.slice(0, 240) || null;
+}
+
 function getTransactionTiming(body = {}) {
   const actualTransactionAt = parseOptionalActualTransactionAt(body.actual_transaction_at);
   return {
@@ -1800,6 +1925,24 @@ function parseOptionalPositiveDecimal(value, fieldName, { max = null } = {}) {
   return parsed;
 }
 
+function calculateSalesLineProfit({ quantitySold, unitCostAtSale, subtotal }) {
+  const quantity = Number(quantitySold || 0);
+  const unitCost = Number(unitCostAtSale || 0);
+  const lineSubtotal = Number(subtotal || 0);
+  const costSubtotal = Number((quantity * unitCost).toFixed(2));
+  const grossProfit = Number((lineSubtotal - costSubtotal).toFixed(2));
+  const profitMarginPercent = Math.abs(lineSubtotal) > 0
+    ? Number(((grossProfit / Math.abs(lineSubtotal)) * 100).toFixed(2))
+    : 0;
+
+  return {
+    unitCostAtSale: Number(unitCost.toFixed(2)),
+    costSubtotal,
+    grossProfit,
+    profitMarginPercent
+  };
+}
+
 async function findProductByIdentity(client, { name, category }) {
   const canonicalCategory = canonicalizeInventoryCategory(category);
   const cleanName = cleanInventoryName(name);
@@ -2048,6 +2191,8 @@ function mapSalesTransactionRow(row) {
     sales_transaction_id: row.sales_transaction_id,
     sales_number: row.sales_number,
     official_invoice_number: officialInvoiceNumber,
+    official_invoice_expected_number: row.official_invoice_expected_number,
+    official_invoice_exception_reason: row.official_invoice_exception_reason,
     reference_sales_number: row.reference_sales_number,
     reference_official_invoice_number: referenceOfficialInvoiceNumber,
     branch: row.branch,
@@ -2101,7 +2246,11 @@ function mapSalesItemRow(row) {
     branch: row.branch,
     quantity_sold: row.quantity_sold,
     unit_price: row.unit_price,
+    unit_cost_at_sale: row.unit_cost_at_sale,
     subtotal: row.subtotal,
+    cost_subtotal: row.cost_subtotal,
+    gross_profit: row.gross_profit,
+    profit_margin_percent: row.profit_margin_percent,
     previous_quantity: row.previous_quantity,
     new_quantity: row.new_quantity,
     refund_for_sales_item_id: row.refund_for_sales_item_id,
@@ -2336,76 +2485,91 @@ async function getSalesInvoiceSequenceYear(client) {
   return Number(yearResult.rows[0]?.invoice_year || new Date().getFullYear());
 }
 
-async function ensureSalesInvoiceSequence(client) {
+function getSalesInvoiceSequenceBranch(branch) {
+  return String(branch || '').trim() || 'Manggahan';
+}
+
+async function ensureSalesInvoiceSequence(client, branch) {
   const invoiceYear = await getSalesInvoiceSequenceYear(client);
+  const sequenceBranch = getSalesInvoiceSequenceBranch(branch);
   const maxResult = await client.query(
     `SELECT GREATEST(
        COALESCE(MAX(official_invoice_number::int), 0),
        $1::int - 1
      ) AS last_number
      FROM sales_transactions
-     WHERE official_invoice_number ~ $2`,
-    [SALES_INVOICE_START_NUMBER, SALES_INVOICE_NUMBER_PATTERN]
+     WHERE official_invoice_number ~ $2
+       AND branch = $3`,
+    [SALES_INVOICE_START_NUMBER, SALES_INVOICE_NUMBER_PATTERN, sequenceBranch]
   );
   const lastNumber = Number(maxResult.rows[0]?.last_number || (SALES_INVOICE_START_NUMBER - 1));
 
   await client.query(
-    `INSERT INTO invoice_number_sequences (document_type, invoice_year, last_number, updated_at)
-     VALUES ($1, $2, $3, ${PHILIPPINE_NOW_SQL})
-     ON CONFLICT (document_type, invoice_year) DO UPDATE
+    `INSERT INTO invoice_number_sequences (document_type, invoice_year, branch, last_number, updated_at)
+     VALUES ($1, $2, $3, $4, ${PHILIPPINE_NOW_SQL})
+     ON CONFLICT (document_type, invoice_year, branch) DO UPDATE
      SET last_number = GREATEST(invoice_number_sequences.last_number, EXCLUDED.last_number),
          updated_at = ${PHILIPPINE_NOW_SQL}
      RETURNING last_number`,
-    [SALES_INVOICE_DOCUMENT_TYPE, invoiceYear, lastNumber]
+    [SALES_INVOICE_DOCUMENT_TYPE, invoiceYear, sequenceBranch, lastNumber]
   );
 
-  return invoiceYear;
+  return { invoiceYear, sequenceBranch };
 }
 
-async function peekNextOfficialSalesInvoiceNumber(client) {
-  const invoiceYear = await ensureSalesInvoiceSequence(client);
+async function peekNextOfficialSalesInvoiceNumber(client, branch) {
+  const { invoiceYear, sequenceBranch } = await ensureSalesInvoiceSequence(client, branch);
   const result = await client.query(
     `SELECT last_number + 1 AS next_number
      FROM invoice_number_sequences
      WHERE document_type = $1
-       AND invoice_year = $2`,
-    [SALES_INVOICE_DOCUMENT_TYPE, invoiceYear]
+       AND invoice_year = $2
+       AND branch = $3`,
+    [SALES_INVOICE_DOCUMENT_TYPE, invoiceYear, sequenceBranch]
   );
   const sequence = Number(result.rows[0]?.next_number || SALES_INVOICE_START_NUMBER);
   return formatOfficialSalesInvoiceNumber(sequence);
 }
 
-async function generateOfficialSalesInvoiceNumber(client) {
-  const invoiceYear = await ensureSalesInvoiceSequence(client);
-  const sequenceResult = await client.query(
-    `UPDATE invoice_number_sequences
-     SET last_number = last_number + 1,
-         updated_at = ${PHILIPPINE_NOW_SQL}
+async function lockOfficialSalesInvoiceSequence(client, branch) {
+  const { invoiceYear, sequenceBranch } = await ensureSalesInvoiceSequence(client, branch);
+  const result = await client.query(
+    `SELECT last_number
+     FROM invoice_number_sequences
      WHERE document_type = $1
        AND invoice_year = $2
-     RETURNING last_number`,
-    [SALES_INVOICE_DOCUMENT_TYPE, invoiceYear]
+       AND branch = $3
+     FOR UPDATE`,
+    [SALES_INVOICE_DOCUMENT_TYPE, invoiceYear, sequenceBranch]
   );
 
-  const sequence = Number(sequenceResult.rows[0]?.last_number || 0);
-  if (!Number.isInteger(sequence) || sequence <= 0) {
-    throw new Error('Failed to generate official sales invoice number.');
+  if (result.rowCount === 0) {
+    throw new Error('Sales invoice sequence is not initialized.');
   }
 
-  return formatOfficialSalesInvoiceNumber(sequence);
+  const lastNumber = Number(result.rows[0]?.last_number || 0);
+  const nextNumber = Math.max(lastNumber + 1, SALES_INVOICE_START_NUMBER);
+  return {
+    invoiceYear,
+    branch: sequenceBranch,
+    lastNumber,
+    nextNumber,
+    nextInvoiceNumber: formatOfficialSalesInvoiceNumber(nextNumber)
+  };
 }
 
-async function syncOfficialSalesInvoiceSequence(client, officialInvoiceNumber) {
+async function advanceOfficialSalesInvoiceSequence(client, invoiceYear, branch, officialInvoiceNumber) {
   const sequence = Number.parseInt(officialInvoiceNumber, 10);
   if (!Number.isInteger(sequence) || sequence <= 0) return;
-  const invoiceYear = await ensureSalesInvoiceSequence(client);
+  const sequenceBranch = getSalesInvoiceSequenceBranch(branch);
   await client.query(
     `UPDATE invoice_number_sequences
      SET last_number = GREATEST(last_number, $3),
          updated_at = ${PHILIPPINE_NOW_SQL}
      WHERE document_type = $1
-       AND invoice_year = $2`,
-    [SALES_INVOICE_DOCUMENT_TYPE, invoiceYear, sequence]
+       AND invoice_year = $2
+       AND branch = $4`,
+    [SALES_INVOICE_DOCUMENT_TYPE, invoiceYear, sequence, sequenceBranch]
   );
 }
 
@@ -4150,6 +4314,8 @@ app.get('/api/sales', authenticate, async (req, res) => {
          st.sales_transaction_id,
          st.sales_number,
          st.official_invoice_number,
+         st.official_invoice_expected_number,
+         st.official_invoice_exception_reason,
          reference_st.sales_number AS reference_sales_number,
          reference_st.official_invoice_number AS reference_official_invoice_number,
          st.branch,
@@ -4199,7 +4365,11 @@ app.get('/api/sales', authenticate, async (req, res) => {
                'branch', si.branch,
                'quantity_sold', si.quantity_sold,
                'unit_price', si.unit_price,
+               'unit_cost_at_sale', si.unit_cost_at_sale,
                'subtotal', si.subtotal,
+               'cost_subtotal', si.cost_subtotal,
+               'gross_profit', si.gross_profit,
+               'profit_margin_percent', si.profit_margin_percent,
                'previous_quantity', si.previous_quantity,
                'new_quantity', si.new_quantity,
                'refund_for_sales_item_id', si.refund_for_sales_item_id,
@@ -4256,10 +4426,11 @@ app.get('/api/sales/next-invoice-number', authenticate, async (req, res) => {
 
   const client = await pool.connect();
   try {
-    const invoiceNumber = await peekNextOfficialSalesInvoiceNumber(client);
+    const invoiceNumber = await peekNextOfficialSalesInvoiceNumber(client, req.user.branch);
     return res.json({
       invoice_number: invoiceNumber,
       format: 'six_digit_numeric',
+      branch: getSalesInvoiceSequenceBranch(req.user.branch),
       editable: true
     });
   } catch (err) {
@@ -4273,6 +4444,7 @@ app.get('/api/sales/next-invoice-number', authenticate, async (req, res) => {
 app.post('/api/sales', authenticate, async (req, res) => {
   const {
     official_invoice_number = '',
+    invoice_sequence_exception_reason = '',
     customer_type = 'walk_in',
     customer_name = '',
     customer_tin = '',
@@ -4298,6 +4470,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
   const cleanPaymentReference = String(payment_reference || '').trim().slice(0, 120) || null;
   const isPaymentConfirmed = payment_confirmed === true || payment_confirmed === 'true';
   const cleanOfficialInvoiceNumber = normalizeOfficialSalesInvoiceNumber(official_invoice_number);
+  const cleanInvoiceSequenceReason = cleanInvoiceSequenceExceptionReason(invoice_sequence_exception_reason);
   let transactionTiming;
   try {
     transactionTiming = getTransactionTiming(req.body);
@@ -4433,14 +4606,41 @@ app.post('/api/sales', authenticate, async (req, res) => {
       `SELECT sales_transaction_id
        FROM sales_transactions
        WHERE official_invoice_number = $1
+         AND branch = $2
        LIMIT 1`,
-      [officialInvoiceNumber]
+      [officialInvoiceNumber, req.user.branch]
     );
     if (duplicateInvoiceResult.rowCount > 0) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: `Sales Invoice Number ${officialInvoiceNumber} has already been used.` });
     }
-    await syncOfficialSalesInvoiceSequence(client, officialInvoiceNumber);
+
+    const sequenceState = await lockOfficialSalesInvoiceSequence(client, req.user.branch);
+    const expectedOfficialInvoiceNumber = sequenceState.nextInvoiceNumber;
+    const enteredInvoiceSequence = Number.parseInt(officialInvoiceNumber, 10);
+    const isBehindCurrentSequence = enteredInvoiceSequence < sequenceState.nextNumber;
+    const isSkippingAhead = enteredInvoiceSequence > sequenceState.nextNumber;
+    const skippedInvoiceCount = isSkippingAhead ? enteredInvoiceSequence - sequenceState.nextNumber : 0;
+    const skippedInvoiceFrom = isSkippingAhead ? expectedOfficialInvoiceNumber : null;
+    const skippedInvoiceTo = isSkippingAhead
+      ? formatOfficialSalesInvoiceNumber(enteredInvoiceSequence - 1)
+      : null;
+
+    if (isBehindCurrentSequence) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        error: `Sales Invoice Number ${officialInvoiceNumber} is behind the current sequence. The next expected Sales Invoice Number is ${expectedOfficialInvoiceNumber}.`
+      });
+    }
+
+    if (isSkippingAhead && (!cleanInvoiceSequenceReason || cleanInvoiceSequenceReason.length < 5)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: `Sales Invoice Number ${officialInvoiceNumber} skips ${expectedOfficialInvoiceNumber}. Enter the booklet reason before saving.`
+      });
+    }
+
+    await advanceOfficialSalesInvoiceSequence(client, sequenceState.invoiceYear, sequenceState.branch, officialInvoiceNumber);
     const soldByName = req.user.fullName || req.user.username || 'System User';
     const cleanRemarks = String(remarks || '').trim().slice(0, 500) || null;
     let totalQuantity = 0;
@@ -4458,6 +4658,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
            p.category,
            p.supplier_name,
            p.default_selling_price,
+           p.cost_price,
            bi.branch,
            bi.stock_level,
            bi.min_stock_level,
@@ -4491,6 +4692,11 @@ app.post('/api/sales', authenticate, async (req, res) => {
 
       const unitPrice = Number(line.unitPrice || 0);
       const subtotal = Number((quantitySold * unitPrice).toFixed(2));
+      const lineProfit = calculateSalesLineProfit({
+        quantitySold,
+        unitCostAtSale: currentItem.cost_price,
+        subtotal
+      });
       const defaultSellingPrice = Number(currentItem.default_selling_price || 0);
       const hasTransactionPriceOverride = defaultSellingPrice > 0 && Math.abs(defaultSellingPrice - unitPrice) > 0.009;
       if (hasTransactionPriceOverride) {
@@ -4531,6 +4737,10 @@ app.post('/api/sales', authenticate, async (req, res) => {
         quantitySold,
         unitPrice,
         subtotal,
+        unitCostAtSale: lineProfit.unitCostAtSale,
+        costSubtotal: lineProfit.costSubtotal,
+        grossProfit: lineProfit.grossProfit,
+        profitMarginPercent: lineProfit.profitMarginPercent,
         previousQuantity,
         newQuantity
       });
@@ -4541,6 +4751,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
         category: currentItem.category,
         supplier_name: currentItem.supplier_name,
         default_selling_price: currentItem.default_selling_price,
+        cost_price: currentItem.cost_price,
         lead_time_days: currentItem.lead_time_days,
         safety_stock: currentItem.safety_stock,
         average_daily_sales: currentItem.average_daily_sales
@@ -4560,6 +4771,10 @@ app.post('/api/sales', authenticate, async (req, res) => {
         quantitySold: line.quantity,
         unitPrice: line.unitPrice,
         subtotal: line.subtotal,
+        unitCostAtSale: line.unitPrice,
+        costSubtotal: line.subtotal,
+        grossProfit: 0,
+        profitMarginPercent: 0,
         previousQuantity: null,
         newQuantity: null
       });
@@ -4641,9 +4856,11 @@ app.post('/api/sales', authenticate, async (req, res) => {
          created_at,
          encoded_at,
          backdate_reason,
-         official_invoice_number
+         official_invoice_number,
+         official_invoice_expected_number,
+         official_invoice_exception_reason
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, true, $20, $21, ${PHILIPPINE_NOW_SQL}, 'completed', $22, $23, $24, COALESCE($25::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $26, $27)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, true, $20, $21, ${PHILIPPINE_NOW_SQL}, 'completed', $22, $23, $24, COALESCE($25::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $26, $27, $28, $29)
        RETURNING *`,
       [
         salesNumber,
@@ -4672,7 +4889,9 @@ app.post('/api/sales', authenticate, async (req, res) => {
         cleanRemarks,
         transactionTiming.actualTransactionAt,
         transactionTiming.backdateReason,
-        officialInvoiceNumber
+        officialInvoiceNumber,
+        expectedOfficialInvoiceNumber,
+        isSkippingAhead ? cleanInvoiceSequenceReason : null
       ]
     );
 
@@ -4692,12 +4911,16 @@ app.post('/api/sales', authenticate, async (req, res) => {
            branch,
            quantity_sold,
            unit_price,
+           unit_cost_at_sale,
            subtotal,
+           cost_subtotal,
+           gross_profit,
+           profit_margin_percent,
            previous_quantity,
            new_quantity,
            created_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, COALESCE($14::timestamp, ${PHILIPPINE_NOW_SQL}))
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, COALESCE($18::timestamp, ${PHILIPPINE_NOW_SQL}))
          RETURNING *`,
         [
           salesTransaction.sales_transaction_id,
@@ -4710,7 +4933,11 @@ app.post('/api/sales', authenticate, async (req, res) => {
           line.branch,
           line.quantitySold,
           line.unitPrice,
+          line.unitCostAtSale,
           line.subtotal,
+          line.costSubtotal,
+          line.grossProfit,
+          line.profitMarginPercent,
           line.previousQuantity,
           line.newQuantity,
           transactionTiming.actualTransactionAt
@@ -4754,6 +4981,14 @@ app.post('/api/sales', authenticate, async (req, res) => {
         branch: req.user.branch,
         officialInvoiceNumber,
         salesNumber,
+        expectedOfficialInvoiceNumber,
+        invoiceSequenceException: isSkippingAhead ? {
+          type: 'skipped_forward',
+          skippedFrom: skippedInvoiceFrom,
+          skippedTo: skippedInvoiceTo,
+          skippedCount: skippedInvoiceCount,
+          reason: cleanInvoiceSequenceReason
+        } : null,
         customerType: normalizedCustomerType,
         customerName: cleanCustomerName,
         customerTinProvided: Boolean(cleanCustomerTin),
@@ -5075,6 +5310,11 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
       line.previousQuantity = previousQuantity;
       line.newQuantity = newQuantity;
       line.refundSubtotal = Number((-refundAmount).toFixed(2));
+      line.refundProfit = calculateSalesLineProfit({
+        quantitySold: -refundQuantity,
+        unitCostAtSale: originalItem.unit_cost_at_sale,
+        subtotal: line.refundSubtotal
+      });
     }
 
     const roundedRefundTotal = Number(totalRefundAmount.toFixed(2));
@@ -5162,13 +5402,17 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
            branch,
            quantity_sold,
            unit_price,
+           unit_cost_at_sale,
            subtotal,
+           cost_subtotal,
+           gross_profit,
+           profit_margin_percent,
            previous_quantity,
            new_quantity,
            refund_for_sales_item_id,
            created_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, COALESCE($15::timestamp, ${PHILIPPINE_NOW_SQL}))
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, COALESCE($19::timestamp, ${PHILIPPINE_NOW_SQL}))
          RETURNING *`,
         [
           refundTransaction.sales_transaction_id,
@@ -5181,7 +5425,11 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
           originalItem.branch,
           -refundQuantity,
           originalItem.unit_price,
+          line.refundProfit.unitCostAtSale,
           refundSubtotal,
+          line.refundProfit.costSubtotal,
+          line.refundProfit.grossProfit,
+          line.refundProfit.profitMarginPercent,
           previousQuantity,
           newQuantity,
           salesItemId,
@@ -7603,7 +7851,7 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
         [scopeBranch]
       ),
       pool.query(
-        `SELECT sales_transaction_id, sales_number, official_invoice_number, branch, status, transaction_type, total_quantity, subtotal_amount, discount_amount, total_amount, payment_method, change_amount
+        `SELECT sales_transaction_id, sales_number, official_invoice_number, official_invoice_expected_number, branch, status, transaction_type, total_quantity, subtotal_amount, discount_amount, total_amount, payment_method, change_amount
          FROM sales_transactions
          WHERE branch = $1
            AND (
@@ -7623,13 +7871,20 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
                   official_invoice_number IS NULL
                   OR TRIM(official_invoice_number) = ''
                   OR official_invoice_number !~ $2
+                  OR official_invoice_expected_number IS NULL
+                  OR TRIM(official_invoice_expected_number) = ''
+                  OR official_invoice_expected_number !~ $2
                 ))
-             OR (transaction_type = 'refund' AND official_invoice_number IS NOT NULL)
+             OR (transaction_type = 'refund' AND (
+                  official_invoice_number IS NOT NULL
+                  OR official_invoice_expected_number IS NOT NULL
+                  OR official_invoice_exception_reason IS NOT NULL
+                ))
            )`,
         [scopeBranch, SALES_INVOICE_NUMBER_PATTERN]
       ),
       pool.query(
-        `SELECT si.sales_item_id, st.sales_number, si.item_name, si.quantity_sold, si.unit_price, si.subtotal
+        `SELECT si.sales_item_id, st.sales_number, si.item_name, si.quantity_sold, si.unit_price, si.unit_cost_at_sale, si.subtotal, si.cost_subtotal, si.gross_profit
          FROM sales_items si
          INNER JOIN sales_transactions st
            ON st.sales_transaction_id = si.sales_transaction_id
@@ -7638,8 +7893,11 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
              (st.transaction_type <> 'refund' AND si.quantity_sold <= 0)
              OR (st.transaction_type = 'refund' AND si.quantity_sold >= 0)
              OR si.unit_price < 0
+             OR si.unit_cost_at_sale < 0
              OR (st.transaction_type <> 'refund' AND si.subtotal < 0)
              OR (st.transaction_type = 'refund' AND si.subtotal >= 0)
+             OR ABS(si.cost_subtotal - ROUND((si.quantity_sold * si.unit_cost_at_sale)::numeric, 2)) > 0.01
+             OR ABS(si.gross_profit - ROUND((si.subtotal - si.cost_subtotal)::numeric, 2)) > 0.01
              OR si.previous_quantity < 0
              OR si.new_quantity < 0
              OR si.item_type NOT IN ('inventory', 'non_inventory')

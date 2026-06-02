@@ -66,11 +66,25 @@ async function verifyDeploymentData() {
     `);
 
     const invoiceSequenceMismatch = await getScalar(`
+      WITH known_branches AS (
+        SELECT DISTINCT branch
+        FROM users
+        WHERE branch IS NOT NULL AND TRIM(branch) <> ''
+        UNION
+        SELECT DISTINCT branch
+        FROM branch_inventory
+        WHERE branch IS NOT NULL AND TRIM(branch) <> ''
+        UNION
+        VALUES ('Manggahan'), ('San Rafael')
+      )
       SELECT COUNT(*)::int AS count
-      FROM invoice_number_sequences
-      WHERE document_type = $1
-        AND invoice_year = EXTRACT(YEAR FROM ${PHILIPPINE_NOW_SQL})::int
-        AND last_number = $2
+      FROM known_branches kb
+      LEFT JOIN invoice_number_sequences seq
+        ON seq.document_type = $1
+       AND seq.invoice_year = EXTRACT(YEAR FROM ${PHILIPPINE_NOW_SQL})::int
+       AND seq.branch = kb.branch
+      WHERE seq.branch IS NULL
+         OR seq.last_number != $2
     `, [SALES_INVOICE_DOCUMENT_TYPE, expectedLastInvoiceSequence]);
 
     const orphanInventory = await getScalar(`
@@ -80,18 +94,32 @@ async function verifyDeploymentData() {
       WHERE p.product_id IS NULL
     `);
 
-    const negativeStock = await getScalar(`
+    const invalidInventoryValues = await getScalar(`
       SELECT COUNT(*)::int AS count
       FROM branch_inventory
-      WHERE stock_level < 0
+      WHERE stock_level IS NULL
+         OR min_stock_level IS NULL
+         OR stock_level < 0
+         OR min_stock_level < 0
+    `);
+
+    const planningDataRemaining = await getScalar(`
+      SELECT COUNT(*)::int AS count
+      FROM branch_inventory
+      WHERE average_daily_sales IS NOT NULL
+         OR manual_average_daily_sales IS NOT NULL
+         OR COALESCE(NULLIF(TRIM(average_daily_sales_override_reason), ''), '') <> ''
+         OR average_daily_sales_mode <> 'auto'
+         OR lead_time_days IS NOT NULL
+         OR safety_stock IS NOT NULL
     `);
 
     const statusMismatch = await getScalar(`
       SELECT COUNT(*)::int AS count
       FROM branch_inventory
       WHERE status != CASE
-        WHEN stock_level <= 0 THEN 'Out of Stock'
-        WHEN stock_level <= min_stock_level THEN 'Low Stock'
+        WHEN GREATEST(COALESCE(stock_level, 0), 0) <= 0 THEN 'Out of Stock'
+        WHEN GREATEST(COALESCE(stock_level, 0), 0) <= GREATEST(COALESCE(min_stock_level, 5), 0) THEN 'Low Stock'
         ELSE 'In Stock'
       END
     `);
@@ -102,9 +130,10 @@ async function verifyDeploymentData() {
       expectedFirstSystemSalesReference: `SALE-${new Date().getFullYear()}-00001`,
       transactionDataRemaining,
       missingInventoryMasterData,
-      invoiceSequenceReady: invoiceSequenceMismatch === 1,
+      invoiceSequenceReady: invoiceSequenceMismatch === 0,
       orphanInventory,
-      negativeStock,
+      invalidInventoryValues,
+      planningDataRemaining,
       statusMismatch
     };
 
@@ -112,9 +141,10 @@ async function verifyDeploymentData() {
     if (
       transactionDataRemaining !== 0 ||
       missingInventoryMasterData !== 0 ||
-      invoiceSequenceMismatch !== 1 ||
+      invoiceSequenceMismatch !== 0 ||
       orphanInventory !== 0 ||
-      negativeStock !== 0 ||
+      invalidInventoryValues !== 0 ||
+      planningDataRemaining !== 0 ||
       statusMismatch !== 0
     ) {
       process.exitCode = 1;

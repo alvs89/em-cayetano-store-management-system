@@ -1011,25 +1011,18 @@ const sanitizePaymentReferenceInput = value => {
 const sanitizeInvoiceNumberInput = value =>
   String(value || '').replace(/\D/g, '').slice(0, 6);
 
-const getInvoiceSequenceNumber = value => {
+const getOfficialInvoiceSequence = value => {
   const cleanValue = String(value || '').trim();
   return OFFICIAL_INVOICE_NUMBER_PATTERN.test(cleanValue) ? Number.parseInt(cleanValue, 10) : null;
 };
 
-const formatInvoiceSequenceNumber = sequence => {
-  const cleanSequence = Number(sequence);
-  if (!Number.isInteger(cleanSequence) || cleanSequence <= 0 || cleanSequence > 999999) return '';
-  return String(cleanSequence).padStart(6, '0');
-};
-
-const getNextAvailableInvoiceNumber = (startSequence, usedInvoiceNumbers) => {
-  let sequence = Math.max(1, Number(startSequence) || 1);
-  while (sequence <= 999999) {
-    const candidate = formatInvoiceSequenceNumber(sequence);
-    if (candidate && !usedInvoiceNumbers.has(candidate)) return candidate;
-    sequence += 1;
+const formatInvoiceRange = (startInvoiceNumber, endSequenceNumber) => {
+  const cleanStart = sanitizeInvoiceNumberInput(startInvoiceNumber);
+  const cleanEnd = String(Number(endSequenceNumber || 0)).padStart(6, '0');
+  if (!OFFICIAL_INVOICE_NUMBER_PATTERN.test(cleanStart) || !OFFICIAL_INVOICE_NUMBER_PATTERN.test(cleanEnd)) {
+    return cleanStart || cleanEnd;
   }
-  return '';
+  return cleanStart === cleanEnd ? cleanStart : `${cleanStart}–${cleanEnd}`;
 };
 
 const isValidMoneyText = value =>
@@ -1056,6 +1049,7 @@ const getSaleProductSearchText = item =>
 export function SalesModule({ user }) {
   const { inventory, salesTransactions, recordSale, refundSale, cancelSale, getNextSalesInvoiceNumber } = useData();
   const [officialInvoiceNumber, setOfficialInvoiceNumber] = useState('');
+  const [invoiceSequenceExceptionReason, setInvoiceSequenceExceptionReason] = useState('');
   const [suggestedOfficialInvoiceNumber, setSuggestedOfficialInvoiceNumber] = useState('');
   const [isLoadingInvoiceSuggestion, setIsLoadingInvoiceSuggestion] = useState(false);
   const [customerType, setCustomerType] = useState('walk_in');
@@ -1076,6 +1070,7 @@ export function SalesModule({ user }) {
   const [isSaving, setIsSaving] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
+  const [isInvoiceSequenceConfirmOpen, setIsInvoiceSequenceConfirmOpen] = useState(false);
   const [isNonInventoryDialogOpen, setIsNonInventoryDialogOpen] = useState(false);
   const [nonInventoryDraft, setNonInventoryDraft] = useState(DEFAULT_NON_INVENTORY_DRAFT);
   const [nonInventorySessionCount, setNonInventorySessionCount] = useState(0);
@@ -1306,6 +1301,7 @@ export function SalesModule({ user }) {
     [salesTransactions]
   );
   const cleanOfficialInvoiceNumber = officialInvoiceNumber.trim();
+  const cleanInvoiceSequenceExceptionReason = invoiceSequenceExceptionReason.trim();
   useEffect(() => {
     let isMounted = true;
 
@@ -1335,6 +1331,33 @@ export function SalesModule({ user }) {
     };
   }, [getNextSalesInvoiceNumber, salesTransactions.length]);
 
+  const suggestedInvoiceSequenceNumber = getOfficialInvoiceSequence(suggestedOfficialInvoiceNumber);
+  const enteredInvoiceSequenceNumber = getOfficialInvoiceSequence(cleanOfficialInvoiceNumber);
+  const isOfficialInvoiceBehindSequence = Boolean(
+    suggestedInvoiceSequenceNumber &&
+    enteredInvoiceSequenceNumber &&
+    enteredInvoiceSequenceNumber < suggestedInvoiceSequenceNumber
+  );
+  const isOfficialInvoiceSkippingSequence = Boolean(
+    suggestedInvoiceSequenceNumber &&
+    enteredInvoiceSequenceNumber &&
+    enteredInvoiceSequenceNumber > suggestedInvoiceSequenceNumber
+  );
+  const skippedInvoiceCount = isOfficialInvoiceSkippingSequence
+    ? enteredInvoiceSequenceNumber - suggestedInvoiceSequenceNumber
+    : 0;
+  const skippedInvoiceRangeText = isOfficialInvoiceSkippingSequence
+    ? skippedInvoiceCount === 1
+      ? suggestedOfficialInvoiceNumber
+      : formatInvoiceRange(suggestedOfficialInvoiceNumber, enteredInvoiceSequenceNumber - 1)
+    : '';
+
+  useEffect(() => {
+    if (!isOfficialInvoiceSkippingSequence && invoiceSequenceExceptionReason) {
+      setInvoiceSequenceExceptionReason('');
+    }
+  }, [invoiceSequenceExceptionReason, isOfficialInvoiceSkippingSequence]);
+
   const usedInvoiceNumbers = useMemo(() => {
     const numbers = new Set();
     (salesTransactions || []).forEach(sale => {
@@ -1354,43 +1377,18 @@ export function SalesModule({ user }) {
     ) || null;
   }, [cleanOfficialInvoiceNumber, salesTransactions]);
   const invoiceNumberSuggestions = useMemo(() => {
-    const findAvailableInvoiceNumber = (...invoiceNumbers) => {
-      for (const invoiceNumber of invoiceNumbers) {
-        const cleanInvoiceNumber = sanitizeInvoiceNumberInput(invoiceNumber);
-        if (OFFICIAL_INVOICE_NUMBER_PATTERN.test(cleanInvoiceNumber) && !usedInvoiceNumbers.has(cleanInvoiceNumber)) {
-          return cleanInvoiceNumber;
-        }
-      }
-      return '';
-    };
-
-    const usedSequences = Array.from(usedInvoiceNumbers)
-      .map(getInvoiceSequenceNumber)
-      .filter(Number.isInteger);
-    const highestUsedSequence = usedSequences.length > 0 ? Math.max(...usedSequences) : 0;
-    const currentSequence = getInvoiceSequenceNumber(cleanOfficialInvoiceNumber);
-    const nextAfterEnteredNumber = currentSequence
-      ? getNextAvailableInvoiceNumber(currentSequence + 1, usedInvoiceNumbers)
-      : '';
-    const nextAfterRecordedInvoices = getNextAvailableInvoiceNumber(highestUsedSequence + 1, usedInvoiceNumbers);
-    const earliestAvailableNumber = getNextAvailableInvoiceNumber(1, usedInvoiceNumbers);
     const systemSuggestedInvoiceNumber = sanitizeInvoiceNumberInput(suggestedOfficialInvoiceNumber);
-    const recommendedInvoiceNumber = findAvailableInvoiceNumber(
-      duplicateOfficialInvoiceSale ? nextAfterEnteredNumber : '',
-      systemSuggestedInvoiceNumber,
-      nextAfterRecordedInvoices,
-      earliestAvailableNumber
-    );
+    const canUseSystemSuggestion =
+      OFFICIAL_INVOICE_NUMBER_PATTERN.test(systemSuggestedInvoiceNumber) &&
+      !usedInvoiceNumbers.has(systemSuggestedInvoiceNumber);
 
-    return recommendedInvoiceNumber
+    return canUseSystemSuggestion
       ? [{
-          invoiceNumber: recommendedInvoiceNumber,
-          reason: recommendedInvoiceNumber === systemSuggestedInvoiceNumber
-            ? 'Next Sales Invoice No. from system sequence.'
-            : 'Recommended next Sales Invoice No.'
+          invoiceNumber: systemSuggestedInvoiceNumber,
+          reason: 'Next Sales Invoice No. from system sequence.'
         }]
       : [];
-  }, [cleanOfficialInvoiceNumber, duplicateOfficialInvoiceSale, suggestedOfficialInvoiceNumber, usedInvoiceNumbers]);
+  }, [suggestedOfficialInvoiceNumber, usedInvoiceNumbers]);
   const recommendedInvoiceSuggestion = invoiceNumberSuggestions[0] || null;
   const recommendedInvoiceNumber = recommendedInvoiceSuggestion?.invoiceNumber || '';
   const isRecommendedInvoiceSelected = Boolean(recommendedInvoiceNumber) && cleanOfficialInvoiceNumber === recommendedInvoiceNumber;
@@ -1405,6 +1403,7 @@ export function SalesModule({ user }) {
 
   const hasSalesFormInput = useMemo(() => (
     officialInvoiceNumber.trim() !== '' ||
+    invoiceSequenceExceptionReason.trim() !== '' ||
     customerType !== 'walk_in' ||
     customerName.trim() !== '' ||
     customerTin.trim() !== '' ||
@@ -1422,7 +1421,7 @@ export function SalesModule({ user }) {
       String(line.quantity || '').trim() !== '' ||
       String(line.unitPrice || '').trim() !== ''
     ))
-  ), [amountReceived, customerAddress, customerName, customerTin, customerType, deliveryCharge, discountAmount, discountType, officialInvoiceNumber, paymentConfirmed, paymentMethod, paymentReference, saleLines]);
+  ), [amountReceived, customerAddress, customerName, customerTin, customerType, deliveryCharge, discountAmount, discountType, invoiceSequenceExceptionReason, officialInvoiceNumber, paymentConfirmed, paymentMethod, paymentReference, saleLines]);
 
   const filteredSalesHistory = useMemo(() => {
     const now = new Date();
@@ -1849,6 +1848,7 @@ export function SalesModule({ user }) {
 
   const resetForm = () => {
     setOfficialInvoiceNumber('');
+    setInvoiceSequenceExceptionReason('');
     setCustomerType('walk_in');
     setCustomerName('');
     setCustomerTin('');
@@ -1868,6 +1868,7 @@ export function SalesModule({ user }) {
     setNonInventoryDraft(DEFAULT_NON_INVENTORY_DRAFT);
     setNonInventorySessionCount(0);
     setEditingNonInventoryLineIndex(null);
+    setIsInvoiceSequenceConfirmOpen(false);
   };
 
   const handlePaymentMethodChange = value => {
@@ -1929,6 +1930,20 @@ export function SalesModule({ user }) {
 
     if (duplicateOfficialInvoiceSale) {
       toast.error(`Sales Invoice Number ${cleanOfficialInvoiceNumber} has already been used.`);
+      return false;
+    }
+
+    if (isOfficialInvoiceBehindSequence) {
+      toast.error(`Sales Invoice Number ${cleanOfficialInvoiceNumber} is behind the current sequence.`, {
+        description: `Use ${suggestedOfficialInvoiceNumber} or confirm the physical booklet before continuing.`
+      });
+      return false;
+    }
+
+    if (isOfficialInvoiceSkippingSequence && cleanInvoiceSequenceExceptionReason.length < 5) {
+      toast.error('Add a short note for the skipped invoice number.', {
+        description: `This entry skips Sales Invoice No. ${skippedInvoiceRangeText}.`
+      });
       return false;
     }
 
@@ -2097,14 +2112,13 @@ export function SalesModule({ user }) {
     return true;
   };
 
-  const handleRecordSale = async () => {
-    if (!validateSale()) return;
-
+  const submitRecordSale = async () => {
     const receiptPrintWindow = openReceiptPrintWindow();
     setIsSaving(true);
     try {
       const sale = await recordSale({
         officialInvoiceNumber: cleanOfficialInvoiceNumber,
+        invoiceSequenceExceptionReason: isOfficialInvoiceSkippingSequence ? cleanInvoiceSequenceExceptionReason : '',
         customerType,
         customerName: customerName.trim() || 'C',
         customerTin: customerTin.trim(),
@@ -2144,6 +2158,21 @@ export function SalesModule({ user }) {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleRecordSale = async () => {
+    if (!validateSale()) return;
+    if (isOfficialInvoiceSkippingSequence) {
+      setIsInvoiceSequenceConfirmOpen(true);
+      return;
+    }
+    await submitRecordSale();
+  };
+
+  const confirmInvoiceSequenceException = async () => {
+    if (!validateSale()) return;
+    setIsInvoiceSequenceConfirmOpen(false);
+    await submitRecordSale();
   };
 
   const handleDownloadSaleSummary = sale => {
@@ -2537,6 +2566,14 @@ export function SalesModule({ user }) {
           white-space: nowrap;
         }
 
+        .sales-checkout-card .sales-readonly-user-name {
+          overflow: visible;
+          text-overflow: clip;
+          white-space: normal;
+          overflow-wrap: anywhere;
+          line-height: 1.3;
+        }
+
         .sales-customer-control {
           width: 100%;
           min-width: 0;
@@ -2553,6 +2590,21 @@ export function SalesModule({ user }) {
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
+        }
+
+        .sales-checkout-card .sales-customer-control {
+          height: auto;
+          min-height: 3.25rem;
+          align-items: center;
+          padding-block: 0.55rem;
+        }
+
+        .sales-checkout-card .sales-customer-control [data-slot="select-value"] {
+          overflow: visible;
+          text-overflow: clip;
+          white-space: normal;
+          overflow-wrap: anywhere;
+          line-height: 1.3;
         }
 
         .sales-transaction-date-input {
@@ -4884,6 +4936,17 @@ export function SalesModule({ user }) {
           align-items: stretch;
         }
 
+        .sales-checkout-card .sales-customer-staff-row {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.85rem;
+        }
+
+        .sales-checkout-card .sales-invoice-customer-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.85rem;
+          align-items: end;
+        }
+
         .sales-invoice-number-field {
           gap: 0.6rem;
           min-width: 0;
@@ -4903,6 +4966,11 @@ export function SalesModule({ user }) {
           align-items: stretch;
         }
 
+        .sales-checkout-card .sales-invoice-input-row {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.85rem;
+        }
+
         .sales-invoice-suggestions-button {
           min-height: 3.25rem;
           min-width: 10.75rem;
@@ -4914,6 +4982,12 @@ export function SalesModule({ user }) {
           font-size: 0.78rem;
           font-weight: 800;
           white-space: nowrap;
+        }
+
+        .sales-checkout-card .sales-invoice-suggestions-button {
+          width: 100%;
+          min-width: 0;
+          padding-inline: 0.65rem;
         }
 
         .sales-invoice-suggestions-button:disabled {
@@ -4946,6 +5020,25 @@ export function SalesModule({ user }) {
           color: #b91c1c;
         }
 
+        .sales-invoice-helper-warning {
+          color: #92400e;
+        }
+
+        .sales-invoice-sequence-note {
+          display: grid;
+          gap: 0.65rem;
+          border: 1px solid #fde68a;
+          border-radius: 0.75rem;
+          background: #fffbeb;
+          padding: 0.75rem;
+        }
+
+        .sales-invoice-sequence-textarea {
+          min-height: 4.75rem;
+          padding-top: 0.8rem;
+          line-height: 1.4;
+        }
+
         .sales-invoice-inline-note {
           display: flex;
           align-items: center;
@@ -4961,6 +5054,11 @@ export function SalesModule({ user }) {
           width: 0.86rem;
           height: 0.86rem;
           color: #2563eb;
+        }
+
+        .sales-invoice-inline-note span {
+          min-width: 0;
+          overflow-wrap: anywhere;
         }
 
         .sales-invoice-input-error,
@@ -4999,6 +5097,7 @@ export function SalesModule({ user }) {
           background: #ffffff;
           color: #0f172a;
           font-weight: 600;
+          min-width: 0;
         }
 
         .sales-invoice-input::placeholder {
@@ -5021,6 +5120,12 @@ export function SalesModule({ user }) {
           display: grid;
           gap: 0.45rem;
           min-width: 0;
+        }
+
+        .sales-checkout-card .sales-pos-field label {
+          min-width: 0;
+          overflow-wrap: anywhere;
+          line-height: 1.25;
         }
 
         .sales-pos-search-row {
@@ -5904,12 +6009,35 @@ export function SalesModule({ user }) {
             grid-template-columns: 1fr;
           }
 
+          .sales-checkout-card .sales-customer-staff-row {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.75rem;
+          }
+
+          .sales-checkout-card .sales-invoice-customer-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.75rem;
+          }
+
+          .sales-checkout-card .sales-invoice-address-field {
+            grid-column: 1 / -1;
+          }
+
           .sales-invoice-input-row {
             grid-template-columns: minmax(0, 1fr);
           }
 
           .sales-invoice-suggestions-button {
             width: 100%;
+          }
+
+          .sales-checkout-card .sales-invoice-input-row {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.75rem;
+          }
+
+          .sales-checkout-card .sales-invoice-suggestions-button {
+            min-width: 0;
           }
 
           .sales-product-header-row,
@@ -6193,8 +6321,7 @@ export function SalesModule({ user }) {
           }
 
           .sales-checkout-card .sales-pos-customer-bar,
-          .sales-checkout-card .sales-customer-grid,
-          .sales-customer-staff-row {
+          .sales-checkout-card .sales-customer-grid {
             grid-template-columns: 1fr;
           }
 
@@ -6206,6 +6333,13 @@ export function SalesModule({ user }) {
           @media (max-width: 360px) {
             .sales-summary-grid,
             .sales-checkout-card .sales-summary-grid {
+              grid-template-columns: 1fr;
+            }
+          }
+
+          @media (max-width: 430px) {
+            .sales-checkout-card .sales-customer-staff-row,
+            .sales-checkout-card .sales-invoice-customer-grid {
               grid-template-columns: 1fr;
             }
           }
@@ -6891,7 +7025,7 @@ export function SalesModule({ user }) {
                           inputMode="numeric"
                           pattern="[0-9]*"
                           disabled={isSaving}
-                          aria-invalid={Boolean(duplicateOfficialInvoiceSale)}
+                          aria-invalid={Boolean(duplicateOfficialInvoiceSale) || isOfficialInvoiceBehindSequence}
                           onChange={event => {
                             const nextValue = sanitizeInvoiceNumberInput(event.target.value);
                             if (event.target.value !== nextValue) {
@@ -6903,7 +7037,7 @@ export function SalesModule({ user }) {
                           }}
                           onBlur={() => setOfficialInvoiceNumber(prev => sanitizeInvoiceNumberInput(prev))}
                           placeholder="6-digit SI no."
-                          className={`sales-invoice-input sales-invoice-number-input ${duplicateOfficialInvoiceSale ? 'sales-invoice-input-error' : ''}`}
+                          className={`sales-invoice-input sales-invoice-number-input ${duplicateOfficialInvoiceSale || isOfficialInvoiceBehindSequence ? 'sales-invoice-input-error' : ''}`}
                         />
                         <Button
                           type="button"
@@ -6928,9 +7062,39 @@ export function SalesModule({ user }) {
                       <p className="sales-invoice-inline-note">
                         <ReceiptText />
                         <span>
-                          Suggested Sales Invoice No.: {recommendedInvoiceNumber || 'enter the next blank SI from the booklet'}.
+                          Suggested Sales Invoice No.: {recommendedInvoiceNumber || 'No system suggestion available'}.
                         </span>
                       </p>
+                      {isOfficialInvoiceSkippingSequence && (
+                        <div className="sales-invoice-sequence-note">
+                          <p className="sales-invoice-helper sales-invoice-helper-warning">
+                            <AlertTriangle />
+                            <span>
+                              This entry skips Sales Invoice No. {skippedInvoiceRangeText}. Note the booklet reason before saving.
+                            </span>
+                          </p>
+                          <div className="sales-pos-field">
+                            <Label htmlFor="sale-invoice-sequence-reason">Booklet Note</Label>
+                            <Textarea
+                              id="sale-invoice-sequence-reason"
+                              value={invoiceSequenceExceptionReason}
+                              maxLength={240}
+                              disabled={isSaving}
+                              onChange={event => setInvoiceSequenceExceptionReason(event.target.value.slice(0, 240))}
+                              placeholder="Example: Previous SI page was spoiled, cancelled, or already written."
+                              className="sales-invoice-input sales-invoice-sequence-textarea"
+                            />
+                          </div>
+                        </div>
+                      )}
+                      {isOfficialInvoiceBehindSequence && !duplicateOfficialInvoiceSale && (
+                        <p className="sales-invoice-helper sales-invoice-helper-error">
+                          <AlertTriangle />
+                          <span>
+                            This number is behind the current sequence. Use {suggestedOfficialInvoiceNumber} or the next number printed in the booklet.
+                          </span>
+                        </p>
+                      )}
                       {duplicateOfficialInvoiceSale && (
                         <p className="sales-invoice-helper sales-invoice-helper-error">
                           <AlertTriangle />
@@ -7404,7 +7568,7 @@ export function SalesModule({ user }) {
                     type="button"
                     className="sales-action-button sales-save-sale-button px-6 disabled:cursor-not-allowed"
                     onClick={handleRecordSale}
-                    disabled={isSaving || Boolean(duplicateOfficialInvoiceSale)}
+                    disabled={isSaving || isLoadingInvoiceSuggestion || !recommendedInvoiceNumber || Boolean(duplicateOfficialInvoiceSale) || isOfficialInvoiceBehindSequence}
                   >
                     {isSaving
                       ? 'Saving Sale...'
@@ -7453,6 +7617,24 @@ export function SalesModule({ user }) {
         onCancelSale={openCancelSaleDialog}
         canRefundSales={canRefundSales}
         canCancelSales={canCancelSales}
+      />
+
+      <ClearSalesFormDialog
+        open={isInvoiceSequenceConfirmOpen}
+        onOpenChange={setIsInvoiceSequenceConfirmOpen}
+        onConfirm={confirmInvoiceSequenceException}
+        icon={<AlertTriangle className="h-4 w-4" />}
+        title="Confirm invoice numbering"
+        message={
+          <>
+            Sales Invoice No. {cleanOfficialInvoiceNumber} skips {skippedInvoiceRangeText}.
+            <br />
+            Continue only if this matches the physical SI booklet.
+          </>
+        }
+        infoText={`Booklet note: ${cleanInvoiceSequenceExceptionReason || 'No note entered'}`}
+        cancelLabel="Review Number"
+        confirmLabel="Save Sale"
       />
 
       <ClearSalesFormDialog
@@ -7846,6 +8028,7 @@ function ClearSalesFormDialog({
   open,
   onOpenChange,
   onConfirm,
+  icon = <Trash2 className="h-4 w-4" />,
   title = 'Clear sales form?',
   message = (
     <>
@@ -7865,7 +8048,7 @@ function ClearSalesFormDialog({
           <DialogHeader className="text-left">
             <div className="sales-confirm-clear-header">
               <span className="sales-confirm-clear-icon">
-                <Trash2 className="h-4 w-4" />
+                {icon}
               </span>
               <div className="min-w-0">
                 <DialogTitle className="text-lg font-bold leading-tight text-slate-950">
@@ -8611,6 +8794,9 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
         {!isRefund && <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="Invoice No." value={displayNumber} />}
         {isRefund && <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="Refund Ref." value={displayNumber} />}
         {systemReferenceNumber && <HistoryDetail icon={<ClipboardList className="h-5 w-5" />} label="System Ref." value={systemReferenceNumber} />}
+        {!isRefund && sale.officialInvoiceExceptionReason && (
+          <HistoryDetail icon={<AlertTriangle className="h-5 w-5" />} label="Booklet Note" value={sale.officialInvoiceExceptionReason} />
+        )}
         {isRefund && originalDisplayNumber && <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="Original Invoice" value={originalDisplayNumber} />}
         <HistoryDetail icon={<User className="h-5 w-5" />} label="Customer Type" value={customerTypeLabels[sale.customerType] || 'Walk-in Customer'} />
         <HistoryDetail icon={<User className="h-5 w-5" />} label={isRefund ? 'Processed By' : 'Sold By'} value={sale.soldByName || 'System'} />

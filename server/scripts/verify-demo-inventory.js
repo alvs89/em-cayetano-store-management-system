@@ -66,10 +66,10 @@ async function verifyDemoInventory() {
     const duplicateOfficialInvoiceNumbers = await getScalar(`
       SELECT COUNT(*)::int AS count
       FROM (
-        SELECT official_invoice_number
+        SELECT branch, official_invoice_number
         FROM sales_transactions
         WHERE official_invoice_number IS NOT NULL
-        GROUP BY official_invoice_number
+        GROUP BY branch, official_invoice_number
         HAVING COUNT(*) > 1
       ) duplicate_invoices
     `);
@@ -82,6 +82,7 @@ async function verifyDemoInventory() {
           SELECT MAX(official_invoice_number::int)
           FROM sales_transactions
           WHERE official_invoice_number ~ '^[0-9]{6}$'
+            AND branch = seq.branch
         ), 0)
     `);
 
@@ -136,7 +137,7 @@ async function verifyDemoInventory() {
         UNION ALL SELECT archived_at AS created_at FROM archived_inventory
         UNION ALL SELECT created_at FROM audit_logs
       ) dated_records
-      WHERE created_at > TIMESTAMP '2026-05-30 14:20:00'
+      WHERE created_at > (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila') + INTERVAL '2 minutes'
     `);
 
     const orphanSalesItems = await getScalar(`
@@ -187,6 +188,16 @@ async function verifyDemoInventory() {
          OR previous_quantity < 0
          OR new_quantity < 0
          OR previous_quantity - quantity_sold != new_quantity
+    `);
+
+    const invalidProfitSnapshots = await getScalar(`
+      SELECT COUNT(*)::int AS count
+      FROM sales_items
+      WHERE unit_price < 0
+         OR unit_cost_at_sale < 0
+         OR cost_subtotal < 0
+         OR ABS(cost_subtotal - ROUND((quantity_sold * unit_cost_at_sale)::numeric, 2)) > 0.01
+         OR ABS(gross_profit - ROUND((subtotal - cost_subtotal)::numeric, 2)) > 0.01
     `);
 
     const salesMovementMismatch = await getScalar(`
@@ -244,12 +255,34 @@ async function verifyDemoInventory() {
       orphanInventory,
       invalidPaymentRecords,
       invalidSalesItemQuantities,
+      invalidProfitSnapshots,
       salesMovementMismatch,
       purchaseMovementMismatch,
       futureDatedRows
     };
 
     console.log(JSON.stringify(result, null, 2));
+    if (
+      badSalesTotals !== 0 ||
+      invalidOfficialInvoiceNumbers !== 0 ||
+      duplicateOfficialInvoiceNumbers !== 0 ||
+      invoiceSequenceMismatch !== 0 ||
+      invalidVatBreakdown !== 0 ||
+      badPurchaseTotals !== 0 ||
+      negativeStock !== 0 ||
+      statusMismatch !== 0 ||
+      orphanSalesItems !== 0 ||
+      orphanPurchaseItems !== 0 ||
+      orphanInventory !== 0 ||
+      invalidPaymentRecords !== 0 ||
+      invalidSalesItemQuantities !== 0 ||
+      invalidProfitSnapshots !== 0 ||
+      salesMovementMismatch !== 0 ||
+      purchaseMovementMismatch !== 0 ||
+      futureDatedRows !== 0
+    ) {
+      process.exitCode = 1;
+    }
   } catch (error) {
     console.error('Demo inventory verification failed:', error.message);
     process.exitCode = 1;
