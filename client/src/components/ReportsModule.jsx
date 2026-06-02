@@ -64,6 +64,7 @@ export function ReportsModule({
   const [reorderSelections, setReorderSelections] = useState({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [reviewItem, setReviewItem] = useState(null);
+  const [isSalesExportDialogOpen, setIsSalesExportDialogOpen] = useState(false);
   const [conversionDraft, setConversionDraft] = useState({
     name: '',
     category: 'Other',
@@ -654,6 +655,7 @@ export function ReportsModule({
       getTrackedSaleItemsForReport(sale)
         .map(item => ({
           id: `${sale.id}-${item.id}`,
+          invoiceNumber: sale.officialInvoiceNumber || sale.referenceOfficialInvoiceNumber || sale.salesNumber,
           salesNumber: sale.salesNumber,
           createdAt: sale.createdAt,
           encodedAt: sale.encodedAt,
@@ -1185,12 +1187,13 @@ export function ReportsModule({
   };
 
   // Generate PDF Report
-  const generatePDF = () => {
+  const generatePDF = (options = {}) => {
     if (!canAccessReportType(user?.role, reportType)) {
       toast.error('This report is not available for your current role.');
       return;
     }
     const isMovementPdfReport = reportType === 'movements' || reportType === 'sales-movements';
+    const isSalesDeductionsOnlyExport = reportType === 'sales-movements' && options.scope === 'deductions-only';
     const doc = new jsPDF({
       orientation: isMovementPdfReport ? 'landscape' : 'portrait',
       unit: 'mm',
@@ -1214,16 +1217,16 @@ export function ReportsModule({
     const getPdfColumnAlignment = headerText => {
       const header = normalizePdfText(headerText).toLowerCase();
       if (
-        ['id', 'item code', 'movement id', 'sale no.', 'purchase no.', 'qty', 'qty sold', 'quantity', 'items', 'total units', 'low stock', 'out of stock', 'current', 'threshold', 'manual', 'manual limit', 'est. point', 'suggest point', 'suggested', 'suggested qty', 'suggest qty', 'reorder qty', 'order qty', 'lead time', 'qty needed', 'times sold', 'before/after', 'before -> after'].includes(header)
+        ['id', 'item code', 'movement id', 'sale no.', 'purchase no.', 'qty', 'qty sold', 'quantity', 'items', 'total units', 'low stock', 'out of stock', 'current', 'threshold', 'manual', 'manual limit', 'est. point', 'suggest point', 'suggested', 'suggested qty', 'suggest qty', 'reorder qty', 'order qty', 'lead time', 'qty needed', 'times sold', 'before', 'after'].includes(header)
       ) {
         return 'center';
       }
       if (
-        ['supplier', 'date', 'last updated', 'last sold', 'category', 'doc', 'terms', 'status', 'action', 'payment'].includes(header)
+        ['supplier', 'date', 'last updated', 'last sold', 'category', 'document', 'terms', 'status', 'action', 'payment'].includes(header)
       ) {
         return 'center';
       }
-      if (['total', 'sales amount', 'amount due'].includes(header)) {
+      if (['total', 'total sales', 'sales amount', 'amount due'].includes(header)) {
         return 'center';
       }
       return 'left';
@@ -1416,7 +1419,7 @@ export function ReportsModule({
       const itemData = items.map(item => [getDisplayItemCode(item), item.name, item.category, item.supplierName || 'Unassigned', item.quantity.toString(), item.status, formatDateTime(item.lastUpdated)]);
       reportTable({
         startY: startY + 20,
-        head: [['Item Code', 'Item Name', 'Category', 'Supplier', 'Qty', 'Status', 'Last Updated']],
+        head: [['Item Code', 'Item Name', 'Category', 'Supplier', 'Quantity', 'Status', 'Last Updated']],
         body: itemData,
         theme: 'striped',
         headStyles: {
@@ -1469,7 +1472,7 @@ export function ReportsModule({
         const itemData = lowStockList.map(item => [getDisplayItemCode(item), item.name, item.category, item.supplierName || 'Unassigned', item.quantity.toString(), item.status, formatDateTime(item.lastUpdated)]);
         reportTable({
           startY: startY + 15,
-          head: [['Item Code', 'Item Name', 'Category', 'Supplier', 'Qty', 'Status', 'Last Updated']],
+          head: [['Item Code', 'Item Name', 'Category', 'Supplier', 'Quantity', 'Status', 'Last Updated']],
           body: itemData,
           theme: 'striped',
           headStyles: {
@@ -1598,7 +1601,7 @@ export function ReportsModule({
       } else {
         reportTable({
           startY: startY + 16,
-          head: [['Item Description', 'Category', 'Qty Sold', 'Sales Amount', 'Times Sold', 'Last Sold', 'Status']],
+          head: [['Item Description', 'Category', 'Total Qty Sold', 'Total Sales', 'Times Sold', 'Last Sold', 'Status']],
           body: untrackedItems.map(item => [
             item.itemName,
             item.category,
@@ -1639,7 +1642,7 @@ export function ReportsModule({
         const itemData = categoryItems.map(item => [getDisplayItemCode(item), item.name, item.supplierName || 'Unassigned', item.quantity.toString(), item.status, formatDateTime(item.lastUpdated)]);
         reportTable({
           startY: currentY + 12,
-          head: [['Item Code', 'Item Name', 'Supplier', 'Qty', 'Status', 'Last Updated']],
+          head: [['Item Code', 'Item Name', 'Supplier', 'Quantity', 'Status', 'Last Updated']],
           body: itemData,
           theme: 'striped',
           headStyles: {
@@ -1694,7 +1697,7 @@ export function ReportsModule({
       } else {
         reportTable({
           startY: startY + 32,
-          head: [['Purchase No.', 'Transaction Date', 'Encoded Date', 'Supplier', 'Doc', 'Terms', 'Qty', 'Total', 'Remarks']],
+          head: [['Purchase No.', 'Transaction Date', 'Encoded Date', 'Supplier', 'Document', 'Terms', 'Quantity', 'Total', 'Remarks']],
           body: purchases.map(purchase => [
             purchase.purchaseNumber,
             formatDateTime(purchase.createdAt),
@@ -1732,12 +1735,20 @@ export function ReportsModule({
       const movementSummary = getStockMovementSummary();
       doc.setFontSize(12);
       doc.setFont('helvetica', 'bold');
-      doc.text(isSalesMovementReport ? 'SALES-BASED STOCK MOVEMENT REPORT' : 'STOCK MOVEMENT HISTORY', 20, startY);
+      doc.text(
+        isSalesDeductionsOnlyExport
+          ? 'DETAILED SALES STOCK DEDUCTIONS'
+          : isSalesMovementReport
+            ? 'SALES-BASED STOCK MOVEMENT REPORT'
+            : 'STOCK MOVEMENT HISTORY',
+        20,
+        startY
+      );
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
       drawLabelValue('Category Filter', selectedCategory === 'all' ? 'All Categories' : selectedCategory, 20, startY + 8);
       drawLabelValue(isSalesMovementReport ? 'Sales Stock Deductions' : 'Total Movements', movements.length, 20, startY + 14);
-      if (isSalesMovementReport) {
+      if (isSalesMovementReport && !isSalesDeductionsOnlyExport) {
         drawLabelValue('Quantity Sold', getSalesMovementUnits(), 20, startY + 20);
         drawLabelValue('Sales Transactions', salesSummary.transactionCount, 20, startY + 26);
         drawLabelValueSegments([
@@ -1745,7 +1756,7 @@ export function ReportsModule({
           { label: 'Discount', value: formatCurrency(salesSummary.discount) },
           { label: 'Amount Due', value: formatCurrency(salesSummary.amountDue) }
         ], 20, startY + 32);
-      } else {
+      } else if (!isSalesMovementReport) {
         drawLabelValue('Stock In Units', movementSummary.stockInUnits, 20, startY + 20);
         drawLabelValue('Stock Out Units', movementSummary.stockOutUnits, 20, startY + 26);
       }
@@ -1756,11 +1767,13 @@ export function ReportsModule({
             ? 'No sales-based stock deductions found for this report period.'
             : 'No stock movements found for this report period.',
           20,
-          isSalesMovementReport ? startY + 44 : startY + 38
+          isSalesMovementReport ? (isSalesDeductionsOnlyExport ? startY + 26 : startY + 44) : startY + 38
         );
       } else {
-        let movementTableStartY = isSalesMovementReport ? startY + 42 : startY + 34;
-        if (isSalesMovementReport && salesComparison) {
+        let movementTableStartY = isSalesMovementReport
+          ? (isSalesDeductionsOnlyExport ? startY + 22 : startY + 42)
+          : startY + 34;
+        if (isSalesMovementReport && !isSalesDeductionsOnlyExport && salesComparison) {
           const amountDueComparison = formatReportComparison(
             salesComparison.current.amountDue,
             salesComparison.previous.amountDue
@@ -1798,7 +1811,7 @@ export function ReportsModule({
           ], 20, movementTableStartY + 6, { fontSize: 8 });
           movementTableStartY += 18;
         }
-        if (isSalesMovementReport && topSellingProducts.length > 0) {
+        if (isSalesMovementReport && !isSalesDeductionsOnlyExport && topSellingProducts.length > 0) {
           doc.setFontSize(10);
           doc.setFont('helvetica', 'bold');
           doc.text('TOP-SELLING PRODUCTS', 20, movementTableStartY);
@@ -1836,6 +1849,9 @@ export function ReportsModule({
             }
           });
           movementTableStartY = doc.lastAutoTable.finalY + 9;
+        }
+
+        if (isSalesMovementReport && !isSalesDeductionsOnlyExport) {
           doc.setFontSize(10);
           doc.setFont('helvetica', 'bold');
           doc.text('DETAILED SALES STOCK DEDUCTIONS', 20, movementTableStartY);
@@ -1851,39 +1867,39 @@ export function ReportsModule({
             getMovementLabel(movement.action),
             isSalesMovementReport ? getPaymentMethodLabel(movement.paymentMethod) : getMovementReasonDisplay(movement),
             movement.quantityChanged.toString(),
-            `${movement.previousQuantity} -> ${movement.newQuantity}`,
+            String(movement.previousQuantity),
+            String(movement.newQuantity),
             movement.actorName || 'System'
           ];
-          return isSalesMovementReport
-            ? [movement.salesNumber || movement.id, ...sharedColumns]
-            : sharedColumns;
+          return sharedColumns;
         });
         const movementHead = isSalesMovementReport
-          ? ['Sale No.', 'Transaction Date', 'Encoded Date', 'Item', 'Category', 'Action', 'Payment', 'Qty Sold', 'Before/After', 'Handled By']
-          : ['Transaction Date', 'Encoded Date', 'Item', 'Category', 'Action', 'Reason', 'Qty', 'Before/After', 'Handled By'];
+          ? ['Transaction Date', 'Encoded Date', 'Item', 'Category', 'Action', 'Payment', 'Qty Sold', 'Before', 'After', 'Handled By']
+          : ['Transaction Date', 'Encoded Date', 'Item', 'Category', 'Action', 'Reason', 'Qty', 'Before', 'After', 'Handled By'];
         const movementColumnStyles = isSalesMovementReport
           ? {
-              0: { cellWidth: 22 },
-              1: { cellWidth: 28 },
-              2: { cellWidth: 26 },
-              3: { cellWidth: 48 },
-              4: { cellWidth: 22 },
+              0: { cellWidth: 29 },
+              1: { cellWidth: 24 },
+              2: { cellWidth: 62 },
+              3: { cellWidth: 24 },
+              4: { cellWidth: 20 },
               5: { cellWidth: 20 },
-              6: { cellWidth: 24 },
-              7: { cellWidth: 14 },
-              8: { cellWidth: 25 },
-              9: { cellWidth: 28 }
+              6: { cellWidth: 14 },
+              7: { cellWidth: 13 },
+              8: { cellWidth: 13 },
+              9: { cellWidth: 38 }
             }
           : {
               0: { cellWidth: 30 },
-              1: { cellWidth: 26 },
-              2: { cellWidth: 56 },
+              1: { cellWidth: 24 },
+              2: { cellWidth: 58 },
               3: { cellWidth: 24 },
               4: { cellWidth: 21 },
-              5: { cellWidth: 34 },
+              5: { cellWidth: 30 },
               6: { cellWidth: 12 },
-              7: { cellWidth: 24 },
-              8: { cellWidth: 30 }
+              7: { cellWidth: 13 },
+              8: { cellWidth: 13 },
+              9: { cellWidth: 32 }
             };
         const movementTableWidth = Object.values(movementColumnStyles)
           .reduce((total, style) => total + Number(style.cellWidth || 0), 0);
@@ -1931,11 +1947,25 @@ export function ReportsModule({
     }
 
     // Save PDF
-    doc.save(`EMC_${reportType}_report_${new Date().toISOString().split('T')[0]}.pdf`);
+    const exportFileScope = isSalesDeductionsOnlyExport ? '_deductions_only' : '';
+    doc.save(`EMC_${reportType}_report${exportFileScope}_${new Date().toISOString().split('T')[0]}.pdf`);
     auditAction?.('EXPORT_REPORT', {
-      targetName: `${getReportTypeLabel()} report - ${getReportScopeLabel()}`
+      targetName: `${getReportTypeLabel()} report${isSalesDeductionsOnlyExport ? ' - detailed deductions only' : ''} - ${getReportScopeLabel()}`
     });
     toast.success('Report downloaded successfully!');
+  };
+
+  const handleExportPdfClick = () => {
+    if (reportType === 'sales-movements') {
+      setIsSalesExportDialogOpen(true);
+      return;
+    }
+    generatePDF();
+  };
+
+  const exportSalesMovementPdf = scope => {
+    setIsSalesExportDialogOpen(false);
+    generatePDF({ scope });
   };
 
   const getMovementLabel = action => {
@@ -2744,6 +2774,90 @@ export function ReportsModule({
           border-color: #166534;
           background: #15803d;
           color: #ffffff;
+        }
+
+        .reports-sales-export-dialog {
+          width: min(100% - 2rem, 32rem) !important;
+          max-width: min(100% - 2rem, 32rem) !important;
+          overflow: hidden;
+          border-radius: 14px;
+        }
+
+        .reports-sales-export-body {
+          padding: clamp(1.25rem, 3vw, 1.8rem);
+        }
+
+        .reports-sales-export-title {
+          color: #111827;
+          font-size: clamp(1.2rem, 2.4vw, 1.55rem);
+          font-weight: 850;
+          line-height: 1.2;
+        }
+
+        .reports-sales-export-description {
+          margin-top: 0.6rem;
+          color: #111827;
+          font-size: 0.95rem;
+          line-height: 1.5;
+        }
+
+        .reports-sales-export-options {
+          display: grid;
+          gap: 0.9rem;
+          margin-top: 1.2rem;
+        }
+
+        .reports-sales-export-option {
+          display: block;
+          width: 100%;
+          border: 1px solid #dbe3ef;
+          border-radius: 14px;
+          background: #ffffff;
+          padding: 1rem 1.15rem;
+          text-align: left;
+          transition:
+            background-color 160ms ease,
+            border-color 160ms ease,
+            box-shadow 160ms ease,
+            transform 160ms ease;
+        }
+
+        .reports-sales-export-option:hover,
+        .reports-sales-export-option:focus-visible {
+          border-color: #2563eb;
+          background: #f8fbff;
+          box-shadow: 0 10px 24px rgba(37, 99, 235, 0.12);
+          outline: none;
+          transform: translateY(-1px);
+        }
+
+        .reports-sales-export-option-title {
+          display: block;
+          color: #111827;
+          font-size: 0.98rem;
+          font-weight: 850;
+          line-height: 1.3;
+        }
+
+        .reports-sales-export-option-text {
+          display: block;
+          margin-top: 0.45rem;
+          color: #111827;
+          font-size: 0.92rem;
+          line-height: 1.5;
+        }
+
+        .reports-sales-export-footer {
+          display: flex;
+          justify-content: flex-end;
+          border-top: 1px solid #e2e8f0;
+          background: #f8fafc;
+          padding: 1rem clamp(1.25rem, 3vw, 1.8rem);
+        }
+
+        .reports-sales-export-cancel {
+          min-width: 6rem;
+          border-radius: 10px;
         }
 
         .reports-desktop-table thead,
@@ -3785,7 +3899,7 @@ export function ReportsModule({
               </CardDescription>
             </div>
             <Button
-              onClick={generatePDF}
+              onClick={handleExportPdfClick}
               className="reports-export-button bg-slate-700 hover:bg-slate-800 text-white font-semibold shadow-md transition-all duration-300"
             >
               <Download className="w-4 h-4 mr-2" />
@@ -3938,6 +4052,49 @@ export function ReportsModule({
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={isSalesExportDialogOpen} onOpenChange={setIsSalesExportDialogOpen}>
+        <DialogContent className="reports-sales-export-dialog border border-slate-200 bg-white p-0 shadow-2xl">
+          <div className="reports-sales-export-body">
+            <DialogHeader className="text-left">
+              <DialogTitle className="reports-sales-export-title">
+                Export Sales-Based Stock Movement PDF
+              </DialogTitle>
+              <DialogDescription className="reports-sales-export-description">
+                Choose the PDF version you need for review or recordkeeping.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="reports-sales-export-options">
+              <button
+                type="button"
+                className="reports-sales-export-option"
+                onClick={() => exportSalesMovementPdf('full')}
+              >
+                <span className="reports-sales-export-option-title">Export Full Report</span>
+                <span className="reports-sales-export-option-text">
+                  Includes the sales summary, comparison, top-selling products, and detailed stock deductions.
+                </span>
+              </button>
+              <button
+                type="button"
+                className="reports-sales-export-option"
+                onClick={() => exportSalesMovementPdf('deductions-only')}
+              >
+                <span className="reports-sales-export-option-title">Export Deductions Only</span>
+                <span className="reports-sales-export-option-text">
+                  Includes only the detailed stock deductions table and report details.
+                </span>
+              </button>
+            </div>
+          </div>
+          <DialogFooter className="reports-sales-export-footer">
+            <Button type="button" variant="outline" className="reports-sales-export-cancel" onClick={() => setIsSalesExportDialogOpen(false)}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className={`reports-metric-grid transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`}>
         {getReportMetrics().map(metric => (
@@ -4866,8 +5023,8 @@ export function ReportsModule({
                         </div>
                         {reportType === 'sales-movements' && (
                           <div className="reports-movement-stat">
-                            <span>Sale No.</span>
-                            <strong>{movement.salesNumber || movement.id}</strong>
+                            <span>Invoice No.</span>
+                            <strong>{movement.invoiceNumber || movement.salesNumber || movement.id}</strong>
                           </div>
                         )}
                       </div>

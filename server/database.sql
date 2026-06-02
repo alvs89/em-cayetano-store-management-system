@@ -18,6 +18,18 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 DROP TABLE IF EXISTS invoice_series_entries CASCADE;
 DROP TABLE IF EXISTS daily_operations CASCADE;
 
+-- INVOICE NUMBER SEQUENCES
+-- Central source of truth for official numeric SI booklet number suggestions.
+CREATE TABLE IF NOT EXISTS invoice_number_sequences (
+    document_type VARCHAR(40) NOT NULL,
+    invoice_year INTEGER NOT NULL,
+    last_number INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila'),
+    PRIMARY KEY (document_type, invoice_year),
+    CHECK (invoice_year BETWEEN 2000 AND 9999),
+    CHECK (last_number >= 0)
+);
+
 -- 2. USERS TABLE
 -- Stores admin-managed accounts, roles, access status, and authentication recovery fields.
 CREATE TABLE IF NOT EXISTS users (
@@ -96,6 +108,7 @@ CREATE TABLE IF NOT EXISTS stock_movements (
 CREATE TABLE IF NOT EXISTS sales_transactions (
     sales_transaction_id SERIAL PRIMARY KEY,
     sales_number VARCHAR(40) UNIQUE NOT NULL,
+    official_invoice_number VARCHAR(40),
     branch VARCHAR(50) NOT NULL,
     customer_type VARCHAR(40) DEFAULT 'walk_in' CHECK (customer_type IN ('walk_in', 'sister_company', 'hardware_reseller', 'regular', 'contractor')),
     customer_name VARCHAR(160) NOT NULL DEFAULT 'C',
@@ -127,8 +140,24 @@ CREATE TABLE IF NOT EXISTS sales_transactions (
     created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila'),
     cancelled_at TIMESTAMP,
     cancelled_by INT REFERENCES users(user_id) ON DELETE SET NULL,
-    cancel_reason TEXT
+    cancel_reason TEXT,
+    CONSTRAINT sales_transactions_official_invoice_number_check
+    CHECK (
+        (
+            transaction_type = 'refund'
+            AND official_invoice_number IS NULL
+        )
+        OR (
+            transaction_type <> 'refund'
+            AND official_invoice_number IS NOT NULL
+            AND official_invoice_number ~ '^[0-9]{6}$'
+        )
+    )
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS sales_transactions_official_invoice_number_unique
+ON sales_transactions (official_invoice_number)
+WHERE official_invoice_number IS NOT NULL;
 
 -- 7. SALES ITEMS TABLE
 -- Stores the sold item lines under each sales transaction.

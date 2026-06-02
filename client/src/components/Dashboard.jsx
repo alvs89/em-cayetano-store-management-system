@@ -147,6 +147,31 @@ const getComparisonDirection = (current, previous) => {
   return 'neutral';
 };
 
+const STOCK_COUNT_SEARCH_LIMIT = 50;
+
+const getStockCountItemDisplayName = item => {
+  if (!item) return '';
+  const code = String(item.itemCode || '').trim();
+  return code ? `${code} - ${item.name}` : item.name;
+};
+
+const normalizeStockCountSearchText = value =>
+  String(value || '')
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[\u2010-\u2015]/g, '-')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const getStockCountSearchText = item => [
+  getStockCountItemDisplayName(item),
+  item?.name,
+  item?.itemCode,
+  item?.category,
+  item?.supplierName
+].map(normalizeStockCountSearchText).filter(Boolean).join(' ');
+
 export function Dashboard({
   onNavigate,
   user,
@@ -164,6 +189,9 @@ export function Dashboard({
   const [salesPeriod, setSalesPeriod] = React.useState('today');
   const [selectedSalesDate, setSelectedSalesDate] = React.useState(() => getLocalDateKey());
   const [selectedComparisonDate, setSelectedComparisonDate] = React.useState(() => getOffsetDateKey(getLocalDateKey(), -1));
+  const [stockCountSearch, setStockCountSearch] = React.useState('');
+  const [isStockCountSelectorOpen, setIsStockCountSelectorOpen] = React.useState(false);
+  const [stockCountActiveIndex, setStockCountActiveIndex] = React.useState(0);
 
   const {
     inventory,
@@ -356,6 +384,17 @@ export function Dashboard({
       .filter(Boolean)
   ).size;
   const selectedCountItem = inventory.find(item => String(item.id) === String(stockCountForm.itemId));
+  const filteredStockCountItems = React.useMemo(() => {
+    const queryTokens = normalizeStockCountSearchText(stockCountSearch).split(' ').filter(Boolean);
+    const matches = queryTokens.length > 0
+      ? inventory.filter(item => {
+        const searchableText = getStockCountSearchText(item);
+        return queryTokens.every(token => searchableText.includes(token));
+      })
+      : inventory;
+
+    return matches.slice(0, STOCK_COUNT_SEARCH_LIMIT);
+  }, [inventory, stockCountSearch]);
   const physicalCountValue = stockCountForm.physicalCount === '' ? null : Number(stockCountForm.physicalCount);
   const hasPhysicalCountEntry = stockCountForm.physicalCount !== '';
   const hasValidPhysicalCount = Number.isInteger(physicalCountValue) && physicalCountValue >= 0;
@@ -471,6 +510,56 @@ export function Dashboard({
       itemId: '',
       physicalCount: ''
     });
+    setStockCountSearch('');
+    setIsStockCountSelectorOpen(false);
+    setStockCountActiveIndex(0);
+  };
+
+  const selectStockCountItem = item => {
+    if (!item) return;
+    setStockCountForm(prev => ({
+      ...prev,
+      itemId: String(item.id)
+    }));
+    setStockCountSearch(getStockCountItemDisplayName(item));
+    setIsStockCountSelectorOpen(false);
+    setStockCountActiveIndex(0);
+  };
+
+  const handleStockCountSearchChange = value => {
+    setStockCountSearch(value);
+    setStockCountForm(prev => ({
+      ...prev,
+      itemId: ''
+    }));
+    setIsStockCountSelectorOpen(true);
+    setStockCountActiveIndex(0);
+  };
+
+  const handleStockCountSearchKeyDown = event => {
+    if (event.key === 'Escape') {
+      setIsStockCountSelectorOpen(false);
+      return;
+    }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setIsStockCountSelectorOpen(true);
+      setStockCountActiveIndex(current => Math.min(current + 1, Math.max(filteredStockCountItems.length - 1, 0)));
+      return;
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setIsStockCountSelectorOpen(true);
+      setStockCountActiveIndex(current => Math.max(current - 1, 0));
+      return;
+    }
+
+    if (event.key === 'Enter' && isStockCountSelectorOpen) {
+      event.preventDefault();
+      selectStockCountItem(filteredStockCountItems[stockCountActiveIndex]);
+    }
   };
 
   const openInventoryStatus = status => {
@@ -1664,6 +1753,118 @@ export function Dashboard({
           text-align: center;
         }
 
+        .dashboard-stock-search {
+          position: relative;
+          min-width: 0;
+        }
+
+        .dashboard-stock-search-input {
+          height: 44px;
+          border-color: #dbe3ef;
+          border-radius: 10px;
+          background: #ffffff;
+          color: #111827;
+          font-size: 14px;
+          font-weight: 600;
+          transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+        }
+
+        .dashboard-stock-search-input:hover {
+          border-color: #bfdbfe;
+          background: #fbfdff;
+        }
+
+        .dashboard-stock-search-input:focus,
+        .dashboard-stock-search-input:focus-visible {
+          border-color: #2563eb;
+          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+          outline: 0;
+        }
+
+        .dashboard-stock-search-results {
+          position: absolute;
+          z-index: 80;
+          top: calc(100% + 8px);
+          left: 0;
+          right: 0;
+          display: grid;
+          max-height: min(18rem, 42vh);
+          overflow-y: auto;
+          border: 1px solid #dbe3ef;
+          border-radius: 12px;
+          background: #ffffff;
+          box-shadow: 0 18px 34px rgba(15, 23, 42, 0.16);
+          padding: 6px;
+        }
+
+        .dashboard-stock-search-option {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          align-items: center;
+          gap: 12px;
+          width: 100%;
+          border: 0;
+          border-radius: 10px;
+          background: transparent;
+          color: #111827;
+          padding: 10px 12px;
+          text-align: left;
+          transition: background-color 140ms ease, color 140ms ease;
+        }
+
+        .dashboard-stock-search-option:hover,
+        .dashboard-stock-search-option.is-active {
+          background: #eff6ff;
+          color: #0f172a;
+        }
+
+        .dashboard-stock-search-main {
+          display: grid;
+          min-width: 0;
+          gap: 3px;
+        }
+
+        .dashboard-stock-search-name {
+          overflow: hidden;
+          color: #111827;
+          font-size: 14px;
+          font-weight: 800;
+          line-height: 1.3;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .dashboard-stock-search-meta {
+          overflow: hidden;
+          color: #111827;
+          font-size: 12px;
+          font-weight: 600;
+          line-height: 1.35;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .dashboard-stock-search-stock {
+          flex-shrink: 0;
+          border-radius: 999px;
+          background: #f1f5f9;
+          color: #111827;
+          padding: 5px 9px;
+          font-size: 12px;
+          font-weight: 800;
+          white-space: nowrap;
+        }
+
+        .dashboard-stock-search-empty {
+          border-radius: 10px;
+          background: #f8fafc;
+          color: #111827;
+          padding: 14px 12px;
+          font-size: 14px;
+          font-weight: 700;
+          text-align: center;
+        }
+
         .dashboard-count-preview {
           border: 1px solid #dbeafe;
           border-radius: 12px;
@@ -1785,6 +1986,19 @@ export function Dashboard({
 
           .dashboard-summary-value {
             font-size: clamp(21px, 6vw, 28px);
+          }
+
+          .dashboard-stock-search-results {
+            max-height: min(16rem, 42vh);
+          }
+
+          .dashboard-stock-search-option {
+            grid-template-columns: 1fr;
+            gap: 6px;
+          }
+
+          .dashboard-stock-search-stock {
+            justify-self: start;
           }
 
           .dashboard-action-grid {
@@ -1994,18 +2208,62 @@ export function Dashboard({
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="stock-count-item">Item Counted</Label>
-                <Select value={stockCountForm.itemId} onValueChange={value => setStockCountForm(prev => ({ ...prev, itemId: value }))}>
-                  <SelectTrigger id="stock-count-item">
-                    <SelectValue placeholder="Choose the item you counted" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {inventory.map(item => (
-                      <SelectItem key={item.id} value={String(item.id)}>
-                        {item.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="dashboard-stock-search">
+                  <Input
+                    id="stock-count-item"
+                    type="text"
+                    value={stockCountSearch}
+                    autoComplete="off"
+                    role="combobox"
+                    aria-expanded={isStockCountSelectorOpen}
+                    aria-controls="stock-count-item-results"
+                    aria-activedescendant={isStockCountSelectorOpen && filteredStockCountItems[stockCountActiveIndex] ? `stock-count-item-option-${filteredStockCountItems[stockCountActiveIndex].id}` : undefined}
+                    aria-autocomplete="list"
+                    placeholder="Search item name, code, category, or supplier"
+                    className="dashboard-stock-search-input"
+                    onFocus={() => setIsStockCountSelectorOpen(true)}
+                    onBlur={() => window.setTimeout(() => setIsStockCountSelectorOpen(false), 120)}
+                    onChange={event => handleStockCountSearchChange(event.target.value)}
+                    onKeyDown={handleStockCountSearchKeyDown}
+                  />
+                  {isStockCountSelectorOpen && (
+                    <div id="stock-count-item-results" className="dashboard-stock-search-results" role="listbox" aria-label="Matching inventory items">
+                      {filteredStockCountItems.length > 0 ? (
+                        filteredStockCountItems.map((item, index) => {
+                          const isActive = index === stockCountActiveIndex;
+                          const quantity = Number(item.quantity || 0);
+                          return (
+                            <button
+                              id={`stock-count-item-option-${item.id}`}
+                              key={item.id}
+                              type="button"
+                              role="option"
+                              aria-selected={String(stockCountForm.itemId) === String(item.id)}
+                              className={`dashboard-stock-search-option${isActive ? ' is-active' : ''}`}
+                              onMouseEnter={() => setStockCountActiveIndex(index)}
+                              onMouseDown={event => event.preventDefault()}
+                              onClick={() => selectStockCountItem(item)}
+                            >
+                              <span className="dashboard-stock-search-main">
+                                <span className="dashboard-stock-search-name">{item.name}</span>
+                                <span className="dashboard-stock-search-meta">
+                                  {item.itemCode || `Item ${item.id}`} / {item.category || 'Uncategorized'} / {item.supplierName || 'No supplier'}
+                                </span>
+                              </span>
+                              <span className="dashboard-stock-search-stock">
+                                {quantity} {formatUnitLabel(quantity)}
+                              </span>
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <div className="dashboard-stock-search-empty" role="status">
+                          No matching products found.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="physical-count">Actual Counted Quantity</Label>

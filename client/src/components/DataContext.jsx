@@ -21,6 +21,24 @@ const normalizeOptionalNumber = value => (
   value === null || value === undefined || value === "" ? "" : Number(value)
 );
 
+const OFFICIAL_INVOICE_NUMBER_PATTERN = /^\d{6}$/;
+const LEGACY_SALES_INVOICE_NUMBER_PATTERN = /^SI-\d{4}-(\d{6})$/i;
+
+const extractLegacyOfficialInvoiceNumber = value => {
+  const match = String(value || "").trim().match(LEGACY_SALES_INVOICE_NUMBER_PATTERN);
+  return match ? match[1] : "";
+};
+
+const resolveOfficialInvoiceNumber = (officialInvoiceNumber, salesNumber) => {
+  const cleanOfficialInvoiceNumber = String(officialInvoiceNumber || "").trim();
+  if (OFFICIAL_INVOICE_NUMBER_PATTERN.test(cleanOfficialInvoiceNumber)) {
+    return cleanOfficialInvoiceNumber;
+  }
+  return extractLegacyOfficialInvoiceNumber(cleanOfficialInvoiceNumber)
+    || extractLegacyOfficialInvoiceNumber(salesNumber)
+    || cleanOfficialInvoiceNumber;
+};
+
 const getEffectiveLowStockThreshold = product =>
   normalizeOptionalNumber(product.active_low_stock_threshold ?? product.min_stock_level ?? 0);
 
@@ -382,6 +400,9 @@ export function DataProvider({ children }) {
   const mapSalesTransaction = (sale) => ({
     id: sale.sales_transaction_id?.toString() ?? '',
     salesNumber: sale.sales_number || '',
+    officialInvoiceNumber: sale.transaction_type === 'refund'
+      ? ''
+      : resolveOfficialInvoiceNumber(sale.official_invoice_number, sale.sales_number),
     branch: sale.branch || '',
     customerType: sale.customer_type || 'walk_in',
     customerName: sale.customer_name || 'C',
@@ -407,6 +428,10 @@ export function DataProvider({ children }) {
     transactionType: sale.transaction_type || 'sale',
     referenceSalesTransactionId: sale.reference_sales_transaction_id?.toString() ?? '',
     referenceSalesNumber: sale.reference_sales_number || '',
+    referenceOfficialInvoiceNumber: resolveOfficialInvoiceNumber(
+      sale.reference_official_invoice_number,
+      sale.reference_sales_number
+    ),
     soldBy: sale.sold_by?.toString() ?? '',
     soldByName: sale.sold_by_name || '',
     remarks: sale.remarks || '',
@@ -452,6 +477,14 @@ export function DataProvider({ children }) {
       console.error('Failed to load sales records:', err);
       setSalesTransactions([]);
     }
+  }, []);
+
+  const getNextSalesInvoiceNumber = useCallback(async () => {
+    const token = localStorage.getItem("token");
+    const res = await axios.get(apiUrl("/api/sales/next-invoice-number"), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    return String(res.data?.invoice_number || "").trim();
   }, []);
 
   const mapPurchaseTransaction = (purchase) => ({
@@ -894,12 +927,13 @@ export function DataProvider({ children }) {
     }
   };
 
-  const recordSale = async ({ customerType, customerName, customerTin, customerAddress, items, remarks, paymentMethod, discountType, discountAmount, deliveryCharge, amountReceived, paymentReference, paymentConfirmed, actualTransactionAt, backdateReason }) => {
+  const recordSale = async ({ officialInvoiceNumber, customerType, customerName, customerTin, customerAddress, items, remarks, paymentMethod, discountType, discountAmount, deliveryCharge, amountReceived, paymentReference, paymentConfirmed, actualTransactionAt, backdateReason }) => {
     const token = localStorage.getItem("token");
     try {
       const res = await axios.post(
         apiUrl("/api/sales"),
         {
+          official_invoice_number: officialInvoiceNumber,
           customer_type: customerType,
           customer_name: customerName,
           customer_tin: customerTin,
@@ -1085,6 +1119,7 @@ export function DataProvider({ children }) {
         purchaseTransactions,
         fetchStockMovements,
         fetchSalesTransactions,
+        getNextSalesInvoiceNumber,
         fetchPurchaseTransactions,
         users,
         setUsers,

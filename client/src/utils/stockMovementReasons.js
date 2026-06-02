@@ -3,7 +3,7 @@
 export const STOCK_OUT_REASON_OPTIONS = [
   { value: "sales", label: "Sales", description: "Stock deducted automatically after a completed sales transaction." },
   { value: "damaged", label: "Damaged", description: "Items removed because they can no longer be sold." },
-  { value: "supplier_return", label: "Supplier Return / Reject", description: "Defective items removed because they will be returned to the supplier." },
+  { value: "supplier_return", label: "Supplier Return/Reject", description: "Items removed because they are defective, incorrect, incomplete, or not accepted and must be returned/rejected by the supplier." },
   { value: "expired", label: "Expired", description: "Items removed because they are past their usable date." },
   { value: "lost_missing", label: "Lost/Missing", description: "Items missing after checking actual stock." },
   { value: "manual_adjustment", label: "Manual Adjustment", description: "Stock corrected after a verified count." },

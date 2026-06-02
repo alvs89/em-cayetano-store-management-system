@@ -25,6 +25,8 @@ async function verifyDemoInventory() {
         (SELECT COUNT(*) FROM branch_inventory) AS inventory,
         (SELECT COUNT(*) FROM sales_transactions) AS sales,
         (SELECT COUNT(*) FROM sales_items) AS sales_items,
+        (SELECT COUNT(*) FROM purchase_transactions) AS purchases,
+        (SELECT COUNT(*) FROM purchase_items) AS purchase_items,
         (SELECT COUNT(*) FROM stock_movements) AS movements,
         (SELECT COUNT(*) FROM archived_inventory) AS archived
     `);
@@ -42,7 +44,67 @@ async function verifyDemoInventory() {
       ) si ON si.sales_transaction_id = st.sales_transaction_id
       WHERE st.total_quantity != COALESCE(si.qty, 0)
          OR st.subtotal_amount != COALESCE(si.total, 0)
-         OR st.total_amount != GREATEST((COALESCE(si.total, 0) - COALESCE(st.discount_amount, 0))::numeric(12,2), 0::numeric)
+         OR ABS(st.total_amount - ROUND((GREATEST(COALESCE(si.total, 0) - COALESCE(st.discount_amount, 0), 0) + COALESCE(st.delivery_charge, 0))::numeric, 2)) > 0.01
+    `);
+
+    const invalidOfficialInvoiceNumbers = await getScalar(`
+      SELECT COUNT(*)::int AS count
+      FROM sales_transactions
+      WHERE (
+          transaction_type <> 'refund'
+          AND (
+            official_invoice_number IS NULL
+            OR official_invoice_number !~ '^[0-9]{6}$'
+          )
+        )
+        OR (
+          transaction_type = 'refund'
+          AND official_invoice_number IS NOT NULL
+        )
+    `);
+
+    const duplicateOfficialInvoiceNumbers = await getScalar(`
+      SELECT COUNT(*)::int AS count
+      FROM (
+        SELECT official_invoice_number
+        FROM sales_transactions
+        WHERE official_invoice_number IS NOT NULL
+        GROUP BY official_invoice_number
+        HAVING COUNT(*) > 1
+      ) duplicate_invoices
+    `);
+
+    const invoiceSequenceMismatch = await getScalar(`
+      SELECT COUNT(*)::int AS count
+      FROM invoice_number_sequences seq
+      WHERE seq.document_type = 'sales_invoice'
+        AND seq.last_number < COALESCE((
+          SELECT MAX(official_invoice_number::int)
+          FROM sales_transactions
+          WHERE official_invoice_number ~ '^[0-9]{6}$'
+        ), 0)
+    `);
+
+    const invalidVatBreakdown = await getScalar(`
+      SELECT COUNT(*)::int AS count
+      FROM sales_transactions
+      WHERE transaction_type <> 'refund'
+        AND ABS((COALESCE(vatable_sales, 0) + COALESCE(vat_amount, 0)) - GREATEST(COALESCE(subtotal_amount, 0) - COALESCE(discount_amount, 0), 0)) > 0.01
+    `);
+
+    const badPurchaseTotals = await getScalar(`
+      SELECT COUNT(*)::int AS count
+      FROM purchase_transactions pt
+      LEFT JOIN (
+        SELECT
+          purchase_transaction_id,
+          SUM(quantity_received)::int AS qty,
+          SUM(subtotal)::numeric(12,2) AS total
+        FROM purchase_items
+        GROUP BY purchase_transaction_id
+      ) pi ON pi.purchase_transaction_id = pt.purchase_transaction_id
+      WHERE pt.total_quantity != COALESCE(pi.qty, 0)
+         OR ABS(pt.subtotal_amount - COALESCE(pi.total, 0)) > 0.01
     `);
 
     const negativeStock = await getScalar(`
@@ -82,6 +144,13 @@ async function verifyDemoInventory() {
       FROM sales_items si
       LEFT JOIN sales_transactions st ON st.sales_transaction_id = si.sales_transaction_id
       WHERE st.sales_transaction_id IS NULL
+    `);
+
+    const orphanPurchaseItems = await getScalar(`
+      SELECT COUNT(*)::int AS count
+      FROM purchase_items pi
+      LEFT JOIN purchase_transactions pt ON pt.purchase_transaction_id = pi.purchase_transaction_id
+      WHERE pt.purchase_transaction_id IS NULL
     `);
 
     const orphanInventory = await getScalar(`
@@ -140,16 +209,43 @@ async function verifyDemoInventory() {
         )
     `);
 
+    const purchaseMovementMismatch = await getScalar(`
+      SELECT COUNT(*)::int AS count
+      FROM purchase_items pi
+      INNER JOIN purchase_transactions pt
+        ON pt.purchase_transaction_id = pi.purchase_transaction_id
+      WHERE pt.status = 'completed'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM stock_movements sm
+          WHERE sm.inventory_id = pi.inventory_id
+            AND sm.product_id = pi.product_id
+            AND sm.action = 'stock_in'
+            AND sm.reason = 'purchase_received'
+            AND sm.quantity_changed = pi.quantity_received
+            AND sm.previous_quantity = pi.previous_quantity
+            AND sm.new_quantity = pi.new_quantity
+            AND sm.branch = pi.branch
+        )
+    `);
+
     const result = {
       counts: counts.rows[0],
       badSalesTotals,
+      invalidOfficialInvoiceNumbers,
+      duplicateOfficialInvoiceNumbers,
+      invoiceSequenceMismatch,
+      invalidVatBreakdown,
+      badPurchaseTotals,
       negativeStock,
       statusMismatch,
       orphanSalesItems,
+      orphanPurchaseItems,
       orphanInventory,
       invalidPaymentRecords,
       invalidSalesItemQuantities,
       salesMovementMismatch,
+      purchaseMovementMismatch,
       futureDatedRows
     };
 

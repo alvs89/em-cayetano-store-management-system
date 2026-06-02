@@ -217,6 +217,30 @@ pool.on('connect', (client) => {
 
 const PHILIPPINE_NOW_SQL = `(CURRENT_TIMESTAMP AT TIME ZONE '${APP_TIME_ZONE}')`;
 const BACKDATE_FUTURE_TOLERANCE_MS = 60 * 1000;
+const SALES_INVOICE_DOCUMENT_TYPE = 'sales_invoice';
+const SALES_INVOICE_SEQUENCE_DIGITS = 6;
+const SALES_INVOICE_NUMBER_PATTERN = '^[0-9]{6}$';
+const LEGACY_SALES_INVOICE_NUMBER_PATTERN = `^SI-[0-9]{4}-[0-9]{${SALES_INVOICE_SEQUENCE_DIGITS}}$`;
+const LEGACY_SALES_INVOICE_NUMBER_REGEX = new RegExp(`^SI-\\d{4}-(\\d{${SALES_INVOICE_SEQUENCE_DIGITS}})$`, 'i');
+const SALES_INVOICE_START_NUMBER = Math.max(
+  1,
+  Number.parseInt(process.env.SALES_INVOICE_START_NUMBER || '1', 10) || 1
+);
+
+function extractLegacyOfficialSalesInvoiceNumber(value) {
+  const match = String(value || '').trim().match(LEGACY_SALES_INVOICE_NUMBER_REGEX);
+  return match ? match[1] : '';
+}
+
+function resolveOfficialSalesInvoiceNumber(officialInvoiceNumber, salesNumber) {
+  const cleanOfficialInvoiceNumber = String(officialInvoiceNumber || '').trim();
+  if (new RegExp(SALES_INVOICE_NUMBER_PATTERN).test(cleanOfficialInvoiceNumber)) {
+    return cleanOfficialInvoiceNumber;
+  }
+  return extractLegacyOfficialSalesInvoiceNumber(cleanOfficialInvoiceNumber)
+    || extractLegacyOfficialSalesInvoiceNumber(salesNumber)
+    || cleanOfficialInvoiceNumber;
+}
 
 async function ensureSchema() {
   await pool.query('CREATE SCHEMA IF NOT EXISTS public;');
@@ -226,6 +250,18 @@ async function ensureSchema() {
     CREATE TABLE IF NOT EXISTS schema_migrations (
       migration_key TEXT PRIMARY KEY,
       applied_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS invoice_number_sequences (
+      document_type VARCHAR(40) NOT NULL,
+      invoice_year INTEGER NOT NULL,
+      last_number INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
+      PRIMARY KEY (document_type, invoice_year),
+      CHECK (invoice_year BETWEEN 2000 AND 9999),
+      CHECK (last_number >= 0)
     );
   `);
 
@@ -313,6 +349,7 @@ async function ensureSchema() {
     CREATE TABLE IF NOT EXISTS sales_transactions (
       sales_transaction_id SERIAL PRIMARY KEY,
       sales_number VARCHAR(40) UNIQUE NOT NULL,
+      official_invoice_number VARCHAR(40),
       branch VARCHAR(50) NOT NULL,
       customer_type VARCHAR(40) DEFAULT 'walk_in' CHECK (customer_type IN ('walk_in', 'sister_company', 'hardware_reseller', 'regular', 'contractor')),
       customer_name VARCHAR(160) NOT NULL DEFAULT 'C',
@@ -638,6 +675,149 @@ async function ensureSchema() {
     UPDATE sales_transactions
     SET transaction_type = COALESCE(NULLIF(TRIM(transaction_type), ''), 'sale')
     WHERE transaction_type IS NULL OR TRIM(transaction_type) = '';
+  `);
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD COLUMN IF NOT EXISTS official_invoice_number VARCHAR(40);
+  `);
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    DROP CONSTRAINT IF EXISTS sales_transactions_official_invoice_number_check;
+  `);
+  await pool.query(`
+    WITH legacy_invoice_candidates AS (
+      SELECT
+        sales_transaction_id,
+        RIGHT(
+          CASE
+            WHEN TRIM(COALESCE(official_invoice_number, '')) ~ '${LEGACY_SALES_INVOICE_NUMBER_PATTERN}'
+              THEN TRIM(official_invoice_number)
+            ELSE TRIM(sales_number)
+          END,
+          ${SALES_INVOICE_SEQUENCE_DIGITS}
+        ) AS legacy_invoice_number
+      FROM sales_transactions
+      WHERE transaction_type <> 'refund'
+        AND (
+          TRIM(COALESCE(official_invoice_number, '')) ~ '${LEGACY_SALES_INVOICE_NUMBER_PATTERN}'
+          OR (
+            (
+              official_invoice_number IS NULL
+              OR TRIM(official_invoice_number) = ''
+              OR official_invoice_number !~ '${SALES_INVOICE_NUMBER_PATTERN}'
+            )
+            AND TRIM(sales_number) ~ '${LEGACY_SALES_INVOICE_NUMBER_PATTERN}'
+          )
+        )
+    ),
+    unique_legacy_invoice_candidates AS (
+      SELECT
+        sales_transaction_id,
+        legacy_invoice_number,
+        COUNT(*) OVER (PARTITION BY legacy_invoice_number) AS duplicate_count
+      FROM legacy_invoice_candidates
+    )
+    UPDATE sales_transactions st
+    SET official_invoice_number = ulic.legacy_invoice_number
+    FROM unique_legacy_invoice_candidates ulic
+    WHERE st.sales_transaction_id = ulic.sales_transaction_id
+      AND ulic.duplicate_count = 1
+      AND NOT EXISTS (
+        SELECT 1
+        FROM sales_transactions existing_st
+        WHERE existing_st.sales_transaction_id <> st.sales_transaction_id
+          AND existing_st.official_invoice_number = ulic.legacy_invoice_number
+      );
+  `);
+  await pool.query(`
+    WITH existing_max AS (
+      SELECT
+        COALESCE(
+          MAX(
+            CASE
+              WHEN official_invoice_number ~ '${SALES_INVOICE_NUMBER_PATTERN}'
+                THEN official_invoice_number::int
+              WHEN official_invoice_number ~ '${LEGACY_SALES_INVOICE_NUMBER_PATTERN}'
+                THEN GREATEST(${SALES_INVOICE_START_NUMBER} - 1, RIGHT(official_invoice_number, ${SALES_INVOICE_SEQUENCE_DIGITS})::int)
+              ELSE NULL
+            END
+          ),
+          ${SALES_INVOICE_START_NUMBER} - 1
+        ) AS last_number
+      FROM sales_transactions
+    ),
+    missing_sales AS (
+      SELECT
+        sales_transaction_id,
+        ROW_NUMBER() OVER (
+          ORDER BY COALESCE(created_at, ${PHILIPPINE_NOW_SQL}), sales_transaction_id
+        ) AS invoice_sequence
+      FROM sales_transactions
+      WHERE transaction_type <> 'refund'
+        AND (
+          official_invoice_number IS NULL
+          OR TRIM(official_invoice_number) = ''
+          OR official_invoice_number !~ '${SALES_INVOICE_NUMBER_PATTERN}'
+        )
+    )
+    UPDATE sales_transactions st
+    SET official_invoice_number = LPAD((em.last_number + ms.invoice_sequence)::text, ${SALES_INVOICE_SEQUENCE_DIGITS}, '0')
+    FROM missing_sales ms
+    CROSS JOIN existing_max em
+    WHERE st.sales_transaction_id = ms.sales_transaction_id;
+  `);
+  await pool.query(`
+    UPDATE sales_transactions
+    SET official_invoice_number = NULL
+    WHERE transaction_type = 'refund'
+      AND official_invoice_number IS NOT NULL;
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS sales_transactions_official_invoice_number_unique
+    ON sales_transactions (official_invoice_number)
+    WHERE official_invoice_number IS NOT NULL;
+  `);
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD CONSTRAINT sales_transactions_official_invoice_number_check
+    CHECK (
+      (
+        transaction_type = 'refund'
+        AND official_invoice_number IS NULL
+      )
+      OR (
+        transaction_type <> 'refund'
+        AND official_invoice_number IS NOT NULL
+        AND official_invoice_number ~ '${SALES_INVOICE_NUMBER_PATTERN}'
+      )
+    );
+  `);
+  await pool.query(`
+    INSERT INTO invoice_number_sequences (document_type, invoice_year, last_number, updated_at)
+    SELECT
+      '${SALES_INVOICE_DOCUMENT_TYPE}',
+      EXTRACT(YEAR FROM ${PHILIPPINE_NOW_SQL})::int AS invoice_year,
+      GREATEST(MAX(official_invoice_number::int), ${SALES_INVOICE_START_NUMBER} - 1) AS last_number,
+      ${PHILIPPINE_NOW_SQL}
+    FROM sales_transactions
+    WHERE official_invoice_number ~ '${SALES_INVOICE_NUMBER_PATTERN}'
+    ON CONFLICT (document_type, invoice_year) DO UPDATE
+    SET last_number = GREATEST(invoice_number_sequences.last_number, EXCLUDED.last_number),
+        updated_at = ${PHILIPPINE_NOW_SQL};
+  `);
+  await pool.query(`
+    INSERT INTO invoice_number_sequences (document_type, invoice_year, last_number, updated_at)
+    SELECT
+      '${SALES_INVOICE_DOCUMENT_TYPE}',
+      EXTRACT(YEAR FROM ${PHILIPPINE_NOW_SQL})::int,
+      ${SALES_INVOICE_START_NUMBER} - 1,
+      ${PHILIPPINE_NOW_SQL}
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM invoice_number_sequences
+      WHERE document_type = '${SALES_INVOICE_DOCUMENT_TYPE}'
+        AND invoice_year = EXTRACT(YEAR FROM ${PHILIPPINE_NOW_SQL})::int
+    );
   `);
   await pool.query(`
     ALTER TABLE sales_transactions
@@ -1855,10 +2035,21 @@ function mapStockMovementRow(row) {
 }
 
 function mapSalesTransactionRow(row) {
+  const transactionType = row.transaction_type || 'sale';
+  const officialInvoiceNumber = transactionType === 'refund'
+    ? null
+    : resolveOfficialSalesInvoiceNumber(row.official_invoice_number, row.sales_number);
+  const referenceOfficialInvoiceNumber = resolveOfficialSalesInvoiceNumber(
+    row.reference_official_invoice_number,
+    row.reference_sales_number
+  );
+
   return {
     sales_transaction_id: row.sales_transaction_id,
     sales_number: row.sales_number,
+    official_invoice_number: officialInvoiceNumber,
     reference_sales_number: row.reference_sales_number,
+    reference_official_invoice_number: referenceOfficialInvoiceNumber,
     branch: row.branch,
     customer_type: row.customer_type,
     customer_name: row.customer_name || 'C',
@@ -1882,7 +2073,7 @@ function mapSalesTransactionRow(row) {
     payment_confirmed_by_name: row.payment_confirmed_by_name,
     payment_confirmed_at: row.payment_confirmed_at,
     status: row.status,
-    transaction_type: row.transaction_type || 'sale',
+    transaction_type: transactionType,
     reference_sales_transaction_id: row.reference_sales_transaction_id,
     sold_by: row.sold_by,
     sold_by_name: row.sold_by_name,
@@ -1998,7 +2189,7 @@ function getDiscountDetails(discountType, subtotalAmount, customDiscountAmount =
 const STOCK_OUT_REASONS = new Map([
   ['sales', 'Sales'],
   ['damaged', 'Damaged'],
-  ['supplier_return', 'Supplier Return / Reject'],
+  ['supplier_return', 'Supplier Return/Reject'],
   ['expired', 'Expired'],
   ['lost_missing', 'Lost/Missing'],
   ['manual_adjustment', 'Manual Adjustment'],
@@ -2130,6 +2321,92 @@ async function generateSalesNumber(client, transactionType = 'sale') {
   );
   const sequence = Number(result.rows[0]?.next_number || 1);
   return `${prefix}-${year}-${String(sequence).padStart(5, '0')}`;
+}
+
+function formatOfficialSalesInvoiceNumber(sequence) {
+  return String(sequence).padStart(SALES_INVOICE_SEQUENCE_DIGITS, '0');
+}
+
+function normalizeOfficialSalesInvoiceNumber(value) {
+  return String(value || '').trim().replace(/\D/g, '');
+}
+
+async function getSalesInvoiceSequenceYear(client) {
+  const yearResult = await client.query(`SELECT EXTRACT(YEAR FROM ${PHILIPPINE_NOW_SQL})::int AS invoice_year`);
+  return Number(yearResult.rows[0]?.invoice_year || new Date().getFullYear());
+}
+
+async function ensureSalesInvoiceSequence(client) {
+  const invoiceYear = await getSalesInvoiceSequenceYear(client);
+  const maxResult = await client.query(
+    `SELECT GREATEST(
+       COALESCE(MAX(official_invoice_number::int), 0),
+       $1::int - 1
+     ) AS last_number
+     FROM sales_transactions
+     WHERE official_invoice_number ~ $2`,
+    [SALES_INVOICE_START_NUMBER, SALES_INVOICE_NUMBER_PATTERN]
+  );
+  const lastNumber = Number(maxResult.rows[0]?.last_number || (SALES_INVOICE_START_NUMBER - 1));
+
+  await client.query(
+    `INSERT INTO invoice_number_sequences (document_type, invoice_year, last_number, updated_at)
+     VALUES ($1, $2, $3, ${PHILIPPINE_NOW_SQL})
+     ON CONFLICT (document_type, invoice_year) DO UPDATE
+     SET last_number = GREATEST(invoice_number_sequences.last_number, EXCLUDED.last_number),
+         updated_at = ${PHILIPPINE_NOW_SQL}
+     RETURNING last_number`,
+    [SALES_INVOICE_DOCUMENT_TYPE, invoiceYear, lastNumber]
+  );
+
+  return invoiceYear;
+}
+
+async function peekNextOfficialSalesInvoiceNumber(client) {
+  const invoiceYear = await ensureSalesInvoiceSequence(client);
+  const result = await client.query(
+    `SELECT last_number + 1 AS next_number
+     FROM invoice_number_sequences
+     WHERE document_type = $1
+       AND invoice_year = $2`,
+    [SALES_INVOICE_DOCUMENT_TYPE, invoiceYear]
+  );
+  const sequence = Number(result.rows[0]?.next_number || SALES_INVOICE_START_NUMBER);
+  return formatOfficialSalesInvoiceNumber(sequence);
+}
+
+async function generateOfficialSalesInvoiceNumber(client) {
+  const invoiceYear = await ensureSalesInvoiceSequence(client);
+  const sequenceResult = await client.query(
+    `UPDATE invoice_number_sequences
+     SET last_number = last_number + 1,
+         updated_at = ${PHILIPPINE_NOW_SQL}
+     WHERE document_type = $1
+       AND invoice_year = $2
+     RETURNING last_number`,
+    [SALES_INVOICE_DOCUMENT_TYPE, invoiceYear]
+  );
+
+  const sequence = Number(sequenceResult.rows[0]?.last_number || 0);
+  if (!Number.isInteger(sequence) || sequence <= 0) {
+    throw new Error('Failed to generate official sales invoice number.');
+  }
+
+  return formatOfficialSalesInvoiceNumber(sequence);
+}
+
+async function syncOfficialSalesInvoiceSequence(client, officialInvoiceNumber) {
+  const sequence = Number.parseInt(officialInvoiceNumber, 10);
+  if (!Number.isInteger(sequence) || sequence <= 0) return;
+  const invoiceYear = await ensureSalesInvoiceSequence(client);
+  await client.query(
+    `UPDATE invoice_number_sequences
+     SET last_number = GREATEST(last_number, $3),
+         updated_at = ${PHILIPPINE_NOW_SQL}
+     WHERE document_type = $1
+       AND invoice_year = $2`,
+    [SALES_INVOICE_DOCUMENT_TYPE, invoiceYear, sequence]
+  );
 }
 
 async function generatePurchaseNumber(client) {
@@ -3872,7 +4149,9 @@ app.get('/api/sales', authenticate, async (req, res) => {
       `SELECT
          st.sales_transaction_id,
          st.sales_number,
+         st.official_invoice_number,
          reference_st.sales_number AS reference_sales_number,
+         reference_st.official_invoice_number AS reference_official_invoice_number,
          st.branch,
          st.customer_type,
          st.customer_name,
@@ -3956,7 +4235,7 @@ app.get('/api/sales', authenticate, async (req, res) => {
        LEFT JOIN sales_items si
          ON si.sales_transaction_id = st.sales_transaction_id
        WHERE st.branch = $1
-       GROUP BY st.sales_transaction_id, reference_st.sales_number
+       GROUP BY st.sales_transaction_id, reference_st.sales_number, reference_st.official_invoice_number
        ORDER BY st.created_at DESC, st.sales_transaction_id DESC`,
       [req.user.branch]
     );
@@ -3968,8 +4247,32 @@ app.get('/api/sales', authenticate, async (req, res) => {
   }
 });
 
+app.get('/api/sales/next-invoice-number', authenticate, async (req, res) => {
+  if (!canRecordSales(req.user)) {
+    return res.status(403).json({
+      error: 'Invoice number preview is available only to Admin / Manager and Cashier / Encoder accounts.'
+    });
+  }
+
+  const client = await pool.connect();
+  try {
+    const invoiceNumber = await peekNextOfficialSalesInvoiceNumber(client);
+    return res.json({
+      invoice_number: invoiceNumber,
+      format: 'six_digit_numeric',
+      editable: true
+    });
+  } catch (err) {
+    console.error('Preview sales invoice number error:', err);
+    return res.status(500).json({ error: 'Failed to preview the next invoice number.' });
+  } finally {
+    client.release();
+  }
+});
+
 app.post('/api/sales', authenticate, async (req, res) => {
   const {
+    official_invoice_number = '',
     customer_type = 'walk_in',
     customer_name = '',
     customer_tin = '',
@@ -3994,6 +4297,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
   const requiresPaymentConfirmation = ['gcash', 'bank_transfer'].includes(normalizedPaymentMethod);
   const cleanPaymentReference = String(payment_reference || '').trim().slice(0, 120) || null;
   const isPaymentConfirmed = payment_confirmed === true || payment_confirmed === 'true';
+  const cleanOfficialInvoiceNumber = normalizeOfficialSalesInvoiceNumber(official_invoice_number);
   let transactionTiming;
   try {
     transactionTiming = getTransactionTiming(req.body);
@@ -4009,6 +4313,22 @@ app.post('/api/sales', authenticate, async (req, res) => {
 
   if (!allowedCustomerTypes.has(normalizedCustomerType)) {
     return res.status(400).json({ error: 'Please select a valid customer type.' });
+  }
+
+  if (String(official_invoice_number || '').trim() && cleanOfficialInvoiceNumber !== String(official_invoice_number || '').trim()) {
+    return res.status(400).json({ error: 'Sales Invoice Number must contain numbers only.' });
+  }
+
+  if (cleanOfficialInvoiceNumber && !new RegExp(SALES_INVOICE_NUMBER_PATTERN).test(cleanOfficialInvoiceNumber)) {
+    return res.status(400).json({
+      error: `Sales Invoice Number must be exactly ${SALES_INVOICE_SEQUENCE_DIGITS} digits.`
+    });
+  }
+
+  if (!cleanOfficialInvoiceNumber) {
+    return res.status(400).json({
+      error: 'Enter the 6-digit Sales Invoice Number from the booklet before recording the sale.'
+    });
   }
 
   if (cleanCustomerName.length > 160) {
@@ -4108,6 +4428,19 @@ app.post('/api/sales', authenticate, async (req, res) => {
     await client.query('BEGIN');
 
     const salesNumber = await generateSalesNumber(client);
+    const officialInvoiceNumber = cleanOfficialInvoiceNumber;
+    const duplicateInvoiceResult = await client.query(
+      `SELECT sales_transaction_id
+       FROM sales_transactions
+       WHERE official_invoice_number = $1
+       LIMIT 1`,
+      [officialInvoiceNumber]
+    );
+    if (duplicateInvoiceResult.rowCount > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: `Sales Invoice Number ${officialInvoiceNumber} has already been used.` });
+    }
+    await syncOfficialSalesInvoiceSequence(client, officialInvoiceNumber);
     const soldByName = req.user.fullName || req.user.username || 'System User';
     const cleanRemarks = String(remarks || '').trim().slice(0, 500) || null;
     let totalQuantity = 0;
@@ -4307,9 +4640,10 @@ app.post('/api/sales', authenticate, async (req, res) => {
          remarks,
          created_at,
          encoded_at,
-         backdate_reason
+         backdate_reason,
+         official_invoice_number
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, true, $20, $21, ${PHILIPPINE_NOW_SQL}, 'completed', $22, $23, $24, COALESCE($25::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $26)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, true, $20, $21, ${PHILIPPINE_NOW_SQL}, 'completed', $22, $23, $24, COALESCE($25::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $26, $27)
        RETURNING *`,
       [
         salesNumber,
@@ -4337,7 +4671,8 @@ app.post('/api/sales', authenticate, async (req, res) => {
         soldByName,
         cleanRemarks,
         transactionTiming.actualTransactionAt,
-        transactionTiming.backdateReason
+        transactionTiming.backdateReason,
+        officialInvoiceNumber
       ]
     );
 
@@ -4399,7 +4734,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
         previousQuantity: line.previousQuantity,
         newQuantity: line.newQuantity,
         reason: 'sales',
-        note: `Sale recorded through Sales module (${salesNumber}).`,
+        note: `Sale recorded through Sales module. Invoice ${officialInvoiceNumber}; system ref ${salesNumber}.`,
         actorId: req.user.id,
         actualTransactionAt: transactionTiming.actualTransactionAt,
         backdateReason: transactionTiming.backdateReason
@@ -4411,12 +4746,14 @@ app.post('/api/sales', authenticate, async (req, res) => {
     await recordAuditLog(client, {
       actorId: req.user.id,
       targetId: salesTransaction.sales_transaction_id,
-      targetName: salesNumber,
+      targetName: officialInvoiceNumber,
       targetType: 'sales_transaction',
-      action: 'CREATE_SALES_TRANSACTION',
+      action: 'CREATE_SALES_INVOICE',
       reason: 'Sales Recording',
       details: {
         branch: req.user.branch,
+        officialInvoiceNumber,
+        salesNumber,
         customerType: normalizedCustomerType,
         customerName: cleanCustomerName,
         customerTinProvided: Boolean(cleanCustomerTin),
@@ -4459,8 +4796,19 @@ app.post('/api/sales', authenticate, async (req, res) => {
     if (err.statusCode) {
       return res.status(err.statusCode).json({ error: err.message });
     }
+    if (err.code === '23505' && String(err.constraint || '').includes('official_invoice_number')) {
+      return res.status(409).json({ error: 'That Sales Invoice Number has already been used. Please check the invoice booklet number and try again.' });
+    }
+    if (err.code === '23503') {
+      return res.status(400).json({ error: 'One sale detail no longer matches an active system record. Refresh the page, reselect the item, and try again.' });
+    }
+    if (err.code === '23514') {
+      return res.status(400).json({ error: 'One sale detail did not pass a system rule. Review the SI number, item quantity, payment, and selected item, then try again.' });
+    }
     console.error('Record sale error:', err);
-    return res.status(500).json({ error: 'Failed to record sale. No inventory was deducted.' });
+    return res.status(500).json({
+      error: 'The sale could not be saved because the database rejected part of the transaction. No inventory was deducted. Please refresh and try again, then check the server console if it repeats.'
+    });
   } finally {
     client.release();
   }
@@ -4515,6 +4863,10 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
     }
 
     const originalSale = saleResult.rows[0];
+    const originalInvoiceNumber = resolveOfficialSalesInvoiceNumber(
+      originalSale.official_invoice_number,
+      originalSale.sales_number
+    ) || originalSale.sales_number;
     if (originalSale.status === 'cancelled') {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Cancelled sales cannot be refunded.' });
@@ -4692,7 +5044,7 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
           previousQuantity,
           newQuantity,
           reason: 'customer_refund',
-          note: `Customer refund for ${originalSale.sales_number}. Reason: ${cleanReason}`,
+          note: `Customer refund for Invoice ${originalInvoiceNumber}. System ref ${originalSale.sales_number}. Reason: ${cleanReason}`,
           actorId: req.user.id,
           actualTransactionAt: transactionTiming.actualTransactionAt,
           backdateReason: transactionTiming.backdateReason
@@ -4788,7 +5140,7 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
         salesTransactionId,
         req.user.id,
         encodedByName,
-        `Refund for ${originalSale.sales_number}. Reason: ${cleanReason}`,
+        `Refund for Invoice ${originalInvoiceNumber}. System ref ${originalSale.sales_number}. Reason: ${cleanReason}`,
         transactionTiming.actualTransactionAt,
         transactionTiming.backdateReason
       ]
@@ -4850,6 +5202,7 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
         branch: req.user.branch,
         originalSalesTransactionId: salesTransactionId,
         originalSalesNumber: originalSale.sales_number,
+        originalOfficialInvoiceNumber: originalInvoiceNumber,
         refundNumber,
         refundReason: cleanReason,
         totalRefundQuantity,
@@ -4867,6 +5220,7 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
       sale: mapSalesTransactionRow({
         ...refundTransaction,
         reference_sales_number: originalSale.sales_number,
+        reference_official_invoice_number: originalInvoiceNumber,
         items: insertedItems.map(mapSalesItemRow)
       }),
       products: restoredItems.map(mapInventoryRow)
@@ -4914,6 +5268,10 @@ app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) =
     }
 
     const sale = saleResult.rows[0];
+    const saleInvoiceNumber = resolveOfficialSalesInvoiceNumber(
+      sale.official_invoice_number,
+      sale.sales_number
+    ) || sale.sales_number;
     if (sale.status === 'cancelled') {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'This sales record has already been cancelled.' });
@@ -5017,7 +5375,7 @@ app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) =
         previousQuantity,
         newQuantity,
         reason: 'sales_cancellation',
-        note: `Cancelled sales transaction ${sale.sales_number}. Reason: ${cleanReason}`,
+        note: `Cancelled Sales Invoice ${saleInvoiceNumber}. System ref ${sale.sales_number}. Reason: ${cleanReason}`,
         actorId: req.user.id
       });
 
@@ -5049,12 +5407,14 @@ app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) =
     await recordAuditLog(client, {
       actorId: req.user.id,
       targetId: salesTransactionId,
-      targetName: sale.sales_number,
+      targetName: saleInvoiceNumber,
       targetType: 'sales_transaction',
-      action: 'CANCEL_SALES_TRANSACTION',
+      action: 'CANCEL_SALES_INVOICE',
       reason: 'Sales Cancellation',
       details: {
         branch: req.user.branch,
+        officialInvoiceNumber: saleInvoiceNumber,
+        salesNumber: sale.sales_number,
         cancelReason: cleanReason,
         totalQuantity: Number(sale.total_quantity || 0),
         totalAmount: Number(sale.total_amount || 0),
@@ -7243,7 +7603,7 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
         [scopeBranch]
       ),
       pool.query(
-        `SELECT sales_transaction_id, sales_number, branch, status, transaction_type, total_quantity, subtotal_amount, discount_amount, total_amount, payment_method, change_amount
+        `SELECT sales_transaction_id, sales_number, official_invoice_number, branch, status, transaction_type, total_quantity, subtotal_amount, discount_amount, total_amount, payment_method, change_amount
          FROM sales_transactions
          WHERE branch = $1
            AND (
@@ -7259,8 +7619,14 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
              OR transaction_type NOT IN ('sale', 'refund')
              OR sales_number IS NULL
              OR TRIM(sales_number) = ''
+             OR (transaction_type <> 'refund' AND (
+                  official_invoice_number IS NULL
+                  OR TRIM(official_invoice_number) = ''
+                  OR official_invoice_number !~ $2
+                ))
+             OR (transaction_type = 'refund' AND official_invoice_number IS NOT NULL)
            )`,
-        [scopeBranch]
+        [scopeBranch, SALES_INVOICE_NUMBER_PATTERN]
       ),
       pool.query(
         `SELECT si.sales_item_id, st.sales_number, si.item_name, si.quantity_sold, si.unit_price, si.subtotal
@@ -7541,7 +7907,7 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
       },
       {
         key: 'invalid_sales_transactions',
-        label: 'Sales records with invalid totals, status, or transaction number',
+        label: 'Sales records with invalid totals, status, or invoice/transaction number',
         count: invalidSalesTransactions.rowCount
       },
       {

@@ -234,6 +234,50 @@ function isRefundSalesRecord(sale) {
 }
 const getTransactionRecordLabel = sale => (isRefundSalesRecord(sale) ? 'Refund Record' : 'Sales Record');
 const getTransactionDocumentName = sale => (isRefundSalesRecord(sale) ? 'Refund Receipt' : 'Receipt');
+const OFFICIAL_INVOICE_NUMBER_PATTERN = /^\d{6}$/;
+const LEGACY_SALES_INVOICE_NUMBER_PATTERN = /^SI-\d{4}-(\d{6})$/i;
+const extractLegacyOfficialInvoiceNumber = value => {
+  const match = String(value || '').trim().match(LEGACY_SALES_INVOICE_NUMBER_PATTERN);
+  return match ? match[1] : '';
+};
+const normalizeOfficialInvoiceDisplayNumber = (officialInvoiceNumber, fallbackSalesNumber) => {
+  const cleanOfficialInvoiceNumber = String(officialInvoiceNumber || '').trim();
+  if (OFFICIAL_INVOICE_NUMBER_PATTERN.test(cleanOfficialInvoiceNumber)) {
+    return cleanOfficialInvoiceNumber;
+  }
+  return extractLegacyOfficialInvoiceNumber(cleanOfficialInvoiceNumber)
+    || extractLegacyOfficialInvoiceNumber(fallbackSalesNumber)
+    || cleanOfficialInvoiceNumber;
+};
+const isLegacySalesInvoiceReference = value => LEGACY_SALES_INVOICE_NUMBER_PATTERN.test(String(value || '').trim());
+const getOfficialInvoiceNumber = sale =>
+  normalizeOfficialInvoiceDisplayNumber(
+    sale?.officialInvoiceNumber || sale?.official_invoice_number,
+    sale?.salesNumber || sale?.sales_number
+  );
+const getSystemReferenceNumber = sale => {
+  const systemReferenceNumber = sale?.salesNumber || sale?.sales_number || '';
+  return isLegacySalesInvoiceReference(systemReferenceNumber) ? '' : systemReferenceNumber;
+};
+const getReferenceOfficialInvoiceNumber = sale =>
+  normalizeOfficialInvoiceDisplayNumber(
+    sale?.referenceOfficialInvoiceNumber || sale?.reference_official_invoice_number,
+    sale?.referenceSalesNumber || sale?.reference_sales_number
+  );
+const getReferenceSystemNumber = sale => {
+  const referenceSystemNumber = sale?.referenceSalesNumber || sale?.reference_sales_number || '';
+  return isLegacySalesInvoiceReference(referenceSystemNumber) ? '' : referenceSystemNumber;
+};
+const getPrimaryDocumentNumber = sale => {
+  if (isRefundSalesRecord(sale)) {
+    return getSystemReferenceNumber(sale) || getTransactionRecordLabel(sale);
+  }
+  return getOfficialInvoiceNumber(sale) || getSystemReferenceNumber(sale) || getTransactionRecordLabel(sale);
+};
+const getSalesHistoryTitleNumber = sale =>
+  isRefundSalesRecord(sale)
+    ? getSystemReferenceNumber(sale) || getTransactionRecordLabel(sale)
+    : getOfficialInvoiceNumber(sale) || getSystemReferenceNumber(sale) || getTransactionRecordLabel(sale);
 const getDisplayQuantity = value => Math.abs(Number(value || 0));
 const sanitizeTinInput = value => {
   const rawValue = String(value || '');
@@ -251,11 +295,13 @@ const sanitizeTinInput = value => {
 const downloadSaleTransactionSummary = sale => {
   if (!sale) return;
 
-  const saleNumber = sale.salesNumber || getTransactionRecordLabel(sale);
   const isRefund = isRefundSalesRecord(sale);
   const documentName = getTransactionDocumentName(sale);
   const documentPrefix = isRefund ? 'REFUND' : 'SALES';
   const documentTitle = isRefund ? 'RECEIPT' : 'INVOICE';
+  const documentNumber = getPrimaryDocumentNumber(sale);
+  const originalInvoiceNumber = getReferenceOfficialInvoiceNumber(sale);
+  const originalSystemNumber = getReferenceSystemNumber(sale);
   const items = sale.items || [];
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -300,7 +346,7 @@ const downloadSaleTransactionSummary = sale => {
   };
 
   doc.setProperties({
-    title: `${saleNumber} ${documentName}`,
+    title: `${documentNumber} ${documentName}`,
     subject: isRefund ? 'Customer refund transaction receipt' : 'Sales transaction invoice-style receipt',
     author: sale.soldByName || 'System',
     creator: 'E.M. Cayetano Trading POS-Integrated Inventory System'
@@ -338,10 +384,10 @@ const downloadSaleTransactionSummary = sale => {
   drawText(documentTitle, invoiceRightX, y + 14, { align: 'right' });
   doc.setTextColor(17, 24, 39);
   doc.setFontSize(11);
-  drawText(`No.: ${saleNumber}`, invoiceRightX, y + 27, { align: 'right' });
-  if (isRefund && sale.referenceSalesNumber) {
+  drawText(`${isRefund ? 'Refund Ref.' : 'No.'}: ${documentNumber}`, invoiceRightX, y + 27, { align: 'right' });
+  if (isRefund && (originalInvoiceNumber || originalSystemNumber)) {
     doc.setFontSize(8);
-    drawText(`Original Sale: ${sale.referenceSalesNumber}`, invoiceRightX, y + 31, { align: 'right' });
+    drawText(`Original Invoice: ${originalInvoiceNumber || originalSystemNumber}`, invoiceRightX, y + 31, { align: 'right' });
     doc.setFontSize(11);
   }
   doc.setTextColor(17, 24, 39);
@@ -492,7 +538,7 @@ const downloadSaleTransactionSummary = sale => {
     });
   }
 
-  doc.save(`${saleNumber}_${isRefund ? 'refund_receipt' : 'transaction_receipt'}.pdf`);
+  doc.save(`${documentNumber}_${isRefund ? 'refund_receipt' : 'sales_invoice'}.pdf`);
 };
 
 const openReceiptPrintWindow = () => {
@@ -534,12 +580,16 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
 
   const items = sale.items || [];
   const isRefund = isRefundSalesRecord(sale);
-  const saleNumber = escapeReceiptText(sale.salesNumber || getTransactionRecordLabel(sale));
+  const documentNumber = getPrimaryDocumentNumber(sale);
+  const safeDocumentNumber = escapeReceiptText(documentNumber);
+  const originalInvoiceNumber = getReferenceOfficialInvoiceNumber(sale);
+  const originalSystemNumber = getReferenceSystemNumber(sale);
   const documentName = getTransactionDocumentName(sale);
   const documentPrefix = isRefund ? 'REFUND' : 'SALES';
   const documentTitle = isRefund ? 'RECEIPT' : 'INVOICE';
-  const originalSaleLine = isRefund && sale.referenceSalesNumber
-    ? `<div class="reference-number">Original Sale: ${escapeReceiptText(sale.referenceSalesNumber)}</div>`
+  const documentNumberLabel = isRefund ? 'Refund Ref.' : 'No.';
+  const originalSaleLine = isRefund && (originalInvoiceNumber || originalSystemNumber)
+    ? `<div class="reference-number">Original Invoice: ${escapeReceiptText(originalInvoiceNumber || originalSystemNumber)}</div>`
     : '';
   const minimumReceiptRows = 10;
   const itemRows = [
@@ -576,7 +626,7 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
     <!doctype html>
     <html>
       <head>
-        <title>${saleNumber} ${escapeReceiptText(documentName)}</title>
+        <title>${safeDocumentNumber} ${escapeReceiptText(documentName)}</title>
         <style>
           @page { size: A4; margin: 0; }
           * { box-sizing: border-box; }
@@ -807,7 +857,7 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
             <div class="invoice-block">
               <div class="sales-label">${escapeReceiptText(documentPrefix)}</div>
               <div class="invoice-title">${escapeReceiptText(documentTitle)}</div>
-              <div class="invoice-number">No.: ${saleNumber}</div>
+              <div class="invoice-number">${escapeReceiptText(documentNumberLabel)}: ${safeDocumentNumber}</div>
               ${originalSaleLine}
             </div>
           </header>
@@ -907,6 +957,17 @@ const getRemainingRefundAmount = item =>
 const hasRefundedSaleItems = sale =>
   (sale?.items || []).some(item => Number(item?.refundedQuantity || 0) > 0 || Number(item?.refundedAmount || 0) > 0);
 
+// Centralizes refund limit wording so real-time validation and final checks stay consistent.
+const getRefundableQuantityLimitMessage = maxQuantity =>
+  `Only ${maxQuantity} unit${Number(maxQuantity) === 1 ? ' is' : 's are'} refundable for this item.`;
+
+const getRefundAmountForQuantity = (line, quantity) => {
+  const cleanQuantity = Math.max(0, Number(quantity || 0));
+  if (cleanQuantity <= 0) return '';
+  const computedAmount = Math.min(Number(line.maxAmount || 0), Number((cleanQuantity * Number(line.unitPrice || 0)).toFixed(2)));
+  return computedAmount > 0 ? computedAmount.toFixed(2) : '';
+};
+
 const notifyNumbersOnly = (fieldName, toastId) => {
   toast.warning(`${fieldName} accepts numbers only.`, {
     id: toastId,
@@ -947,6 +1008,30 @@ const sanitizePaymentReferenceInput = value => {
   return rawValue.replace(/[^A-Za-z0-9 ._#/-]/g, '').slice(0, 120);
 };
 
+const sanitizeInvoiceNumberInput = value =>
+  String(value || '').replace(/\D/g, '').slice(0, 6);
+
+const getInvoiceSequenceNumber = value => {
+  const cleanValue = String(value || '').trim();
+  return OFFICIAL_INVOICE_NUMBER_PATTERN.test(cleanValue) ? Number.parseInt(cleanValue, 10) : null;
+};
+
+const formatInvoiceSequenceNumber = sequence => {
+  const cleanSequence = Number(sequence);
+  if (!Number.isInteger(cleanSequence) || cleanSequence <= 0 || cleanSequence > 999999) return '';
+  return String(cleanSequence).padStart(6, '0');
+};
+
+const getNextAvailableInvoiceNumber = (startSequence, usedInvoiceNumbers) => {
+  let sequence = Math.max(1, Number(startSequence) || 1);
+  while (sequence <= 999999) {
+    const candidate = formatInvoiceSequenceNumber(sequence);
+    if (candidate && !usedInvoiceNumbers.has(candidate)) return candidate;
+    sequence += 1;
+  }
+  return '';
+};
+
 const isValidMoneyText = value =>
   String(value || '').trim() === '' || /^\d+(\.\d{0,2})?$/.test(String(value).trim());
 
@@ -969,7 +1054,10 @@ const getSaleProductSearchText = item =>
   ].filter(Boolean).join(' '));
 
 export function SalesModule({ user }) {
-  const { inventory, salesTransactions, recordSale, refundSale, cancelSale } = useData();
+  const { inventory, salesTransactions, recordSale, refundSale, cancelSale, getNextSalesInvoiceNumber } = useData();
+  const [officialInvoiceNumber, setOfficialInvoiceNumber] = useState('');
+  const [suggestedOfficialInvoiceNumber, setSuggestedOfficialInvoiceNumber] = useState('');
+  const [isLoadingInvoiceSuggestion, setIsLoadingInvoiceSuggestion] = useState(false);
   const [customerType, setCustomerType] = useState('walk_in');
   const [customerName, setCustomerName] = useState('');
   const [customerTin, setCustomerTin] = useState('');
@@ -1217,8 +1305,106 @@ export function SalesModule({ user }) {
       .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()),
     [salesTransactions]
   );
+  const cleanOfficialInvoiceNumber = officialInvoiceNumber.trim();
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadNextInvoiceNumber = async () => {
+      if (typeof getNextSalesInvoiceNumber !== 'function') return;
+      setIsLoadingInvoiceSuggestion(true);
+      try {
+        const invoiceNumber = sanitizeInvoiceNumberInput(await getNextSalesInvoiceNumber());
+        if (isMounted) {
+          setSuggestedOfficialInvoiceNumber(OFFICIAL_INVOICE_NUMBER_PATTERN.test(invoiceNumber) ? invoiceNumber : '');
+        }
+      } catch (error) {
+        console.error('Failed to load suggested Sales Invoice Number:', error);
+        if (isMounted) {
+          setSuggestedOfficialInvoiceNumber('');
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingInvoiceSuggestion(false);
+        }
+      }
+    };
+
+    loadNextInvoiceNumber();
+    return () => {
+      isMounted = false;
+    };
+  }, [getNextSalesInvoiceNumber, salesTransactions.length]);
+
+  const usedInvoiceNumbers = useMemo(() => {
+    const numbers = new Set();
+    (salesTransactions || []).forEach(sale => {
+      if (sale.transactionType === 'refund') return;
+      const invoiceNumber = String(sale.officialInvoiceNumber || '').trim();
+      if (OFFICIAL_INVOICE_NUMBER_PATTERN.test(invoiceNumber)) {
+        numbers.add(invoiceNumber);
+      }
+    });
+    return numbers;
+  }, [salesTransactions]);
+  const duplicateOfficialInvoiceSale = useMemo(() => {
+    if (!OFFICIAL_INVOICE_NUMBER_PATTERN.test(cleanOfficialInvoiceNumber)) return null;
+    return (salesTransactions || []).find(sale =>
+      sale.transactionType !== 'refund' &&
+      String(sale.officialInvoiceNumber || '').trim() === cleanOfficialInvoiceNumber
+    ) || null;
+  }, [cleanOfficialInvoiceNumber, salesTransactions]);
+  const invoiceNumberSuggestions = useMemo(() => {
+    const findAvailableInvoiceNumber = (...invoiceNumbers) => {
+      for (const invoiceNumber of invoiceNumbers) {
+        const cleanInvoiceNumber = sanitizeInvoiceNumberInput(invoiceNumber);
+        if (OFFICIAL_INVOICE_NUMBER_PATTERN.test(cleanInvoiceNumber) && !usedInvoiceNumbers.has(cleanInvoiceNumber)) {
+          return cleanInvoiceNumber;
+        }
+      }
+      return '';
+    };
+
+    const usedSequences = Array.from(usedInvoiceNumbers)
+      .map(getInvoiceSequenceNumber)
+      .filter(Number.isInteger);
+    const highestUsedSequence = usedSequences.length > 0 ? Math.max(...usedSequences) : 0;
+    const currentSequence = getInvoiceSequenceNumber(cleanOfficialInvoiceNumber);
+    const nextAfterEnteredNumber = currentSequence
+      ? getNextAvailableInvoiceNumber(currentSequence + 1, usedInvoiceNumbers)
+      : '';
+    const nextAfterRecordedInvoices = getNextAvailableInvoiceNumber(highestUsedSequence + 1, usedInvoiceNumbers);
+    const earliestAvailableNumber = getNextAvailableInvoiceNumber(1, usedInvoiceNumbers);
+    const systemSuggestedInvoiceNumber = sanitizeInvoiceNumberInput(suggestedOfficialInvoiceNumber);
+    const recommendedInvoiceNumber = findAvailableInvoiceNumber(
+      duplicateOfficialInvoiceSale ? nextAfterEnteredNumber : '',
+      systemSuggestedInvoiceNumber,
+      nextAfterRecordedInvoices,
+      earliestAvailableNumber
+    );
+
+    return recommendedInvoiceNumber
+      ? [{
+          invoiceNumber: recommendedInvoiceNumber,
+          reason: recommendedInvoiceNumber === systemSuggestedInvoiceNumber
+            ? 'Next Sales Invoice No. from system sequence.'
+            : 'Recommended next Sales Invoice No.'
+        }]
+      : [];
+  }, [cleanOfficialInvoiceNumber, duplicateOfficialInvoiceSale, suggestedOfficialInvoiceNumber, usedInvoiceNumbers]);
+  const recommendedInvoiceSuggestion = invoiceNumberSuggestions[0] || null;
+  const recommendedInvoiceNumber = recommendedInvoiceSuggestion?.invoiceNumber || '';
+  const isRecommendedInvoiceSelected = Boolean(recommendedInvoiceNumber) && cleanOfficialInvoiceNumber === recommendedInvoiceNumber;
+  const handleInvoiceSuggestionAction = () => {
+    if (recommendedInvoiceNumber && !isRecommendedInvoiceSelected) {
+      setOfficialInvoiceNumber(recommendedInvoiceNumber);
+      toast.success(`Sales Invoice Number ${recommendedInvoiceNumber} selected.`);
+      return;
+    }
+    toast.info('The suggested Sales Invoice Number is already selected.');
+  };
 
   const hasSalesFormInput = useMemo(() => (
+    officialInvoiceNumber.trim() !== '' ||
     customerType !== 'walk_in' ||
     customerName.trim() !== '' ||
     customerTin.trim() !== '' ||
@@ -1236,7 +1422,7 @@ export function SalesModule({ user }) {
       String(line.quantity || '').trim() !== '' ||
       String(line.unitPrice || '').trim() !== ''
     ))
-  ), [amountReceived, customerAddress, customerName, customerTin, customerType, deliveryCharge, discountAmount, discountType, paymentConfirmed, paymentMethod, paymentReference, saleLines]);
+  ), [amountReceived, customerAddress, customerName, customerTin, customerType, deliveryCharge, discountAmount, discountType, officialInvoiceNumber, paymentConfirmed, paymentMethod, paymentReference, saleLines]);
 
   const filteredSalesHistory = useMemo(() => {
     const now = new Date();
@@ -1262,6 +1448,9 @@ export function SalesModule({ user }) {
     return periodFilteredSales.filter(sale => {
       const searchableText = [
         sale.salesNumber,
+        sale.officialInvoiceNumber,
+        sale.referenceOfficialInvoiceNumber,
+        sale.referenceSalesNumber,
         customerTypeLabels[sale.customerType],
         sale.customerName,
         sale.customerTin,
@@ -1659,6 +1848,7 @@ export function SalesModule({ user }) {
   };
 
   const resetForm = () => {
+    setOfficialInvoiceNumber('');
     setCustomerType('walk_in');
     setCustomerName('');
     setCustomerTin('');
@@ -1729,6 +1919,18 @@ export function SalesModule({ user }) {
 
   const validateSale = () => {
     const usedItems = new Set();
+
+    if (!/^\d{6}$/.test(cleanOfficialInvoiceNumber)) {
+      toast.error('Enter the 6-digit Sales Invoice Number from the booklet.', {
+        description: 'Use the exact number printed on the Sales Invoice.'
+      });
+      return false;
+    }
+
+    if (duplicateOfficialInvoiceSale) {
+      toast.error(`Sales Invoice Number ${cleanOfficialInvoiceNumber} has already been used.`);
+      return false;
+    }
 
     for (let index = 0; index < selectedLineDetails.length; index += 1) {
       const line = selectedLineDetails[index];
@@ -1902,6 +2104,7 @@ export function SalesModule({ user }) {
     setIsSaving(true);
     try {
       const sale = await recordSale({
+        officialInvoiceNumber: cleanOfficialInvoiceNumber,
         customerType,
         customerName: customerName.trim() || 'C',
         customerTin: customerTin.trim(),
@@ -1926,7 +2129,7 @@ export function SalesModule({ user }) {
         }))
       });
       toast.success('Sale recorded successfully.', {
-        description: `${sale?.salesNumber || sale?.sales_number || 'Sales record'} saved and inventory was updated.`
+        description: `${getPrimaryDocumentNumber(sale)} saved and inventory was updated.`
       });
       const printStarted = printSaleTransactionReceipt(sale, receiptPrintWindow);
       if (!printStarted) {
@@ -2001,24 +2204,61 @@ export function SalesModule({ user }) {
 
       if (field === 'quantity') {
         const quantityText = sanitizeWholeNumberInput(value, 'Refund quantity', 'sales-refund-quantity-numbers-only');
-        const quantity = Number(quantityText || 0);
-        const computedAmount = quantity > 0 ? Math.min(line.maxAmount, Number((quantity * line.unitPrice).toFixed(2))) : 0;
+        const attemptedQuantity = Number(quantityText || 0);
+        const maxQuantity = Number(line.maxQuantity || 0);
+        if (attemptedQuantity > maxQuantity) {
+          toast.warning(getRefundableQuantityLimitMessage(maxQuantity), {
+            id: `sales-refund-quantity-limit-${line.salesItemId}`,
+            duration: 2600
+          });
+          return line;
+        }
         return {
           ...line,
-          quantity: quantityText,
-          refundAmount: quantity > 0 ? computedAmount.toFixed(2) : ''
+          quantity: attemptedQuantity > 0 ? quantityText : '',
+          refundAmount: getRefundAmountForQuantity(line, attemptedQuantity)
         };
       }
 
       if (field === 'refundAmount') {
+        const amountText = sanitizeDecimalInput(value, 'Refund amount', 'sales-refund-amount-numbers-only');
+        const attemptedAmount = Number(amountText || 0);
+        const maxAmount = Number(line.maxAmount || 0);
+        if (attemptedAmount > maxAmount) {
+          toast.warning(`Refund amount cannot exceed ${formatCurrency(maxAmount)} for this item.`, {
+            id: `sales-refund-amount-limit-${line.salesItemId}`,
+            duration: 2600
+          });
+        }
         return {
           ...line,
-          refundAmount: sanitizeDecimalInput(value, 'Refund amount', 'sales-refund-amount-numbers-only')
+          refundAmount: attemptedAmount > maxAmount ? maxAmount.toFixed(2) : amountText
         };
       }
 
       return line;
     }));
+  };
+
+  const fillAllRefundableQuantities = () => {
+    setRefundLines(prev => prev.map(line => {
+      const maxQuantity = Number(line.maxQuantity || 0);
+      return {
+        ...line,
+        quantity: maxQuantity > 0 ? String(maxQuantity) : '',
+        refundAmount: getRefundAmountForQuantity(line, maxQuantity)
+      };
+    }));
+    toast.success('All remaining refundable quantities were selected.');
+  };
+
+  const clearRefundQuantities = () => {
+    setRefundLines(prev => prev.map(line => ({
+      ...line,
+      quantity: '',
+      refundAmount: ''
+    })));
+    toast.info('Refund quantities cleared.');
   };
 
   const handleRefundActualTransactionAtChange = value => {
@@ -2052,7 +2292,9 @@ export function SalesModule({ user }) {
         return;
       }
       if (line.quantityValue > line.maxQuantity) {
-        toast.error(`${line.itemName} has only ${line.maxQuantity} refundable unit${line.maxQuantity === 1 ? '' : 's'} remaining.`);
+        toast.error(getRefundableQuantityLimitMessage(line.maxQuantity), {
+          description: line.itemName
+        });
         return;
       }
       if (!Number.isFinite(line.refundAmountValue) || line.refundAmountValue <= 0) {
@@ -2097,7 +2339,7 @@ export function SalesModule({ user }) {
         }))
       });
       toast.success('Refund recorded and stock restored.', {
-        description: `${refundRecord?.salesNumber || refundRecord?.sales_number || 'Refund record'} was saved.`
+        description: `${getPrimaryDocumentNumber(refundRecord)} was saved.`
       });
       setSaleToRefund(null);
       setRefundLines([]);
@@ -2126,7 +2368,7 @@ export function SalesModule({ user }) {
     try {
       const cancelledSale = await cancelSale(saleToCancel.id, cleanReason);
       toast.success('Sale cancelled and stock restored.', {
-        description: `${cancelledSale?.sales_number || cancelledSale?.salesNumber || saleToCancel.salesNumber || 'Sales record'} was marked as cancelled.`
+        description: `${getPrimaryDocumentNumber(cancelledSale || saleToCancel)} was marked as cancelled.`
       });
       setSaleToCancel(null);
       setCancelReason('');
@@ -2144,6 +2386,8 @@ export function SalesModule({ user }) {
       <style>{`
         .sales-screen {
           min-height: 0;
+          max-width: 100%;
+          overflow-x: hidden;
         }
 
         .sales-grid {
@@ -2151,6 +2395,7 @@ export function SalesModule({ user }) {
           grid-template-columns: minmax(0, 1fr) minmax(340px, 410px);
           gap: 1.25rem;
           align-items: start;
+          min-width: 0;
         }
 
         .sales-page {
@@ -2190,6 +2435,8 @@ export function SalesModule({ user }) {
         .sales-side-panel {
           display: grid;
           gap: 1rem;
+          min-width: 0;
+          max-width: 100%;
           position: sticky;
           top: 1rem;
         }
@@ -2210,6 +2457,7 @@ export function SalesModule({ user }) {
         }
 
         .sales-form-section {
+          min-width: 0;
           border: 1px solid #e2e8f0;
           border-radius: 1rem;
           background: #ffffff;
@@ -2278,15 +2526,30 @@ export function SalesModule({ user }) {
           font-weight: 600;
         }
 
+        .sales-readonly-user svg {
+          flex: 0 0 auto;
+        }
+
+        .sales-readonly-user-name {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
         .sales-customer-control {
           width: 100%;
           min-width: 0;
           min-height: 3.5rem;
           overflow: hidden;
+          color: #0f172a;
         }
 
         .sales-customer-control [data-slot="select-value"] {
+          display: flex;
+          flex: 1 1 auto;
           min-width: 0;
+          max-width: 100%;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -2945,7 +3208,7 @@ export function SalesModule({ user }) {
 
         .sales-refund-description {
           margin-top: 0.45rem;
-          color: #475569;
+          color: #111827;
           font-size: 0.9rem;
           line-height: 1.5;
         }
@@ -3002,18 +3265,58 @@ export function SalesModule({ user }) {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 0.75rem;
+          gap: 1.15rem;
           color: #111827;
           font-size: 0.9rem;
           font-weight: 850;
-          line-height: 1.25;
+          line-height: 1.2;
+        }
+
+        .sales-refund-section-heading > div:first-child {
+          display: flex;
+          min-width: 0;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 0.35rem 0.6rem;
+          min-height: 2.25rem;
         }
 
         .sales-refund-section-heading strong {
-          flex-shrink: 0;
           color: #64748b;
           font-size: 0.78rem;
           font-weight: 800;
+        }
+
+        .sales-refund-bulk-actions {
+          display: flex;
+          flex: 0 0 auto;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 0.5rem;
+        }
+
+        .sales-refund-bulk-actions button {
+          min-height: 2.25rem;
+          border-color: #cbd5e1;
+          border-radius: 0.55rem;
+          background: #ffffff;
+          color: #1f2937;
+          font-size: 0.78rem;
+          font-weight: 800;
+          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .sales-refund-bulk-actions button:hover,
+        .sales-refund-bulk-actions button:focus-visible {
+          border-color: #94a3b8;
+          background: #f8fafc;
+          color: #111827;
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+        }
+
+        .sales-refund-bulk-actions button:disabled {
+          box-shadow: none;
         }
 
         .sales-refund-lines {
@@ -3082,7 +3385,7 @@ export function SalesModule({ user }) {
           align-items: center;
           gap: 0.35rem 0.55rem;
           margin-top: 0.35rem;
-          color: #475569;
+          color: #111827;
           font-size: 0.82rem;
           line-height: 1.35;
         }
@@ -3180,7 +3483,7 @@ export function SalesModule({ user }) {
         }
 
         .sales-refund-helper {
-          color: #475569;
+          color: #111827;
           font-size: 0.76rem;
           line-height: 1.45;
         }
@@ -3290,7 +3593,7 @@ export function SalesModule({ user }) {
 
         .sales-refund-summary-heading p {
           margin-top: 0.2rem;
-          color: #64748b;
+          color: #111827;
           font-size: 0.74rem;
           font-weight: 650;
         }
@@ -3459,6 +3762,23 @@ export function SalesModule({ user }) {
 
           .sales-refund-main {
             gap: 0.8rem;
+          }
+
+          .sales-refund-section-heading {
+            align-items: stretch;
+            flex-direction: column;
+            gap: 0.65rem;
+          }
+
+          .sales-refund-bulk-actions {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            width: 100%;
+          }
+
+          .sales-refund-bulk-actions button {
+            width: 100%;
+            white-space: normal;
           }
 
           .sales-refund-lines {
@@ -3678,6 +3998,8 @@ export function SalesModule({ user }) {
           box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
           display: flex;
           flex-direction: column;
+          min-width: 0;
+          max-width: 100%;
         }
 
         .sales-checkout-header {
@@ -3689,10 +4011,13 @@ export function SalesModule({ user }) {
           gap: 0.85rem;
           padding: 0 1rem 1rem;
           min-height: 0;
+          min-width: 0;
+          overflow-x: hidden;
           overflow-y: auto;
         }
 
         .sales-checkout-section {
+          min-width: 0;
           padding: 0.9rem;
         }
 
@@ -3876,10 +4201,17 @@ export function SalesModule({ user }) {
           overflow: hidden;
         }
 
+        .sales-history-filter-panel {
+          display: grid;
+          grid-template-columns: minmax(320px, 1fr) minmax(420px, auto);
+          align-items: center;
+          gap: 1rem;
+        }
+
         .sales-history-search {
           display: flex;
           min-width: 0;
-          flex: 1;
+          width: 100%;
           align-items: center;
           gap: 0.85rem;
           border: 1px solid #e2e8f0;
@@ -3887,16 +4219,46 @@ export function SalesModule({ user }) {
           background: #ffffff;
           padding: 0 1rem;
           min-height: 3rem;
+          height: 3rem;
           transition: border-color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .sales-history-search-input {
+          height: 100%;
+          min-width: 0;
+        }
+
+        .sales-history-filter-controls {
+          display: grid;
+          grid-template-columns: minmax(13rem, 15rem) minmax(8.5rem, auto) minmax(8.5rem, auto);
+          align-items: center;
+          gap: 0.75rem;
+          color: #475569;
         }
 
         .sales-history-filter {
           min-width: 12rem;
+          height: 3rem;
         }
 
         .sales-history-search:focus-within {
           border-color: #f4f400;
           box-shadow: 0 0 0 3px rgba(244, 244, 0, 0.32);
+        }
+
+        .sales-history-count-pill {
+          display: inline-flex;
+          height: 3rem;
+          min-width: 8.5rem;
+          align-items: center;
+          justify-content: center;
+          gap: 0.45rem;
+          border-radius: 0.75rem;
+          padding: 0 1rem;
+          font-size: 0.875rem;
+          font-weight: 500;
+          line-height: 1;
+          white-space: nowrap;
         }
 
         .sales-history-list {
@@ -4100,14 +4462,21 @@ export function SalesModule({ user }) {
 
         .sales-selected-items-header {
           display: flex;
+          min-width: 0;
           align-items: flex-start;
           justify-content: space-between;
           gap: 0.85rem;
           margin-bottom: 0.85rem;
         }
 
+        .sales-selected-items-header > div:first-child {
+          min-width: 0;
+        }
+
         .sales-selected-items-actions {
           display: flex;
+          min-width: 0;
+          max-width: 100%;
           flex-wrap: wrap;
           justify-content: flex-end;
           gap: 0.5rem;
@@ -4117,6 +4486,7 @@ export function SalesModule({ user }) {
           min-height: 2.35rem;
           border-radius: 0.7rem;
           font-weight: 700;
+          white-space: nowrap;
         }
 
         .sales-non-inventory-dialog {
@@ -4509,8 +4879,105 @@ export function SalesModule({ user }) {
         }
 
         .sales-checkout-card .sales-pos-customer-bar {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
+          grid-template-columns: minmax(0, 1fr);
+          gap: 1rem;
+          align-items: stretch;
+        }
+
+        .sales-invoice-number-field {
+          gap: 0.6rem;
+          min-width: 0;
+          max-width: none;
+        }
+
+        .sales-invoice-number-input {
+          font-weight: 850;
+          letter-spacing: 0;
+          text-align: left;
+        }
+
+        .sales-invoice-input-row {
+          display: grid;
+          grid-template-columns: minmax(9rem, 1fr) auto;
+          gap: 0.5rem;
+          align-items: stretch;
+        }
+
+        .sales-invoice-suggestions-button {
+          min-height: 3.25rem;
+          min-width: 10.75rem;
+          justify-content: center;
+          border-color: #dbeafe;
+          border-radius: 0.65rem;
+          background: #ffffff;
+          color: #1d4ed8;
+          font-size: 0.78rem;
+          font-weight: 800;
+          white-space: nowrap;
+        }
+
+        .sales-invoice-suggestions-button:disabled {
+          opacity: 0.72;
+        }
+
+        .sales-invoice-suggestions-button svg {
+          width: 0.95rem;
+          height: 0.95rem;
+        }
+
+        .sales-invoice-helper {
+          display: flex;
+          align-items: flex-start;
+          gap: 0.35rem;
+          color: #475569;
+          font-size: 0.72rem;
+          font-weight: 650;
+          line-height: 1.35;
+        }
+
+        .sales-invoice-helper svg {
+          margin-top: 0.05rem;
+          flex: 0 0 auto;
+          width: 0.85rem;
+          height: 0.85rem;
+        }
+
+        .sales-invoice-helper-error {
+          color: #b91c1c;
+        }
+
+        .sales-invoice-inline-note {
+          display: flex;
+          align-items: center;
+          gap: 0.45rem;
+          color: #475569;
+          font-size: 0.74rem;
+          font-weight: 650;
+          line-height: 1.4;
+        }
+
+        .sales-invoice-inline-note svg {
+          flex: 0 0 auto;
+          width: 0.86rem;
+          height: 0.86rem;
+          color: #2563eb;
+        }
+
+        .sales-invoice-input-error,
+        .sales-invoice-input-error:hover,
+        .sales-invoice-input-error:focus,
+        .sales-invoice-input-error:focus-visible {
+          border-color: #dc2626;
+          box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.14);
+        }
+
+        .sales-customer-staff-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(10.5rem, 0.95fr);
           gap: 0.85rem 1rem;
+          align-items: end;
+          min-width: 0;
+          margin-top: 0.7rem;
         }
 
         .sales-invoice-customer-grid {
@@ -5267,8 +5734,7 @@ export function SalesModule({ user }) {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
-          .sales-payment-grid,
-          .sales-checkout-card .sales-pos-customer-bar {
+          .sales-payment-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
@@ -5276,6 +5742,14 @@ export function SalesModule({ user }) {
             grid-template-columns: 1fr;
             flex: 1;
             overflow: hidden;
+          }
+
+          .sales-history-filter-panel {
+            grid-template-columns: 1fr;
+          }
+
+          .sales-history-filter-controls {
+            grid-template-columns: minmax(13rem, 1fr) minmax(8.5rem, auto) minmax(8.5rem, auto);
           }
 
           .sales-history-list {
@@ -5424,9 +5898,18 @@ export function SalesModule({ user }) {
 
           .sales-product-toolbar,
           .sales-pos-customer-bar,
+          .sales-customer-staff-row,
           .sales-invoice-customer-grid,
           .sales-pos-search-row {
             grid-template-columns: 1fr;
+          }
+
+          .sales-invoice-input-row {
+            grid-template-columns: minmax(0, 1fr);
+          }
+
+          .sales-invoice-suggestions-button {
+            width: 100%;
           }
 
           .sales-product-header-row,
@@ -5710,7 +6193,8 @@ export function SalesModule({ user }) {
           }
 
           .sales-checkout-card .sales-pos-customer-bar,
-          .sales-checkout-card .sales-customer-grid {
+          .sales-checkout-card .sales-customer-grid,
+          .sales-customer-staff-row {
             grid-template-columns: 1fr;
           }
 
@@ -5762,6 +6246,22 @@ export function SalesModule({ user }) {
           .sales-history-dialog {
             width: calc(100vw - 1rem);
             max-height: 92vh;
+          }
+
+          .sales-history-filter-panel {
+            grid-template-columns: 1fr;
+            gap: 0.75rem;
+          }
+
+          .sales-history-filter-controls {
+            grid-template-columns: 1fr;
+            gap: 0.6rem;
+          }
+
+          .sales-history-filter,
+          .sales-history-count-pill {
+            width: 100%;
+            min-width: 0;
           }
 
           .sales-history-row {
@@ -6140,7 +6640,9 @@ export function SalesModule({ user }) {
                     <Label>Sold By</Label>
                     <div className="sales-readonly-user">
                       <User />
-                      {user?.fullName || user?.username || 'Current user'}
+                      <span className="sales-readonly-user-name">
+                        {user?.fullName || user?.username || 'Current user'}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -6377,6 +6879,67 @@ export function SalesModule({ user }) {
               <CardContent className="sales-checkout-content">
                 <div className="sales-form-section sales-checkout-section bg-slate-50/60">
                   <div className="sales-pos-customer-bar">
+                    <div className="sales-pos-field sales-invoice-number-field">
+                      <Label htmlFor="sale-official-invoice-number">
+                        Sales Invoice No. <span className="text-red-600">*</span>
+                      </Label>
+                      <div className="sales-invoice-input-row">
+                        <Input
+                          id="sale-official-invoice-number"
+                          value={officialInvoiceNumber}
+                          maxLength={6}
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          disabled={isSaving}
+                          aria-invalid={Boolean(duplicateOfficialInvoiceSale)}
+                          onChange={event => {
+                            const nextValue = sanitizeInvoiceNumberInput(event.target.value);
+                            if (event.target.value !== nextValue) {
+                              toast.warning('Sales Invoice Number accepts numbers only.', {
+                                id: 'sales-invoice-number-digits-only'
+                              });
+                            }
+                            setOfficialInvoiceNumber(nextValue);
+                          }}
+                          onBlur={() => setOfficialInvoiceNumber(prev => sanitizeInvoiceNumberInput(prev))}
+                          placeholder="6-digit SI no."
+                          className={`sales-invoice-input sales-invoice-number-input ${duplicateOfficialInvoiceSale ? 'sales-invoice-input-error' : ''}`}
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          aria-label={recommendedInvoiceNumber ? `Use Sales Invoice Number ${recommendedInvoiceNumber}` : 'No Sales Invoice suggestion available'}
+                          title={recommendedInvoiceNumber ? `Use ${recommendedInvoiceNumber}` : 'No Sales Invoice suggestion available'}
+                          className="sales-action-button sales-invoice-suggestions-button"
+                          onClick={handleInvoiceSuggestionAction}
+                          disabled={isSaving || isLoadingInvoiceSuggestion || !recommendedInvoiceNumber}
+                        >
+                          <CheckCircle />
+                          {isLoadingInvoiceSuggestion
+                            ? 'Loading suggestion'
+                            : recommendedInvoiceNumber
+                            ? isRecommendedInvoiceSelected
+                              ? 'Selected'
+                              : `Use ${recommendedInvoiceNumber}`
+                            : 'No suggestion'}
+                        </Button>
+                      </div>
+                      <p className="sales-invoice-inline-note">
+                        <ReceiptText />
+                        <span>
+                          Suggested Sales Invoice No.: {recommendedInvoiceNumber || 'enter the next blank SI from the booklet'}.
+                        </span>
+                      </p>
+                      {duplicateOfficialInvoiceSale && (
+                        <p className="sales-invoice-helper sales-invoice-helper-error">
+                          <AlertTriangle />
+                          <span>This number is already recorded in Sales History.</span>
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="sales-customer-staff-row">
                     <div className="sales-pos-field">
                       <Label htmlFor="customer-type">Customer Type</Label>
                       <Select value={customerType} onValueChange={setCustomerType}>
@@ -6394,7 +6957,9 @@ export function SalesModule({ user }) {
                       <Label>Sold By</Label>
                       <div className="sales-readonly-user">
                         <User />
-                        {user?.fullName || user?.username || 'Current user'}
+                        <span className="sales-readonly-user-name">
+                          {user?.fullName || user?.username || 'Current user'}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -6839,7 +7404,7 @@ export function SalesModule({ user }) {
                     type="button"
                     className="sales-action-button sales-save-sale-button px-6 disabled:cursor-not-allowed"
                     onClick={handleRecordSale}
-                    disabled={isSaving}
+                    disabled={isSaving || Boolean(duplicateOfficialInvoiceSale)}
                   >
                     {isSaving
                       ? 'Saving Sale...'
@@ -6933,6 +7498,8 @@ export function SalesModule({ user }) {
         onActualTransactionAtChange={handleRefundActualTransactionAtChange}
         onBackdateReasonChange={setRefundBackdateReason}
         onLineChange={updateRefundLine}
+        onFillAll={fillAllRefundableQuantities}
+        onClearQuantities={clearRefundQuantities}
         onOpenChange={open => {
           if (!open) closeRefundSaleDialog();
         }}
@@ -7145,6 +7712,7 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
   const hasTrackedItems = items.some(item => !isNonInventorySaleItem(item));
   const hasNonInventoryItems = items.some(isNonInventorySaleItem);
   const branchAddress = getReceiptBranchAddress(sale?.branch);
+  const invoiceNumber = getPrimaryDocumentNumber(sale);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -7194,7 +7762,7 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
               <div className="sales-receipt-preview-invoice">
                 <p className="sales-receipt-preview-sales">SALES</p>
                 <p className="sales-receipt-preview-title">INVOICE</p>
-                <p className="sales-receipt-preview-number">No.: {sale?.salesNumber || 'Sales record'}</p>
+                <p className="sales-receipt-preview-number">No.: {invoiceNumber}</p>
               </div>
             </div>
             <div className="sales-receipt-divider" />
@@ -7353,7 +7921,7 @@ function CancelSaleDialog({ open, sale, reason, onReasonChange, onOpenChange, on
                   Cancel entire sale?
                 </DialogTitle>
                 <DialogDescription className="sales-cancel-description text-sm leading-6">
-                  This admin action voids <span className="sales-cancel-sale-number">{sale?.salesNumber || 'this sales record'}</span> and restores all tracked inventory from the original sale. Use Refund Items instead when a customer returns only selected items.
+                  This admin action voids <span className="sales-cancel-sale-number">{getPrimaryDocumentNumber(sale)}</span> and restores all tracked inventory from the original sale. Use Refund Items instead when a customer returns only selected items.
                 </DialogDescription>
               </div>
             </div>
@@ -7407,6 +7975,8 @@ function RefundSaleDialog({
   onActualTransactionAtChange,
   onBackdateReasonChange,
   onLineChange,
+  onFillAll,
+  onClearQuantities,
   onOpenChange,
   onConfirm,
   isSubmitting
@@ -7415,6 +7985,8 @@ function RefundSaleDialog({
   const refundTotal = selectedLines.reduce((sum, line) => sum + Number(line.refundAmount || 0), 0);
   const refundQuantityTotal = selectedLines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
   const maxRefundTotal = (lines || []).reduce((sum, line) => sum + Number(line.maxAmount || 0), 0);
+  const hasSelectedQuantities = refundQuantityTotal > 0;
+  const hasUnfilledRefundableQuantity = (lines || []).some(line => Number(line.maxQuantity || 0) > Number(line.quantity || 0));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -7431,7 +8003,7 @@ function RefundSaleDialog({
                     Record Customer Refund
                   </DialogTitle>
                   <DialogDescription className="sales-refund-description">
-                    Refund items from {sale?.salesNumber || 'this sale'}. Returned items will be added back to inventory.
+                    Refund items from {getPrimaryDocumentNumber(sale)}. Returned items will be added back to inventory.
                   </DialogDescription>
                 </div>
               </div>
@@ -7450,8 +8022,30 @@ function RefundSaleDialog({
           <div className="sales-refund-body">
             <div className="sales-refund-main">
               <div className="sales-refund-section-heading">
-                <span>Refundable Items</span>
-                <strong>{(lines || []).length} item{(lines || []).length === 1 ? '' : 's'}</strong>
+                <div>
+                  <span>Refundable Items</span>
+                  <strong>{(lines || []).length} item{(lines || []).length === 1 ? '' : 's'}</strong>
+                </div>
+                <div className="sales-refund-bulk-actions" aria-label="Refund quantity shortcuts">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={onFillAll}
+                    disabled={isSubmitting || !hasUnfilledRefundableQuantity}
+                  >
+                    Refund All Remaining
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={onClearQuantities}
+                    disabled={isSubmitting || !hasSelectedQuantities}
+                  >
+                    Clear Quantities
+                  </Button>
+                </div>
               </div>
               <div className="sales-refund-lines" role="region" aria-label="Refundable items">
                 {(lines || []).map(line => {
@@ -7484,11 +8078,19 @@ function RefundSaleDialog({
                             value={line.quantity}
                             maxLength={6}
                             disabled={isSubmitting}
-                            onChange={event => onLineChange(line.salesItemId, 'quantity', event.target.value)}
+                            {...createNumericInputGuards({
+                              mode: 'whole',
+                              fieldName: 'Refund quantity',
+                              toastId: `sales-refund-quantity-entry-${line.salesItemId}`,
+                              onChange: event => onLineChange(line.salesItemId, 'quantity', event.target.value)
+                            })}
                             placeholder="0"
                             className="sales-refund-input"
+                            aria-describedby={`refund-quantity-help-${line.salesItemId}`}
                           />
-                          <p className="sales-refund-helper">Enter the quantity of items being returned.</p>
+                          <p id={`refund-quantity-help-${line.salesItemId}`} className="sales-refund-helper">
+                            {getRefundableQuantityLimitMessage(line.maxQuantity)}
+                          </p>
                         </div>
                         <div className="sales-refund-field">
                           <Label htmlFor={`refund-amount-${line.salesItemId}`}>Refund Amount</Label>
@@ -7497,7 +8099,12 @@ function RefundSaleDialog({
                             inputMode="decimal"
                             value={line.refundAmount}
                             disabled={isSubmitting || quantityValue <= 0}
-                            onChange={event => onLineChange(line.salesItemId, 'refundAmount', event.target.value)}
+                            {...createNumericInputGuards({
+                              mode: 'decimal',
+                              fieldName: 'Refund amount',
+                              toastId: `sales-refund-amount-entry-${line.salesItemId}`,
+                              onChange: event => onLineChange(line.salesItemId, 'refundAmount', event.target.value)
+                            })}
                             placeholder="0.00"
                             className="sales-refund-input"
                           />
@@ -7678,19 +8285,19 @@ function SalesHistoryDialog({
         </DialogHeader>
 
         <div className="sales-history-body px-5 py-5 sm:px-7">
-          <div className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="sales-history-filter-panel rounded-xl border border-slate-200 bg-white p-4">
             <div className="sales-history-search">
               <Search className="h-5 w-5 shrink-0 text-slate-500" />
               <Input
                 value={searchValue}
                 onChange={event => onSearchChange(event.target.value)}
-                placeholder="Search by sale number, item, employee, or remarks"
-                className="h-11 border-0 bg-transparent px-0 text-base shadow-none focus-visible:border-0 focus-visible:ring-0"
+                placeholder="Search by invoice, system ref, item, employee, or remarks"
+                className="sales-history-search-input border-0 bg-transparent px-0 text-base shadow-none focus-visible:border-0 focus-visible:ring-0"
               />
             </div>
-            <div className="flex shrink-0 flex-col gap-2 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-end">
+            <div className="sales-history-filter-controls text-sm">
               <Select value={periodValue} onValueChange={onPeriodChange}>
-                <SelectTrigger className="sales-history-filter h-10 rounded-lg border-slate-200 bg-white">
+                <SelectTrigger className="sales-history-filter rounded-lg border-slate-200 bg-white">
                   <CalendarDays className="h-4 w-4 text-slate-500" />
                   <SelectValue placeholder="Date filter" />
                 </SelectTrigger>
@@ -7701,11 +8308,11 @@ function SalesHistoryDialog({
                   <SelectItem value="month">This Month</SelectItem>
                 </SelectContent>
               </Select>
-              <Badge variant="secondary" className="h-10 rounded-lg bg-slate-100 px-4 text-sm text-slate-800">
+              <Badge variant="secondary" className="sales-history-count-pill bg-slate-100 text-slate-800">
                 <Info className="h-4 w-4 text-blue-600" />
                 {sales.length} visible
               </Badge>
-              <Badge variant="outline" className="h-10 rounded-lg px-4 text-sm text-slate-800">
+              <Badge variant="outline" className="sales-history-count-pill text-slate-800">
                 <ClipboardList className="h-4 w-4 text-blue-600" />
                 {totalSalesCount} total
               </Badge>
@@ -7726,6 +8333,10 @@ function SalesHistoryDialog({
                 {sales.map(sale => {
                   const isSelected = selectedSale?.id === sale.id;
                   const isRefund = isRefundSalesRecord(sale);
+                  const displayNumber = getSalesHistoryTitleNumber(sale);
+                  const systemReferenceNumber = getSystemReferenceNumber(sale);
+                  const originalInvoiceNumber = getReferenceOfficialInvoiceNumber(sale);
+                  const originalSystemNumber = getReferenceSystemNumber(sale);
 
                   return (
                     <button
@@ -7737,13 +8348,20 @@ function SalesHistoryDialog({
                       <div className="sales-history-row">
                         <div className="min-w-0">
                           <p className="truncate text-base font-bold text-slate-900">
-                            {sale.salesNumber || 'Sales record'}
+                            {displayNumber}
                           </p>
+                          {!isRefund && systemReferenceNumber && systemReferenceNumber !== displayNumber && (
+                            <p className="mt-1 truncate text-xs font-semibold text-slate-500">System Ref.: {systemReferenceNumber}</p>
+                          )}
                           {isRefund && (
                             <p className="mt-1 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-700">
                               <RotateCcw className="h-3.5 w-3.5" />
                               <span>Refund record</span>
-                              {sale.referenceSalesNumber && <span className="normal-case tracking-normal text-slate-600">for {sale.referenceSalesNumber}</span>}
+                              {(originalInvoiceNumber || originalSystemNumber) && (
+                                <span className="normal-case tracking-normal text-slate-600">
+                                  for {originalInvoiceNumber || originalSystemNumber}
+                                </span>
+                              )}
                             </p>
                           )}
                           <p className="sales-history-meta mt-2 text-sm leading-5 text-slate-700">
@@ -7862,15 +8480,23 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
   const encodedDate = formatHistoryDateParts(sale.encodedAt);
   const recordLabel = getTransactionRecordLabel(sale);
   const documentName = getTransactionDocumentName(sale);
+  const displayNumber = getSalesHistoryTitleNumber(sale);
+  const systemReferenceNumber = getSystemReferenceNumber(sale);
+  const originalInvoiceNumber = getReferenceOfficialInvoiceNumber(sale);
+  const originalSystemNumber = getReferenceSystemNumber(sale);
+  const originalDisplayNumber = originalInvoiceNumber || originalSystemNumber;
   return (
     <div className="space-y-5">
       <div className="sales-history-detail-header">
         <div className="sales-history-detail-title-row">
           <div className="min-w-0">
             <span className="sales-history-detail-label">{recordLabel}</span>
-            <h3 className="sales-history-detail-number">{sale.salesNumber}</h3>
-            {isRefund && sale.referenceSalesNumber && (
-              <p className="mt-1 text-sm font-medium text-slate-600">Original sale: {sale.referenceSalesNumber}</p>
+            <h3 className="sales-history-detail-number">{displayNumber}</h3>
+            {!isRefund && systemReferenceNumber && systemReferenceNumber !== displayNumber && (
+              <p className="mt-1 text-sm font-medium text-slate-600">System Ref.: {systemReferenceNumber}</p>
+            )}
+            {isRefund && originalDisplayNumber && (
+              <p className="mt-1 text-sm font-medium text-slate-600">Original invoice: {originalDisplayNumber}</p>
             )}
           </div>
           <Badge className={`sales-history-status-badge capitalize ${isCancelled ? 'bg-red-100 text-red-700 hover:bg-red-100' : isRefund ? 'bg-amber-100 text-amber-700 hover:bg-amber-100' : 'bg-green-100 text-green-700 hover:bg-green-100'}`}>
@@ -7954,8 +8580,8 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
         <div className="sales-history-action-note">
           <Info className="h-4 w-4" />
           <span>
-            {isRefund && sale.referenceSalesNumber
-              ? `This refund record is linked to original sale ${sale.referenceSalesNumber}.`
+            {isRefund && originalDisplayNumber
+              ? `This refund record is linked to original invoice ${originalDisplayNumber}.`
               : hasRefundableItems
                 ? 'Refund Items handles returned items and creates a separate refund record.'
                 : refundUnavailableText}
@@ -7982,6 +8608,10 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
       )}
 
       <div className="grid gap-4 sm:grid-cols-2">
+        {!isRefund && <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="Invoice No." value={displayNumber} />}
+        {isRefund && <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="Refund Ref." value={displayNumber} />}
+        {systemReferenceNumber && <HistoryDetail icon={<ClipboardList className="h-5 w-5" />} label="System Ref." value={systemReferenceNumber} />}
+        {isRefund && originalDisplayNumber && <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="Original Invoice" value={originalDisplayNumber} />}
         <HistoryDetail icon={<User className="h-5 w-5" />} label="Customer Type" value={customerTypeLabels[sale.customerType] || 'Walk-in Customer'} />
         <HistoryDetail icon={<User className="h-5 w-5" />} label={isRefund ? 'Processed By' : 'Sold By'} value={sale.soldByName || 'System'} />
         <HistoryDetail icon={<ClipboardList className="h-5 w-5" />} label="Registered Name" value={getReceiptCustomerName(sale)} />

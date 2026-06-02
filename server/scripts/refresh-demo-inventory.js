@@ -18,6 +18,9 @@ const BRANCHES = ['Manggahan', 'San Rafael'];
 const CATALOG = buildEmCayetanoCatalog();
 const PRESENTATION_NOW = new Date(2026, 4, 30, 14, 20, 0, 0);
 const PRESENTATION_YEAR = PRESENTATION_NOW.getFullYear();
+const SALES_INVOICE_DOCUMENT_TYPE = 'sales_invoice';
+const SALES_INVOICE_SEQUENCE_DIGITS = 6;
+const DEMO_OFFICIAL_INVOICE_START_NUMBER = 71101;
 
 if (CATALOG.length === 0) {
   throw new Error('E.M. Cayetano product catalog is empty.');
@@ -150,7 +153,15 @@ const philippineTimestamp = (daysAgo, hour = 8, minute = 0) => {
 };
 
 const formatSalesNumber = sequence => `SALE-${PRESENTATION_YEAR}-${String(sequence).padStart(5, '0')}`;
+const formatOfficialInvoiceNumber = sequence => String(sequence).padStart(SALES_INVOICE_SEQUENCE_DIGITS, '0');
 const formatPurchaseNumber = sequence => `PUR-${PRESENTATION_YEAR}-${String(sequence).padStart(5, '0')}`;
+
+const computeVatBreakdown = taxableAmount => {
+  const grossAmount = Number(taxableAmount || 0);
+  const vatableSales = Number((grossAmount / 1.12).toFixed(2));
+  const vatAmount = Number((grossAmount - vatableSales).toFixed(2));
+  return { vatableSales, vatAmount };
+};
 
 const getDiscountDetails = (discountType, subtotalAmount, customAmount = 0) => {
   const normalizedType = String(discountType || 'none').trim().toLowerCase();
@@ -267,6 +278,18 @@ async function refreshDemoInventory() {
     const primaryAdmin = await findActor(client, 'Manggahan', 'Admin');
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS invoice_number_sequences (
+        document_type VARCHAR(40) NOT NULL,
+        invoice_year INTEGER NOT NULL,
+        last_number INTEGER NOT NULL DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila'),
+        PRIMARY KEY (document_type, invoice_year),
+        CHECK (invoice_year BETWEEN 2000 AND 9999),
+        CHECK (last_number >= 0)
+      )
+    `);
+
+    await client.query(`
       TRUNCATE TABLE
         purchase_items,
         purchase_transactions,
@@ -279,6 +302,13 @@ async function refreshDemoInventory() {
       RESTART IDENTITY
       CASCADE
     `);
+
+    await client.query(
+      `DELETE FROM invoice_number_sequences
+       WHERE document_type = $1
+         AND invoice_year = $2`,
+      [SALES_INVOICE_DOCUMENT_TYPE, PRESENTATION_YEAR]
+    );
 
     await client.query(`
       DELETE FROM audit_logs
@@ -527,6 +557,7 @@ async function refreshDemoInventory() {
       const discountDetails = getDiscountDetails(sale.discountType, subtotalAmount, sale.discountAmount);
       const discountAmount = Math.min(discountDetails.amount, subtotalAmount);
       const totalAmount = Number(Math.max(subtotalAmount - discountAmount, 0).toFixed(2));
+      const { vatableSales, vatAmount } = computeVatBreakdown(totalAmount);
       const paymentMethod = sale.paymentMethod || 'cash';
       const amountReceived = paymentMethod === 'cash'
         ? Number(Math.max(Number(sale.cashTendered || totalAmount), totalAmount).toFixed(2))
@@ -540,14 +571,17 @@ async function refreshDemoInventory() {
 
       const transactionResult = await client.query(
         `INSERT INTO sales_transactions (
-           sales_number, branch, customer_type, total_quantity, subtotal_amount,
-           discount_amount, discount_type, discount_label, total_amount,
+          sales_number, branch, customer_type, total_quantity, subtotal_amount,
+           discount_amount, discount_type, discount_label, delivery_charge,
+           vatable_sales, vat_amount, total_amount,
            payment_method, amount_received, change_amount, payment_reference,
            payment_confirmed, payment_confirmed_by, payment_confirmed_by_name,
-           payment_confirmed_at, status, sold_by, sold_by_name, remarks, created_at
+           payment_confirmed_at, status, sold_by, sold_by_name, remarks,
+           created_at, official_invoice_number
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                 true, $14, $15, $16, 'completed', $17, $18, $19, $20)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10, $11, $12,
+                 $13, $14, $15, true, $16, $17, $18, 'completed',
+                 $19, $20, $21, $22, $23)
          RETURNING sales_transaction_id`,
         [
           formatSalesNumber(salesSequence),
@@ -558,6 +592,8 @@ async function refreshDemoInventory() {
           discountAmount,
           discountDetails.type,
           discountDetails.label,
+          vatableSales,
+          vatAmount,
           totalAmount,
           paymentMethod,
           amountReceived,
@@ -569,7 +605,8 @@ async function refreshDemoInventory() {
           actor.user_id,
           actor.full_name,
           sale.remarks,
-          saleTime
+          saleTime,
+          formatOfficialInvoiceNumber(DEMO_OFFICIAL_INVOICE_START_NUMBER + salesSequence - 1)
         ]
       );
       salesSequence += 1;
@@ -616,6 +653,23 @@ async function refreshDemoInventory() {
           createdAt: saleTime
         });
       }
+    }
+
+    const lastOfficialInvoiceNumber = DEMO_OFFICIAL_INVOICE_START_NUMBER + salesSequence - 2;
+    if (lastOfficialInvoiceNumber >= DEMO_OFFICIAL_INVOICE_START_NUMBER) {
+      await client.query(
+        `INSERT INTO invoice_number_sequences (document_type, invoice_year, last_number, updated_at)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (document_type, invoice_year) DO UPDATE
+         SET last_number = EXCLUDED.last_number,
+             updated_at = EXCLUDED.updated_at`,
+        [
+          SALES_INVOICE_DOCUMENT_TYPE,
+          PRESENTATION_YEAR,
+          lastOfficialInvoiceNumber,
+          philippineTimestamp(0, 17, 0)
+        ]
+      );
     }
 
     for (const inventory of inventoryRows) {
@@ -672,6 +726,7 @@ async function refreshDemoInventory() {
           productsCreated: productRows.length,
           branchInventoryRecords: inventoryRows.length,
           salesTransactionsCreated: SALES_PLANS.length,
+          officialInvoiceRange: `${formatOfficialInvoiceNumber(DEMO_OFFICIAL_INVOICE_START_NUMBER)}-${formatOfficialInvoiceNumber(lastOfficialInvoiceNumber)}`,
           purchaseTransactionsCreated: purchaseSeedLines.length,
           archivedRecordsCreated: archiveCandidates.length,
           branches: BRANCHES
