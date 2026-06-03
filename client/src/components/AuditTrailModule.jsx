@@ -28,7 +28,8 @@ const DATE_RANGES = {
   all: 'All Time',
   today: 'Today',
   sevenDays: 'Last 7 Days',
-  thirtyDays: 'Last 30 Days'
+  thirtyDays: 'Last 30 Days',
+  custom: 'Custom Date Range'
 };
 
 const DEFAULT_VISIBLE_RECORDS = 5;
@@ -120,20 +121,39 @@ const isLongDetailField = key => LONG_DETAIL_FIELDS.has(String(key || '').replac
 const isStructuredDetailValue = value => value && typeof value === 'object';
 const shouldUseDetailBlock = (key, value) => isLongDetailField(key) || isStructuredDetailValue(value);
 
-const getDateRangeStart = range => {
+const parseDateInput = (value, endOfDay = false) => {
+  const [year, month, day] = String(value || '').split('-').map(Number);
+  if (!year || !month || !day) return null;
+  return endOfDay
+    ? new Date(year, month - 1, day, 23, 59, 59, 999)
+    : new Date(year, month - 1, day, 0, 0, 0, 0);
+};
+
+const getDateRangeBounds = (range, customStartDate = '', customEndDate = '') => {
   const now = new Date();
-  if (range === 'today') return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (range === 'today') {
+    return {
+      start: new Date(now.getFullYear(), now.getMonth(), now.getDate()),
+      end: new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+    };
+  }
   if (range === 'sevenDays') {
     const date = new Date(now);
     date.setDate(date.getDate() - 7);
-    return date;
+    return { start: date, end: null };
   }
   if (range === 'thirtyDays') {
     const date = new Date(now);
     date.setDate(date.getDate() - 30);
-    return date;
+    return { start: date, end: null };
   }
-  return null;
+  if (range === 'custom') {
+    return {
+      start: parseDateInput(customStartDate),
+      end: parseDateInput(customEndDate, true)
+    };
+  }
+  return { start: null, end: null };
 };
 
 const getRecordTitle = log => {
@@ -149,6 +169,8 @@ export function AuditTrailModule({ user }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [actionFilter, setActionFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState('all');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
   const [showAllRecords, setShowAllRecords] = useState(false);
   const [floatingButtonPosition, setFloatingButtonPosition] = useState(null);
   const auditRecordsPanelRef = useRef(null);
@@ -188,12 +210,16 @@ export function AuditTrailModule({ user }) {
 
   const filteredLogs = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    const rangeStart = getDateRangeStart(dateFilter);
+    const { start: rangeStart, end: rangeEnd } = getDateRangeBounds(dateFilter, customStartDate, customEndDate);
+    const hasInvalidCustomRange = dateFilter === 'custom' && rangeStart && rangeEnd && rangeStart > rangeEnd;
+    if (hasInvalidCustomRange) return [];
+
     return auditLogs.filter(log => {
       const group = getActionGroup(log.action);
       const matchesGroup = actionFilter === 'all' || group === actionFilter;
       const createdAt = log.createdAt ? new Date(log.createdAt) : null;
-      const matchesDate = !rangeStart || (createdAt && createdAt >= rangeStart);
+      const matchesDate = (!rangeStart || (createdAt && createdAt >= rangeStart)) &&
+        (!rangeEnd || (createdAt && createdAt <= rangeEnd));
       const haystack = [
         log.id,
         log.actorName,
@@ -207,16 +233,19 @@ export function AuditTrailModule({ user }) {
       ].join(' ').toLowerCase();
       return matchesGroup && matchesDate && (!query || haystack.includes(query));
     });
-  }, [auditLogs, searchQuery, actionFilter, dateFilter]);
+  }, [auditLogs, searchQuery, actionFilter, dateFilter, customStartDate, customEndDate]);
 
   const latestLog = auditLogs[0];
   const visibleLogs = showAllRecords ? filteredLogs : filteredLogs.slice(0, DEFAULT_VISIBLE_RECORDS);
   const hasMoreRecords = filteredLogs.length > DEFAULT_VISIBLE_RECORDS;
+  const customRangeStart = parseDateInput(customStartDate);
+  const customRangeEnd = parseDateInput(customEndDate, true);
+  const hasInvalidCustomRange = dateFilter === 'custom' && customRangeStart && customRangeEnd && customRangeStart > customRangeEnd;
 
   useEffect(() => {
     setShowAllRecords(false);
     setFloatingButtonPosition(null);
-  }, [searchQuery, actionFilter, dateFilter]);
+  }, [searchQuery, actionFilter, dateFilter, customStartDate, customEndDate]);
 
   useEffect(() => {
     if (!showAllRecords || !floatingButtonPosition) return undefined;
@@ -343,6 +372,24 @@ export function AuditTrailModule({ user }) {
 
         .audit-filter-control input {
           height: 100%;
+        }
+
+        .audit-custom-date-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(180px, 1fr));
+          gap: 18px;
+          margin-top: 18px;
+        }
+
+        .audit-custom-date-note {
+          margin-top: 10px;
+          font-size: 13px;
+          font-weight: 600;
+          color: #64748B;
+        }
+
+        .audit-custom-date-error {
+          color: #B91C1C;
         }
 
         .audit-record-row {
@@ -529,6 +576,7 @@ export function AuditTrailModule({ user }) {
 
           .audit-metric-grid,
           .audit-filter-grid,
+          .audit-custom-date-grid,
           .audit-record-row {
             grid-template-columns: 1fr;
           }
@@ -676,6 +724,39 @@ export function AuditTrailModule({ user }) {
               </Button>
             </div>
           </div>
+          {dateFilter === 'custom' && (
+            <div>
+              <div className="audit-custom-date-grid" aria-label="Custom audit date range">
+                <div className="space-y-2">
+                  <label htmlFor="audit-start-date" className="text-sm font-medium text-slate-700">Start Date</label>
+                  <Input
+                    id="audit-start-date"
+                    type="date"
+                    value={customStartDate}
+                    max={customEndDate || undefined}
+                    onChange={event => setCustomStartDate(event.target.value)}
+                    className="audit-filter-control border-slate-200 bg-slate-50"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="audit-end-date" className="text-sm font-medium text-slate-700">End Date</label>
+                  <Input
+                    id="audit-end-date"
+                    type="date"
+                    value={customEndDate}
+                    min={customStartDate || undefined}
+                    onChange={event => setCustomEndDate(event.target.value)}
+                    className="audit-filter-control border-slate-200 bg-slate-50"
+                  />
+                </div>
+              </div>
+              <p className={`audit-custom-date-note ${hasInvalidCustomRange ? 'audit-custom-date-error' : ''}`}>
+                {hasInvalidCustomRange
+                  ? 'Start Date must be earlier than or the same as End Date.'
+                  : 'Custom range includes all records from the start date through the end date.'}
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
