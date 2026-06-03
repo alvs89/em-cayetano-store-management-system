@@ -1052,6 +1052,8 @@ export function SalesModule({ user }) {
   const [invoiceSequenceExceptionReason, setInvoiceSequenceExceptionReason] = useState('');
   const [suggestedOfficialInvoiceNumber, setSuggestedOfficialInvoiceNumber] = useState('');
   const [isLoadingInvoiceSuggestion, setIsLoadingInvoiceSuggestion] = useState(false);
+  const [hasManualInvoiceEntry, setHasManualInvoiceEntry] = useState(false);
+  const [autoFilledInvoiceNumber, setAutoFilledInvoiceNumber] = useState('');
   const [customerType, setCustomerType] = useState('walk_in');
   const [customerName, setCustomerName] = useState('');
   const [customerTin, setCustomerTin] = useState('');
@@ -1331,6 +1333,29 @@ export function SalesModule({ user }) {
     };
   }, [getNextSalesInvoiceNumber, salesTransactions.length]);
 
+  useEffect(() => {
+    const currentInvoiceNumber = officialInvoiceNumber.trim();
+    if (
+      isSaving ||
+      hasManualInvoiceEntry ||
+      !OFFICIAL_INVOICE_NUMBER_PATTERN.test(suggestedOfficialInvoiceNumber)
+    ) {
+      return;
+    }
+
+    if (currentInvoiceNumber && currentInvoiceNumber !== autoFilledInvoiceNumber) {
+      return;
+    }
+
+    if (currentInvoiceNumber === suggestedOfficialInvoiceNumber) {
+      setAutoFilledInvoiceNumber(suggestedOfficialInvoiceNumber);
+      return;
+    }
+
+    setOfficialInvoiceNumber(suggestedOfficialInvoiceNumber);
+    setAutoFilledInvoiceNumber(suggestedOfficialInvoiceNumber);
+  }, [autoFilledInvoiceNumber, hasManualInvoiceEntry, isSaving, officialInvoiceNumber, suggestedOfficialInvoiceNumber]);
+
   const suggestedInvoiceSequenceNumber = getOfficialInvoiceSequence(suggestedOfficialInvoiceNumber);
   const enteredInvoiceSequenceNumber = getOfficialInvoiceSequence(cleanOfficialInvoiceNumber);
   const isOfficialInvoiceBehindSequence = Boolean(
@@ -1358,17 +1383,6 @@ export function SalesModule({ user }) {
     }
   }, [invoiceSequenceExceptionReason, isOfficialInvoiceSkippingSequence]);
 
-  const usedInvoiceNumbers = useMemo(() => {
-    const numbers = new Set();
-    (salesTransactions || []).forEach(sale => {
-      if (sale.transactionType === 'refund') return;
-      const invoiceNumber = String(sale.officialInvoiceNumber || '').trim();
-      if (OFFICIAL_INVOICE_NUMBER_PATTERN.test(invoiceNumber)) {
-        numbers.add(invoiceNumber);
-      }
-    });
-    return numbers;
-  }, [salesTransactions]);
   const duplicateOfficialInvoiceSale = useMemo(() => {
     if (!OFFICIAL_INVOICE_NUMBER_PATTERN.test(cleanOfficialInvoiceNumber)) return null;
     return (salesTransactions || []).find(sale =>
@@ -1376,33 +1390,23 @@ export function SalesModule({ user }) {
       String(sale.officialInvoiceNumber || '').trim() === cleanOfficialInvoiceNumber
     ) || null;
   }, [cleanOfficialInvoiceNumber, salesTransactions]);
-  const invoiceNumberSuggestions = useMemo(() => {
-    const systemSuggestedInvoiceNumber = sanitizeInvoiceNumberInput(suggestedOfficialInvoiceNumber);
-    const canUseSystemSuggestion =
-      OFFICIAL_INVOICE_NUMBER_PATTERN.test(systemSuggestedInvoiceNumber) &&
-      !usedInvoiceNumbers.has(systemSuggestedInvoiceNumber);
-
-    return canUseSystemSuggestion
-      ? [{
-          invoiceNumber: systemSuggestedInvoiceNumber,
-          reason: 'Next Sales Invoice No. from system sequence.'
-        }]
-      : [];
-  }, [suggestedOfficialInvoiceNumber, usedInvoiceNumbers]);
-  const recommendedInvoiceSuggestion = invoiceNumberSuggestions[0] || null;
-  const recommendedInvoiceNumber = recommendedInvoiceSuggestion?.invoiceNumber || '';
-  const isRecommendedInvoiceSelected = Boolean(recommendedInvoiceNumber) && cleanOfficialInvoiceNumber === recommendedInvoiceNumber;
-  const handleInvoiceSuggestionAction = () => {
-    if (recommendedInvoiceNumber && !isRecommendedInvoiceSelected) {
-      setOfficialInvoiceNumber(recommendedInvoiceNumber);
-      toast.success(`Sales Invoice Number ${recommendedInvoiceNumber} selected.`);
-      return;
-    }
-    toast.info('The suggested Sales Invoice Number is already selected.');
-  };
+  const expectedOfficialInvoiceNumber = OFFICIAL_INVOICE_NUMBER_PATTERN.test(suggestedOfficialInvoiceNumber)
+    ? suggestedOfficialInvoiceNumber
+    : '';
+  const isExpectedInvoiceSelected = Boolean(expectedOfficialInvoiceNumber) && cleanOfficialInvoiceNumber === expectedOfficialInvoiceNumber;
+  const invoiceNumberGuidanceText = isLoadingInvoiceSuggestion
+    ? 'Checking the next Sales Invoice No. for this branch...'
+    : expectedOfficialInvoiceNumber
+      ? isExpectedInvoiceSelected
+        ? `Auto-filled next expected SI No. ${expectedOfficialInvoiceNumber}. Confirm it matches the physical booklet.`
+        : `Next expected SI No. is ${expectedOfficialInvoiceNumber}. Continue only if the physical booklet shows a different valid number.`
+      : 'Enter the 6-digit SI number printed on the physical booklet.';
+  const hasManualOfficialInvoiceValue =
+    officialInvoiceNumber.trim() !== '' &&
+    (hasManualInvoiceEntry || officialInvoiceNumber.trim() !== autoFilledInvoiceNumber);
 
   const hasSalesFormInput = useMemo(() => (
-    officialInvoiceNumber.trim() !== '' ||
+    hasManualOfficialInvoiceValue ||
     invoiceSequenceExceptionReason.trim() !== '' ||
     customerType !== 'walk_in' ||
     customerName.trim() !== '' ||
@@ -1421,7 +1425,7 @@ export function SalesModule({ user }) {
       String(line.quantity || '').trim() !== '' ||
       String(line.unitPrice || '').trim() !== ''
     ))
-  ), [amountReceived, customerAddress, customerName, customerTin, customerType, deliveryCharge, discountAmount, discountType, invoiceSequenceExceptionReason, officialInvoiceNumber, paymentConfirmed, paymentMethod, paymentReference, saleLines]);
+  ), [amountReceived, customerAddress, customerName, customerTin, customerType, deliveryCharge, discountAmount, discountType, hasManualOfficialInvoiceValue, invoiceSequenceExceptionReason, paymentConfirmed, paymentMethod, paymentReference, saleLines]);
 
   const filteredSalesHistory = useMemo(() => {
     const now = new Date();
@@ -1848,6 +1852,8 @@ export function SalesModule({ user }) {
 
   const resetForm = () => {
     setOfficialInvoiceNumber('');
+    setHasManualInvoiceEntry(false);
+    setAutoFilledInvoiceNumber('');
     setInvoiceSequenceExceptionReason('');
     setCustomerType('walk_in');
     setCustomerName('');
@@ -4961,42 +4967,14 @@ export function SalesModule({ user }) {
 
         .sales-invoice-input-row {
           display: grid;
-          grid-template-columns: minmax(9rem, 1fr) auto;
+          grid-template-columns: minmax(9rem, 1fr);
           gap: 0.5rem;
           align-items: stretch;
         }
 
         .sales-checkout-card .sales-invoice-input-row {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
+          grid-template-columns: minmax(0, 1fr);
           gap: 0.85rem;
-        }
-
-        .sales-invoice-suggestions-button {
-          min-height: 3.25rem;
-          min-width: 10.75rem;
-          justify-content: center;
-          border-color: #dbeafe;
-          border-radius: 0.65rem;
-          background: #ffffff;
-          color: #1d4ed8;
-          font-size: 0.78rem;
-          font-weight: 800;
-          white-space: nowrap;
-        }
-
-        .sales-checkout-card .sales-invoice-suggestions-button {
-          width: 100%;
-          min-width: 0;
-          padding-inline: 0.65rem;
-        }
-
-        .sales-invoice-suggestions-button:disabled {
-          opacity: 0.72;
-        }
-
-        .sales-invoice-suggestions-button svg {
-          width: 0.95rem;
-          height: 0.95rem;
         }
 
         .sales-invoice-helper {
@@ -6027,17 +6005,9 @@ export function SalesModule({ user }) {
             grid-template-columns: minmax(0, 1fr);
           }
 
-          .sales-invoice-suggestions-button {
-            width: 100%;
-          }
-
           .sales-checkout-card .sales-invoice-input-row {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-columns: minmax(0, 1fr);
             gap: 0.75rem;
-          }
-
-          .sales-checkout-card .sales-invoice-suggestions-button {
-            min-width: 0;
           }
 
           .sales-product-header-row,
@@ -7033,37 +7003,18 @@ export function SalesModule({ user }) {
                                 id: 'sales-invoice-number-digits-only'
                               });
                             }
+                            setHasManualInvoiceEntry(true);
+                            setAutoFilledInvoiceNumber('');
                             setOfficialInvoiceNumber(nextValue);
                           }}
                           onBlur={() => setOfficialInvoiceNumber(prev => sanitizeInvoiceNumberInput(prev))}
                           placeholder="6-digit SI no."
                           className={`sales-invoice-input sales-invoice-number-input ${duplicateOfficialInvoiceSale || isOfficialInvoiceBehindSequence ? 'sales-invoice-input-error' : ''}`}
                         />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          aria-label={recommendedInvoiceNumber ? `Use Sales Invoice Number ${recommendedInvoiceNumber}` : 'No Sales Invoice suggestion available'}
-                          title={recommendedInvoiceNumber ? `Use ${recommendedInvoiceNumber}` : 'No Sales Invoice suggestion available'}
-                          className="sales-action-button sales-invoice-suggestions-button"
-                          onClick={handleInvoiceSuggestionAction}
-                          disabled={isSaving || isLoadingInvoiceSuggestion || !recommendedInvoiceNumber}
-                        >
-                          <CheckCircle />
-                          {isLoadingInvoiceSuggestion
-                            ? 'Loading suggestion'
-                            : recommendedInvoiceNumber
-                            ? isRecommendedInvoiceSelected
-                              ? 'Selected'
-                              : `Use ${recommendedInvoiceNumber}`
-                            : 'No suggestion'}
-                        </Button>
                       </div>
                       <p className="sales-invoice-inline-note">
                         <ReceiptText />
-                        <span>
-                          Suggested Sales Invoice No.: {recommendedInvoiceNumber || 'No system suggestion available'}.
-                        </span>
+                        <span>{invoiceNumberGuidanceText}</span>
                       </p>
                       {isOfficialInvoiceSkippingSequence && (
                         <div className="sales-invoice-sequence-note">
@@ -7568,7 +7519,7 @@ export function SalesModule({ user }) {
                     type="button"
                     className="sales-action-button sales-save-sale-button px-6 disabled:cursor-not-allowed"
                     onClick={handleRecordSale}
-                    disabled={isSaving || isLoadingInvoiceSuggestion || !recommendedInvoiceNumber || Boolean(duplicateOfficialInvoiceSale) || isOfficialInvoiceBehindSequence}
+                    disabled={isSaving || (isLoadingInvoiceSuggestion && !cleanOfficialInvoiceNumber) || Boolean(duplicateOfficialInvoiceSale) || isOfficialInvoiceBehindSequence}
                   >
                     {isSaving
                       ? 'Saving Sale...'
