@@ -1890,7 +1890,7 @@ export function UserManagementModule() {
             <DialogHeader>
               <DialogTitle>Create User Account</DialogTitle>
               <DialogDescription className="mt-2 max-w-[30rem] text-base leading-7 text-slate-700">
-                Create accounts only for approved store personnel. Use Admin / Manager for trusted users who need full system control.
+                Create accounts only for approved store personnel. Use Admin / Owner for the business owner or authorized owner-level users who need full system control.
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleCreateUserAccount} className="space-y-4 py-2">
@@ -2205,9 +2205,9 @@ export function UserManagementModule() {
               <AlertDialogTitle>Confirm Role Change</AlertDialogTitle>
               <AlertDialogDescription>
                 {isAdminRole(newRole) && !isAdminRole(selectedUser?.role) ? (
-                  <>Are you sure you want to promote <strong className="text-gray-900">{selectedUser?.fullName}</strong> to Admin / Manager?</>
+                  <>Are you sure you want to promote <strong className="text-gray-900">{selectedUser?.fullName}</strong> to Admin / Owner?</>
                 ) : selectedUser && sessionUser?.id === selectedUser.id && !isAdminRole(newRole) ? (
-                  <>You are changing your own role from <strong className="text-gray-900">Admin / Manager</strong> to <strong className="text-gray-900">{getRoleLabel(newRole)}</strong>. You will lose administrative access and will be logged out immediately after this change.</>
+                  <>You are changing your own role from <strong className="text-gray-900">Admin / Owner</strong> to <strong className="text-gray-900">{getRoleLabel(newRole)}</strong>. You will lose administrative access and will be logged out immediately after this change.</>
                 ) : (
                   <>Are you sure you want to change <strong className="text-gray-900">{selectedUser?.fullName}</strong>'s role from{' '}
                     <strong className="text-gray-900">{getRoleLabel(selectedUser?.role)}</strong> to{' '}

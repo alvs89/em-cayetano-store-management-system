@@ -1027,7 +1027,7 @@ export function InventoryModule({
     if (!action) return;
     if (action === "add-item") {
       if (!canManageInventory(user?.role)) {
-        toast.error("Admin / Manager access is required to add a new inventory item.");
+        toast.error("Admin / Owner access is required to add a new inventory item.");
         return;
       }
       setDashboardPickerAction(null);
@@ -1037,7 +1037,7 @@ export function InventoryModule({
 
     if (action === "daily-sales-deduction") {
       if (!canPerformInventoryMovement(user?.role)) {
-        toast.error("Batch Stock Out is available only to Admin / Manager and Inventory Staff accounts.");
+        toast.error("Batch Stock Out is available only to Admin / Owner and Inventory Staff accounts.");
         return;
       }
       setDashboardPickerAction(null);
@@ -1047,7 +1047,7 @@ export function InventoryModule({
 
     if (action === "stock-in") {
       if (!canPerformInventoryMovement(user?.role)) {
-        toast.error("Stock In is available only to Admin / Manager and Inventory Staff accounts.");
+        toast.error("Stock In is available only to Admin / Owner and Inventory Staff accounts.");
         return;
       }
       setDashboardPickerItemId(itemId ? String(itemId) : "");
@@ -1057,7 +1057,7 @@ export function InventoryModule({
 
     if (action === "stock-out") {
       if (!canPerformInventoryMovement(user?.role)) {
-        toast.error("Stock Out is available only to Admin / Manager and Inventory Staff accounts.");
+        toast.error("Stock Out is available only to Admin / Owner and Inventory Staff accounts.");
         return;
       }
       setDashboardPickerItemId(itemId ? String(itemId) : "");

@@ -748,7 +748,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
                   <Link to="/forgot-password" className="login-forgot-link text-blue-600 hover:text-blue-700 hover:underline">Forgot Password?</Link>
                 </p>
                 <p className="mt-3 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">
-                  Accounts are created by the Admin / Manager for approved store personnel.
+                  Accounts are created by the Admin / Owner for approved store personnel.
                 </p>
               </div>
             </form>

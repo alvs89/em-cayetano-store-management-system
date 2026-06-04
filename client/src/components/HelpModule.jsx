@@ -80,7 +80,7 @@ const supportContacts = [
 
 const roleHelpAccess = {
   [ROLE_VALUES.ADMIN]: {
-    title: 'Admin / Manager Guide',
+    title: 'Admin / Owner Guide',
     description: 'Complete store management guide for users, inventory, sales, reports, maintenance, and audit review.',
     modules: [
       'Dashboard',

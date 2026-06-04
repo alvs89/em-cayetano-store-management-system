@@ -501,7 +501,7 @@ export function ReportsModule({
 
   const openConvertUntrackedItemDialog = item => {
     if (!isAdminRole(user?.role)) {
-      toast.info('Only Admin / Manager accounts can add reviewed manual items to Inventory.');
+      toast.info('Only Admin / Owner accounts can add reviewed manual items to Inventory.');
       return;
     }
 
@@ -4702,7 +4702,7 @@ export function ReportsModule({
                                   ? `Already tracked as ${item.activeInventoryMatch?.name || 'an inventory item'}`
                                   : isAdminRole(user?.role)
                                     ? 'Review and add this manual item to Inventory'
-                                    : 'Only Admin / Manager can add items to Inventory'
+                                    : 'Only Admin / Owner can add items to Inventory'
                               }
                             >
                               <PackagePlus className="mr-2 h-4 w-4" />

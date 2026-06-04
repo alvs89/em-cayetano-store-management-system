@@ -2910,7 +2910,7 @@ function canPerformInventoryMovement(user) {
 
 function getRoleLabel(role) {
   const normalized = normalizeRole(role);
-  if (normalized === 'Admin') return 'Admin / Manager';
+  if (normalized === 'Admin') return 'Admin / Owner';
   if (normalized === 'Cashier') return 'Cashier / Encoder';
   if (normalized === 'Inventory Staff') return 'Inventory Staff';
   return role || 'User';
@@ -3352,7 +3352,7 @@ async function authenticate(req, res, next) {
 
 function requireAdmin(req, res, next) {
   if (!isAdmin(req.user)) {
-    return res.status(403).json({ error: 'Admin / Manager access required' });
+    return res.status(403).json({ error: 'Admin / Owner access required' });
   }
 
   return next();
@@ -3364,7 +3364,7 @@ app.get('/', (req, res) => {
 
 app.post('/api/auth/register', async (req, res) => {
   return res.status(410).json({
-    error: 'Account requests are disabled. Please ask the Admin / Manager to create your account.'
+    error: 'Account requests are disabled. Please ask the Admin / Owner to create your account.'
   });
 
   const { password, branch } = req.body;
@@ -4096,7 +4096,7 @@ app.post('/api/admin/users/:id/role', authenticate, requireAdmin, async (req, re
       );
       if ((adminCount.rows[0]?.count || 0) <= 1) {
         return res.status(400).json({
-          error: 'Cannot change role: At least one Admin is required to manage the system.'
+          error: 'Cannot change role: At least one Admin / Owner is required to manage the system.'
         });
       }
     }
@@ -4549,7 +4549,7 @@ app.get('/api/sales', authenticate, async (req, res) => {
 app.get('/api/sales/next-invoice-number', authenticate, async (req, res) => {
   if (!canRecordSales(req.user)) {
     return res.status(403).json({
-      error: 'Invoice number preview is available only to Admin / Manager and Cashier / Encoder accounts.'
+      error: 'Invoice number preview is available only to Admin / Owner and Cashier / Encoder accounts.'
     });
   }
 
@@ -4609,7 +4609,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
 
   if (!canRecordSales(req.user)) {
     return res.status(403).json({
-      error: 'Sales recording is available only to Admin / Manager and Cashier / Encoder accounts.'
+      error: 'Sales recording is available only to Admin / Owner and Cashier / Encoder accounts.'
     });
   }
 
@@ -5204,7 +5204,7 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
 
   if (!canRecordSales(req.user)) {
     return res.status(403).json({
-      error: 'Refund recording is available only to Admin / Manager and Cashier / Encoder accounts.'
+      error: 'Refund recording is available only to Admin / Owner and Cashier / Encoder accounts.'
     });
   }
 
@@ -5905,7 +5905,7 @@ app.get('/api/purchases', authenticate, async (req, res) => {
 app.post('/api/purchases', authenticate, async (req, res) => {
   if (!canPerformInventoryMovement(req.user)) {
     return res.status(403).json({
-      error: 'Purchase entry is available only to Admin / Manager and Inventory Staff accounts.'
+      error: 'Purchase entry is available only to Admin / Owner and Inventory Staff accounts.'
     });
   }
 
@@ -6548,7 +6548,7 @@ app.post('/api/inventory/batch-stock-out', authenticate, async (req, res) => {
 
   if (!canPerformInventoryMovement(req.user)) {
     return res.status(403).json({
-      error: 'Batch Stock Out is available only to Admin / Manager and Inventory Staff accounts.'
+      error: 'Batch Stock Out is available only to Admin / Owner and Inventory Staff accounts.'
     });
   }
 
@@ -6706,7 +6706,7 @@ app.post('/api/inventory/batch-stock-adjustment', authenticate, async (req, res)
 
   if (!canPerformInventoryMovement(req.user)) {
     return res.status(403).json({
-      error: 'Batch Stock Adjustment is available only to Admin / Manager and Inventory Staff accounts.'
+      error: 'Batch Stock Adjustment is available only to Admin / Owner and Inventory Staff accounts.'
     });
   }
 
@@ -7053,14 +7053,14 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     if (!canPerformInventoryMovement(req.user)) {
       await client.query('ROLLBACK');
       return res.status(403).json({
-        error: 'Stock In and Stock Out are available only to Admin / Manager and Inventory Staff accounts.'
+        error: 'Stock In and Stock Out are available only to Admin / Owner and Inventory Staff accounts.'
       });
     }
 
     if (!isAdmin(req.user) && !isValidStockMovementRequest) {
       await client.query('ROLLBACK');
       return res.status(403).json({
-        error: 'Admin / Manager access is required to change item details. Inventory Staff can only perform Stock In and Stock Out.'
+        error: 'Admin / Owner access is required to change item details. Inventory Staff can only perform Stock In and Stock Out.'
       });
     }
 

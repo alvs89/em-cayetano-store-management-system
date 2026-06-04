@@ -8713,7 +8713,7 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
         ? 'This sale already has refund activity, so cancellation is disabled to avoid restoring stock twice.'
         : isCancelled
           ? 'This sale is already cancelled.'
-          : 'Only Admin users can cancel an entire sale.';
+          : 'Only Admin / Owner accounts can cancel an entire sale.';
   const transactionDate = formatHistoryDateParts(sale.createdAt);
   const encodedDate = formatHistoryDateParts(sale.encodedAt);
   const recordLabel = getTransactionRecordLabel(sale);

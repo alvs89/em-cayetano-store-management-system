@@ -29,7 +29,7 @@ The E.M. Cayetano Trading POS-Integrated Inventory Management System is a web-ba
 
 ### Key Features
 - **Dual-Branch Support**: Manage inventory for Manggahan and San Rafael locations
-- **Role-Based Access**: Admin/Manager, Cashier, and Inventory Staff roles with clear responsibility boundaries
+- **Role-Based Access**: Admin/Owner, Cashier, and Inventory Staff roles with clear responsibility boundaries
 - **POS-Integrated Sales**: Record sold items, unit prices, discounts, payment method, amount received, change, and completed sales records
 - **Automatic Inventory Deduction**: Successful sales reduce inventory immediately and create stock movement records
 - **Enhanced Security**: Bcrypt password hashing, Two-Factor Authentication (2FA)
@@ -38,7 +38,7 @@ The E.M. Cayetano Trading POS-Integrated Inventory Management System is a web-ba
 - **Professional UI**: Yellow (#FFFF00) and Red (#FF0000) color scheme
 
 ### User Roles
-- **Admin / Manager**: Full system access, including user management, reports, archive, maintenance, inventory setup, reorder review, and business oversight
+- **Admin / Owner**: Full system access for the business owner or authorized owner-level user, including user management, reports, archive, maintenance, inventory setup, reorder review, and business oversight
 - **Cashier**: Records customer purchases through the Sales/POS workflow and helps keep sales-based stock deduction accurate
 - **Inventory Staff**: Handles inventory operations such as Stock In, Stock Out, physical stock checking, and inventory monitoring
 
@@ -61,18 +61,18 @@ The E.M. Cayetano Trading POS-Integrated Inventory Management System is a web-ba
 
 ### 1. Admin-Managed Account Creation
 
-The system no longer supports public account requests. This is intentional. In a real hardware store, access should be given only to approved store personnel. The Admin/Manager creates accounts, assigns roles, assigns the branch, and provides the temporary password.
+The system no longer supports public account requests. This is intentional. In a real hardware store, access should be given only to approved store personnel. The Admin/Owner creates accounts, assigns roles, assigns the branch, and provides the temporary password.
 
 #### Step-by-Step Process:
-1. **Admin / Manager Opens User Management**
-   - The Admin/Manager creates the account from the official employee list.
+1. **Admin / Owner Opens User Management**
+   - The Admin/Owner creates the account from the official employee list.
 
 2. **Fill Account Details**
    - **Full Name**: Complete employee name
    - **Username**: Unique username for login
    - **Email**: Valid email address
    - **Branch**: Manggahan or San Rafael
-   - **Role**: Admin/Manager, Cashier, or Inventory Staff
+   - **Role**: Admin/Owner, Cashier, or Inventory Staff
 
 3. **Temporary Password**
    - The system generates a temporary password.
@@ -80,7 +80,7 @@ The system no longer supports public account requests. This is intentional. In a
    - Passwords are protected using **Bcrypt** before storage.
 
 4. **Access Control**
-   - If an employee resigns or should no longer use the system, the Admin/Manager can deactivate the account instead of deleting operational history.
+   - If an employee resigns or should no longer use the system, the Admin/Owner can deactivate the account instead of deleting operational history.
 
 #### Technical Note:
 ```
@@ -558,7 +558,7 @@ View and manage soft-deleted inventory items with restoration capabilities.
 
 ## User Management Module
 
-**Access**: Admin / Manager Only
+**Access**: Admin / Owner Only
 
 ### Purpose
 Manage user accounts, roles, and permissions across both branches.
@@ -571,7 +571,7 @@ Manage user accounts, roles, and permissions across both branches.
   - Full Name
   - Email
   - Branch
-  - Role (Admin/Manager, Cashier, or Inventory Staff)
+  - Role (Admin/Owner, Cashier, or Inventory Staff)
   - Status (Active/Inactive)
   - Created Date
   
@@ -591,7 +591,7 @@ Manage user accounts, roles, and permissions across both branches.
   - Username
   - Email (format validation)
   - Branch (dropdown)
-  - Role (Admin/Manager, Cashier, or Inventory Staff)
+  - Role (Admin/Owner, Cashier, or Inventory Staff)
   
 - **Password Setup**:
   - System generates a temporary password
@@ -608,7 +608,7 @@ Manage user accounts, roles, and permissions across both branches.
   - Full Name
   - Email
   - Branch
-  - Role (Admin/Manager can change roles)
+  - Role (Admin/Owner can change roles)
   - Status (Active/Inactive)
   
 - **Password Reset**:

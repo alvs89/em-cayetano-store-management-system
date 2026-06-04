@@ -1,5 +1,5 @@
 // Role helpers centralize screen access and legacy role normalization so all
-// modules enforce the same Admin, Cashier, and Inventory Staff permissions.
+// modules enforce the same owner-level admin, Cashier, and Inventory Staff permissions.
 export const ROLE_VALUES = {
   ADMIN: "Admin",
   CASHIER: "Cashier",
@@ -10,8 +10,8 @@ export const ROLE_VALUES = {
 export const ROLE_OPTIONS = [
   {
     value: ROLE_VALUES.ADMIN,
-    label: "Admin / Manager",
-    description: "Owner or trusted manager access for users, reports, audit trail, maintenance, and full inventory control.",
+    label: "Admin / Owner",
+    description: "Business owner or authorized owner-level access for users, reports, audit trail, maintenance, and full inventory control.",
   },
   {
     value: ROLE_VALUES.CASHIER,
@@ -45,7 +45,7 @@ export function normalizeRole(role) {
 
 export function getRoleLabel(role) {
   const normalized = normalizeRole(role);
-  if (normalized === ROLE_VALUES.ADMIN) return "Admin / Manager";
+  if (normalized === ROLE_VALUES.ADMIN) return "Admin / Owner";
   if (normalized === ROLE_VALUES.CASHIER) return "Cashier / Encoder";
   if (normalized === ROLE_VALUES.INVENTORY_STAFF) return "Inventory Staff";
   return role || "User";
