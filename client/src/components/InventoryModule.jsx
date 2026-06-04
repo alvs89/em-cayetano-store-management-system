@@ -367,6 +367,11 @@ const normalizeCategory = value => {
   if (!normalized) return "";
   return CATEGORY_ALIASES[normalized] || normalized.replace(/\b\w/g, char => char.toUpperCase());
 };
+const getInventoryCategoryDisplay = item => {
+  const category = normalizeCategory(item?.category) || "Uncategorized";
+  const note = String(item?.categoryNote || "").trim();
+  return note ? `${category}: ${note}` : category;
+};
 const STATUS_PRIORITY = {
   "Out of Stock": 1,
   "Low Stock": 2,
@@ -724,6 +729,7 @@ export function InventoryModule({
     const matchesSearch =
       !query ||
       item.name.toLowerCase().includes(query) ||
+      getInventoryCategoryDisplay(item).toLowerCase().includes(query) ||
       item.itemCode?.toLowerCase().includes(query) ||
       String(item.id || "").toLowerCase().includes(query) ||
       item.productId?.toLowerCase().includes(query);
@@ -4314,7 +4320,7 @@ export function InventoryModule({
     className: highlightedInventoryRowId === String(item.id) ? "inventory-row-highlight" : ""
   }, /*#__PURE__*/React.createElement(TableCell, {
     className: "font-mono text-sm align-middle"
-  }, item.itemCode || item.id), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, null, item.supplierName || "Unassigned"), /*#__PURE__*/React.createElement(TableCell, {
+  }, item.itemCode || item.id), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, getInventoryCategoryDisplay(item)), /*#__PURE__*/React.createElement(TableCell, null, item.supplierName || "Unassigned"), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-right font-medium text-slate-900"
   }, item.defaultSellingPrice ? `P${Number(item.defaultSellingPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "No price"), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-right"
@@ -4414,7 +4420,7 @@ export function InventoryModule({
     className: "inventory-mobile-label"
   }, "Category"), /*#__PURE__*/React.createElement("span", {
     className: "inventory-mobile-value"
-  }, normalizeCategory(item.category) || "Uncategorized")), /*#__PURE__*/React.createElement("div", {
+  }, getInventoryCategoryDisplay(item))), /*#__PURE__*/React.createElement("div", {
     className: "inventory-mobile-field"
   }, /*#__PURE__*/React.createElement("span", {
     className: "inventory-mobile-label"

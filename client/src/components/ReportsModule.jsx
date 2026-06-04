@@ -42,6 +42,12 @@ const isBackdatedRecord = record => {
 
 const formatEncodedDate = record => isBackdatedRecord(record) ? formatDateTime(record.encodedAt) : '-';
 
+const getCategoryDisplay = item => {
+  const category = item?.category || 'Uncategorized';
+  const note = String(item?.categoryNote || item?.category_note || '').trim();
+  return note ? `${category}: ${note}` : category;
+};
+
 export function ReportsModule({
   user,
   onNavigate
@@ -1450,7 +1456,7 @@ export function ReportsModule({
       doc.setFont('helvetica', 'normal');
       drawLabelValue('Category Filter', selectedCategory === 'all' ? 'All Categories' : selectedCategory, 20, startY + 8);
       drawLabelValue('Total Items', items.length, 20, startY + 14);
-      const itemData = items.map(item => [getDisplayItemCode(item), item.name, item.category, item.supplierName || 'Unassigned', item.quantity.toString(), item.status, formatDateTime(item.lastUpdated)]);
+      const itemData = items.map(item => [getDisplayItemCode(item), item.name, getCategoryDisplay(item), item.supplierName || 'Unassigned', item.quantity.toString(), item.status, formatDateTime(item.lastUpdated)]);
       reportTable({
         startY: startY + 20,
         head: [['Item Code', 'Item Name', 'Category', 'Supplier', 'Quantity', 'Status', 'Last Updated']],
@@ -1503,7 +1509,7 @@ export function ReportsModule({
       if (lowStockList.length === 0) {
         doc.text('No low stock or out-of-stock items found for this report period.', 20, startY + 20);
       } else {
-        const itemData = lowStockList.map(item => [getDisplayItemCode(item), item.name, item.category, item.supplierName || 'Unassigned', item.quantity.toString(), item.status, formatDateTime(item.lastUpdated)]);
+        const itemData = lowStockList.map(item => [getDisplayItemCode(item), item.name, getCategoryDisplay(item), item.supplierName || 'Unassigned', item.quantity.toString(), item.status, formatDateTime(item.lastUpdated)]);
         reportTable({
           startY: startY + 15,
           head: [['Item Code', 'Item Name', 'Category', 'Supplier', 'Quantity', 'Status', 'Last Updated']],
@@ -1638,7 +1644,7 @@ export function ReportsModule({
           head: [['Item Description', 'Category', 'Total Qty Sold', 'Total Sales', 'Times Sold', 'Last Sold', 'Status']],
           body: untrackedItems.map(item => [
             item.itemName,
-            item.category,
+            getCategoryDisplay(item),
             String(item.totalQuantity),
             formatCurrency(item.totalSalesAmount),
             String(item.timesSold),
@@ -2164,7 +2170,7 @@ export function ReportsModule({
           <p className="reports-record-code">{getDisplayItemCode(item)}</p>
           <h4 className="reports-record-name">{item.name}</h4>
           <p className="reports-record-meta">
-            {[showCategory ? item.category : null, showSupplier ? item.supplierName || 'Unassigned supplier' : null]
+            {[showCategory ? getCategoryDisplay(item) : null, showSupplier ? item.supplierName || 'Unassigned supplier' : null]
               .filter(Boolean)
               .join(' - ')}
           </p>
@@ -4397,7 +4403,7 @@ export function ReportsModule({
                         <TableRow key={item.id}>
                           <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
                           <TableCell>{item.name}</TableCell>
-                          <TableCell>{item.category}</TableCell>
+                          <TableCell>{getCategoryDisplay(item)}</TableCell>
                           <TableCell>{item.supplierName || 'Unassigned'}</TableCell>
                           <TableCell>{item.quantity}</TableCell>
                           <TableCell>
@@ -4455,7 +4461,7 @@ export function ReportsModule({
                         <TableRow key={item.id}>
                           <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
                           <TableCell>{item.name}</TableCell>
-                          <TableCell>{item.category}</TableCell>
+                          <TableCell>{getCategoryDisplay(item)}</TableCell>
                           <TableCell>{item.supplierName || 'Unassigned'}</TableCell>
                           <TableCell className="font-bold">{item.quantity}</TableCell>
                           <TableCell>
@@ -4559,7 +4565,7 @@ export function ReportsModule({
                           </TableCell>
                           <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
                           <TableCell>{item.name}</TableCell>
-                          <TableCell>{item.category}</TableCell>
+                          <TableCell>{getCategoryDisplay(item)}</TableCell>
                           <TableCell className="font-semibold">{item.quantity}</TableCell>
                           <TableCell>{item.lowStockThreshold}</TableCell>
                           <TableCell>{item.estimatedReorderPoint === null ? '-' : item.estimatedReorderPoint}</TableCell>
@@ -4603,7 +4609,7 @@ export function ReportsModule({
                           <div className="min-w-0">
                           <p className="reports-record-code">{getDisplayItemCode(item)}</p>
                           <h4 className="reports-record-name">{item.name}</h4>
-                          <p className="reports-record-meta">{item.category}</p>
+                          <p className="reports-record-meta">{getCategoryDisplay(item)}</p>
                           </div>
                         </div>
                         {item.reorderReviewSuggested ? (
@@ -4671,7 +4677,7 @@ export function ReportsModule({
                       {getUntrackedSalesItems().map(item => (
                         <TableRow key={`${item.itemName}-${item.category}`}>
                           <TableCell className="font-semibold">{item.itemName}</TableCell>
-                          <TableCell>{item.category}</TableCell>
+                          <TableCell>{getCategoryDisplay(item)}</TableCell>
                           <TableCell>{item.totalQuantity}</TableCell>
                           <TableCell>{formatCurrency(item.totalSalesAmount)}</TableCell>
                           <TableCell>{item.timesSold}</TableCell>
@@ -4714,7 +4720,7 @@ export function ReportsModule({
                       <div className="reports-record-top">
                         <div className="min-w-0">
                           <h4 className="reports-record-name">{item.itemName}</h4>
-                          <p className="reports-record-meta">{item.category}</p>
+                          <p className="reports-record-meta">{getCategoryDisplay(item)}</p>
                         </div>
                         {item.reviewStatus === 'tracked' ? (
                           <Badge className="shrink-0 border-green-200 bg-green-50 text-green-700 hover:bg-green-50">Now Tracked</Badge>
@@ -5889,7 +5895,7 @@ export function ReportsModule({
     key: item.id
   }, /*#__PURE__*/React.createElement(TableCell, {
     className: "font-mono text-sm"
-  }, getDisplayItemCode(item)), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, null, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
+  }, getDisplayItemCode(item)), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, getCategoryDisplay(item)), /*#__PURE__*/React.createElement(TableCell, null, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
     className: getStockStatusBadgeClass(item.status)
   }, item.status)), /*#__PURE__*/React.createElement(TableCell, null, formatDateTime(item.lastUpdated))))))), reportType === 'low-stock' && /*#__PURE__*/React.createElement(Card, {
     className: `transition-opacity duration-300 ${isRefreshing ? 'opacity-50' : 'opacity-100'}`
@@ -5901,7 +5907,7 @@ export function ReportsModule({
     key: item.id
   }, /*#__PURE__*/React.createElement(TableCell, {
     className: "font-mono text-sm"
-  }, getDisplayItemCode(item)), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, {
+  }, getDisplayItemCode(item)), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, getCategoryDisplay(item)), /*#__PURE__*/React.createElement(TableCell, {
     className: "font-bold"
   }, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
     className: getStockStatusBadgeClass(item.status)

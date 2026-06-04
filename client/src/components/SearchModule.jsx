@@ -12,6 +12,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { useData } from "./DataContext";
 import { PageHeader } from "./PageHeader";
 
+const getCategoryDisplay = product => {
+  const category = product?.category || "Uncategorized";
+  const note = String(product?.categoryNote || "").trim();
+  return note ? `${category}: ${note}` : category;
+};
+
 export function SearchModule({ onNavigate }) {
   const { inventory } = useData();
   const [searchQuery, setSearchQuery] = useState("");
@@ -55,10 +61,12 @@ export function SearchModule({ onNavigate }) {
       const productId = String(product.id || "").toLowerCase();
       const productCode = (product.itemCode || "").toLowerCase();
       const productDatabaseId = String(product.productId || "").toLowerCase();
+      const productCategory = getCategoryDisplay(product).toLowerCase();
       const query = searchQuery.toLowerCase();
       const matchesSearch =
         searchQuery === "" ||
         productName.includes(query) ||
+        productCategory.includes(query) ||
         productCode.includes(query) ||
         productId.includes(query) ||
         productDatabaseId.includes(query);
@@ -827,7 +835,7 @@ export function SearchModule({ onNavigate }) {
                             <span className="search-result-detail-icon" aria-hidden="true"><BriefcaseBusiness /></span>
                             <span>
                               <span className="search-result-detail-label">Category</span>
-                              <span className="search-result-detail-value">{product.category}</span>
+                              <span className="search-result-detail-value">{getCategoryDisplay(product)}</span>
                             </span>
                           </div>
                           <div className="search-result-detail search-result-detail-quantity">

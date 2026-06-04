@@ -125,6 +125,12 @@ const getDiscountLabel = sale =>
 const isNonInventorySaleItem = item =>
   item?.isInventoryItem === false || item?.itemType === 'non_inventory' || item?.item_type === 'non_inventory';
 
+const getSaleItemCategoryDisplay = item => {
+  const category = item?.category || 'Uncategorized';
+  const note = String(item?.categoryNote || item?.category_note || '').trim();
+  return note ? `${category}: ${note}` : category;
+};
+
 const getSaleItemNotes = sale =>
   (sale?.items || [])
     .map(item => String(item.categoryNote || item.category_note || '').trim())
@@ -541,15 +547,6 @@ const downloadSaleTransactionSummary = sale => {
 
   drawText(`Received the amount of ${money(sale.amountReceived ?? sale.totalAmount)} via ${paymentLabel}.`, margin, y);
   if (sale.paymentReference) drawText(`Payment Reference: ${String(sale.paymentReference).slice(0, 40)}`, margin, y + 5);
-  const remarksText = getSaleRemarksText(sale);
-  if (remarksText) {
-    doc.setFont('helvetica', 'bold');
-    drawText('Remarks:', margin, y + 12);
-    doc.setFont('helvetica', 'normal');
-    doc.splitTextToSize(remarksText, contentWidth).slice(0, 3).forEach((lineText, index) => {
-      drawText(lineText, margin, y + 17 + (index * 4));
-    });
-  }
 
   doc.save(`${documentNumber}_${isRefund ? 'refund_receipt' : 'sales_invoice'}.pdf`);
 };
@@ -933,12 +930,6 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
               </table>
             </div>
           </section>
-
-          ${getSaleRemarksText(sale) ? `
-            <section style="padding: 0 22px 14px;">
-              <strong>Remarks:</strong> ${escapeReceiptText(getSaleRemarksText(sale))}
-            </section>
-          ` : ''}
         </main>
         <script>
           window.addEventListener('load', () => {
@@ -1058,6 +1049,7 @@ const getSaleProductSearchText = item =>
     item.itemCode,
     item.name,
     item.category,
+    item.categoryNote,
     item.supplierName,
     item.status,
     item.defaultSellingPrice
@@ -6687,7 +6679,7 @@ export function SalesModule({ user }) {
                             {item.itemCode || 'No item code'}
                           </span>
                           <span className="sales-product-meta">
-                            <span>{item.category || 'Uncategorized'}</span>
+                            <span>{getSaleItemCategoryDisplay(item)}</span>
                             <span>&middot;</span>
                             <span>{item.quantity} unit{Number(item.quantity) === 1 ? '' : 's'}</span>
                             {selectedQuantity > 0 && (
@@ -8033,7 +8025,7 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
                     <span>{formatCurrency(item.subtotal)}</span>
                   </div>
                   <p className="text-xs text-slate-500">
-                    {item.quantitySold || 0} x {formatCurrency(item.unitPrice)} &middot; {isNonInventorySaleItem(item) ? 'Non-Inventory' : item.category || 'Item'}
+                    {item.quantitySold || 0} x {formatCurrency(item.unitPrice)} &middot; {isNonInventorySaleItem(item) ? 'Non-Inventory' : getSaleItemCategoryDisplay(item)}
                   </p>
                 </div>
               ))}

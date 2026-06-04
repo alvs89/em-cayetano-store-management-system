@@ -161,6 +161,12 @@ const getPurchaseItems = purchase => {
   return [];
 };
 
+const getInventoryCategoryDisplay = item => {
+  const category = item?.category || 'Uncategorized';
+  const note = String(item?.categoryNote || item?.category_note || '').trim();
+  return note ? `${category}: ${note}` : category;
+};
+
 const getPurchaseItemNotes = purchase =>
   getPurchaseItems(purchase)
     .map(item => String(item.categoryNote || item.category_note || '').trim())
@@ -305,6 +311,7 @@ export function PurchasesModule({ user, onNavigate }) {
           item.itemCode,
           item.name,
           item.category,
+          item.categoryNote,
           item.supplierName
         ].filter(Boolean).join(' ').toLowerCase().includes(query);
     });
@@ -2921,14 +2928,14 @@ export function PurchasesModule({ user, onNavigate }) {
                           <span className="purchase-inventory-item-meta">
                             <span>{item.itemCode || 'No item code'}</span>
                             <span className="purchase-mobile-only">&middot;</span>
-                            <span className="purchase-mobile-only">{item.category || 'Uncategorized'}</span>
+                            <span className="purchase-mobile-only">{getInventoryCategoryDisplay(item)}</span>
                             <span className="purchase-mobile-only">&middot;</span>
                             <span className="purchase-mobile-only">{stockStatus}</span>
                             <span className="purchase-mobile-only">&middot;</span>
                             <span className="purchase-mobile-only">Reorder: {reorderInfo.label}</span>
                           </span>
                         </span>
-                        <span className="purchase-inventory-category truncate text-sm text-slate-700">{item.category}</span>
+                        <span className="purchase-inventory-category truncate text-sm text-slate-700">{getInventoryCategoryDisplay(item)}</span>
                         <span className="purchase-inventory-stock text-center">
                           <Badge className={stockStatus === 'Out of Stock'
                             ? 'purchase-stock-badge purchase-stock-badge-out'
