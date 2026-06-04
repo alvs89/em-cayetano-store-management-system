@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS invoice_number_sequences (
     updated_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila'),
     PRIMARY KEY (document_type, invoice_year, branch),
     CHECK (invoice_year BETWEEN 2000 AND 9999),
-    CHECK (last_number >= 0)
+    CHECK (last_number BETWEEN 0 AND 999999)
 );
 
 -- 2. USERS TABLE
@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS products (
     product_id SERIAL PRIMARY KEY,
     name VARCHAR(150) NOT NULL,
     category VARCHAR(50) NOT NULL,
+    category_note TEXT,
     supplier_name VARCHAR(120),
     default_selling_price NUMERIC(12,2),
     cost_price NUMERIC(12,2),
@@ -173,6 +174,7 @@ CREATE TABLE IF NOT EXISTS sales_items (
     is_inventory_item BOOLEAN NOT NULL DEFAULT true,
     item_name VARCHAR(150) NOT NULL,
     category VARCHAR(50) NOT NULL,
+    category_note TEXT,
     branch VARCHAR(50) NOT NULL,
     quantity_sold INTEGER NOT NULL,
     unit_price NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -195,6 +197,7 @@ CREATE TABLE IF NOT EXISTS purchase_transactions (
     branch VARCHAR(50) NOT NULL,
     supplier_name VARCHAR(120) NOT NULL,
     document_type VARCHAR(20) DEFAULT 'DR' CHECK (document_type IN ('DR', 'SI', 'OR', 'OTHER')),
+    document_type_note TEXT,
     document_number VARCHAR(80),
     payment_terms VARCHAR(30) DEFAULT 'cash' CHECK (payment_terms IN ('cash', 'cod', 'credit', 'branch_transfer')),
     subtotal_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -218,6 +221,7 @@ CREATE TABLE IF NOT EXISTS purchase_items (
     product_id INT REFERENCES products(product_id) ON DELETE SET NULL,
     item_name VARCHAR(150) NOT NULL,
     category VARCHAR(50) NOT NULL,
+    category_note TEXT,
     branch VARCHAR(50) NOT NULL,
     quantity_received INTEGER NOT NULL,
     unit_cost NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -235,6 +239,7 @@ CREATE TABLE IF NOT EXISTS archived_inventory (
     product_id INT,
     name VARCHAR(150) NOT NULL,
     category VARCHAR(50) NOT NULL,
+    category_note TEXT,
     branch VARCHAR(50) NOT NULL,
     stock_level INTEGER DEFAULT 0,
     min_stock_level INTEGER DEFAULT 5,
@@ -251,6 +256,7 @@ CREATE TABLE IF NOT EXISTS archived_inventory (
     last_updated TIMESTAMP,
     archived_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila'),
     archive_reason VARCHAR(40),
+    archive_reason_note TEXT,
     archived_by INT REFERENCES users(user_id) ON DELETE SET NULL
 );
 

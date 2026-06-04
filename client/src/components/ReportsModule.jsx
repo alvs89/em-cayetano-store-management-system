@@ -318,6 +318,14 @@ export function ReportsModule({
     return purchaseDate >= start && purchaseDate <= end;
   });
 
+  const getPurchaseItemNotes = purchase =>
+    (purchase?.items || [])
+      .map(item => String(item.categoryNote || item.category_note || '').trim())
+      .filter(Boolean);
+
+  const getPurchaseRemarksText = purchase =>
+    String(purchase?.remarks || '').trim() || getPurchaseItemNotes(purchase).join('\n');
+
   const normalizeMovementName = value => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
   const getCurrentInventoryForMovement = movement =>
@@ -1729,11 +1737,11 @@ export function ReportsModule({
             formatDateTime(purchase.createdAt),
             formatEncodedDate(purchase),
             purchase.supplierName,
-            formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber),
+            formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber, purchase.documentTypeNote),
             formatPurchasePaymentTerms(purchase.paymentTerms),
             String(purchase.totalQuantity),
             formatCurrency(purchase.subtotalAmount),
-            String(purchase.remarks || '').trim() || '-'
+            getPurchaseRemarksText(purchase) || '-'
           ]),
           theme: 'striped',
           headStyles: { fillColor: [22, 101, 52], textColor: 255, fontStyle: 'bold' },
@@ -4777,11 +4785,11 @@ export function ReportsModule({
                           <TableCell>{formatDateTime(purchase.createdAt)}</TableCell>
                           <TableCell>{formatEncodedDate(purchase)}</TableCell>
                           <TableCell>{purchase.supplierName}</TableCell>
-                          <TableCell>{formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber)}</TableCell>
+                          <TableCell>{formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber, purchase.documentTypeNote)}</TableCell>
                           <TableCell>{formatPurchasePaymentTerms(purchase.paymentTerms)}</TableCell>
                           <TableCell>{purchase.totalQuantity}</TableCell>
                           <TableCell className="reports-purchase-total-cell">{formatCurrency(purchase.subtotalAmount)}</TableCell>
-                          <TableCell className="reports-purchase-remarks-cell">{purchase.remarks || '-'}</TableCell>
+                          <TableCell className="reports-purchase-remarks-cell">{getPurchaseRemarksText(purchase) || '-'}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -4805,7 +4813,7 @@ export function ReportsModule({
                       <div className="reports-record-grid reports-record-grid-four">
                         <div className="reports-record-stat">
                           <span>Document</span>
-                          <strong>{formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber)}</strong>
+                          <strong>{formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber, purchase.documentTypeNote)}</strong>
                         </div>
                         <div className="reports-record-stat">
                           <span>Terms</span>
@@ -4820,8 +4828,8 @@ export function ReportsModule({
                           <strong>{formatCurrency(purchase.subtotalAmount)}</strong>
                         </div>
                       </div>
-                      {purchase.remarks && (
-                        <p className="reports-purchase-note">{purchase.remarks}</p>
+                      {getPurchaseRemarksText(purchase) && (
+                        <p className="reports-purchase-note">{getPurchaseRemarksText(purchase)}</p>
                       )}
                     </article>
                   ))}

@@ -9,6 +9,7 @@ import { getStockStatusBadgeClass } from "../utils/statusStyles";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Textarea } from "./ui/textarea";
 import { Badge } from "./ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "./ui/dialog";
@@ -416,6 +417,7 @@ export function InventoryModule({
   const [batchStockOutActualTransactionAt, setBatchStockOutActualTransactionAt] = useState("");
   const [batchStockOutBackdateReason, setBatchStockOutBackdateReason] = useState("");
   const [archiveReason, setArchiveReason] = useState("");
+  const [archiveReasonNote, setArchiveReasonNote] = useState("");
   const [discardPrompt, setDiscardPrompt] = useState(null);
   const [archivedDuplicatePrompt, setArchivedDuplicatePrompt] = useState(null);
   const [similarDuplicatePrompt, setSimilarDuplicatePrompt] = useState(null);
@@ -425,6 +427,7 @@ export function InventoryModule({
   const [editItem, setEditItem] = useState({
     name: "",
     category: "",
+    categoryNote: "",
     supplierName: "",
     defaultSellingPrice: "",
     costPrice: "",
@@ -503,6 +506,7 @@ export function InventoryModule({
   const [newItem, setNewItem] = useState({
     name: "",
     category: "",
+    categoryNote: "",
     supplierName: "",
     defaultSellingPrice: "",
     costPrice: "",
@@ -999,6 +1003,7 @@ export function InventoryModule({
     setNewItem({
       name: "",
       category: "",
+      categoryNote: "",
       supplierName: "",
       defaultSellingPrice: "",
       costPrice: "",
@@ -1307,6 +1312,7 @@ export function InventoryModule({
     setIsArchiveDialogOpen(false);
     setSelectedItem(null);
     setArchiveReason("");
+    setArchiveReasonNote("");
   };
   
   // Human-friendly sort labels depending on column type
@@ -1559,6 +1565,7 @@ export function InventoryModule({
     setEditItem({
       name: item.name || "",
       category: normalizeCategory(item.category) || item.category || "",
+      categoryNote: normalizeCategory(item.category) === "Other" ? item.categoryNote || "" : "",
       supplierName,
       defaultSellingPrice: item.defaultSellingPrice === null || item.defaultSellingPrice === undefined || item.defaultSellingPrice === "" ? "" : String(item.defaultSellingPrice),
       costPrice: item.costPrice === null || item.costPrice === undefined || item.costPrice === "" ? "" : String(item.costPrice),
@@ -1730,6 +1737,7 @@ export function InventoryModule({
       const addedItem = await addInventoryItem({
         name: cleanName,
         category: normalizeCategory(newItem.category),
+        categoryNote: normalizeCategory(newItem.category) === "Other" ? newItem.categoryNote.trim() : "",
         supplierName: newItem.supplierName.trim().replace(/\s+/g, " "),
         defaultSellingPrice,
         costPrice,
@@ -2200,6 +2208,7 @@ export function InventoryModule({
       const updatedItem = await updateInventoryItem(selectedItem.id, {
         name: cleanName,
         category: canonicalCategory,
+        categoryNote: canonicalCategory === "Other" ? editItem.categoryNote.trim() : "",
         supplierName: editItem.supplierName.trim().replace(/\s+/g, " "),
         defaultSellingPrice,
         costPrice,
@@ -2229,12 +2238,19 @@ export function InventoryModule({
       toast.error("Please select the reason for archiving this item.");
       return;
     }
+    const cleanArchiveReasonNote = archiveReasonNote.trim().replace(/\s+/g, " ");
+    if (archiveReason === "other" && !cleanArchiveReasonNote) {
+      toast.error("Please enter the reason for choosing Other.");
+      return;
+    }
     const itemToArchive = selectedItem;
-    const reasonLabel = getArchiveReasonLabel(archiveReason);
+    const reasonLabel = archiveReason === "other" && cleanArchiveReasonNote
+      ? `Other: ${cleanArchiveReasonNote}`
+      : getArchiveReasonLabel(archiveReason);
     closeArchiveDialog();
     localStorage.setItem("archiveRowHighlightOriginalId", String(itemToArchive.id));
     try {
-      await archiveInventoryItem(itemToArchive.id, archiveReason);
+      await archiveInventoryItem(itemToArchive.id, archiveReason, cleanArchiveReasonNote);
       toast.success(`${itemToArchive.name} archived successfully!`, {
         description: `Reason: ${reasonLabel}. Item moved to Archive.`
       });
@@ -2357,7 +2373,11 @@ export function InventoryModule({
             </Label>
             <Select
               value={editItem.category}
-              onValueChange={value => setEditItem({ ...editItem, category: value })}
+              onValueChange={value => setEditItem({
+                ...editItem,
+                category: value,
+                categoryNote: value === "Other" ? editItem.categoryNote : ""
+              })}
             >
               <SelectTrigger
                 id="edit-category"
@@ -2372,6 +2392,21 @@ export function InventoryModule({
                 ))}
               </SelectContent>
             </Select>
+            {editItem.category === "Other" && (
+              <div className="mt-2 space-y-1">
+                <Label htmlFor="edit-category-note" className="text-xs font-semibold text-slate-700">
+                  Optional: note
+                </Label>
+                <Textarea
+                  id="edit-category-note"
+                  value={editItem.categoryNote}
+                  maxLength={240}
+                  onChange={e => setEditItem(prev => ({ ...prev, categoryNote: e.target.value.slice(0, 240) }))}
+                  placeholder="E.g., Specialty hardware item not covered by the listed categories."
+                  className="min-h-[68px] resize-y border-slate-300 bg-white text-sm text-slate-950"
+                />
+              </div>
+            )}
           </div>
 
           {renderSupplierField({
@@ -3869,7 +3904,8 @@ export function InventoryModule({
       setSimilarDuplicatePrompt(null);
       setNewItem({
         ...newItem,
-        category: value
+        category: value,
+        categoryNote: value === "Other" ? newItem.categoryNote : ""
       });
     }
   }, /*#__PURE__*/React.createElement(SelectTrigger, {
@@ -3891,7 +3927,22 @@ export function InventoryModule({
     style: {
       fontSize: "12px"
     }
-  }, "Select the category that best describes the item. If none applies, choose \"Other.\"")), renderSupplierField({
+  }, "Select the category that best describes the item. If none applies, choose \"Other.\""), newItem.category === "Other" && /*#__PURE__*/React.createElement("div", {
+    className: "mt-2 space-y-1"
+  }, /*#__PURE__*/React.createElement(Label, {
+    htmlFor: "category-note",
+    className: "text-xs font-semibold text-slate-700"
+  }, "Optional: note"), /*#__PURE__*/React.createElement(Textarea, {
+    id: "category-note",
+    value: newItem.categoryNote,
+    maxLength: 240,
+    onChange: e => setNewItem(prev => ({
+      ...prev,
+      categoryNote: e.target.value.slice(0, 240)
+    })),
+    placeholder: "E.g., Specialty hardware item not covered by the listed categories.",
+    className: "min-h-[68px] resize-y border-slate-300 bg-white text-sm text-slate-950"
+  }))), renderSupplierField({
     id: "supplier-name",
     value: newItem.supplierName,
     mode: newItemSupplierMode,
@@ -5480,7 +5531,12 @@ export function InventoryModule({
     }
   }, "Reason for Archiving"), /*#__PURE__*/React.createElement(Select, {
     value: archiveReason,
-    onValueChange: setArchiveReason
+    onValueChange: value => {
+      setArchiveReason(value);
+      if (value !== "other") {
+        setArchiveReasonNote("");
+      }
+    }
   }, /*#__PURE__*/React.createElement(SelectTrigger, {
     id: "archive-reason",
     className: "border-slate-300 bg-white text-slate-950",
@@ -5495,7 +5551,37 @@ export function InventoryModule({
   })), /*#__PURE__*/React.createElement(SelectContent, null, ARCHIVE_REASON_OPTIONS.map(option => /*#__PURE__*/React.createElement(SelectItem, {
     key: option.value,
     value: option.value
-  }, option.label))))), /*#__PURE__*/React.createElement("div", {
+  }, option.label))))), archiveReason === "other" && /*#__PURE__*/React.createElement("div", {
+    className: "space-y-2"
+  }, /*#__PURE__*/React.createElement(Label, {
+    htmlFor: "archive-reason-note",
+    className: "font-semibold text-slate-950",
+    style: {
+      display: "block",
+      marginBottom: "8px",
+      fontSize: "14px",
+      lineHeight: "1.25"
+    }
+  }, "Other Reason"), /*#__PURE__*/React.createElement(Textarea, {
+    id: "archive-reason-note",
+    value: archiveReasonNote,
+    onChange: event => setArchiveReasonNote(event.target.value.slice(0, 240)),
+    placeholder: "E.g., Item is no longer carried by the branch but kept for past record reference.",
+    className: "min-h-[88px] resize-none border-slate-300 bg-white text-slate-950",
+    maxLength: 240,
+    style: {
+      borderRadius: "10px",
+      fontSize: "14px",
+      lineHeight: "1.45",
+      padding: "12px 14px"
+    }
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "text-slate-700",
+    style: {
+      fontSize: "12px",
+      lineHeight: "1.35"
+    }
+  }, "Required only when Other is selected. This note is saved with the archived record.")), /*#__PURE__*/React.createElement("div", {
     className: "inventory-archive-info-note flex items-center text-slate-800",
     style: {
       gap: "16px",
@@ -5536,7 +5622,7 @@ export function InventoryModule({
   }, "Cancel"), /*#__PURE__*/React.createElement(Button, {
     className: "modal-button-dark font-semibold shadow-lg transition-transform duration-150 active:scale-95",
     onClick: handleArchiveItem,
-    disabled: !archiveReason,
+    disabled: !archiveReason || (archiveReason === "other" && !archiveReasonNote.trim()),
     style: {
       height: "38px",
       minWidth: "132px",
@@ -5545,7 +5631,7 @@ export function InventoryModule({
       fontSize: "13px",
       background: "#111827",
       color: "#FFFFFF",
-      opacity: archiveReason ? 1 : 0.58,
+      opacity: archiveReason && (archiveReason !== "other" || archiveReasonNote.trim()) ? 1 : 0.58,
       boxShadow: "0 14px 24px rgba(15, 23, 42, 0.18)"
     }
   }, /*#__PURE__*/React.createElement(Archive, {

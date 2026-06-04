@@ -14,6 +14,8 @@ const pool = new Pool({
 const APP_TIME_ZONE = process.env.APP_TIME_ZONE || 'Asia/Manila';
 const PHILIPPINE_NOW_SQL = `(CURRENT_TIMESTAMP AT TIME ZONE '${APP_TIME_ZONE}')`;
 const SALES_INVOICE_DOCUMENT_TYPE = 'sales_invoice';
+const SALES_INVOICE_SEQUENCE_DIGITS = 6;
+const SALES_INVOICE_MAX_NUMBER = Number('9'.repeat(SALES_INVOICE_SEQUENCE_DIGITS));
 const DEFAULT_FIRST_OFFICIAL_INVOICE_NUMBER = '000001';
 
 const parseFirstInvoiceNumber = () => {
@@ -22,8 +24,8 @@ const parseFirstInvoiceNumber = () => {
     throw new Error('DEPLOYMENT_FIRST_OFFICIAL_INVOICE_NUMBER must be exactly 6 digits.');
   }
   const sequence = Number.parseInt(rawValue, 10);
-  if (!Number.isInteger(sequence) || sequence < 1) {
-    throw new Error('DEPLOYMENT_FIRST_OFFICIAL_INVOICE_NUMBER must be 000001 or greater.');
+  if (!Number.isInteger(sequence) || sequence < 1 || sequence > SALES_INVOICE_MAX_NUMBER) {
+    throw new Error('DEPLOYMENT_FIRST_OFFICIAL_INVOICE_NUMBER must be from 000001 to 999999.');
   }
   return {
     firstInvoiceNumber: rawValue,
@@ -103,7 +105,7 @@ async function prepareDeploymentData() {
         updated_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
         PRIMARY KEY (document_type, invoice_year, branch),
         CHECK (invoice_year BETWEEN 2000 AND 9999),
-        CHECK (last_number >= 0)
+        CHECK (last_number BETWEEN 0 AND ${SALES_INVOICE_MAX_NUMBER})
       )
     `);
     await client.query(`
@@ -118,6 +120,19 @@ async function prepareDeploymentData() {
     await client.query(`
       ALTER TABLE invoice_number_sequences
       ALTER COLUMN branch SET NOT NULL;
+    `);
+    await client.query(`
+      ALTER TABLE invoice_number_sequences
+      DROP CONSTRAINT IF EXISTS invoice_number_sequences_last_number_check;
+    `);
+    await client.query(`
+      UPDATE invoice_number_sequences
+      SET last_number = LEAST(GREATEST(COALESCE(last_number, 0), 0), ${SALES_INVOICE_MAX_NUMBER});
+    `);
+    await client.query(`
+      ALTER TABLE invoice_number_sequences
+      ADD CONSTRAINT invoice_number_sequences_last_number_check
+      CHECK (last_number BETWEEN 0 AND ${SALES_INVOICE_MAX_NUMBER});
     `);
     await client.query(`
       ALTER TABLE invoice_number_sequences

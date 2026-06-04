@@ -160,7 +160,7 @@ Figure 82 Edit User Role Screen UI..............................................
 Figure 83 Edit Branch Screen UI.................................................................. 108
 Figure 84 Deactivate User Screen UI........................................................... 109
 Figure 85 Help Screen UI............................................................................. 110
-Figure 86 V-Model Diagram.......................................................................... 112
+Figure 86 Agile Model Diagram..................................................................... 112
 Figure 87 System Architecture......................................................................116
 Figure 88 Gantt Chart................................................................................... 135
 Figure 89 Linear Search Algorithm Architecture...........................................138
@@ -169,260 +169,89 @@ Figure 91 Merge Sort Algorithm Architecture.....................................
 Figure 92 Bcrypt Hashing Algorithm Architecture.........................................141
 CHAPTER 1
 Introduction
-In today’s digital era, many businesses rely on technology to improve their
-efficiency, accuracy, and competitiveness. For small and medium-sized
-enterprises (SMEs), computerized systems have become essential for managing
-daily operations, including inventories, employee records, and transactions.
-Without such systems, businesses often face issues such as inaccurate records,
-delays in reporting, and difficulties in coordinating across branches.
-In this context, software engineering provides a structured and disciplined
-approach to solving business challenges through technology. According to
-McNeil (2024), software engineering applies engineering principles traditionally
-used in the design and management of physical systems to the entire software
-life cycle, including design, development, testing, deployment, and maintenance.
-This ensures that the resulting software is not only functional but also efficient,
-reliable, and adaptable to change. In simple terms, software engineering focuses
-on building quality systems that can support long-term business growth and
-continuous improvement.
-McNeil (2024) also explains that computer software refers to the collection
-of programs, procedures, and documentation that enable a computer system to
-perform specific tasks. It is classified into three major types: system software,
-which manages hardware and system resources; application software, which
-helps users perform specific tasks such as word processing or inventory
-management; and programming software, which provides the tools developers
-1
-use to create and maintain applications. Together, these types form the
-foundation of every computerized system and make automation and integration
-possible in modern business operations.
-The concept of a system, an organized set of components working
-together toward a goal lies at the center of software engineering and computer
-software. In business, systems are used to automate processes, reduce errors,
-and support decision-making. This is especially valuable for SMEs with multiple
-branches, where manual methods such as spreadsheets often result in
-inefficiency and inconsistent reporting.
-A web-based system addresses these issues. Accessible through the
-Internet, this type of system allows authorized users to log in and update records
-in real time, regardless of their location. Web-based systems eliminate delays in
-data consolidation, reduce inconsistencies, and provide scalability, since new
-branches can be integrated easily without separate installations. They are also
-cost-efficient, compatible with multiple devices and operating systems, and
-capable of supporting continuous updates and improvements.
-Building on these principles, this study proposes the development of a
-Web-Based Store Management System for E.M. Cayetano Trading, a hardware
-and construction supply business with two branches. The current manual
-method, which relies on spreadsheets and daily cross-checks, often results in
-errors and time delays. By introducing a semi-automated, web-based system, the
-business will be able to streamline inventory monitoring, manage supplies more
-2
-effectively, and generate standardized daily, weekly, and monthly reports,
-complemented by content-based report views and types, such as Summary,
-Detailed, Low Stock Alert, and Category Analysis. With real-time access and
-branch-wide connectivity, the proposed system is designed to improve accuracy,
-efficiency, and overall business performance.
+In the current digital business environment, small and medium-sized enterprises increasingly depend on information systems to improve operational accuracy, accountability, and responsiveness. Hardware and construction supply stores are especially dependent on accurate records because sales, purchases, deliveries, inventory balances, and branch-level stock availability directly affect customer service and replenishment decisions. When these processes are handled manually or through disconnected spreadsheets, the business becomes vulnerable to delayed reporting, inconsistent data, duplicate encoding, weak access control, and difficulty tracing the origin of record discrepancies.
+
+Software engineering provides the discipline necessary to address these operational concerns through planned analysis, iterative design, implementation, testing, deployment, and maintenance. According to McNeil (2024), software engineering applies engineering principles to the full software life cycle so that systems are not only functional but also reliable, secure, usable, and adaptable. This study applies that principle by developing a web-based system that does not merely digitize individual records, but organizes related business workflows into a centralized store management platform.
+
+The proposed Web-Based Store Management System for E.M. Cayetano Trading is designed to support daily branch operations through secured access, role-based permissions, product and branch inventory management, sales recording, supplier purchase receiving, stock movement tracking, reporting, archiving, audit trails, and maintenance utilities. The system reflects the actual relationship between inventory and transactions: sales decrease available stock, supplier purchases increase stock, manual adjustments are recorded as stock movements, and reports consolidate these activities into useful summaries for management review.
+
+The development approach for the project has shifted from the traditional V-Model to the Agile Model. This change is significant because the system's scope evolved through repeated review of business needs and working software. Agile development is more appropriate for this project because it supports incremental delivery, user feedback, reprioritization, and continuous validation of implemented features. Rather than treating requirements as fixed at the beginning of the project, the proponents refined the system through iterations that produced concrete modules such as sales history, purchase receiving, audit logging, backup and restore, and expanded role permissions.
+
+As a web-based platform, the system allows authorized users to access business records through a browser, reducing dependency on isolated files and manual consolidation. It provides centralized storage through PostgreSQL, server-side processing through Express.js, and a responsive user interface through React. These technologies enable real-time access to branch data, structured validation of transactions, secure authentication, and consistent record retrieval for reports and administrative review. Through this integrated approach, the system supports E.M. Cayetano Trading in improving operational accuracy, business visibility, and readiness for future expansion.
+
 Background of the Study
-E.M. Cayetano Trading is a hardware and construction supply store
-established on May 25, 2012, by Ms. Edna M. Cayetano, who continues to serve
-as the business admin, owner, and proprietor. The company’s main branch is
-located in Manggahan, Rodriguez, Rizal, and another branch operates in San
-Rafael, Rodriguez, Rizal. The business offers a wide variety of products, such as
-cement, plywood, nails, hammers, screwdrivers, steel bars, and other hardware
-supplies that cater to construction projects and home improvement needs.
-At present, the store relies heavily on manual processes and Microsoft
-Excel for tracking daily sales and inventory. Typically, one employee encodes
-daily transactions while another conducts manual counts of stock. At the end of
-the day, their records are compared to ensure accuracy. However, this method is
-not always reliable. The admin has identified recurring issues such as inaccurate
-tallies, discrepancies between actual stock and recorded inventory, and
-instances of overstocking or understocking. For example, items like plywood or
-cement sometimes appear to be out of stock on paper, leading to unnecessary
-reorders, even when sufficient stock is still available.
-3
-To calculate inventory, the store follows a basic formula: Beginning
-Inventory – Outgoing Sales + New Deliveries = Ending Inventory. Although
-simple, this process can be error-prone, especially when data is handled
-manually. Furthermore, with two branches now in operation, monitoring stock
-levels across locations has become increasingly challenging. The lack of a
-centralized system makes data consolidation time-consuming and inconsistent.
-To address these challenges, a Web-Based Store Management System is
-proposed. The system will integrate multiple branches into a single platform,
-allowing the admin and authorized employees to access accurate stock
-information, generate daily, weekly, and monthly reports, and receive low-stock
-alerts. In addition, the reporting feature will support content-based report views
-and types, including Summary, Detailed, Low Stock Alert, and Category Analysis
-to provide the Admin with a clearer understanding of stock movement and
-category performance across branches. The proposed system will be developed
-using HTML5 and CSS3 for structure and design, paired with React v19 as the
-front-end framework to enhance interactivity and responsiveness. On the server
-side, JavaScript (ES2024) with Express.js version 5.1.0 will serve as the
-backend technology, enabling smooth communication between the user interface
-and the database. For data storage, PostgreSQL (v18) will be implemented as
-the primary database because of its reliability, scalability, and ability to handle
-structured records, such as inventory counts across branches. These
-technologies were chosen because they are widely used in modern web
-4
-development, cost-efficient, and capable of ensuring both accessibility and
-real-time updates for branch-wide monitoring purposes.
-By adapting a web-based system, the recurring problems of inaccurate
-stock monitoring, delayed reporting, and inconsistent records between branches
-can be significantly reduced, if not fully eliminated. Unlike the current manual and
-spreadsheet-based approaches, the proposed system ensures secured access,
-real-time synchronization, and reliable storage, making inventory data accurate,
-accessible, and protected from unauthorized manipulation or loss. Through this
-digital transformation, E.M. Cayetano Trading will not only improve efficiency,
-minimize stock errors, and maintain consistent records across its two branches
-but also establish a scalable foundation that can support future business
-expansion plans.
+E.M. Cayetano Trading is a hardware and construction supply business established on May 25, 2012, by Ms. Edna M. Cayetano, who continues to serve as the owner and proprietor. Its main branch is located in Manggahan, Rodriguez, Rizal, while another branch operates in San Rafael, Rodriguez, Rizal. The business offers products commonly used in construction and home improvement, including cement, plywood, roofing materials, PVC pipes and fittings, steel bars, electrical supplies, paints, tools, and other hardware items.
+
+The existing operational process relies on manual records and Microsoft Excel for inventory and daily transaction monitoring. At the end of daily operations, sales and purchases are encoded, stock balances are computed, and physical counts are compared against recorded quantities. The store uses the practical inventory formula: Beginning Inventory - Outgoing Sales + New Deliveries = Ending Inventory. Although this formula is straightforward, the manual process surrounding it is susceptible to human error, delayed updating, and inconsistent branch records.
+
+The interview with the business owner established that inventory accuracy is the primary operational concern. However, the implemented system recognizes that inventory accuracy depends on the quality of related workflows. Sales must be recorded with sufficient detail to deduct tracked items, distinguish non-inventory items, handle discounts, payment methods, VAT breakdowns, refunds, and cancellations, and preserve official sales invoice numbers. Supplier deliveries and purchases must likewise be encoded as receiving records so that new stock is added to the appropriate branch inventory and linked to supplier, document, payment, quantity, and cost information.
+
+The proposed system therefore expands beyond a narrow inventory application into a store management system that connects inventory, sales, purchases, reporting, auditing, and maintenance. The Sales Module records point-of-sale transactions, official numeric sales invoice references, customer details, payment confirmation, receipt generation, sales history, refunds, and administrative cancellations. The Purchases Module records supplier receiving entries, delivery documents, payment terms, item-level costs, and stock increases. The Reports Module provides inventory snapshots and activity-based reports, including summary, detailed inventory, low-stock alerts, supplier reorder reports, untracked sales items, category analysis, purchase reports, stock movement history, actual earnings, and sales-based stock movement reports based on user role.
+
+The system is implemented using HTML5, CSS3, and React v19 for the front end; JavaScript (ES2024) and Express.js version 5.1.0 for the back end; and PostgreSQL version 18 for persistent data storage. It uses bcrypt password hashing, JSON Web Token authentication, email-based one-time password verification, role-based access control, database-level constraints, and audit logs to strengthen security and accountability. These features address not only record accuracy but also traceability, operational control, and resilience.
+
+By adopting a web-based and Agile-developed solution, E.M. Cayetano Trading can reduce delays in branch monitoring, minimize discrepancies caused by manual encoding, and improve the visibility of sales, purchasing, and stock movement data. The system also establishes a maintainable foundation for future improvements because Agile development encourages iterative enhancement based on user feedback and operational evidence.
+
 Statement of the Problem
-E.M. Cayetano Trading currently relies on manual and spreadsheet-based
-processes to track inventory, leading to inconsistencies and inefficiencies in
-managing its operations.
-1. Lack of security for inventory data and monitoring, which leads to weak
-access controls, vulnerability to unauthorized changes, and increased risk
-of inventory mismanagement or discrepancies.
-2. Absence of real-time monitoring and centralized access to inventory data
-between the Manggahan and San Rafael branches.
-5
-3. Inefficient management of user accounts, where the absence of a
-centralized system for adding, updating, or maintaining user information
-leads to unorganized record handling and the absence of a proper
-process for authorizing or maintaining user access.
+E.M. Cayetano Trading currently relies on manual and spreadsheet-based processes that are insufficient for accurate, secure, and timely management of inventory, sales, purchases, and branch-level operational records. Specifically, the study addresses the following problems:
+
+1. Weak security and accountability in record handling, resulting in limited control over who can view, create, modify, cancel, restore, or maintain business records.
+2. Lack of centralized and real-time visibility over inventory balances, stock movements, sales transactions, and supplier purchase entries across the Manggahan and San Rafael branches.
+3. Inefficient sales and purchase recording, where daily outgoing sales and incoming deliveries require manual encoding and reconciliation before inventory balances can be verified.
+4. Limited reporting capability, making it difficult for the admin to review low-stock items, supplier reorder needs, sales-based stock movement, purchase history, actual earnings, and category performance in a consistent format.
+5. Inefficient user and system administration, including account approval, role assignment, branch assignment, password recovery, audit review, backup, restore, log cleanup, database optimization, and data integrity checking.
+
 Objectives of the Study
-The study aims to address the challenges of E.M. Cayetano Trading by
-developing a Web-Based Inventory Management System that ensures accuracy,
-efficiency, and accessibility.
-1. To implement a robust security module through role-based access control
-and secure password hashing to restrict access and protect employee
-credentials.
-2. To provide a centralized platform that enables real-time monitoring of
-stock and supply levels, allows product updates, and supports report
-generation across both branches.
-3. To design and integrate a centralized User Management feature that
-enables the admin to efficiently authorize, update, and maintain user
-accounts, ensuring organized access control and streamlined system
-operations.
+The general objective of this study is to develop a Web-Based Store Management System for E.M. Cayetano Trading that improves accuracy, efficiency, security, and accountability in branch operations.
+
+Specifically, the study aims to:
+
+1. Implement a secure authentication and authorization module using role-based access control, bcrypt password hashing, JSON Web Tokens, and email-based one-time password verification.
+2. Provide centralized inventory management for branch stock records, including product information, categories, stock levels, reorder thresholds, supplier details, cost values, selling prices, stock movements, archiving, and restoration.
+3. Develop a Sales Module that supports point-of-sale recording, official sales invoice numbering, customer details, discounts, VAT computation, payment methods, payment confirmation, receipt generation, sales history, refunds, and administrative cancellation.
+4. Develop a Purchases Module that records supplier deliveries, document types, document numbers, payment terms, item-level costs, total quantities, and automatic stock increases for the appropriate branch.
+5. Provide reporting tools that generate inventory, sales, purchase, supplier reorder, low-stock, stock movement, category, untracked sales, and earnings information according to user role and selected reporting period.
+6. Integrate administrative features for user management, audit trail review, database backup, restore, log cleanup, database optimization, and read-only data integrity checking.
+7. Apply an Agile development methodology that supports iterative requirements refinement, incremental implementation, feedback-based improvement, and continuous validation of the system against business needs.
+
 Significance of the Study
-The product of this study will directly benefit E.M Cayetano Trading’s
-business operations by introducing a centralized and accurate inventory system
-6
-that guarantees real-time monitoring of inventory count across all branches. The
-product will facilitate optimized operations, reduce financial losses from
-overstocking or understocking, and support smarter business decision-making.
-The employees of the business that handles stock management will benefit from
-a central digitized stock management system, and will eliminate tedious manual
-counting and recording of stocks. The business admin will be able to access the
-inventory of all their branches and receive notifications when certain products are
-nearing depletion.
-The proponents will enhance their technical skills, gain practical
-experience in software development, and produce a product that addresses a
-real-world business need. The proponents will incorporate all past knowledge to
-create a software solution for E.M. Cayetano Trading. The proponents will have
-first-hand experience in the software development process, from the initial
-interview with the target business to the deployment of the final product to be
-utilized by the business. The proponents will learn how to design a system that
-will aid in the day-to-day operations of a real business and use that experience to
-boost their careers in the future.
-Moreover, this study will contribute to various academic and professional
-fields. In technology, it demonstrates how business operations can be improved
-through automation, data centralization, and real-time information sharing. In
-computer science, the study highlights the application of algorithms and
-7
-database management to solve real-world problems efficiently. In software
-engineering, it strengthens the importance of applying systematic development
-methodologies from requirement analysis and design to testing and deployment,
-ensuring that the software is reliable, scalable, and user-friendly. Beyond these
-technical fields, the study also impacts economics and business management.
-By converting a manual system into a semi-automated, computerized one, the
-company can minimize inefficiencies, increase productivity, and serve more
-customers, which ultimately leads to higher profits and improved competitiveness
-in the market. Furthermore, the conducted research will open new opportunities
-for future researchers in software engineering by expanding studies on
-web-based development of inventory systems for businesses. It can serve as a
-valuable reference in understanding the design and implementation of a
-centralized inventory system tailored for multi-branched brick-and-mortar
-enterprises.
+The study is significant to E.M. Cayetano Trading because it provides a centralized platform for monitoring core store operations. The admin gains improved visibility over branch inventory, sales, purchases, reports, users, and system health. This supports better decision-making, reduces dependence on manual reconciliation, and helps prevent losses caused by overstocking, understocking, inaccurate sales records, or delayed purchase updates.
+
+Employees benefit from clearer and more structured workflows. Cashiers can record sales, generate receipts, and review sales history within their assigned operational context. Inventory staff can monitor stock, encode supplier receiving entries, access inventory reports, and respond to low-stock conditions. The system reduces repetitive manual work and provides immediate feedback when entries are incomplete, invalid, or outside the user's role permissions.
+
+The business also benefits from stronger accountability. Audit trails, stock movement history, backup logs, and system logs make it easier to review important events and administrative actions. The separation of user roles between Admin, Cashier, and Inventory Staff ensures that sensitive functions such as account management, database restoration, cancellation of sales, and audit review remain under administrative control.
+
+For the proponents, the study provides practical experience in software engineering, database design, web application development, security, system testing, and Agile project management. The iterative development process strengthens the proponents' ability to analyze changing requirements, deliver working increments, evaluate feedback, and revise the system without losing coherence in the overall design.
+
+For future researchers, the study may serve as a reference for developing web-based store management systems for small and medium-sized enterprises. It demonstrates how inventory management can be integrated with sales, purchases, reports, auditability, and administrative maintenance in a coherent system architecture.
+
 Scope
-The proposed project will deliver a reliable, efficient, and user-friendly
-web-based inventory management system for E.M. Cayetano Trading. Its primary
-purpose is to replace the limitations of the existing manual and
-spreadsheet-based processes by introducing semi-automation approach,
-real-time monitoring, enhanced security, and accurate reporting across all
-branches.
-8
-At the core of the system is the Security Module, which will manage
-authentication, authorization, and password protection using bcrypt to ensure
-employee credentials remain safe even in the event of a database compromise.
-Complementing this is the Registration and Verification Module, which handles
-account creation, prevents duplicate registrations through database-level unique
-indexes, and verifies users through email.
-The Maintenance Module enables the admin to perform essential upkeep
-tasks, such as database backup and restore. This module also integrates User
-Management functions, allowing the admin to approve new accounts, deactivate
-or reactivate users, and manage user roles to maintain security and
-accountability within the system.
-Additionally, a Help Module will provide user assistance and guidance,
-enabling employees to easily navigate the system and resolve common issues,
-thereby reducing its misuse and downtime.
-The system will also integrate a Search Module designed to make
-inventory lookup faster and more efficient than the current system. This will
-employ binary search algorithms for dealing with sorted product lists, significantly
-reducing lookup time by repeatedly dividing the search space in half. For smaller
-datasets or unsorted product collections, linear search will be used, as it allows
-quick scanning without the overhead of sorting.
-9
-For reporting, the Reports Module will provide standardized daily, weekly,
-and monthly reports based on the business formula “Beginning Inventory –
-Outgoing Sales + New Deliveries = Ending Inventory.” It will also support
-content-based report views and types (Summary, Detailed, Low Stock Alert, and
-Category Analysis) to enhance data interpretation and support better
-decision-making.
-Central to these modules is the Inventory Module, which will record and
-manage all stock movements across branches, including item codes, quantities,
-prices, and categories, serving as the foundation of the system’s operations.
-To further enhance business oversight, the Alerts and Notifications Module
-will deliver low-stock warnings, synchronization failure alerts, and notifications for
-new user registrations directly through the system. Complementing this is the
-Archive Module, which securely stores inactive or outdated inventory records,
-allowing an admin to restore or review them when necessary without
-permanently deleting data.
-For data organization, the system will apply merge sort, a
-divide-and-conquer algorithm known for its stability and efficiency with large
-datasets. Merge sort will ensure that product records, particularly those
-containing duplicate values, are always presented in a clear and consistent order.
-The development of the system will utilize JavaScript (ES2024) with the
-React v19 for the front-end, Express.js version 5.1.0 for the back-end, and
-PostgreSQL (v18) for the database, ensuring efficiency and reliability in data
-10
-management. The use of HTML5 and CSS3 will support responsive web design,
-while the design of the system will be visualized using Figma. As a web-based
-platform, the inventory management system will be compatible with major
-operating systems such as Windows and Android, it will function through widely
-used browsers including Google Chrome and Mozilla Firefox. With these features
-and modules, the system is expected to optimize inventory management for E.M.
-Cayetano Trading, providing a centralized solution that guarantees security,
-accessibility, and accuracy in managing business resources.
+The proposed system covers the development of a web-based store management platform for E.M. Cayetano Trading. It is designed for authorized business users and supports the Manggahan and San Rafael branches. The system includes modules for security, dashboard monitoring, inventory, search, archive, reports, sales, purchases, alerts, maintenance, user management, audit trail, and help.
+
+The Security Module manages login, two-factor verification, password recovery, password change, token-based sessions, password policy validation, and role-based access. User registration is administratively controlled through account approval, rejection, role assignment, branch assignment, activation, and deactivation. The supported roles are Admin, Cashier, and Inventory Staff.
+
+The Inventory Module manages the product catalog and branch-specific stock records. It stores product names, categories, suppliers, prices, costs, stock levels, minimum stock thresholds, lead times, safety stock, average daily sales values, and status values such as In Stock, Low Stock, and Out of Stock. It also records stock movements, including stock in, stock out, initial stock, and adjustment actions.
+
+The Sales Module supports customer-facing sales records and sales history. It records official six-digit sales invoice numbers, system sales references, customer type, customer name, tax identification number, address, items sold, tracked and non-inventory items, discounts, delivery charges, VAT, payment method, payment confirmation, total amounts, receipts, refunds, backdated entries with reasons, and admin-controlled cancellations.
+
+The Purchases Module records supplier receiving transactions. It stores supplier name, document type, document number, payment terms, remarks, item-level quantities, unit costs, subtotals, previous and new quantities, and the user who encoded the transaction. Purchase entries automatically add stock to the applicable branch inventory.
+
+The Reports Module provides both inventory snapshot reports and activity-based reports. Supported report types include Summary, Detailed Inventory, Low Stock Alert, Supplier Reorder Report, Untracked Sales Items, Category Analysis, Purchases, Stock Movement History, Actual Earnings, and Sales-Based Stock Movement. Access to specific report types depends on the user's role.
+
+The Archive Module stores inactive inventory records so that discontinued or removed items can be reviewed and restored by an administrator when appropriate. The Alerts Module notifies users about low-stock and out-of-stock items, pending user accounts, backup status, and recent maintenance events. The Search Module supports efficient product lookup and filtering. The Help Module provides in-system assistance for users.
+
+The Maintenance Module is limited to authorized administrators and supports database backup, database restore, eligible system log cleanup, database optimization, and read-only data integrity checking. The Audit Trail Module records significant user actions for accountability and administrative review.
+
+The system uses React v19, HTML5, and CSS3 for the client interface; JavaScript (ES2024) and Express.js version 5.1.0 for server-side processing; and PostgreSQL version 18 for database management. Algorithms such as linear search, binary search, merge sort, and bcrypt hashing are applied to support search, sorting, and security requirements. The system is intended for browser-based use on supported devices and operating systems.
+
 Delimitations
-During the initial interview with the business admin, the admin expressed
-that the business's main need and priority is an improved inventory management
-system from their current strategy. In light of this, the proponents will not be
-building a separate transaction system alongside the inventory management
-system. The intended users of the system will only be the employees of E.M.
-Cayetano Trading, who will handle the inventory management, and the business
-admin.
-An internet connection will be needed for the users to access the
-inventory. The proposed system will not function without an internet connection.
-Support of the system is limited to the specified operating systems, versions, and
-the specified browsers stated in the scope; other OS/browsers and legacy OS
-and browser versions are not guaranteed to work. Customer relationship
-management, payroll, and supplier ordering modules are not included in the
-11
-system. Likewise, the data migration process from the existing manual or
-spreadsheet-based system to the proposed system will not be handled by the
-proponents. Post-deployment maintenance and feature updates are also
-excluded from the initial deliverables.
-Other limitations include the limitation of security coverage; the system
-cannot guarantee absolute protection from external threats, such as hacking or
-data loss, due to unforeseen server issues.
-12
+The system is intended for internal use by E.M. Cayetano Trading's admin and authorized employees. It does not provide a public customer ordering website, online marketplace, customer relationship management module, payroll module, accounting ledger, or direct supplier communication portal. Although the Purchases Module records supplier receiving entries, it does not send orders to suppliers or automate supplier negotiation.
+
+The system depends on internet connectivity and a functioning server and database environment. It is limited to supported browsers and operating systems identified in the scope and does not guarantee complete compatibility with legacy browsers, unsupported devices, or offline operation.
+
+The initial deliverable does not include full migration of historical spreadsheet or paper records into the database. Existing records may be encoded manually or prepared separately before operational use. Post-deployment enhancements, long-term hosting administration, and continuous business process consulting are outside the initial project deliverables.
+
+The system improves security through authentication, authorization, password hashing, role control, validation, audit logs, and backup procedures; however, it cannot guarantee absolute protection from all external threats, hardware failures, hosting failures, credential misuse, or unforeseen data loss.
 CHAPTER 2
 System Design
 System design is the process of transforming user requirements into a
@@ -519,26 +348,16 @@ unauthorized edits, or untracked changes can easily occur without accountability
 Overall, the existing manual system is inefficient and error-prone, limiting
 the company’s ability to maintain accurate inventory records, generate timely
 reports, and ensure secure data handling across branches. These limitations
-highlight the need for a web-based, centralized inventory management system
-that can support semi-automated stock monitoring, reporting, and user access
-control—helping streamline operations and support better business decisions for
-both branches.
+highlight the need for a web-based, centralized store management system that can support semi-automated inventory monitoring, sales recording, purchase receiving, reporting, and user access control, helping streamline operations and support better business decisions for both branches.
 Narrative Description of the Proposed System
-The proposed system is a web-based inventory management platform
-developed specifically for E.M. Cayetano Trading to replace its manual,
-paper-based, and spreadsheet-driven processes. It aims to improve the
-company’s inventory monitoring, reporting accuracy, and data security across its
-multiple branches. By centralizing all records in a single online database, the
+The proposed system is a web-based store management platform developed specifically for E.M. Cayetano Trading to replace its manual, paper-based, and spreadsheet-driven processes. It aims to improve the company's inventory monitoring, sales and purchase recording, reporting accuracy, and data security across its multiple branches. By centralizing all records in a single online database, the
 system enables the admin and authorized employees to access real-time,
 consistent information anytime and anywhere through a secure internet
 connection.
 The system provides role-based access control to ensure organized and
 secure user interaction. The admin holds the highest level of access, enabling
 them to manage products, review reports, perform maintenance tasks such as
-data backup and restoration, and oversee user accounts. Meanwhile, employees
-are granted limited access that focuses on operational tasks such as updating
-stock movements (stock-in and stock-out), searching items, and viewing product
-details. This role-based control ensures that sensitive functions—like deactivating
+data backup and restoration, and oversee user accounts. Meanwhile, employees are granted limited access according to role, such as recording sales, receiving supplier purchases, updating stock movements, searching items, and viewing product details. This role-based control ensures that sensitive functions—like deactivating
 17
 accounts, approving new users, or editing high-level records remain exclusive to
 admin.
@@ -548,25 +367,16 @@ authorized users can log in through role-based authentication, secure password
 handling, and account verification. The Registration and Verification Module
 supports new account creation, email verification, and password reset processes,
 ensuring accessibility and preventing duplicate user entries.
-For system upkeep, the Maintenance Module allows an admin to perform
-data backups, restore records when needed, and manage user profiles. A Help
+For system upkeep, the Maintenance Module allows an admin to perform data backups, restore records when needed, clear eligible system logs, optimize database tables, check data integrity, and manage user profiles. A Help
 Module is also integrated to assist users by providing FAQs, system guidelines,
 and contact support, minimizing confusion and errors during use.
-Central to the system is the Inventory Module, where all stock records are
-stored and updated. Employees can record deliveries, sales, and adjustments
-while the system automatically calculates balances. Supporting this, the Search
+Central to the system is the Inventory Module, where all stock records are stored and updated. Sales transactions deduct tracked items, supplier purchase entries add received items, and manual adjustments are recorded as stock movements while the system automatically calculates balances. Supporting this, the Search
 Module enables fast and accurate item lookups.
 Supporting business oversight, the Reports Module provides
 comprehensive reporting features to support business analysis and
 decision-making. It generates standardized daily, weekly, and monthly reports
 based on the company’s formula. In addition to time-based summaries, the
-system also features content-based report views and types, such as Summary,
-Detailed, Low Stock Alert, and Category Analysis, allowing the admin and
-18
-employees to analyze inventory trends and performance from different
-perspectives. The module also includes an Export to PDF option, enabling users
-to easily generate and download digital copies of reports for documentation and
-review.
+system also features content-based report views and types, such as Summary, Detailed Inventory, Low Stock Alert, Supplier Reorder, Untracked Sales Items, Category Analysis, Purchases, Stock Movement History, Actual Earnings, and Sales-Based Stock Movement, depending on user role. These reports allow the admin and authorized employees to analyze inventory trends, transaction history, profitability, and operational performance from different perspectives. The module also includes export options for documentation and review.
 To further support operational accuracy, the Alerts and Notifications
 Module provides real-time low-stock alerts and system-related notifications,
 ensuring that the admins and employees can make timely restocking decisions
@@ -582,13 +392,11 @@ user experiences. On the server side, the system will utilize JavaScript (ES2024
 with Express.js version 5.1.0 to handle backend logic and enable seamless
 communication between the client and server. For data storage, PostgreSQL
 (v18) will serve as the main database, offering reliable, scalable, and structured
-record management for inventory data across branches. The system will remain
+record management for inventory, sales, purchase, audit, and maintenance data across branches. The system will remain
 accessible across devices and browsers, supporting both desktop and mobile
 platforms through common browsers like Google Chrome and Mozilla Firefox.
 19
-Overall, the system strengthens operational efficiency by automating stock
-management, securing sensitive data, and improving communication across
-branches. With clear role assignments and centralized data access, E.M.
+Overall, the system strengthens operational efficiency by semi-automating stock management, structuring sales and purchase records, securing sensitive data, and improving operational visibility across branches. With clear role assignments and centralized data access, E.M.
 Cayetano Trading can minimize errors, generate timely reports, and make
 data-driven decisions, establishing a stronger foundation for business growth and
 sustainability.
@@ -1171,633 +979,145 @@ management system.
 110
 CHAPTER 3
 Methodology
-This chapter discusses the methodology employed in developing the
-Web-Based Store Management System, using the V-Model as the selected
-software development framework. The V-Model was chosen because it
-integrates validation and verification at every stage, ensuring that each phase of
-development is matched with a corresponding testing phase to guarantee system
-accuracy, reliability, and effectiveness. This chapter provides an overview of the
-structured process followed in designing, developing, and evaluating the system.
-It also discusses the data-gathering methods, such as interviews, observations,
-and research, which were used to obtain accurate and relevant information for
-the system’s requirements. The feasibility study is included to assess the
-project’s technical, operational, and economic viability, determining whether the
-system can be realistically implemented and sustained. Additionally, the chapter
-presents the cost-benefit analysis to evaluate the financial soundness of the
-project and a Gantt chart that visually represents the project timeline and
-workflow. Altogether, these sections establish a comprehensive and systematic
-methodological framework that ensures the system’s development is
-well-organized, evidence-based, and aligned with its intended goals.
-111
+This chapter discusses the methodology used in developing the Web-Based Store Management System for E.M. Cayetano Trading. The project adopts the Agile Model as its software development methodology. The shift from the traditional V-Model to Agile is appropriate because the system evolved from a primarily inventory-focused concept into a broader store management platform that integrates inventory, sales, purchases, reports, audit trails, user management, and maintenance operations. Agile supports this type of development because it allows requirements to be refined through iterations, encourages regular review of working software, and enables the proponents to respond to newly clarified business needs without disrupting the entire project structure.
+
+The methodology covers the software process model, system architecture, data-gathering instruments, feasibility study, cost-benefit analysis, materials, testing and operating procedure, software evaluation, sampling tools, work plan, algorithm implementation, and algorithm architecture. These sections establish how the system was planned, developed, evaluated, and aligned with E.M. Cayetano Trading's operational requirements.
+
 Software Process Model
-Figure 86 V-Model Diagram
-The diagram illustrated above is the V-Model Software Development Life
-Cycle (SDLC), which is an extension of the classic waterfall model by bending
-the process into a V shape. It consists of three phases: Verification, Coding, and
-Validation.
-It begins in the left leg, which is the Verification Phase, where the
-proponents ensure that the software is developed according to the company's
-requirements and technical specifications. This phase includes four design
-levels: Requirements Design, System Design, Architectural Design, and Module
-Design.
-112
-The Requirement design is where the software requirements are
-understood from the customer's perspective. This phase involves thorough
-communication with the company to understand their expectations and exact
-requirements. The requirement gathering was done using interviews between the
-company owner and proponents.
-Next, in the System Design, the proponents determined the overall
-structure of the web-based system, describing how its components work together
-and interact. This phase will include understanding and documenting the whole
-hardware and communication architecture for the product being developed.
-The Architectural Design, also known as High-Level Design, is where
-architectural specifications are understood and designed. The system design is
-broken down further into modules taking up different functionality. The flow of
-data and communication between the internal modules and other systems is
-understood and defined in this stage.
-The Module Design, also referred to as Low-Level Design, is where the
-detailed internal design for all the system modules is defined. Each module’s
-logic, input-output structure, and interconnection are defined to ensure
-consistency and compatibility across the system.
-The middle of the V represents the Coding or Development Phase, where
-the proponents implement the gathered requirements and specifications from the
-previous phase. In the V-model, the process bends upward for the final phase,
-which is the validation phase. The goal of this phase is the analysis of
-113
-requirements; for example, the requirement design is paired with acceptance
-testing, the system design is paired with system testing, and the software design
-is paired with integration testing.
-The Coding phase is where the actual implementation of all the design
-choices from the prior phase is made. The most suitable programming language
-is decided based on the system and architectural requirements, which for this
-specific project is Javascript (ES2024) using VSCode (ver. 1.105) and
-PostgreSQL (v18) for the system database. The coding is done according to the
-coding principles and standards. Before the final build is checked into the
-repository, the code is subjected to many code reviews and optimized for
-maximum performance.
-After the coding phase, the final phase in the V-Model is to test the
-system. Unit testing is code-level testing that helps eliminate issues early on,
-although it cannot find all defects.
-In integration testing, the modules are integrated and the system is tested.
-The integration testing process is conducted during the architecture design
-phase to confirm the interconnection of modules.
-System testing, which is directly paired with the system design phase,
-ensures that the whole system functions properly and that the system under
-development communicates with external systems. Software and hardware
-compatibility issues are expected to be discovered in this segment.
-114
-Acceptance testing, paired with the requirements phase, is conducted with
-real users in the company’s environment to confirm that the system meets both
-functional and non-functional requirements—such as performance, load
-handling, usability, and compatibility with external systems.
-115
+Figure 86 Agile Model Diagram
+The Agile Model is an iterative and incremental software development approach in which a system is built through repeated cycles of planning, design, implementation, testing, review, and refinement. Unlike strictly sequential models, Agile recognizes that software requirements may become clearer as users examine working features. For this project, Agile was used to manage changing requirements, validate implemented modules early, and improve the system based on observed business workflows.
+
+The Agile process followed by the proponents consisted of the following recurring activities:
+
+1. Requirement discovery and prioritization. The proponents gathered initial requirements through interview, observation, and research. Requirements were then organized according to business priority, with inventory accuracy, branch monitoring, user security, sales recording, and purchase receiving treated as high-value features.
+2. Iteration planning. Each development cycle focused on a defined set of modules or improvements, such as authentication, inventory records, sales history, purchase receiving, reports, audit logging, or maintenance utilities. This allowed the proponents to deliver visible progress while maintaining a coherent system direction.
+3. Design and prototyping. User interface layouts, database relationships, and module flows were drafted before implementation. Design decisions were adjusted when the actual workflow required more precise controls, such as official sales invoice numbering, payment confirmation, backdated transaction reasons, or role-specific report access.
+4. Implementation. The proponents implemented each increment using React, Express.js, and PostgreSQL. Client-side validation, server-side validation, database constraints, and role checks were incorporated to ensure that business rules were consistently enforced.
+5. Testing and review. Implemented features were tested at unit, module, integration, and system levels. Review activities focused on correctness, usability, security, data consistency, and alignment with store operations.
+6. Refinement and documentation. Feedback and defects identified during review were addressed in succeeding iterations. Documentation was updated to reflect the actual system scope, including the transition from an inventory-only description to a store management system with sales, purchases, reporting, auditability, and maintenance.
+
+The Agile Model therefore supports the system's need for continuous improvement. It permits the proponents to respond to operational discoveries while still maintaining formal documentation, testing discipline, and traceability of requirements.
+
 System Architecture
 Figure 87 System Architecture
-The system architecture for the Web-Based Store Management System
-for E.M. Cayetano Trading is designed to streamline inventory monitoring,
-116
-product management, and report generation across multiple branches while
-ensuring data accuracy, real-time access, and security. The architecture adopts a
-three-tier model consisting of the Presentation Tier, Logic Tier, and Data Tier,
-each serving a distinct role in promoting efficiency, scalability, and protection of
-business data.
-In the Presentation Tier, the user interface is developed using React (v19)
-to provide an interactive and responsive environment where users with different
-access levels can navigate various functionalities such as client registration,
-inventory management, and other general and advanced modules. This layer
-allows the admin and authorized employees to log in, manage inventory,
-generate reports, and monitor product stocks in real time. It focuses on delivering
-a user-friendly experience through a clean, accessible layout that matches the
-users’ level of computer literacy. Basic data validation is performed on the client
-side to reduce unnecessary server requests and to provide immediate feedback
-for invalid or missing inputs.
-The Logic Tier serves as the system’s core, where all business logic,
-rules, and data processing occur. Implemented using JavaScript (ES2024) and
-Express.js version 5.1.0, this layer efficiently handles server-side operations,
-data validation, and communication between components. It integrates bcrypt
-hashing for password encryption, along with session management and
-role-based access control (RBAC) to ensure that only authorized users can
-perform sensitive or administrative operations. This tier ensures that all
-117
-processes are executed securely and that responses to user actions are
-accurate and timely.
-The Data Tier is responsible for securely managing all persistent data
-through PostgreSQL (v18), chosen for its reliability, scalability, and capacity to
-handle large volumes of structured records across multiple branches. This layer
-stores all system data, including inventory records, user accounts, and generated
-reports, and manages archiving, retrieval, and restoration as needed. It also
-supports semi-automated data backup and recovery procedures as part of the
-system’s maintenance module, ensuring business continuity in case of failures or
-data corruption.
-In terms of data flow, the process begins when the user interacts with the
-Presentation Tier by entering input through the interface. These inputs are first
-validated on the client side before being sent as requests to the Logic Tier, where
-the system’s business rules and server-side processing take place. The Logic
-Tier communicates with the Data Tier to store, retrieve, or update records as
-required. Once the operation is completed, the processed data is sent back
-through the Logic Tier to the Presentation Tier, where the results are displayed to
-the user in real time. This seamless exchange of data ensures efficiency,
-accuracy, and responsiveness across all system components.
-Overall, this three-tier architecture ensures that the Web-Based Store
-Management System operates efficiently, securely, and at scale. It enables
-real-time synchronization of data across branches, minimizes human error, and
-118
-provides a solid foundation for future enhancements or system expansion.
-Through its modular and layered design, the system achieves its goal of offering
-E.M. Cayetano Trading a centralized, accurate, and responsive platform for
-managing inventory and supporting data-driven business decisions.
+The system architecture for the Web-Based Store Management System follows a three-tier structure composed of the Presentation Tier, Logic Tier, and Data Tier. This architecture separates the user interface, business processing, and database storage so that each layer can be developed, tested, maintained, and improved independently.
+
+The Presentation Tier is implemented using React v19, HTML5, and CSS3. It provides responsive interfaces for dashboard monitoring, inventory management, archive review, report generation, sales recording, purchase receiving, alerts, maintenance, user management, audit trail review, search, and help. The interface adapts available screens and controls according to user role. Admin users have access to system-wide administrative functions, Cashiers primarily handle sales recording, and Inventory Staff manage stock-related activities such as inventory review, purchase receiving, archive viewing, and inventory reports.
+
+The Logic Tier is implemented using JavaScript (ES2024) and Express.js version 5.1.0. It handles authentication, two-factor verification, password recovery, role-based authorization, sales and purchase processing, inventory updates, stock movement recording, report data retrieval, audit logging, backup and restore requests, log cleanup, database optimization, and data integrity checking. This tier validates user inputs and enforces business rules before records are stored or modified.
+
+The Data Tier uses PostgreSQL version 18. It stores users, products, branch inventory, stock movements, sales transactions, sales items, purchase transactions, purchase items, archived inventory, audit logs, backup logs, branch settings, system logs, and invoice number sequences. The schema includes constraints and relationships that preserve record consistency, such as unique official sales invoice numbers per branch, defined user roles, allowed transaction statuses, and foreign-key relationships between transaction headers and item lines.
+
+Data flow begins when a user performs an action in the web interface. The client validates basic input and sends the request to the server. The server authenticates the user, verifies the user's role, applies the relevant business rules, and reads from or writes to the database. The server then returns structured results to the client, where updated records, alerts, reports, or confirmation messages are displayed. This layered exchange supports secure, accurate, and responsive system behavior.
+
 Data Gathering Instruments and Procedures
-This section discusses the instruments and procedures used in collecting
-the necessary data for the development of the Web-Based Store Management
-System for E.M. Cayetano Trading. Gathering accurate and reliable information
-was essential to understanding the business’s workflow, identifying challenges,
-and designing an appropriate system solution. Research indicates that employing
-multiple data-collection methods enhances insight and strengthens the validity of
-findings through data triangulation (George, 2021). To ensure comprehensive
-and credible results, the proponents utilized three data-gathering instruments, as
-follows:
-1. Interview – it served as the primary tool for obtaining firsthand information
-from the store admin. Its purpose was to gather details about the current
-processes, problems encountered, and desired improvements for the
-system. Before conducting the interview, the proponents submitted a
-formal letter of request to the admin, seeking permission to conduct the
-interview and gather accurate information about the existing manual sales
-and inventory process. A semi-structured format was used, allowing
-open-ended questions and follow-ups to clarify responses. This method
-helped the proponents better understand the store’s daily operations, such
-119
-as sales recording and inventory tracking. According to Braun and Clarke
-(2021), interviews are effective in exploring participants’ experiences and
-obtaining detailed qualitative data. The insights gained from this process
-guided the formulation of system features and functions aligned with the
-store’s operational needs.
-2. Online Research – it was used as a secondary method to gather
-supporting information and references relevant to the study. The
-proponents accessed credible online sources, including academic articles,
-journals, and reputable websites, to find related studies about store
-management systems and system design. The literature review process
-on digital and print platforms helps situate a study within existing work and
-guides methodology design (Chigbu, 2023). By leveraging online
-databases and academic repositories, the proponents were able to identify
-best practices for system development.
-3. Library Research – It was conducted to complement the information
-gathered from interviews and online sources. The proponents visited the
-school library to consult recently published and freely available printed
-books and materials that provided additional up-to-date references to
-support the study. The library research strengthened the proponents’
-background knowledge and ensured scholarly accuracy. The academic
-library serves as a source of quality, authoritative, up-to-date, and relevant
-resources that support academic needs and research requirements of the
-academic community (Philippine Association of Academic and Research
-120
-Librarians, 2022). By using library resources, the proponents were able to
-gather reliable and well-reviewed information that met academic
-standards.
+The proponents used multiple data-gathering methods to obtain a reliable understanding of the business problem and to guide the Agile development iterations. The use of multiple sources strengthens the credibility of the requirements because the system design is based on both direct business input and supporting literature.
+
+1. Interview. A semi-structured interview was conducted with the owner of E.M. Cayetano Trading to identify current practices, recurring problems, business priorities, and desired improvements. The interview confirmed that inventory accuracy was the primary concern, while also revealing the relationship between daily sales, purchases, supplier deliveries, and ending inventory computation.
+2. Observation and workflow analysis. The proponents examined how manual records and spreadsheet-based procedures affect daily operations. This analysis helped translate the business formula Beginning Inventory - Outgoing Sales + New Deliveries = Ending Inventory into system workflows involving Sales, Purchases, Inventory, Stock Movements, and Reports.
+3. Online research. Online academic and technical resources were reviewed to support decisions on software engineering methodology, web-based system design, database management, password hashing, search algorithms, sorting algorithms, and software quality evaluation.
+4. Library research. Printed and institutional resources were consulted to strengthen the academic foundation of the study and to support formal discussion of methodology, system analysis, feasibility, and evaluation.
+5. Codebase review. As development progressed, the implemented source code and database schema were reviewed to ensure that the documentation reflected the actual system. This was necessary because the Agile process introduced additional modules and refinements beyond the earliest inventory-centered description.
+
 Feasibility Study
-The proponents intend to develop a Web-Based Inventory Management
-System for the E.M. Cayetano Trading to replace the company’s current
-paper-based inventory management system which will enhance the operational
-efficiency and security of the company’s inventory.
-Technical, Operational, and Economical
-The technical feasibility of implementing a Web-based Inventory
-Management System depends on meeting the precise system requirements. It
-requires a 64-bit processor and operating system, preferably Windows 10 or
-above. JavaScript (ES2024) is the programming language that will be utilized for
-the development of the system. The minimum system specification for the
-system is a desktop motherboard that supports 8GB DDR4 Ram, which, for Intel,
-are LGA 1151, 1200, and specific LGA 1700 motherboards; meanwhile, for AMD
-chipsets, are AM4 motherboards. External peripherals such as printers, monitors,
-USB optical mouse, keyboard are essential for the system’s functionality. In
-addition, the system requires trained or proficient employees to ensure correct
-and efficient operation. The Web-Based Inventory Management System's
-seamless implementation and operation are guaranteed by this technical base.
-121
-There are several factors that comprise the operational feasibility of the
-Inventory management system that ensures its straightforward adaptation into
-the hardware store’s daily operations. A detailed user manual is essential for
-training since it provides users with the knowledge and skills they need to
-efficiently operate the system. User acceptability is critical to the system's
-performance, necessitating an assessment of staff preparedness and technical
-competency to facilitate seamless implementation. A proactive maintenance plan
-is necessary to promptly resolve any problems that may occur during regular use
-in order to preserve continuous operating efficiency. A full migration of existing
-physical inventory and records is integral for the system’s integration, as it
-ensures a smooth transition and continuity of operations in the store.
-In evaluating the economic feasibility of the proposed system, several
-critical considerations have been identified. The main goal is to determine the
-financial viability and benefits associated with this implementation. Using a Cost
-Benefit Analysis (CBA), the costs, which include implementation, training, and
-maintenance, have been thoroughly evaluated, totalling to ₱162,674.88 for the
-initial investment with a projected annual benefit of ₱138,273.65. Estimated
-benefits also include enhanced record handling, increased workflow efficiency,
-and a more robust security system, contributing to the overall value proposition of
-the system. The predicted return on investment (ROI) is roughly 85%, with a
-calculated payback period of around a year and two months. This rigorous
-economic feasibility analysis, which takes into account both costs and benefits,
-seeks to determine if the veterinary management system is not only financially
-122
-viable but also capable of producing demonstrable gains in workflow efficiency
-and service quality.
+The feasibility study evaluates whether the Web-Based Store Management System can be implemented and sustained from technical, operational, and economic perspectives.
+
+Technical Feasibility
+The system is technically feasible because it uses widely adopted and accessible web technologies. React v19 provides a responsive client interface, Express.js version 5.1.0 manages API requests and business logic, and PostgreSQL version 18 stores structured business records. JavaScript (ES2024) is used across the client and server, reducing technology fragmentation and simplifying development.
+
+The system requires a server environment capable of running Node.js, connecting to PostgreSQL, serving the client application, and sending email-based verification codes. It also requires client devices with supported browsers, stable internet access, and sufficient capability to use the web interface. The recommended hardware and software materials support branch-level use, printing, system access, and operational continuity.
+
+Operational Feasibility
+The system is operationally feasible because its modules are aligned with the store's daily activities. Sales records directly support outgoing stock movement, purchase entries support incoming stock movement, inventory records show current branch quantities, and reports consolidate operational data for review. Role-based access improves usability by limiting users to the functions relevant to their responsibilities.
+
+Training remains necessary because the system introduces structured workflows that replace informal manual practices. Cashiers must understand sales recording, invoice entry, payment details, and receipt generation. Inventory Staff must understand product records, stock movement, supplier receiving, low-stock review, and purchase history. Admin users must understand user management, audit trail review, backup, restore, and system maintenance.
+
+Economic Feasibility
+The system is economically feasible because the anticipated benefits justify the initial cost. The estimated total cost remains 162,674.88 pesos, covering hardware, software development, system costs, stationeries and supplies, utility expenses, and training. The projected annual benefit is 138,273.65 pesos, based on improved accuracy and efficiency. The estimated return on investment is 85 percent, with an approximate payback period of fourteen months or one year and two months.
+
+The economic value is strengthened by the system's expanded operational coverage. In addition to inventory accuracy, the current system supports sales history, purchase receiving, auditability, reports, backup, and maintenance. These features reduce the cost of manual reconciliation and improve the reliability of management decisions.
+
 Cost Benefit Analysis (CBA)
-1. Hardware Cost
-Recommended
-Requirements
-Specifications Quantity Unit Price
-(₱)
-Cost (₱)
-Printer Canon PIXMA
-TS207
-2 2,495.00 4990.00
-Motherboard MSI PRO
-H610M-E
-2 4,302.00 8,604.00
-Power Supply
-Unit (PSU)
-MSI MAG
-A550BN
-2 2,595.00 5,190.00
-Display Monitor Nvision H22V8
-21.5
-2 2,333.00 4,666.00
-Keyboard &
-Mouse
-K-101 Membrane
-Keyboard and
-Mouse Combo
-2 299.00 598.00
-Processor (CPU) Intel® Core™
-i3-13100
-2 6,500.00 13,000.00
-Memory Kingston Fury
-8GB
-2 1,895.00 3,790.00
-Storage ADATA 1TB
-LEGEND 710
-M.2 PCIe NVMe
-2 3,650.00 7,300.00
-PC Case MSI Pro Shield
-M100P
-2 1,395.00 2,790.00
-UPS Awp Wise
-(AID650) 650va /
-360w UPS
-2 1,530.00 3,060.00
-123
-LAN cable Vention Cat6
-High Speed Lan
-Cable Ethernet
-Rj45 1000Mbps
-2 124.00 248.00
-Total: ₱54,326.00
-Sources:
-https://shopee.ph/Canon-PIXMA-TS207-Inkjet-Printer-with-High-Resolution-andLow-Cost-Cartridges-for-Quality-Printing-i.132868149.4640189091?extraParams
-=%7B%22display_model_id%22%3A214220846767%2C%22model_selection_lo
-gic%22%3A3%7D&rModelId=214220846767&sp_atk=f27b44c8-a626-4c7c-b14e
--856cfe540b97&vItemId=29086705090&vModelId=295107984953&vShopId=125
-7811163&xptdk=f27b44c8-a626-4c7c-b14e-856cfe540b97
-https://easypc.com.ph/collections/motherboard/products/msi-pro-h610m-e-socket
--lga-1700-ddr4-motherboard#
-https://dynaquestpc.com/collections/components-power-supply-500-650-watts/pr
-oducts/msi-mag-a550bn-bronze-550w-80-power-supply
-https://shopee.ph/Zeus-Office-School-Keyboard-And-Mouse-USB-Wired-Office-D
-esktop-Laptop-Mouse-Keyboard-Combo-Set-i.822608811.26709708047?extraPa
-rams=%7B%22display_model_id%22%3A241498787537%2C%22model_selecti
-on_logic%22%3A3%7D
-https://pcx.com.ph/collections/processors/products/intel-core-i3-13100-processor
--12m-cache-up-to-4-50-ghz?_pos=2&_fid=0f4bdf9ab&_ss=c
-124
-https://shopee.ph/Kingston-Fury-8GB-Beast-DDR4-3200mHz-Memory-(KF432C1
-6BB-8)-i.124930893.13515932412?extraParams=%7B%22display_model_id%22
-%3A85023829595%2C%22model_selection_logic%22%3A3%7D
-https://pcx.com.ph/collections/internal-storages/products/adata-1tb-legend-710-m
--2-pcie-nvme-aleg-710-1tcs-solid-state-drive
-https://dynaquestpc.com/collections/chassis-mid-tower/products/msi-pro-shield-m
-100p-compact-mid-tower-tool-free-drive-bays-usb-3-2-pc-case
-https://dynaquestpc.com/collections/ups-avr/products/awp-wise-aid650-650va-36
-0w-ups
-https://shopee.ph/Vention-Cat6-High-Speed-Lan-Cable-Ethernet-Rj45-1000Mbps
--For-Router-Pc-i.270658839.5654614237?extraParams=%7B%22display_model
-_id%22%3A61180921690%2C%22model_selection_logic%22%3A3%7D
-2. Software Development Cost
-Personnel No. of Personnel Salary (₱)
-Programmer 3 26,878.00
-Total: ₱80,634.00
-Source:
-https://ph.indeed.com/career/programmer/salaries
-125
-Operational Cost
-A. System Cost
-Items Specification Costs (₱)
-Operating System Windows 11 Home
-64-Bit
-6,700.00
-Database Engine PostgreSQL
-(version 18.0)
-Free
-Programming
-Language
-Javascript (ES2024) Free
-IDE Virtual Studio Code
-(Version 1.105)
-Free
-Version Control
-System
-Git (Version 2.51.2) Free
-Domain Name emcayetano.org 410.04
-Web Hosting Services DigitalOcean
-(App Platform,
-Managed DB, Spaces)
-1,477.44 / month
-Total: ₱8,587.48
-Sources:
-https://pcx.com.ph/collections/windows/products/windows-11-home-64-bit-eng-int
-ernational-oem-dvd-oem-kw9-00632
-https://code.visualstudio.com/updates/v1_105
-https://git-scm.com/
-https://www.namecheap.com/domains/registration/results/?domain=cayetanohar
-dware.com
-https://www.digitalocean.com/pricing
-126
-B. Stationeries and Supplies
-Item Quantity Price (₱) Total (₱)
-Hard Copy
-Bond Paper
-Short A4
-500 230.00 230.00
-Hard Copy
-Bond Paper
-Short Legal
-500 240.00 240.00
-Canon PG 745
-or CL 746 Ink
-Cartridge
-2 2,455.00 4,910.00
-Best Buy Folder
-White with
-Cover
-5 25.00 125.00
-Deli 12PCS Gel
-Pen 0.5mm
-12 132.00 132.00
-Mongol Pencil
-No.2 Box of 12
-12 119.00 119.00
-Total: ₱5,756.00
-Sources:
-https://shopee.ph/Hard-Copy-Bond-Paper-Short-A4-Long-70gsm-80gsm-(sold-pe
-r-ream)-i.215629824.29206798671?extraParams=%7B%22display_model_id%2
-2%3A178337237122%2C%22model_selection_logic%22%3A3%7D&sp_atk=fa2
-f90ba-bbee-411a-ad7b-ec16113ab59c&xptdk=fa2f90ba-bbee-411a-ad7b-ec1611
-3ab59c
-https://shopee.ph/Canon-PG-745-or-CL-746-Ink-Cartridge-i.132868149.5608044
-004
-127
-https://shopee.ph/Best-Buy-Folder-White-with-Cover-School-Supplies-Filing-Sup
-plies-i.75450137.28311142466?extraParams=%7B%22display_model_id%22%3
-A148790151325%2C%22model_selection_logic%22%3A3%7D
-https://shopee.ph/Deli-12PCS-Gel-Pen-0.5mm-Press-Sign-Pens-Writing-Ballpeni.332268558.23557748984?extraParams=%7B%22display_model_id%22%3A27
-0712237428%2C%22model_selection_logic%22%3A3%7D
-https://shopee.ph/Mongol-Pencil-No.2-Box-of-12-i.489304202.12505832097?extr
-aParams=%7B%22display_model_id%22%3A120248291930%2C%22model_sel
-ection_logic%22%3A3%7D
-C. Utility Expenses
-Particulars Cost (₱) Total (₱)
-Electricity 2,786.70 5,573.40
-Internet 2,099.00 4,198.00
-Total: ₱9,771.40
-Assumptions/Usage: The two branches use 210 kWh per month for 9 hours/day
-over 30 days.
-Rate: ₱13.27/kWh (based on Meralco August rate 2025)
-Electricity Cost = 210 kWh x 13.27 ₱/kWh = 2,786.7 x 2 = ₱5,573.40
-Plan: PLDT Home Fiber 500 Mbps
-Monthly Fee: ₱2,099.00
-Assumptions: Used for system access, inventory notifications, and backups.
-Internet Cost per month = ₱2,099.00
-128
-Sources:
-https://company.meralco.com.ph/news-and-advisories/higher-rates-august-2025
-https://www.pldthome.com/fiber
-D. Training Costs
-Personnel Amount per Day
-(₱)
-Days Hours Total (₱)
-Administrator 300.00 7 5 2,100.00
-Employee 300.00 5 5 1,500.00
-Total: ₱3,600.00
-((60.00 / hour * 5 Hours) * 7 Days) = ₱2,100.00
-((60.00 / hour * 5 Hours) * 5 Days) = ₱1,500.00
-Summary Cost
-Description Cost (₱)
-I. Hardware Cost 54,326.00
-II. Software Development Cost 80,634.00
-III. A. System Cost 8,587.48
-III. B. Stationeries and Supplies 5,756.00
-III. C. Utility Expenses 9,771.40
-III. D. Training Cost 3,600.00
-Table 1 Cost-Benefit Analysis. Total Costs: ₱162,674.88
-129
-Estimated Benefits:
-Accuracy and efficiency of the software at approximately 85%
-Total estimated benefits = 162,674.88 x 85%
-Total = ₱138,273.65
-Payback Period
-Payback Period = (Total Cost / Total Estimated Benefits) x 12
-= (162,674.88 / 138,273.65) x 12
-Total = 14 Months or 1 year and 2 months
-Return on Investment (ROI)
-Return of Investment = (Total Estimated Benefits / Total Cost) x 100
-= (138,273.65 / 162,674.88) x 100
-Total = 85%
-The total cost of the hardware, software development, system, stationery,
-supplies, utility, and training is ₱162,674.88. Meanwhile, the time allotted for the
-money to be returned is within 14 months or 1 year and 2 months. In that time,
-85% of the money will be returned which totals to ₱138,273.65.
+The cost-benefit analysis evaluates the financial practicality of the system. The total implementation cost is composed of the following major categories: hardware cost, software development cost, system cost, stationeries and supplies, utility expenses, and training cost. The total cost is 162,674.88 pesos.
+
+The estimated benefits are calculated at approximately 85 percent of the total cost, resulting in 138,273.65 pesos in estimated operational benefit. Using the formula Payback Period = (Total Cost / Total Estimated Benefits) x 12, the payback period is approximately fourteen months. Using the formula ROI = (Total Estimated Benefits / Total Cost) x 100, the return on investment is 85 percent.
+
+This result indicates that the proposed system is financially reasonable because it can recover its cost within a practical period while providing long-term operational improvements. The benefits include improved data accuracy, faster reporting, better stock visibility, stronger security, more accountable transaction handling, and reduced dependence on manual spreadsheet reconciliation.
+
 Materials
-The system will employ various software and hardware. For hardware, a
-printer will be used mainly for processing standardized reports of inventory. For
-software, the system will be developed using Javascript (ES2024) programming
-language for the reason that the proposed system will be web based. VSCode
-130
-(ver. 1.105) will be the IDE of choice for; Git (Version 2.51.2) will be the version
-control system of the development process, and PostgreSQL (v18.0) for the
-database.
+The system uses both hardware and software resources. Hardware materials include computers for branch users, monitors, keyboard and mouse sets, printers for receipts or reports, networking equipment, storage devices, and uninterruptible power supply units. These materials support practical store operations and reduce interruptions during daily use.
+
+Software materials include Windows 11, Visual Studio Code version 1.105, Git version 2.51.2, JavaScript (ES2024), React v19, Express.js version 5.1.0, PostgreSQL version 18, bcrypt, JSON Web Token authentication, and supporting web development libraries. These materials were selected because they are appropriate for building a secure and maintainable web-based system.
+
 Testing and Operating Procedure
+Testing was conducted throughout the Agile development process rather than only after implementation. Each iteration included verification of the newly developed feature and regression review of affected workflows.
+
 Unit Testing
-Unit testing is the process of testing the small parts of the code, like it is a
-method that verifies the code's correctness by running it one by one. It's a key
-part of software development that improves code quality by testing each unit in
-isolation.
-You write unit tests for these code units and run them automatically every
-time you make changes. If a test fails, it helps you quickly find and fix the issue.
-Unit testing promotes modular code, ensures better test coverage, and saves
-time by allowing developers to focus more on coding than manual testing.
+Unit testing focuses on small units of program logic, such as validation functions, formatting utilities, search functions, sorting functions, password policy checks, role helpers, and computation functions for totals, VAT, discounts, stock status, and reorder values. Unit testing helps identify defects early and supports maintainability because individual logic can be checked before it is used by larger modules.
+
 Module Testing
-Module testing is a type of software testing that focuses on individual
-modules. The goal of module testing is to ensure that each module is working
-correctly and meets all the requirements. This includes verifying the functionality
-of the code, as well as checking for any errors or bugs. Module testing is an
-important part of the software development process and should not be
-overlooked. It can help to find and fix any defects in the code before they cause
-problems in the final product.
-131
-Module testing will be conducted in the Inventory Management System by
-individually evaluating each module to ensure proper functionality and reliability.
-Both input and output tests will be performed to assess performance under
-various conditions. This process ensures the detection of bugs and errors early
-on, prior to integrating the modules into the complete system.
+Module testing evaluates each major system module independently. The Inventory Module is tested for product creation, branch inventory updates, stock status computation, archiving, and restoration. The Sales Module is tested for invoice number handling, item entry, payment methods, discounts, VAT computation, receipt generation, refunds, and cancellations. The Purchases Module is tested for supplier selection, document details, item receiving, unit costs, stock increases, and purchase history. The Reports Module is tested for report filtering, role-based report access, and period-based activity summaries. The Maintenance, User Management, Audit Trail, Alerts, Search, and Help modules are likewise tested according to their specific functions.
+
 Integration Testing
-Integration Testing focuses on verifying the interactions between different
-modules of the software. The main purpose of Integration Testing is to identify
-any problems or bugs that arise when different components interact with each
-other.
-Integration testing will be implemented in the Inventory Management
-System to ensure that all modules function seamlessly together as a unified
-system. This process identifies defects that may arise during module interactions
-and detects issues not visible during individual module testing.
+Integration testing verifies that modules work correctly together. Sales transactions must reduce inventory and create stock movement records. Purchase transactions must increase inventory and create purchase histories. Archived items must be removed from active inventory and restored only through authorized administrative action. Reports must reflect inventory, sales, purchases, and stock movement data accurately. Alerts must respond to low-stock, out-of-stock, pending user, backup, and maintenance conditions. Maintenance actions must be recorded and must not compromise core business records.
+
+System Testing
+System testing evaluates the complete web-based application in conditions similar to actual operation. It verifies login, two-factor authentication, role-based navigation, dashboard summaries, inventory workflows, sales workflows, purchase workflows, report generation, audit trail review, maintenance actions, browser compatibility, and general usability. The objective is to confirm that the system functions as an integrated store management platform.
+
+Acceptance Testing
+Acceptance testing is conducted with reference to the business requirements gathered from E.M. Cayetano Trading. The system is assessed according to whether it improves inventory monitoring, supports sales and purchases, reduces manual reconciliation, protects sensitive functions, and provides reports useful for branch-level and administrative decision-making.
+
 Software Evaluation
-The following are the criteria identified to evaluate the software, according to the
-ISO 25010 model
-1. Functionality - Refers to how effectively the software performs its intended
-purpose and delivers all required features accurately and completely.
-132
-2. Security - Measures the system’s capability to safeguard data, control
-access, and prevent unauthorized usage; it ensures confidentiality,
-integrity, and availability of information.
-3. Usability - Evaluates how simple and intuitive the system is to learn,
-navigate, and operate, ensuring a user-friendly and efficient interface.
-4. Reliability - Describes the system’s capacity to function consistently
-without errors, maintaining a dependable performance during regular and
-practical use.
-5. Maintainability - Determines how easily the software can be updated,
-modified, or enhanced, this includes bug fixes, improving performance,
-and adding new features.
-Likert - Scale Likert-Scale
-Description
-Likert - Scale Interval
-6 Strongly Agree 5.17- 6.00
+The system is evaluated using selected ISO 25010 quality characteristics:
+
+1. Functional suitability. The system must provide the required features for inventory, sales, purchases, reports, users, audit trail, alerts, archive, maintenance, search, and help.
+2. Security. The system must protect accounts and records through authentication, authorization, password hashing, token-based access, one-time verification, and audit logging.
+3. Usability. The system must be understandable to store personnel and must provide clear workflows for Cashiers, Inventory Staff, and Admin users.
+4. Reliability. The system must consistently process records, preserve data relationships, and support backup, restore, and integrity checking.
+5. Maintainability. The system must be organized so that future improvements, bug fixes, and module refinements can be introduced through Agile iterations.
+6. Performance efficiency. The system must provide responsive search, filtering, report preparation, and transaction processing for branch-level operations.
+
+Likert - Scale Likert-Scale Description Likert - Scale Interval
+6 Strongly Agree 5.17 - 6.00
 5 Agree 4.33 - 5.16
 4 Slightly Agree 3.51 - 4.32
 3 Slightly Disagree 2.67 - 3.50
 2 Disagree 1.83 - 2.66
 1 Strongly Disagree 1.00 - 1.82
 Table 2 Likert Scale
-133
+
 Sampling Tools
-This study employs cluster sampling as its primary sampling method, in
-which the population is categorized into natural groups based on their
-professions. For this research, two distinct clusters were identified: IT-related
-professionals and non-IT professionals. The use of cluster sampling enables the
-researchers to focus on specific groups capable of providing valuable feedback
-regarding the technical and practical aspects of the system.
-A total of twenty participants will be involved in the study, consisting of ten
-IT professionals and ten non-IT professionals. The IT professionals will include
-individuals with computer-related degrees such as Information Technology,
-Computer Science, Information Systems, Data Science, and other related fields.
-Participants are preferably those with at least one year of relevant work
-experience with an age range of twenty-five to sixty years old.
-On the other hand, the non-IT participants will consist of ten store
-personnel, this includes the store manager, cashier, and employees who handle
-product transactions and stock. Their ages are preferably within the same age
-range of twenty-five to sixty years old.
-134
+This study employs cluster sampling as its primary sampling method. The population is grouped into two clusters: IT-related professionals and non-IT professionals. This method allows the proponents to obtain feedback from participants who can evaluate both the technical and practical aspects of the system.
+
+A total of twenty participants will be involved in the study, consisting of ten IT professionals and ten non-IT professionals. IT professionals include individuals with backgrounds in Computer Science, Information Technology, Information Systems, Data Science, or related fields. Non-IT participants include store personnel such as the manager, cashier, and employees who handle stock, sales, purchases, and daily store operations.
+
 Work Plan
 Figure 88 Gantt Chart
+The work plan follows the Agile Model. Instead of a single linear sequence, the project is organized into iterative cycles. The general activities include requirement gathering, backlog prioritization, interface and database design, implementation of selected modules, testing, feedback review, refinement, documentation revision, and final evaluation. Major increments include security and user management, inventory and search, sales and official invoice handling, purchase receiving, reporting, archive and alerts, audit trail, maintenance, and documentation alignment.
+
 Algorithm Implementation
-The algorithm implementation of the proposed Web-Based Store
-Management System for E.M. Cayetano Trading plays a crucial role in ensuring
-fast, accurate, and secure operations across its major modules. Each algorithm
-was carefully selected to meet the system’s functional requirements, particularly
-in inventory search, product sorting, and user authentication. By integrating these
-algorithms, the system minimizes manual errors, improves performance, and
-enhances user experience for both the admin and employees.
-The search algorithm is applied within the system’s Search Module to
-enable users to quickly locate specific products from the inventory database. The
-system dynamically uses two search approaches: Linear Search and Binary
-135
-Search. The Linear Search algorithm is used when the dataset is unsorted or
-when the user performs a general keyword search. It checks each record
-sequentially until a match is found, making it simple and appropriate for small
-datasets or flexible keyword queries. On the other hand, the Binary Search
-algorithm is implemented when the dataset is already sorted by product ID or
-name. Binary Search works by repeatedly dividing the search range in half until
-the target record is found, significantly reducing search time across branches
-compared to a linear scan. This dual-use approach ensures that the system
-remains efficient regardless of the data size or structure, providing users with
-accurate and immediate results. When the dataset is unsorted or recently
-updated, the system automatically defaults to Linear Search to maintain search
-functionality until the data is re-sorted.
-The system also integrates a sorting algorithm, specifically Merge Sort, to
-organize inventory data before display and reporting. Merge Sort was chosen
-due to its high stability and predictable time complexity of O(n log n), making it
-ideal for handling large datasets such as hundreds of product records. The
-algorithm works by recursively dividing the product list into smaller sublists,
-sorting them individually, and then merging them back together in the correct
-order. This ensures that all product information—such as product ID, name,
-category, quantity, and last updated date—is presented in a consistent,
-ascending or descending order. This not only helps the admin easily interpret the
-data but also improves report generation speed and accuracy.
-136
-To maintain system security and data integrity, the system implements a
-Bcrypt Hashing Algorithm for password encryption. When users create or log into
-their accounts, the system does not store plain-text passwords. Instead, Bcrypt
-transforms the entered password into an irreversible hash using a salt value.
-During login, the system verifies the entered password by hashing it again and
-comparing the result with the stored hash in the database. If both hashes match,
-access is granted. This ensures that even if unauthorized users gain access to
-the database, the actual passwords remain protected. Through this algorithm, the
-system provides a strong defense against common security threats such as
-brute-force and dictionary attacks.
-137
+The algorithm implementation of the Web-Based Store Management System supports performance, organization, and security. The system applies search, sorting, and hashing algorithms where they are appropriate to the implemented workflows.
+
+Linear search is used for flexible filtering and lookup operations, especially when the dataset is unsorted or when the user performs keyword-based matching across product names, categories, suppliers, stock status, or report conditions. It is simple, reliable, and appropriate for moderate datasets where conditions may vary.
+
+Binary search is used when records are sorted and the system needs faster lookup of specific values. Because binary search repeatedly divides the search area in half, it improves lookup efficiency when the dataset is already ordered.
+
+Merge sort is used to organize records into stable and predictable order for display and reporting. It is appropriate for lists that may contain duplicate values, such as multiple products within the same category or stock status. Consistent ordering improves readability and supports efficient search and reporting.
+
+Bcrypt hashing is used to protect user passwords. The system does not store plain-text passwords. Instead, passwords are transformed into secure hashes with salts. During login, the submitted password is hashed and compared with the stored hash. This protects credentials even if unauthorized access to the database occurs.
+
 System Architecture of Algorithm
 Figure 89 Linear Search Algorithm Architecture
-This diagram illustrates the linear search algorithm, in which the system
-starts checking the first item in the list and continues one by one until it either
-finds the target item or reaches the end of the list. In the context of our system,
-linear search is used for simpler lookup scenarios—such as when an employee
-enters a product name or ID and the inventory list is small or not fully sorted. The
-algorithm proceeds by comparing each inventory record in sequence; if a match
-is found, it returns the item and ends the search; otherwise, it continues until no
-more items remain. Because its performance grows proportionally with the
-number of items (O(n) complexity), this method works well for small to moderate
-datasets but becomes less efficient as the inventory size grows.
-138
+The linear search algorithm checks records sequentially until a matching item is found or until all records have been evaluated. In this system, it supports general product search, report filtering, status filtering, category filtering, and other flexible lookup tasks where the list may not be sorted.
+
 Figure 90 Binary Search Algorithm Architecture
-This diagram shows the binary search algorithm applied to a sorted list of
-items: the system calculates the middle index, compares the target value with the
-middle item, and depending on whether the target is less or greater than that
-middle item, it discards half of the list and repeats the process on the remaining
-half. In our system, after the product inventory is sorted (for example, by ID or
-category using a sorting algorithm), binary search is used for fast lookups across
-branches. Because with each step the search space is halved, this method
-achieves logarithmic time complexity, O(log n), making it especially efficient for
-large inventories. It requires that the list is already sorted, which aligns with our
-preprocessing step in the system. This process continues until the item is found
-or the search space becomes empty, ensuring quick and accurate lookups within
-the inventory.
-139
+The binary search algorithm is applied to sorted records. It compares the target value with the middle item, removes half of the search area from consideration, and repeats the process until the target is found or no matching record exists. This approach supports efficient lookup when the system has an ordered dataset.
+
 Figure 91 Merge Sort Algorithm Architecture
-This diagram displays the merge sort algorithm, which uses a
-divide-and-conquer strategy: the inventory list is repeatedly split into smaller
-halves until each sub-list contains a single item (trivially sorted), then those
-sub-lists are merged back together in sorted order, reconstructing the complete
-list. In the system for E.M. Cayetano Trading, merge sort is used to arrange the
-inventory items—by product ID, name, category, quantity, or last updated
-date—to ensure organized data before searching. This ensures consistent
-ordering and efficient subsequent operations. Merge sort has good performance
-(O(n log n) time complexity) and is stable, which is helpful when items share the
-same key field (e.g., category).
-140
+The merge sort algorithm divides a list into smaller parts, sorts each part, and merges the sorted parts into a complete ordered list. In the system, it helps present product, inventory, purchase, sales, and report data in a consistent sequence.
+
 Figure 92 Bcrypt Hashing Algorithm Architecture
-This diagram illustrates how bcrypt converts a plain-text password into a
-secure hash by combining it with a unique salt, processed through the bcrypt
-algorithm (with an adjustable cost factor), and produces a hashed value for
-secure storage. In our system’s Security Module, bcrypt is used to protect admin
-and employee credentials stored in the database, ensuring that plain-text
-passwords are never saved. Even if the system is compromised, attackers
-cannot easily reverse the hash because bcrypt is intentionally slow and includes
-salt to protect against pre-computed attacks (like rainbow tables). This method is
-widely recognized as an industry standard for secure password storage.
-141
+The bcrypt hashing algorithm converts a user's password into a protected hash using a salt and computational cost factor. The stored hash is used for password verification, while the original password is never saved. This strengthens the system's security module and protects employee credentials.
 Appendix A
 Concept Paper
 Appendix B
@@ -1894,6 +1214,11 @@ Appendix C
 Photo with Company
 Appendix D
 References
+Beck, K., Beedle, M., van Bennekum, A., Cockburn, A., Cunningham, W.,
+Fowler, M., Grenning, J., Highsmith, J., Hunt, A., Jeffries, R., Kern, J.,
+Marick, B., Martin, R. C., Mellor, S., Schwaber, K., Sutherland, J., &
+Thomas, D. (2001). Manifesto for Agile Software Development.
+https://agilemanifesto.org/
 Auth0 by Okta. (2024, April 5). What is bcrypt and how does password
 hashing work? Auth0.
 https://auth0.com/blog/hashing-in-action-understanding-bcrypt/
@@ -1925,6 +1250,9 @@ Manufacturing Technology, 139, 2103–2121.
 https://doi.org/10.1007/s00170-025-15982-1
 McNeil, R. (2024). Software Engineering: Principles and Practices (2nd
 ed.). Pearson Education.
+Schwaber, K., & Sutherland, J. (2020). The Scrum Guide: The definitive
+guide to Scrum: The rules of the game. Scrum.org.
+https://scrumguides.org/
 Pavlíčková, M., Mojžišová, A., Bodíková, Z., Szeplaki, R., & Laciak, M.
 (2024). Integration and implementation of scaled agile framework and V-model in
 the healthcare sector organization. Electronics, 13(11), 2051.

@@ -2,7 +2,7 @@
 // two-factor verification flow when an OTP challenge is required.
 import axios from 'axios';
 import { useState, useEffect } from "react";
-import { Eye, EyeOff, Loader2, Lock, Store, User } from "lucide-react";
+import { AlertCircle, CheckCircle, Eye, EyeOff, Loader2, Lock, Store, User } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -11,18 +11,21 @@ import { Card, CardContent } from "./ui/card";
 import { toast } from "sonner";
 
 import { Link, useNavigate } from 'react-router-dom';
-import { useData } from "./DataContext";
 import { apiUrl } from "../utils/api";
 
 const emcLogoSrc = "/emc-logo.png";
 const LOGIN_BACKGROUND_CLASS = "login-screen-active";
 
 export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
-  const { users } = useData();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [branch, setBranch] = useState("");
   const [branchHintShown, setBranchHintShown] = useState(false);
+  const [isCheckingAssignedBranch, setIsCheckingAssignedBranch] = useState(false);
+  const [assignedBranchNotice, setAssignedBranchNotice] = useState("");
+  const [isBranchSelectionReady, setIsBranchSelectionReady] = useState(false);
+  const [isAssignedBranchLocked, setIsAssignedBranchLocked] = useState(false);
+  const [autoSelectedBranch, setAutoSelectedBranch] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const navigate = useNavigate();
@@ -55,7 +58,75 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
     }
   }, [branch, username, password, branchHintShown]);
 
-  const continueToTwoFactor = (loginData, otpData = {}, { reusedExistingCode = false } = {}) => {
+  const fetchAssignedBranchForCredentials = async (loginUsername, loginPassword) => {
+    const response = await axios.post(apiUrl('/api/auth/assigned-branch'), {
+      username: loginUsername,
+      password: loginPassword
+    });
+    return {
+      branch: String(response.data?.branch || '').trim(),
+      role: response.data?.role || '',
+      branchLocked: Boolean(response.data?.branchLocked)
+    };
+  };
+
+  useEffect(() => {
+    const cleanUsername = username.trim();
+    if (!cleanUsername || !password) {
+      setIsCheckingAssignedBranch(false);
+      setAssignedBranchNotice("");
+      setIsBranchSelectionReady(false);
+      setIsAssignedBranchLocked(false);
+      setBranch("");
+      setAutoSelectedBranch("");
+      return undefined;
+    }
+
+    let isActive = true;
+    setIsCheckingAssignedBranch(true);
+    setIsBranchSelectionReady(false);
+    setIsAssignedBranchLocked(false);
+    setBranch("");
+    setAutoSelectedBranch("");
+    const timer = window.setTimeout(async () => {
+      try {
+        const assigned = await fetchAssignedBranchForCredentials(cleanUsername, password);
+        if (!isActive) return;
+
+        if (assigned.branch) {
+          setBranch(assigned.branch);
+          setAutoSelectedBranch(assigned.branch);
+          setIsAssignedBranchLocked(assigned.branchLocked);
+          setIsBranchSelectionReady(true);
+          setAssignedBranchNotice(`${assigned.branch} branch selected from your account.`);
+        } else {
+          setAutoSelectedBranch("");
+          setIsAssignedBranchLocked(false);
+          setIsBranchSelectionReady(true);
+          setAssignedBranchNotice("Select the branch you want to use.");
+        }
+      } catch {
+        if (isActive) {
+          setAssignedBranchNotice("Unable to verify login details.");
+          setIsBranchSelectionReady(false);
+          setIsAssignedBranchLocked(false);
+          setBranch("");
+          setAutoSelectedBranch("");
+        }
+      } finally {
+        if (isActive) {
+          setIsCheckingAssignedBranch(false);
+        }
+      }
+    }, 500);
+
+    return () => {
+      isActive = false;
+      window.clearTimeout(timer);
+    };
+  }, [username, password]);
+
+  const continueToTwoFactor = (loginData, otpData = {}, { reusedExistingCode = false, loginBranch = branch } = {}) => {
     const challengeUsername = String(loginData.username || username || '').trim();
     const challengeEmail = loginData.email || '';
     if (!challengeUsername) return;
@@ -84,7 +155,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
 
     localStorage.setItem('temp_username', challengeUsername);
     localStorage.setItem('temp_email', challengeEmail);
-    localStorage.setItem('temp_branch_selected', branch);
+    localStorage.setItem('temp_branch_selected', loginBranch);
 
     if (reusedExistingCode) {
       toast.info('A verification code was already sent. Please enter the latest code from your email.', {
@@ -99,7 +170,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
       onNavigateTo2FA({
         username: challengeUsername,
         email: challengeEmail,
-        branch,
+        branch: loginBranch,
       });
     } else {
       navigate('/2fa');
@@ -110,8 +181,8 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
   const handleLogin = async (e) => {
     e.preventDefault();
 
-    if (!username || !password || !branch) {
-      toast.error(!branch ? "Please fill in all fields, including branch" : "Please fill the other fields", {
+    if (!username || !password) {
+      toast.error("Please fill the other fields", {
         classNames: {
           toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
         },
@@ -122,16 +193,57 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
     setIsLoggingIn(true);
 
     try {
+      let loginBranch = "";
+      try {
+        setIsCheckingAssignedBranch(true);
+        const assigned = await fetchAssignedBranchForCredentials(username.trim(), password);
+        if (assigned.branch) {
+          loginBranch = assigned.branch;
+          setBranch(assigned.branch);
+          setAutoSelectedBranch(assigned.branch);
+          setIsAssignedBranchLocked(assigned.branchLocked);
+          setAssignedBranchNotice(`${assigned.branch} branch selected from your account.`);
+        } else {
+          loginBranch = branch;
+          setAutoSelectedBranch("");
+          setIsAssignedBranchLocked(false);
+          setIsBranchSelectionReady(true);
+          setAssignedBranchNotice("Select the branch you want to use.");
+        }
+      } catch (branchError) {
+        setBranch("");
+        setAutoSelectedBranch("");
+        setIsBranchSelectionReady(false);
+        setIsAssignedBranchLocked(false);
+        toast.error(branchError.response?.data?.error || "Unable to verify your branch. Please check your login details.", {
+          classNames: {
+            toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+          },
+        });
+        return;
+      } finally {
+        setIsCheckingAssignedBranch(false);
+      }
+
+      if (!loginBranch) {
+        toast.error("Please select your branch.", {
+          classNames: {
+            toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+          },
+        });
+        return;
+      }
+
       const response = await axios.post(apiUrl('/api/auth/login'), {
         username,
         password,
-        branch // This must match the selected branch in your dropdown
+        branch: loginBranch
       });
 
       if (response.data.token) {
         localStorage.setItem('token', response.data.token);
         localStorage.setItem('user', JSON.stringify(response.data.user));
-        localStorage.setItem('active_branch', branch);
+        localStorage.setItem('active_branch', loginBranch);
         sessionStorage.setItem('authSessionActive', 'true');
         window.dispatchEvent(new Event('auth-state-changed'));
         if (typeof onLogin === 'function') {
@@ -145,13 +257,13 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
       if (response.data.require2fa) {
         try {
           const otpResponse = await axios.post(apiUrl('/api/auth/send-otp'), { username });
-          continueToTwoFactor(response.data, otpResponse.data);
+          continueToTwoFactor(response.data, otpResponse.data, { loginBranch });
         } catch (otpError) {
           const otpStatus = otpError.response?.status;
           const otpMessage = otpError.response?.data?.error || otpError.response?.data?.message || '';
           const hasActiveCode = otpStatus === 429 && otpMessage.toLowerCase().includes('already sent');
           if (hasActiveCode) {
-            continueToTwoFactor(response.data, otpError.response?.data, { reusedExistingCode: true });
+            continueToTwoFactor(response.data, otpError.response?.data, { reusedExistingCode: true, loginBranch });
             return;
           }
           throw otpError;
@@ -168,6 +280,13 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
       setIsLoggingIn(false);
     }
   };
+
+  const hasCredentialsForBranchCheck = Boolean(username.trim() && password);
+  const branchNoticeText = isCheckingAssignedBranch
+    ? "Checking branch..."
+    : assignedBranchNotice || (!hasCredentialsForBranchCheck ? "Enter username and password first." : "");
+  const isBranchNoticeError = branchNoticeText === "Unable to verify login details.";
+  const isBranchNoticeNeutral = branchNoticeText === "Enter username and password first.";
 
   return (
     <div className="login-page auth-gradient-page min-h-screen flex">
@@ -564,8 +683,10 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
                   <Store className="login-field-icon pointer-events-none absolute left-4 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-slate-500" />
                   <Select
                     value={branch}
+                    disabled={!isBranchSelectionReady || isAssignedBranchLocked || isCheckingAssignedBranch || isLoggingIn}
                     onValueChange={(value) => {
                       setBranch(value);
+                      setAutoSelectedBranch("");
                       if (!username || !password) {
                         toast.error("Please fill the other fields", {
                           id: "login-fill-other-fields",
@@ -579,7 +700,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
                   >
                     <SelectTrigger
                       id="branch"
-                      className="login-field-control rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm"
+                      className="login-field-control rounded-xl border-gray-300 focus:border-[#FFFF00] focus:ring-[#FFFF00] shadow-sm disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-700 disabled:opacity-100"
                     >
                       <SelectValue placeholder="Select branch" />
                     </SelectTrigger>
@@ -589,17 +710,33 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
                     </SelectContent>
                   </Select>
                 </div>
+                {branchNoticeText && (
+                  <p className={`flex items-center gap-1.5 text-xs font-medium ${isBranchNoticeError ? "text-red-700" : "text-slate-600"}`}>
+                    {isCheckingAssignedBranch ? (
+                      <Loader2 className="h-3 w-3 shrink-0 animate-spin text-slate-500" />
+                    ) : isBranchNoticeError ? (
+                      <AlertCircle className="h-3 w-3 shrink-0 text-red-600" strokeWidth={2.25} />
+                    ) : isBranchNoticeNeutral ? (
+                      <Store className="h-3 w-3 shrink-0 text-slate-500" strokeWidth={2.25} />
+                    ) : (
+                      <CheckCircle className="h-3 w-3 shrink-0 text-green-600" strokeWidth={2.25} />
+                    )}
+                    <span>
+                      {branchNoticeText}
+                    </span>
+                  </p>
+                )}
               </div>
 
               <Button
                 type="submit"
                 className="login-button w-full py-6 rounded-xl bg-[#FFFF00] hover:bg-[#e6e600] text-black shadow-lg transition-all duration-300"
-                disabled={isLoggingIn}
+                disabled={isLoggingIn || isCheckingAssignedBranch}
               >
-                {isLoggingIn ? (
+                {isLoggingIn || isCheckingAssignedBranch ? (
                   <>
                     <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                    Logging in...
+                    {isCheckingAssignedBranch && !isLoggingIn ? "Checking branch..." : "Logging in..."}
                   </>
                 ) : (
                   "Login"

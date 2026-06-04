@@ -46,8 +46,11 @@ export const formatPurchaseDocumentType = value => {
   return labels[normalized] || titleCaseWords(normalized);
 };
 
-export const formatPurchaseDocumentLabel = (documentType, documentNumber = "") => {
+export const formatPurchaseDocumentLabel = (documentType, documentNumber = "", documentTypeNote = "") => {
+  const normalized = String(documentType || "DR").trim().toUpperCase();
   const typeLabel = formatPurchaseDocumentType(documentType);
   const numberLabel = String(documentNumber || "").trim();
-  return numberLabel ? `${typeLabel} ${numberLabel}` : typeLabel;
+  const baseLabel = numberLabel ? `${typeLabel} ${numberLabel}` : typeLabel;
+  const noteLabel = String(documentTypeNote || "").trim();
+  return normalized === "OTHER" && noteLabel ? `${baseLabel}: ${noteLabel}` : baseLabel;
 };

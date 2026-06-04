@@ -161,6 +161,14 @@ const getPurchaseItems = purchase => {
   return [];
 };
 
+const getPurchaseItemNotes = purchase =>
+  getPurchaseItems(purchase)
+    .map(item => String(item.categoryNote || item.category_note || '').trim())
+    .filter(Boolean);
+
+const getPurchaseRemarksText = purchase =>
+  String(purchase?.remarks || '').trim() || getPurchaseItemNotes(purchase).join('\n');
+
 const getPurchaseLineCount = purchase =>
   Number(purchase?.itemCount ?? getPurchaseItems(purchase).length ?? 0);
 
@@ -230,6 +238,7 @@ export function PurchasesModule({ user, onNavigate }) {
   const [supplierName, setSupplierName] = useState('');
   const [supplierMode, setSupplierMode] = useState('listed');
   const [documentType, setDocumentType] = useState('DR');
+  const [documentTypeNote, setDocumentTypeNote] = useState('');
   const [documentNumber, setDocumentNumber] = useState('');
   const [paymentTerms, setPaymentTerms] = useState('cash');
   const [remarks, setRemarks] = useState('');
@@ -720,6 +729,7 @@ export function PurchasesModule({ user, onNavigate }) {
     setDismissedSupplierSuggestionKey('');
     setUseSupplierFilter(true);
     setDocumentType('DR');
+    setDocumentTypeNote('');
     setDocumentNumber('');
     setPaymentTerms('cash');
     setRemarks('');
@@ -746,6 +756,11 @@ export function PurchasesModule({ user, onNavigate }) {
   const validatePurchase = () => {
     if (!supplierName.trim()) {
       toast.error('Select a supplier or choose Other to enter one.');
+      return false;
+    }
+
+    if (documentType === 'OTHER' && !documentTypeNote.trim()) {
+      toast.error('Enter a short note for the Other document type.');
       return false;
     }
 
@@ -804,6 +819,7 @@ export function PurchasesModule({ user, onNavigate }) {
       const purchase = await recordPurchase({
         supplierName: supplierName.trim(),
         documentType,
+        documentTypeNote: documentType === 'OTHER' ? documentTypeNote.trim() : '',
         documentNumber: documentNumber.trim(),
         paymentTerms,
         remarks: remarks.trim(),
@@ -858,11 +874,17 @@ export function PurchasesModule({ user, onNavigate }) {
       purchase.supplierName,
       purchase.documentType,
       purchase.documentNumber,
+      purchase.documentTypeNote,
       purchase.paymentTerms,
+      purchase.remarks,
       formatDateTime(purchase.createdAt),
       formatDateTime(purchase.encodedAt),
       purchase.backdateReason,
-      ...getPurchaseItems(purchase).map(item => item.itemName || item.name)
+      ...getPurchaseItems(purchase).flatMap(item => [
+        item.itemName || item.name,
+        item.category,
+        item.categoryNote || item.category_note
+      ])
     ].filter(Boolean).join(' ').toLowerCase().includes(query));
   }, [purchaseHistorySearch, sortedPurchases]);
 
@@ -2670,12 +2692,31 @@ export function PurchasesModule({ user, onNavigate }) {
                 </div>
                 <div className="purchase-doc-column">
                   <Field label="Document Type">
-                    <Select value={documentType} onValueChange={setDocumentType} disabled={isSaving}>
+                    <Select
+                      value={documentType}
+                      onValueChange={value => {
+                        setDocumentType(value);
+                        if (value !== 'OTHER') {
+                          setDocumentTypeNote('');
+                        }
+                      }}
+                      disabled={isSaving}
+                    >
                       <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {DOCUMENT_TYPES.map(type => <SelectItem key={type} value={type}>{type}</SelectItem>)}
                       </SelectContent>
                     </Select>
+                    {documentType === 'OTHER' && (
+                      <Input
+                        value={documentTypeNote}
+                        maxLength={240}
+                        onChange={event => setDocumentTypeNote(event.target.value.slice(0, 240))}
+                        placeholder="E.g., Supplier delivery slip without DR/SI/OR label."
+                        disabled={isSaving}
+                        className="mt-2 h-10"
+                      />
+                    )}
                   </Field>
                   <Field label="Terms">
                     <Select value={paymentTerms} onValueChange={setPaymentTerms} disabled={isSaving}>
@@ -3238,7 +3279,7 @@ export function PurchasesModule({ user, onNavigate }) {
               </div>
               <div className="purchase-confirm-summary-item">
                 <span>Document</span>
-                <strong>{formatPurchaseDocumentLabel(documentType, documentNumber)}</strong>
+                <strong>{formatPurchaseDocumentLabel(documentType, documentNumber, documentTypeNote)}</strong>
               </div>
               <div className="purchase-confirm-summary-item">
                 <span>Terms</span>
@@ -3411,7 +3452,7 @@ function PurchaseHistoryDialog({
                             </p>
                           )}
                           <p className="mt-2 truncate text-sm text-slate-600">
-                            {purchase.supplierName || 'No supplier'} - {formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber)}
+                            {purchase.supplierName || 'No supplier'} - {formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber, purchase.documentTypeNote)}
                           </p>
                         </div>
                         <div className="shrink-0 text-right">
@@ -3443,6 +3484,7 @@ function PurchaseHistoryDialog({
 
 function PurchaseHistoryDetail({ purchase }) {
   const items = getPurchaseItems(purchase);
+  const remarksText = getPurchaseRemarksText(purchase) || 'No remarks recorded.';
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -3464,7 +3506,7 @@ function PurchaseHistoryDetail({ purchase }) {
 
       <div className="grid gap-4 sm:grid-cols-2">
         <HistoryDetail icon={<Truck className="h-5 w-5" />} label="Supplier" value={purchase.supplierName || 'No supplier'} />
-        <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Document" value={formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber)} />
+        <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Document" value={formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber, purchase.documentTypeNote)} />
         <HistoryDetail icon={<PackagePlus className="h-5 w-5" />} label="Line Items" value={`${getPurchaseLineCount(purchase)} line${getPurchaseLineCount(purchase) === 1 ? '' : 's'}`} />
         <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="Quantity Added" value={`${getPurchaseQuantity(purchase)} unit${getPurchaseQuantity(purchase) === 1 ? '' : 's'}`} />
         <HistoryDetail icon={<Wallet className="h-5 w-5" />} label="Total Purchase" value={formatCurrency(purchase.subtotalAmount)} />
@@ -3472,6 +3514,7 @@ function PurchaseHistoryDetail({ purchase }) {
         {purchase.backdateReason && (
           <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Backdate Reason" value={purchase.backdateReason} />
         )}
+        <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Remarks" value={remarksText} />
       </div>
 
       <div>
@@ -3486,6 +3529,12 @@ function PurchaseHistoryDetail({ purchase }) {
             <div key={item.id || `${item.inventoryId}-${index}`} className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
               <div className="min-w-0">
                 <p className="break-words font-semibold leading-5 text-slate-900">{item.itemName || item.name || 'Inventory item'}</p>
+                <p className="mt-1 break-words text-xs leading-5 text-slate-700">Category: {item.category || 'Uncategorized'}</p>
+                {(item.categoryNote || item.category_note) && (
+                  <p className="mt-1 break-words text-xs leading-5 text-slate-700">
+                    Note: {item.categoryNote || item.category_note}
+                  </p>
+                )}
                 <p className="mt-1 break-words text-xs leading-5 text-slate-700">Quantity: {item.quantity || 0}</p>
               </div>
               <div className="text-right">
@@ -3508,7 +3557,7 @@ function HistoryDetail({ icon, label, value }) {
       </span>
       <div className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-        <p className="mt-1 break-words font-bold text-slate-900">{value}</p>
+        <p className="mt-1 whitespace-pre-line break-words font-bold text-slate-900">{value}</p>
       </div>
     </div>
   );

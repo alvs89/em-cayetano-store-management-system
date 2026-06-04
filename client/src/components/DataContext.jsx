@@ -278,6 +278,7 @@ export function DataProvider({ children }) {
           productId: p.product_id?.toString() ?? '',
           name: p.name,
           category: p.category,
+          categoryNote: p.category_note || '',
           supplierName: p.supplier_name || '',
           defaultSellingPrice: p.default_selling_price === null || p.default_selling_price === undefined ? '' : Number(p.default_selling_price),
           costPrice: p.cost_price === null || p.cost_price === undefined ? '' : Number(p.cost_price),
@@ -328,6 +329,7 @@ export function DataProvider({ children }) {
           productId: p.product_id?.toString() ?? '',
           name: p.name,
           category: p.category,
+          categoryNote: p.category_note || '',
           supplierName: p.supplier_name || '',
           defaultSellingPrice: p.default_selling_price === null || p.default_selling_price === undefined ? '' : Number(p.default_selling_price),
           costPrice: p.cost_price === null || p.cost_price === undefined ? '' : Number(p.cost_price),
@@ -347,6 +349,7 @@ export function DataProvider({ children }) {
           // preserve full ISO timestamps for accuracy in alerts and history
           lastUpdated: p.last_updated ? new Date(p.last_updated).toISOString() : '',
           archiveReason: p.archive_reason || '',
+          archiveReasonNote: p.archive_reason_note || '',
           archivedAt: p.archived_at ? new Date(p.archived_at).toISOString() : '',
         };
         return {
@@ -453,6 +456,7 @@ export function DataProvider({ children }) {
       isInventoryItem: item.is_inventory_item !== false,
       itemName: item.item_name || '',
       category: item.category || '',
+      categoryNote: item.category_note || '',
       branch: item.branch || '',
       quantitySold: Number(item.quantity_sold || 0),
       unitPrice: Number(item.unit_price || 0),
@@ -502,6 +506,7 @@ export function DataProvider({ children }) {
     branch: purchase.branch || '',
     supplierName: purchase.supplier_name || '',
     documentType: purchase.document_type || 'DR',
+    documentTypeNote: purchase.document_type_note || '',
     documentNumber: purchase.document_number || '',
     paymentTerms: purchase.payment_terms || 'cash',
     subtotalAmount: Number(purchase.subtotal_amount || 0),
@@ -521,6 +526,7 @@ export function DataProvider({ children }) {
       productId: item.product_id?.toString() ?? '',
       itemName: item.item_name || '',
       category: item.category || '',
+      categoryNote: item.category_note || '',
       branch: item.branch || '',
       quantityReceived: Number(item.quantity_received || 0),
       unitCost: Number(item.unit_cost || 0),
@@ -779,6 +785,7 @@ export function DataProvider({ children }) {
       {
         name: item.name,
         category: item.category,
+        category_note: item.categoryNote,
         supplier_name: item.supplierName,
         default_selling_price: item.defaultSellingPrice,
         cost_price: item.costPrice,
@@ -816,6 +823,7 @@ export function DataProvider({ children }) {
                 ...it,
                 name: updates.name ?? it.name,
                 category: updates.category ?? it.category,
+                categoryNote: updates.categoryNote ?? it.categoryNote,
                 supplierName: updates.supplierName ?? it.supplierName,
                 defaultSellingPrice: updates.defaultSellingPrice ?? it.defaultSellingPrice,
                 costPrice: updates.costPrice ?? it.costPrice,
@@ -843,6 +851,7 @@ export function DataProvider({ children }) {
         {
           name: updates.name,
           category: updates.category,
+          category_note: updates.categoryNote,
           supplier_name: updates.supplierName,
           default_selling_price: updates.defaultSellingPrice,
           cost_price: updates.costPrice,
@@ -964,6 +973,7 @@ export function DataProvider({ children }) {
             is_manual: Boolean(item.isManual),
             item_name: item.itemName,
             category: item.category,
+            category_note: item.categoryNote,
             quantity: item.quantity,
             unit_price: item.unitPrice,
           })),
@@ -1019,7 +1029,7 @@ export function DataProvider({ children }) {
     }
   };
 
-  const recordPurchase = async ({ supplierName, documentType, documentNumber, paymentTerms, remarks, items, actualTransactionAt, backdateReason }) => {
+  const recordPurchase = async ({ supplierName, documentType, documentTypeNote, documentNumber, paymentTerms, remarks, items, actualTransactionAt, backdateReason }) => {
     const token = localStorage.getItem("token");
     try {
       const res = await axios.post(
@@ -1027,6 +1037,7 @@ export function DataProvider({ children }) {
         {
           supplier_name: supplierName,
           document_type: documentType,
+          document_type_note: documentTypeNote,
           document_number: documentNumber,
           payment_terms: paymentTerms,
           remarks,
@@ -1077,13 +1088,16 @@ export function DataProvider({ children }) {
   };
 
   // Archive (delete) inventory item
-  const archiveInventoryItem = async (id, archiveReason) => {
+  const archiveInventoryItem = async (id, archiveReason, archiveReasonNote = "") => {
     const token = localStorage.getItem("token");
 
     try {
       await axios.delete(apiUrl(`/api/inventory/${id}`), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
-        data: { archive_reason: archiveReason },
+        data: {
+          archive_reason: archiveReason,
+          archive_reason_note: archiveReasonNote,
+        },
       });
       await fetchInventory();
       await fetchArchivedInventory();

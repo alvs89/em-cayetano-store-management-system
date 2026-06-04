@@ -220,6 +220,7 @@ const BACKDATE_FUTURE_TOLERANCE_MS = 60 * 1000;
 const SALES_INVOICE_DOCUMENT_TYPE = 'sales_invoice';
 const SALES_INVOICE_SEQUENCE_DIGITS = 6;
 const SALES_INVOICE_NUMBER_PATTERN = '^[0-9]{6}$';
+const SALES_INVOICE_MAX_NUMBER = Number('9'.repeat(SALES_INVOICE_SEQUENCE_DIGITS));
 const LEGACY_SALES_INVOICE_NUMBER_PATTERN = `^SI-[0-9]{4}-[0-9]{${SALES_INVOICE_SEQUENCE_DIGITS}}$`;
 const LEGACY_SALES_INVOICE_NUMBER_REGEX = new RegExp(`^SI-\\d{4}-(\\d{${SALES_INVOICE_SEQUENCE_DIGITS}})$`, 'i');
 const SALES_INVOICE_START_NUMBER = Math.max(
@@ -262,7 +263,7 @@ async function ensureSchema() {
       updated_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
       PRIMARY KEY (document_type, invoice_year, branch),
       CHECK (invoice_year BETWEEN 2000 AND 9999),
-      CHECK (last_number >= 0)
+      CHECK (last_number BETWEEN 0 AND ${SALES_INVOICE_MAX_NUMBER})
     );
   `);
   await pool.query(`
@@ -277,6 +278,19 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE invoice_number_sequences
     ALTER COLUMN branch SET NOT NULL;
+  `);
+  await pool.query(`
+    ALTER TABLE invoice_number_sequences
+    DROP CONSTRAINT IF EXISTS invoice_number_sequences_last_number_check;
+  `);
+  await pool.query(`
+    UPDATE invoice_number_sequences
+    SET last_number = LEAST(GREATEST(COALESCE(last_number, 0), 0), ${SALES_INVOICE_MAX_NUMBER});
+  `);
+  await pool.query(`
+    ALTER TABLE invoice_number_sequences
+    ADD CONSTRAINT invoice_number_sequences_last_number_check
+    CHECK (last_number BETWEEN 0 AND ${SALES_INVOICE_MAX_NUMBER});
   `);
   await pool.query(`
     ALTER TABLE invoice_number_sequences
@@ -319,6 +333,7 @@ async function ensureSchema() {
       product_id SERIAL PRIMARY KEY,
       name VARCHAR(150) NOT NULL,
       category VARCHAR(50) NOT NULL,
+      category_note TEXT,
       supplier_name VARCHAR(120),
       default_selling_price NUMERIC(12,2),
       cost_price NUMERIC(12,2),
@@ -421,6 +436,7 @@ async function ensureSchema() {
       is_inventory_item BOOLEAN NOT NULL DEFAULT true,
       item_name VARCHAR(150) NOT NULL,
       category VARCHAR(50) NOT NULL,
+      category_note TEXT,
       branch VARCHAR(50) NOT NULL,
       quantity_sold INTEGER NOT NULL,
       unit_price NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -443,6 +459,7 @@ async function ensureSchema() {
       branch VARCHAR(50) NOT NULL,
       supplier_name VARCHAR(120) NOT NULL,
       document_type VARCHAR(20) DEFAULT 'DR' CHECK (document_type IN ('DR', 'SI', 'OR', 'OTHER')),
+      document_type_note TEXT,
       document_number VARCHAR(80),
       payment_terms VARCHAR(30) DEFAULT 'cash' CHECK (payment_terms IN ('cash', 'cod', 'credit', 'branch_transfer')),
       subtotal_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -468,6 +485,7 @@ async function ensureSchema() {
       product_id INT REFERENCES products(product_id) ON DELETE SET NULL,
       item_name VARCHAR(150) NOT NULL,
       category VARCHAR(50) NOT NULL,
+      category_note TEXT,
       branch VARCHAR(50) NOT NULL,
       quantity_received INTEGER NOT NULL,
       unit_cost NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -485,6 +503,7 @@ async function ensureSchema() {
       product_id INT,
       name VARCHAR(150) NOT NULL,
       category VARCHAR(50) NOT NULL,
+      category_note TEXT,
       branch VARCHAR(50) NOT NULL,
       stock_level INTEGER DEFAULT 0,
       min_stock_level INTEGER DEFAULT 5,
@@ -501,6 +520,7 @@ async function ensureSchema() {
       last_updated TIMESTAMP,
       archived_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
       archive_reason VARCHAR(40),
+      archive_reason_note TEXT,
       archived_by INT REFERENCES users(user_id) ON DELETE SET NULL
     );
   `);
@@ -594,6 +614,11 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE products
     ADD COLUMN IF NOT EXISTS supplier_name VARCHAR(120);
+  `);
+
+  await pool.query(`
+    ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS category_note TEXT;
   `);
 
   await pool.query(`
@@ -862,13 +887,13 @@ async function ensureSchema() {
       '${SALES_INVOICE_DOCUMENT_TYPE}',
       EXTRACT(YEAR FROM ${PHILIPPINE_NOW_SQL})::int AS invoice_year,
       branch,
-      GREATEST(MAX(official_invoice_number::int), ${SALES_INVOICE_START_NUMBER} - 1) AS last_number,
+      LEAST(GREATEST(MAX(official_invoice_number::int), ${SALES_INVOICE_START_NUMBER} - 1), ${SALES_INVOICE_MAX_NUMBER}) AS last_number,
       ${PHILIPPINE_NOW_SQL}
     FROM sales_transactions
     WHERE official_invoice_number ~ '${SALES_INVOICE_NUMBER_PATTERN}'
     GROUP BY branch
     ON CONFLICT (document_type, invoice_year, branch) DO UPDATE
-    SET last_number = GREATEST(invoice_number_sequences.last_number, EXCLUDED.last_number),
+    SET last_number = LEAST(GREATEST(invoice_number_sequences.last_number, EXCLUDED.last_number), ${SALES_INVOICE_MAX_NUMBER}),
         updated_at = ${PHILIPPINE_NOW_SQL};
   `);
   await pool.query(`
@@ -1040,6 +1065,11 @@ async function ensureSchema() {
 
   await pool.query(`
     ALTER TABLE sales_items
+    ADD COLUMN IF NOT EXISTS category_note TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_items
     DROP CONSTRAINT IF EXISTS sales_items_item_type_check;
   `);
 
@@ -1119,6 +1149,10 @@ async function ensureSchema() {
   `);
   await pool.query(`
     ALTER TABLE purchase_transactions
+    ADD COLUMN IF NOT EXISTS document_type_note TEXT;
+  `);
+  await pool.query(`
+    ALTER TABLE purchase_transactions
     ADD COLUMN IF NOT EXISTS backdate_reason TEXT;
   `);
   await pool.query(`
@@ -1133,6 +1167,11 @@ async function ensureSchema() {
   `);
 
   await pool.query(`
+    ALTER TABLE purchase_items
+    ADD COLUMN IF NOT EXISTS category_note TEXT;
+  `);
+
+  await pool.query(`
     ALTER TABLE archived_inventory
     ALTER COLUMN archived_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
   `);
@@ -1140,6 +1179,16 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE archived_inventory
     ADD COLUMN IF NOT EXISTS archive_reason VARCHAR(40);
+  `);
+
+  await pool.query(`
+    ALTER TABLE archived_inventory
+    ADD COLUMN IF NOT EXISTS archive_reason_note TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE archived_inventory
+    ADD COLUMN IF NOT EXISTS category_note TEXT;
   `);
 
   await pool.query(`
@@ -1800,6 +1849,17 @@ function cleanSupplierName(value) {
   return cleanName ? cleanName.slice(0, 120) : null;
 }
 
+function cleanOptionalContextNote(value, { maxLength = 240 } = {}) {
+  const cleanNote = String(value ?? '').trim().replace(/\s+/g, ' ');
+  return cleanNote ? cleanNote.slice(0, maxLength) : null;
+}
+
+function cleanCategoryNote(value, category) {
+  return canonicalizeInventoryCategory(category) === 'Other'
+    ? cleanOptionalContextNote(value)
+    : null;
+}
+
 function hasValidInventoryTextCharacters(value) {
   return /^[A-Za-z0-9\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u00FF\u00D1\u00F1 #./,'"()&+_-]+$/.test(String(value || ''));
 }
@@ -1950,7 +2010,7 @@ async function findProductByIdentity(client, { name, category }) {
   const normalizedIdentityName = normalizeInventoryIdentityName(cleanName);
 
   const existing = await client.query(
-    `SELECT product_id, name, category, supplier_name, default_selling_price, cost_price
+    `SELECT product_id, name, category, category_note, supplier_name, default_selling_price, cost_price
      FROM products
      WHERE LOWER(category) = LOWER($1)`,
     [canonicalCategory]
@@ -1959,9 +2019,10 @@ async function findProductByIdentity(client, { name, category }) {
   return existing.rows.find(row => normalizeInventoryIdentityName(row.name) === normalizedIdentityName) || null;
 }
 
-async function findOrCreateProduct(client, { name, category, supplierName = null, defaultSellingPrice = null, costPrice = null }) {
+async function findOrCreateProduct(client, { name, category, categoryNote = null, supplierName = null, defaultSellingPrice = null, costPrice = null }) {
   const canonicalCategory = canonicalizeInventoryCategory(category);
   const cleanName = cleanInventoryName(name);
+  const cleanNote = cleanCategoryNote(categoryNote, canonicalCategory);
   const cleanSupplier = cleanSupplierName(supplierName);
   if (!canonicalCategory) {
     const error = new Error('Invalid inventory category');
@@ -1985,20 +2046,23 @@ async function findOrCreateProduct(client, { name, category, supplierName = null
       ? existingCostPrice
       : Number(costPrice);
     const shouldUpdateSupplier = cleanSupplier && cleanSupplier !== existing.supplier_name;
+    const shouldUpdateCategoryNote = cleanNote !== cleanOptionalContextNote(existing.category_note);
     const shouldUpdateDefaultPrice = nextDefaultPrice !== existingDefaultPrice;
     const shouldUpdateCostPrice = nextCostPrice !== existingCostPrice;
 
-    if (shouldUpdateSupplier || shouldUpdateDefaultPrice || shouldUpdateCostPrice) {
+    if (shouldUpdateSupplier || shouldUpdateCategoryNote || shouldUpdateDefaultPrice || shouldUpdateCostPrice) {
       await client.query(
         `UPDATE products
          SET supplier_name = $1,
              default_selling_price = $2,
-             cost_price = $3
-         WHERE product_id = $4`,
+             cost_price = $3,
+             category_note = $4
+         WHERE product_id = $5`,
         [
           shouldUpdateSupplier ? cleanSupplier : existing.supplier_name,
           nextDefaultPrice,
           nextCostPrice,
+          cleanNote,
           existing.product_id
         ]
       );
@@ -2007,10 +2071,10 @@ async function findOrCreateProduct(client, { name, category, supplierName = null
   }
 
   const inserted = await client.query(
-    `INSERT INTO products (name, category, supplier_name, default_selling_price, cost_price)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO products (name, category, category_note, supplier_name, default_selling_price, cost_price)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING product_id`,
-    [cleanName, canonicalCategory, cleanSupplier, defaultSellingPrice, costPrice]
+    [cleanName, canonicalCategory, cleanNote, cleanSupplier, defaultSellingPrice, costPrice]
   );
 
   return inserted.rows[0].product_id;
@@ -2100,6 +2164,7 @@ function mapInventoryRow(row, options = {}) {
     product_id: row.product_id,
     name: row.name,
     category: row.category,
+    category_note: row.category_note,
     supplier_name: row.supplier_name,
     default_selling_price: row.default_selling_price,
     stock_level: row.stock_level,
@@ -2130,6 +2195,7 @@ function mapArchivedInventoryRow(row, options = {}) {
     product_id: row.product_id,
     name: row.name,
     category: row.category,
+    category_note: row.category_note,
     supplier_name: row.supplier_name,
     default_selling_price: row.default_selling_price,
     stock_level: row.stock_level,
@@ -2147,6 +2213,7 @@ function mapArchivedInventoryRow(row, options = {}) {
     branch: row.branch,
     last_updated: row.last_updated,
     archive_reason: row.archive_reason,
+    archive_reason_note: row.archive_reason_note,
     archived_at: row.archived_at
   };
   if (options.includeCostPrice) {
@@ -2162,6 +2229,7 @@ function mapStockMovementRow(row) {
     product_id: row.product_id,
     item_name: row.item_name,
     category: row.category,
+    category_note: row.category_note,
     branch: row.branch,
     action: row.action,
     quantity_changed: row.quantity_changed,
@@ -2243,6 +2311,7 @@ function mapSalesItemRow(row) {
     is_inventory_item: row.is_inventory_item,
     item_name: row.item_name,
     category: row.category,
+    category_note: row.category_note,
     branch: row.branch,
     quantity_sold: row.quantity_sold,
     unit_price: row.unit_price,
@@ -2267,6 +2336,7 @@ function mapPurchaseTransactionRow(row) {
     branch: row.branch,
     supplier_name: row.supplier_name,
     document_type: row.document_type,
+    document_type_note: row.document_type_note,
     document_number: row.document_number,
     payment_terms: row.payment_terms,
     subtotal_amount: row.subtotal_amount,
@@ -2473,11 +2543,25 @@ async function generateSalesNumber(client, transactionType = 'sale') {
 }
 
 function formatOfficialSalesInvoiceNumber(sequence) {
-  return String(sequence).padStart(SALES_INVOICE_SEQUENCE_DIGITS, '0');
+  const safeSequence = Number.parseInt(sequence, 10);
+  if (!Number.isInteger(safeSequence) || safeSequence < SALES_INVOICE_START_NUMBER || safeSequence > SALES_INVOICE_MAX_NUMBER) {
+    return '';
+  }
+  return String(safeSequence).padStart(SALES_INVOICE_SEQUENCE_DIGITS, '0');
 }
 
 function normalizeOfficialSalesInvoiceNumber(value) {
   return String(value || '').trim().replace(/\D/g, '');
+}
+
+function getNextOfficialSalesInvoiceSequence(lastNumber) {
+  const safeLastNumber = Number.parseInt(lastNumber, 10);
+  if (!Number.isInteger(safeLastNumber) || safeLastNumber < SALES_INVOICE_START_NUMBER) {
+    return SALES_INVOICE_START_NUMBER;
+  }
+  return safeLastNumber >= SALES_INVOICE_MAX_NUMBER
+    ? SALES_INVOICE_START_NUMBER
+    : safeLastNumber + 1;
 }
 
 async function getSalesInvoiceSequenceYear(client) {
@@ -2508,10 +2592,10 @@ async function ensureSalesInvoiceSequence(client, branch) {
     `INSERT INTO invoice_number_sequences (document_type, invoice_year, branch, last_number, updated_at)
      VALUES ($1, $2, $3, $4, ${PHILIPPINE_NOW_SQL})
      ON CONFLICT (document_type, invoice_year, branch) DO UPDATE
-     SET last_number = GREATEST(invoice_number_sequences.last_number, EXCLUDED.last_number),
+     SET last_number = LEAST(GREATEST(invoice_number_sequences.last_number, EXCLUDED.last_number), $5::int),
          updated_at = ${PHILIPPINE_NOW_SQL}
      RETURNING last_number`,
-    [SALES_INVOICE_DOCUMENT_TYPE, invoiceYear, sequenceBranch, lastNumber]
+    [SALES_INVOICE_DOCUMENT_TYPE, invoiceYear, sequenceBranch, Math.min(lastNumber, SALES_INVOICE_MAX_NUMBER), SALES_INVOICE_MAX_NUMBER]
   );
 
   return { invoiceYear, sequenceBranch };
@@ -2520,14 +2604,14 @@ async function ensureSalesInvoiceSequence(client, branch) {
 async function peekNextOfficialSalesInvoiceNumber(client, branch) {
   const { invoiceYear, sequenceBranch } = await ensureSalesInvoiceSequence(client, branch);
   const result = await client.query(
-    `SELECT last_number + 1 AS next_number
+    `SELECT last_number
      FROM invoice_number_sequences
      WHERE document_type = $1
        AND invoice_year = $2
        AND branch = $3`,
     [SALES_INVOICE_DOCUMENT_TYPE, invoiceYear, sequenceBranch]
   );
-  const sequence = Number(result.rows[0]?.next_number || SALES_INVOICE_START_NUMBER);
+  const sequence = getNextOfficialSalesInvoiceSequence(result.rows[0]?.last_number);
   return formatOfficialSalesInvoiceNumber(sequence);
 }
 
@@ -2547,8 +2631,8 @@ async function lockOfficialSalesInvoiceSequence(client, branch) {
     throw new Error('Sales invoice sequence is not initialized.');
   }
 
-  const lastNumber = Number(result.rows[0]?.last_number || 0);
-  const nextNumber = Math.max(lastNumber + 1, SALES_INVOICE_START_NUMBER);
+  const lastNumber = Math.min(Number(result.rows[0]?.last_number || 0), SALES_INVOICE_MAX_NUMBER);
+  const nextNumber = getNextOfficialSalesInvoiceSequence(lastNumber);
   return {
     invoiceYear,
     branch: sequenceBranch,
@@ -2560,16 +2644,19 @@ async function lockOfficialSalesInvoiceSequence(client, branch) {
 
 async function advanceOfficialSalesInvoiceSequence(client, invoiceYear, branch, officialInvoiceNumber) {
   const sequence = Number.parseInt(officialInvoiceNumber, 10);
-  if (!Number.isInteger(sequence) || sequence <= 0) return;
+  if (!Number.isInteger(sequence) || sequence < SALES_INVOICE_START_NUMBER || sequence > SALES_INVOICE_MAX_NUMBER) return;
   const sequenceBranch = getSalesInvoiceSequenceBranch(branch);
   await client.query(
     `UPDATE invoice_number_sequences
-     SET last_number = GREATEST(last_number, $3),
+     SET last_number = CASE
+           WHEN last_number >= $5::int THEN $3::int
+           ELSE GREATEST(last_number, $3::int)
+         END,
          updated_at = ${PHILIPPINE_NOW_SQL}
      WHERE document_type = $1
        AND invoice_year = $2
        AND branch = $4`,
-    [SALES_INVOICE_DOCUMENT_TYPE, invoiceYear, sequence, sequenceBranch]
+    [SALES_INVOICE_DOCUMENT_TYPE, invoiceYear, sequence, sequenceBranch, SALES_INVOICE_MAX_NUMBER]
   );
 }
 
@@ -3403,6 +3490,44 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+app.post('/api/auth/assigned-branch', async (req, res) => {
+  const username = cleanUsername(req.body.username);
+  const password = req.body.password || '';
+  const usernameError = validateUsername(username);
+  if (usernameError || !password) {
+    return res.status(400).json({ error: 'Enter username and password first.' });
+  }
+
+  try {
+    const userResult = await pool.query(
+      'SELECT user_id, username, password_hash, role, branch, status FROM users WHERE username = $1',
+      [username]
+    );
+    if (userResult.rowCount === 0) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    const user = userResult.rows[0];
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+    if (!validPassword) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    if (user.status !== 'Active') {
+      return res.status(403).json({ error: 'Your account does not have access. Please contact an administrator.' });
+    }
+
+    return res.json({
+      branch: isAdmin(user) ? '' : normalizeBranch(user.branch),
+      branchLocked: !isAdmin(user),
+      role: user.role
+    });
+  } catch (err) {
+    console.error('Assigned branch lookup error:', err);
+    return res.status(500).json({ error: 'Failed to check assigned branch.' });
+  }
+});
+
 app.post('/api/auth/send-otp', async (req, res) => {
   const username = cleanUsername(req.body.username);
   const usernameError = validateUsername(username);
@@ -4202,6 +4327,7 @@ app.get('/api/inventory', authenticate, async (req, res) => {
          bi.product_id,
          p.name,
          p.category,
+         p.category_note,
          p.supplier_name,
          p.default_selling_price,
          p.cost_price,
@@ -4244,6 +4370,7 @@ app.get('/api/archive', authenticate, async (req, res) => {
          product_id,
          name,
          category,
+         category_note,
          supplier_name,
          default_selling_price,
          cost_price,
@@ -4259,6 +4386,7 @@ app.get('/api/archive', authenticate, async (req, res) => {
          status,
          last_updated,
          archive_reason,
+         archive_reason_note,
          archived_at
        FROM archived_inventory
        WHERE branch = $1
@@ -4362,6 +4490,7 @@ app.get('/api/sales', authenticate, async (req, res) => {
                'is_inventory_item', si.is_inventory_item,
                'item_name', si.item_name,
                'category', si.category,
+               'category_note', si.category_note,
                'branch', si.branch,
                'quantity_sold', si.quantity_sold,
                'unit_price', si.unit_price,
@@ -4504,6 +4633,17 @@ app.post('/api/sales', authenticate, async (req, res) => {
     });
   }
 
+  const enteredOfficialInvoiceSequence = Number.parseInt(cleanOfficialInvoiceNumber, 10);
+  if (
+    !Number.isInteger(enteredOfficialInvoiceSequence) ||
+    enteredOfficialInvoiceSequence < SALES_INVOICE_START_NUMBER ||
+    enteredOfficialInvoiceSequence > SALES_INVOICE_MAX_NUMBER
+  ) {
+    return res.status(400).json({
+      error: `Sales Invoice Number must be from ${formatOfficialSalesInvoiceNumber(SALES_INVOICE_START_NUMBER)} to ${formatOfficialSalesInvoiceNumber(SALES_INVOICE_MAX_NUMBER)}.`
+    });
+  }
+
   if (cleanCustomerName.length > 160) {
     return res.status(400).json({ error: 'Registered name must be 160 characters or fewer.' });
   }
@@ -4563,12 +4703,14 @@ app.post('/api/sales', authenticate, async (req, res) => {
       if (isManualItem) {
         const itemName = String(item?.item_name || '').trim().replace(/\s+/g, ' ');
         const category = canonicalizeInventoryCategory(item?.category || 'Other') || 'Other';
+        const categoryNote = cleanCategoryNote(item?.category_note, category);
         if (!itemName || itemName.length > 150) {
           return res.status(400).json({ error: 'Manual sale items must include an item description of 150 characters or less.' });
         }
         manualItems.push({
           itemName,
           category,
+          categoryNote,
           quantity,
           unitPrice,
           subtotal: Number((quantity * unitPrice).toFixed(2))
@@ -4617,7 +4759,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
 
     const sequenceState = await lockOfficialSalesInvoiceSequence(client, req.user.branch);
     const expectedOfficialInvoiceNumber = sequenceState.nextInvoiceNumber;
-    const enteredInvoiceSequence = Number.parseInt(officialInvoiceNumber, 10);
+    const enteredInvoiceSequence = enteredOfficialInvoiceSequence;
     const isBehindCurrentSequence = enteredInvoiceSequence < sequenceState.nextNumber;
     const isSkippingAhead = enteredInvoiceSequence > sequenceState.nextNumber;
     const skippedInvoiceCount = isSkippingAhead ? enteredInvoiceSequence - sequenceState.nextNumber : 0;
@@ -4656,6 +4798,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
            bi.product_id,
            p.name,
            p.category,
+           p.category_note,
            p.supplier_name,
            p.default_selling_price,
            p.cost_price,
@@ -4733,6 +4876,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
         isInventoryItem: true,
         itemName: currentItem.name,
         category: currentItem.category,
+        categoryNote: currentItem.category_note || null,
         branch: currentItem.branch,
         quantitySold,
         unitPrice,
@@ -4749,6 +4893,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
         ...updatedResult.rows[0],
         name: currentItem.name,
         category: currentItem.category,
+        category_note: currentItem.category_note,
         supplier_name: currentItem.supplier_name,
         default_selling_price: currentItem.default_selling_price,
         cost_price: currentItem.cost_price,
@@ -4767,6 +4912,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
         isInventoryItem: false,
         itemName: line.itemName,
         category: line.category,
+        categoryNote: line.categoryNote || null,
         branch: req.user.branch,
         quantitySold: line.quantity,
         unitPrice: line.unitPrice,
@@ -4908,6 +5054,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
            is_inventory_item,
            item_name,
            category,
+           category_note,
            branch,
            quantity_sold,
            unit_price,
@@ -4920,7 +5067,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
            new_quantity,
            created_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, COALESCE($18::timestamp, ${PHILIPPINE_NOW_SQL}))
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, COALESCE($19::timestamp, ${PHILIPPINE_NOW_SQL}))
          RETURNING *`,
         [
           salesTransaction.sales_transaction_id,
@@ -4930,6 +5077,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
           line.isInventoryItem,
           line.itemName,
           line.category,
+          line.categoryNote || null,
           line.branch,
           line.quantitySold,
           line.unitPrice,
@@ -5229,6 +5377,7 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
              bi.product_id,
              p.name,
              p.category,
+             p.category_note,
              p.supplier_name,
              p.default_selling_price,
              bi.branch,
@@ -5399,6 +5548,7 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
            is_inventory_item,
            item_name,
            category,
+           category_note,
            branch,
            quantity_sold,
            unit_price,
@@ -5412,7 +5562,7 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
            refund_for_sales_item_id,
            created_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, COALESCE($19::timestamp, ${PHILIPPINE_NOW_SQL}))
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, COALESCE($20::timestamp, ${PHILIPPINE_NOW_SQL}))
          RETURNING *`,
         [
           refundTransaction.sales_transaction_id,
@@ -5422,6 +5572,7 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
           originalItem.is_inventory_item !== false,
           originalItem.item_name,
           originalItem.category,
+          originalItem.category_note || null,
           originalItem.branch,
           -refundQuantity,
           originalItem.unit_price,
@@ -5572,6 +5723,7 @@ app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) =
            bi.product_id,
            p.name,
            p.category,
+           p.category_note,
            p.supplier_name,
            p.default_selling_price,
            bi.branch,
@@ -5633,6 +5785,7 @@ app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) =
         ...updatedResult.rows[0],
         name: currentItem.name,
         category: currentItem.category,
+        category_note: currentItem.category_note,
         supplier_name: currentItem.supplier_name,
         default_selling_price: currentItem.default_selling_price,
         lead_time_days: currentItem.lead_time_days,
@@ -5697,6 +5850,7 @@ app.get('/api/purchases', authenticate, async (req, res) => {
          pt.branch,
          pt.supplier_name,
          pt.document_type,
+         pt.document_type_note,
          pt.document_number,
          pt.payment_terms,
          pt.subtotal_amount,
@@ -5719,6 +5873,7 @@ app.get('/api/purchases', authenticate, async (req, res) => {
                'product_id', pi.product_id,
                'item_name', pi.item_name,
                'category', pi.category,
+               'category_note', pi.category_note,
                'branch', pi.branch,
                'quantity_received', pi.quantity_received,
                'unit_cost', pi.unit_cost,
@@ -5757,6 +5912,7 @@ app.post('/api/purchases', authenticate, async (req, res) => {
   const {
     supplier_name,
     document_type = 'DR',
+    document_type_note = '',
     document_number = '',
     payment_terms = 'cash',
     remarks = '',
@@ -5764,6 +5920,7 @@ app.post('/api/purchases', authenticate, async (req, res) => {
   } = req.body;
   const cleanSupplierName = String(supplier_name || '').trim().replace(/\s+/g, ' ');
   const normalizedDocumentType = String(document_type || 'DR').trim().toUpperCase();
+  const cleanDocumentTypeNote = String(document_type_note || '').trim().replace(/\s+/g, ' ').slice(0, 240);
   const normalizedPaymentTerms = String(payment_terms || 'cash').trim().toLowerCase();
   const cleanDocumentNumber = String(document_number || '').trim().slice(0, 80) || null;
   const cleanRemarks = String(remarks || '').trim().slice(0, 500) || null;
@@ -5782,6 +5939,10 @@ app.post('/api/purchases', authenticate, async (req, res) => {
 
   if (!allowedDocumentTypes.has(normalizedDocumentType)) {
     return res.status(400).json({ error: 'Please select a valid purchase document type.' });
+  }
+
+  if (normalizedDocumentType === 'OTHER' && !cleanDocumentTypeNote) {
+    return res.status(400).json({ error: 'Please enter a short note for the Other document type.' });
   }
 
   if (!allowedPaymentTerms.has(normalizedPaymentTerms)) {
@@ -5848,6 +6009,7 @@ app.post('/api/purchases', authenticate, async (req, res) => {
            bi.product_id,
            p.name,
            p.category,
+           p.category_note,
            p.supplier_name,
            p.default_selling_price,
            bi.branch,
@@ -5892,6 +6054,7 @@ app.post('/api/purchases', authenticate, async (req, res) => {
         productId: currentItem.product_id,
         itemName: currentItem.name,
         category: currentItem.category,
+        categoryNote: currentItem.category_note || null,
         branch: currentItem.branch,
         quantityReceived: line.quantity,
         unitCost: line.unitCost,
@@ -5904,6 +6067,7 @@ app.post('/api/purchases', authenticate, async (req, res) => {
         ...updatedResult.rows[0],
         name: currentItem.name,
         category: currentItem.category,
+        category_note: currentItem.category_note,
         supplier_name: currentItem.supplier_name,
         default_selling_price: currentItem.default_selling_price,
         lead_time_days: currentItem.lead_time_days,
@@ -5919,6 +6083,7 @@ app.post('/api/purchases', authenticate, async (req, res) => {
          branch,
          supplier_name,
          document_type,
+         document_type_note,
          document_number,
          payment_terms,
          subtotal_amount,
@@ -5931,13 +6096,14 @@ app.post('/api/purchases', authenticate, async (req, res) => {
          encoded_at,
          backdate_reason
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'completed', $10, $11, COALESCE($12::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $13)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'completed', $11, $12, COALESCE($13::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $14)
        RETURNING *`,
       [
         purchaseNumber,
         req.user.branch,
         cleanSupplierName,
         normalizedDocumentType,
+        cleanDocumentTypeNote || null,
         cleanDocumentNumber,
         normalizedPaymentTerms,
         roundedSubtotalAmount,
@@ -5961,6 +6127,7 @@ app.post('/api/purchases', authenticate, async (req, res) => {
            product_id,
            item_name,
            category,
+           category_note,
            branch,
            quantity_received,
            unit_cost,
@@ -5969,7 +6136,7 @@ app.post('/api/purchases', authenticate, async (req, res) => {
            new_quantity,
            created_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12::timestamp, ${PHILIPPINE_NOW_SQL}))
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, COALESCE($13::timestamp, ${PHILIPPINE_NOW_SQL}))
          RETURNING *`,
         [
           purchaseTransaction.purchase_transaction_id,
@@ -5977,6 +6144,7 @@ app.post('/api/purchases', authenticate, async (req, res) => {
           line.productId,
           line.itemName,
           line.category,
+          line.categoryNote || null,
           line.branch,
           line.quantityReceived,
           line.unitCost,
@@ -6017,6 +6185,7 @@ app.post('/api/purchases', authenticate, async (req, res) => {
         branch: req.user.branch,
         supplierName: cleanSupplierName,
         documentType: normalizedDocumentType,
+        documentTypeNote: cleanDocumentTypeNote || null,
         documentNumber: cleanDocumentNumber,
         paymentTerms: normalizedPaymentTerms,
         totalQuantity,
@@ -6051,6 +6220,7 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
   const {
     name,
     category,
+    category_note,
     supplier_name,
     default_selling_price,
     cost_price,
@@ -6072,6 +6242,7 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
     const cleanName = cleanInventoryName(name);
     const cleanSupplier = cleanSupplierName(supplier_name);
     const canonicalCategory = canonicalizeInventoryCategory(category);
+    const categoryNote = cleanCategoryNote(category_note, canonicalCategory);
     const nameQualityError = validateInventoryNameQuality(cleanName);
     if (nameQualityError || !canonicalCategory) {
       await client.query('ROLLBACK');
@@ -6204,11 +6375,12 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
 
     const productId = await findOrCreateProduct(client, {
       name: cleanName,
-        category: canonicalCategory,
-        supplierName: cleanSupplier,
-        defaultSellingPrice,
-        costPrice
-      });
+      category: canonicalCategory,
+      categoryNote,
+      supplierName: cleanSupplier,
+      defaultSellingPrice,
+      costPrice
+    });
     const status = computeInventoryStatus(stockLevel, getEffectiveReorderThreshold({
       min_stock_level: minStockLevel,
       lead_time_days: leadTimeDays,
@@ -6265,6 +6437,7 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
          bi.product_id,
          p.name,
          p.category,
+         p.category_note,
          p.supplier_name,
          p.default_selling_price,
          p.cost_price,
@@ -6295,6 +6468,7 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
       details: {
         branch: createdItem.branch,
         category: createdItem.category,
+        categoryNote: createdItem.category_note || null,
         supplier: createdItem.supplier_name || 'Unassigned',
         defaultSellingPrice,
         costPrice,
@@ -6412,6 +6586,7 @@ app.post('/api/inventory/batch-stock-out', authenticate, async (req, res) => {
            bi.product_id,
            p.name,
            p.category,
+           p.category_note,
            p.supplier_name,
            p.default_selling_price,
            bi.branch,
@@ -6569,6 +6744,7 @@ app.post('/api/inventory/batch-stock-adjustment', authenticate, async (req, res)
            bi.product_id,
            p.name,
            p.category,
+           p.category_note,
            p.supplier_name,
            p.default_selling_price,
            bi.branch,
@@ -6674,6 +6850,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
   const {
     name,
     category,
+    category_note,
     supplier_name,
     default_selling_price,
     cost_price,
@@ -6708,6 +6885,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
          bi.product_id,
          p.name,
          p.category,
+         p.category_note,
          p.supplier_name,
          p.default_selling_price,
          p.cost_price,
@@ -6782,6 +6960,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     const cleanName = cleanInventoryName(name);
     const cleanSupplier = cleanSupplierName(supplier_name);
     const canonicalCategory = canonicalizeInventoryCategory(category);
+    const categoryNote = cleanCategoryNote(category_note, canonicalCategory);
     const nameQualityError = validateInventoryNameQuality(cleanName);
     if (nameQualityError || !canonicalCategory) {
       await client.query('ROLLBACK');
@@ -6799,6 +6978,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       canonicalizeInventoryCategory(inventoryRow.category) !== canonicalCategory;
     const normalizeNullableNumber = value => (value === null || value === undefined ? null : Number(value));
     const supplierChanged = cleanSupplier !== cleanSupplierName(inventoryRow.supplier_name);
+    const categoryNoteChanged = cleanOptionalContextNote(inventoryRow.category_note) !== categoryNote;
     const defaultSellingPriceChanged =
       normalizeNullableNumber(inventoryRow.default_selling_price) !== normalizeNullableNumber(nextDefaultSellingPrice);
     const costPriceChanged =
@@ -6817,6 +6997,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       previousStatus !== status ||
       identityChanged ||
       supplierChanged ||
+      categoryNoteChanged ||
       defaultSellingPriceChanged ||
       costPriceChanged ||
       reorderLevelChanged ||
@@ -7001,6 +7182,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       targetProductId = await findOrCreateProduct(client, {
         name: cleanName,
         category: canonicalCategory,
+        categoryNote,
         supplierName: cleanSupplier,
         defaultSellingPrice: nextDefaultSellingPrice,
         costPrice: nextCostPrice
@@ -7010,11 +7192,12 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
         `UPDATE products
          SET name = $1,
              category = $2,
-             supplier_name = $3,
-             default_selling_price = $4,
-             cost_price = $5
-         WHERE product_id = $6`,
-        [cleanName, canonicalCategory, cleanSupplier, nextDefaultSellingPrice, nextCostPrice, productId]
+             category_note = $3,
+             supplier_name = $4,
+             default_selling_price = $5,
+             cost_price = $6
+         WHERE product_id = $7`,
+        [cleanName, canonicalCategory, categoryNote, cleanSupplier, nextDefaultSellingPrice, nextCostPrice, productId]
       );
     }
 
@@ -7068,6 +7251,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
          bi.product_id,
          p.name,
          p.category,
+         p.category_note,
          p.supplier_name,
          p.default_selling_price,
          p.cost_price,
@@ -7145,6 +7329,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       const changedFields = [];
       if (inventoryRow.name !== cleanName) changedFields.push('name');
       if (inventoryRow.category !== canonicalCategory) changedFields.push('category');
+      if (categoryNoteChanged) changedFields.push('category note');
       if (supplierChanged) changedFields.push('supplier');
       if (defaultSellingPriceChanged) changedFields.push('default selling price');
       if (costPriceChanged) changedFields.push('cost price');
@@ -7165,6 +7350,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
             previous: {
               name: inventoryRow.name,
               category: inventoryRow.category,
+              categoryNote: inventoryRow.category_note || null,
               supplier: inventoryRow.supplier_name || 'Unassigned',
               defaultSellingPrice: normalizeNullableNumber(inventoryRow.default_selling_price),
               costPrice: normalizeNullableNumber(inventoryRow.cost_price),
@@ -7180,6 +7366,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
             current: {
               name: updatedItem.name,
               category: updatedItem.category,
+              categoryNote: updatedItem.category_note || null,
               supplier: updatedItem.supplier_name || 'Unassigned',
               defaultSellingPrice: normalizeNullableNumber(updatedItem.default_selling_price),
               costPrice: normalizeNullableNumber(updatedItem.cost_price),
@@ -7228,9 +7415,14 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
 app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) => {
   const { id } = req.params;
   const normalizedArchiveReason = normalizeArchiveReason(req.body?.archive_reason);
+  const archiveReasonNote = String(req.body?.archive_reason_note || '').trim().replace(/\s+/g, ' ').slice(0, 240);
 
   if (!normalizedArchiveReason) {
     return res.status(400).json({ error: 'Please select the reason for archiving this item.' });
+  }
+
+  if (normalizedArchiveReason === 'other' && !archiveReasonNote) {
+    return res.status(400).json({ error: 'Please enter the reason for choosing Other.' });
   }
 
   const client = await pool.connect();
@@ -7243,6 +7435,7 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
          bi.product_id,
          p.name,
          p.category,
+         p.category_note,
          p.supplier_name,
          p.default_selling_price,
          p.cost_price,
@@ -7275,6 +7468,7 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
          product_id,
          name,
          category,
+         category_note,
          supplier_name,
          default_selling_price,
          cost_price,
@@ -7290,14 +7484,16 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
          status,
          last_updated,
          archive_reason,
+         archive_reason_note,
          archived_by
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
       [
         archivedItem.inventory_id,
         archivedItem.product_id,
         archivedItem.name,
         archivedItem.category,
+        archivedItem.category_note,
         archivedItem.supplier_name,
         archivedItem.default_selling_price,
         archivedItem.cost_price,
@@ -7313,6 +7509,7 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
         archivedItem.status,
         archivedItem.last_updated,
         normalizedArchiveReason,
+        archiveReasonNote || null,
         req.user.id
       ]
     );
@@ -7347,11 +7544,15 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
       targetName: archivedItem.name,
       targetType: 'inventory_item',
       action: `ARCHIVE_ITEM: ${getArchiveReasonLabel(normalizedArchiveReason)}`,
-      reason: getArchiveReasonLabel(normalizedArchiveReason),
+      reason: normalizedArchiveReason === 'other' && archiveReasonNote
+        ? `Other: ${archiveReasonNote}`
+        : getArchiveReasonLabel(normalizedArchiveReason),
       details: {
         branch: archivedItem.branch,
         category: archivedItem.category,
         supplier: archivedItem.supplier_name || 'Unassigned',
+        archiveReason: getArchiveReasonLabel(normalizedArchiveReason),
+        archiveReasonNote: archiveReasonNote || null,
         quantityAtArchive: Number(archivedItem.stock_level || 0),
         reorderLevel: Number(archivedItem.min_stock_level || 0),
         leadTimeDays: Number(archivedItem.lead_time_days || 0),
@@ -7414,6 +7615,7 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
     const productId = await findOrCreateProduct(client, {
       name: archivedItem.name,
       category: canonicalizeInventoryCategory(archivedItem.category) || 'Other',
+      categoryNote: archivedItem.category_note,
       supplierName: archivedItem.supplier_name,
       defaultSellingPrice: archivedItem.default_selling_price === null || archivedItem.default_selling_price === undefined
         ? null
@@ -7546,6 +7748,7 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
          bi.product_id,
          p.name,
          p.category,
+         p.category_note,
          p.supplier_name,
          p.default_selling_price,
          p.cost_price,
@@ -7917,7 +8120,7 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
         [scopeBranch]
       ),
       pool.query(
-        `SELECT DISTINCT p.product_id, p.name, p.category, p.supplier_name, p.default_selling_price, p.cost_price
+        `SELECT DISTINCT p.product_id, p.name, p.category, p.category_note, p.supplier_name, p.default_selling_price, p.cost_price
          FROM products p
          INNER JOIN branch_inventory bi ON bi.product_id = p.product_id
          WHERE bi.branch = $1

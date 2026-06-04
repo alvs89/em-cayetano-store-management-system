@@ -34,6 +34,17 @@ const ARCHIVE_REASON_LABELS = {
 };
 
 const getArchiveReasonLabel = reason => ARCHIVE_REASON_LABELS[reason] || "Not specified";
+const getArchiveReasonDisplay = item => {
+  const reasonLabel = getArchiveReasonLabel(item?.archiveReason);
+  const reasonNote = String(item?.archiveReasonNote || "").trim();
+  return item?.archiveReason === "other" && reasonNote ? `${reasonLabel}: ${reasonNote}` : reasonLabel;
+};
+const getCategoryNote = item => String(item?.categoryNote || "").trim();
+const getArchiveCategoryDisplay = item => {
+  const category = item?.category || "Uncategorized";
+  const note = getCategoryNote(item);
+  return note ? `${category}: ${note}` : category;
+};
 
 export function ArchiveModule({
   user
@@ -90,7 +101,8 @@ export function ArchiveModule({
       String(item.id || "").toLowerCase().includes(query) ||
       String(item.originalInventoryId || "").toLowerCase().includes(query) ||
       item.supplierName?.toLowerCase().includes(query) ||
-      getArchiveReasonLabel(item.archiveReason).toLowerCase().includes(query);
+      getArchiveCategoryDisplay(item).toLowerCase().includes(query) ||
+      getArchiveReasonDisplay(item).toLowerCase().includes(query);
     const matchesCategory = categoryFilter === "all" || item.category === categoryFilter;
     const matchesSupplier = supplierFilter === "all" ||
       (supplierFilter === "unassigned" ? !supplierName : supplierName === supplierFilter);
@@ -113,7 +125,7 @@ export function ArchiveModule({
       case "supplier":
         return (a.supplierName || "").localeCompare(b.supplierName || "") * direction;
       case "reason":
-        return getArchiveReasonLabel(a.archiveReason).localeCompare(getArchiveReasonLabel(b.archiveReason)) * direction;
+        return getArchiveReasonDisplay(a).localeCompare(getArchiveReasonDisplay(b)) * direction;
       case "quantity":
         return ((a.quantity ?? 0) - (b.quantity ?? 0)) * direction;
       case "status":
@@ -950,7 +962,7 @@ export function ArchiveModule({
     className: highlightedArchiveRowId === String(item.id) ? "archive-row-highlight" : ""
   }, /*#__PURE__*/React.createElement(TableCell, {
     className: "font-mono text-sm"
-  }, getArchiveId(item)), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, item.category), /*#__PURE__*/React.createElement(TableCell, null, item.supplierName || "Unassigned"), /*#__PURE__*/React.createElement(TableCell, null, getArchiveReasonLabel(item.archiveReason)), /*#__PURE__*/React.createElement(TableCell, {
+  }, getArchiveId(item)), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, getArchiveCategoryDisplay(item)), /*#__PURE__*/React.createElement(TableCell, null, item.supplierName || "Unassigned"), /*#__PURE__*/React.createElement(TableCell, null, getArchiveReasonDisplay(item)), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-right"
   }, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
     className: getStockStatusBadgeClass(item.status)
@@ -1014,7 +1026,7 @@ export function ArchiveModule({
     className: "archive-mobile-label"
   }, "Category"), /*#__PURE__*/React.createElement("span", {
     className: "archive-mobile-value"
-  }, item.category || "Uncategorized")), /*#__PURE__*/React.createElement("div", {
+  }, getArchiveCategoryDisplay(item))), /*#__PURE__*/React.createElement("div", {
     className: "archive-mobile-field"
   }, /*#__PURE__*/React.createElement("span", {
     className: "archive-mobile-label"
@@ -1032,7 +1044,7 @@ export function ArchiveModule({
     className: "archive-mobile-label"
   }, "Reason"), /*#__PURE__*/React.createElement("span", {
     className: "archive-mobile-value"
-  }, getArchiveReasonLabel(item.archiveReason)))), /*#__PURE__*/React.createElement("div", {
+  }, getArchiveReasonDisplay(item)))), /*#__PURE__*/React.createElement("div", {
     className: "archive-mobile-actions"
   }, /*#__PURE__*/React.createElement(Badge, {
     className: `archive-status-badge ${getStockStatusBadgeClass(item.status)}`
@@ -1191,7 +1203,7 @@ export function ArchiveModule({
     className: "font-semibold text-slate-600"
   }, "Category:"), /*#__PURE__*/React.createElement("span", {
     className: "font-medium text-slate-950"
-  }, selectedItem?.category), /*#__PURE__*/React.createElement("span", {
+  }, getArchiveCategoryDisplay(selectedItem)), /*#__PURE__*/React.createElement("span", {
     className: "font-semibold text-slate-600"
   }, "Supplier:"), /*#__PURE__*/React.createElement("span", {
     className: "font-medium text-slate-950"
@@ -1222,7 +1234,7 @@ export function ArchiveModule({
     className: "font-semibold text-slate-600"
   }, "Reason:"), /*#__PURE__*/React.createElement("span", {
     className: "font-medium text-slate-950"
-  }, getArchiveReasonLabel(selectedItem?.archiveReason))))))), /*#__PURE__*/React.createElement("div", {
+  }, getArchiveReasonDisplay(selectedItem))))))), /*#__PURE__*/React.createElement("div", {
     className: "flex items-center text-slate-800",
     style: {
       gap: "12px",

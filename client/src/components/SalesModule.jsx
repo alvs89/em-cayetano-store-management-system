@@ -23,6 +23,7 @@ const emptySaleLine = () => ({
   isManual: false,
   itemName: '',
   category: 'Other',
+  categoryNote: '',
   quantity: '',
   unitPrice: ''
 });
@@ -31,6 +32,7 @@ const PRODUCT_PAGE_SIZE = 10;
 const DEFAULT_NON_INVENTORY_DRAFT = {
   itemName: '',
   category: 'Other',
+  categoryNote: '',
   quantity: '1',
   unitPrice: ''
 };
@@ -122,6 +124,14 @@ const getDiscountLabel = sale =>
 
 const isNonInventorySaleItem = item =>
   item?.isInventoryItem === false || item?.itemType === 'non_inventory' || item?.item_type === 'non_inventory';
+
+const getSaleItemNotes = sale =>
+  (sale?.items || [])
+    .map(item => String(item.categoryNote || item.category_note || '').trim())
+    .filter(Boolean);
+
+const getSaleRemarksText = sale =>
+  String(sale?.remarks || '').trim() || getSaleItemNotes(sale).join('\n');
 
 const requiresPaymentConfirmation = paymentMethod => ['gcash', 'bank_transfer'].includes(paymentMethod);
 const VAT_RATE = 0.12;
@@ -235,6 +245,8 @@ function isRefundSalesRecord(sale) {
 const getTransactionRecordLabel = sale => (isRefundSalesRecord(sale) ? 'Refund Record' : 'Sales Record');
 const getTransactionDocumentName = sale => (isRefundSalesRecord(sale) ? 'Refund Receipt' : 'Receipt');
 const OFFICIAL_INVOICE_NUMBER_PATTERN = /^\d{6}$/;
+const OFFICIAL_INVOICE_MIN_SEQUENCE = 1;
+const OFFICIAL_INVOICE_MAX_SEQUENCE = 999999;
 const LEGACY_SALES_INVOICE_NUMBER_PATTERN = /^SI-\d{4}-(\d{6})$/i;
 const extractLegacyOfficialInvoiceNumber = value => {
   const match = String(value || '').trim().match(LEGACY_SALES_INVOICE_NUMBER_PATTERN);
@@ -529,11 +541,12 @@ const downloadSaleTransactionSummary = sale => {
 
   drawText(`Received the amount of ${money(sale.amountReceived ?? sale.totalAmount)} via ${paymentLabel}.`, margin, y);
   if (sale.paymentReference) drawText(`Payment Reference: ${String(sale.paymentReference).slice(0, 40)}`, margin, y + 5);
-  if (sale.remarks) {
+  const remarksText = getSaleRemarksText(sale);
+  if (remarksText) {
     doc.setFont('helvetica', 'bold');
     drawText('Remarks:', margin, y + 12);
     doc.setFont('helvetica', 'normal');
-    doc.splitTextToSize(sale.remarks, contentWidth).slice(0, 3).forEach((lineText, index) => {
+    doc.splitTextToSize(remarksText, contentWidth).slice(0, 3).forEach((lineText, index) => {
       drawText(lineText, margin, y + 17 + (index * 4));
     });
   }
@@ -921,9 +934,9 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
             </div>
           </section>
 
-          ${sale.remarks ? `
+          ${getSaleRemarksText(sale) ? `
             <section style="padding: 0 22px 14px;">
-              <strong>Remarks:</strong> ${escapeReceiptText(sale.remarks)}
+              <strong>Remarks:</strong> ${escapeReceiptText(getSaleRemarksText(sale))}
             </section>
           ` : ''}
         </main>
@@ -1013,7 +1026,11 @@ const sanitizeInvoiceNumberInput = value =>
 
 const getOfficialInvoiceSequence = value => {
   const cleanValue = String(value || '').trim();
-  return OFFICIAL_INVOICE_NUMBER_PATTERN.test(cleanValue) ? Number.parseInt(cleanValue, 10) : null;
+  if (!OFFICIAL_INVOICE_NUMBER_PATTERN.test(cleanValue)) return null;
+  const sequence = Number.parseInt(cleanValue, 10);
+  return sequence >= OFFICIAL_INVOICE_MIN_SEQUENCE && sequence <= OFFICIAL_INVOICE_MAX_SEQUENCE
+    ? sequence
+    : null;
 };
 
 const formatInvoiceRange = (startInvoiceNumber, endSequenceNumber) => {
@@ -1055,6 +1072,7 @@ export function SalesModule({ user }) {
   const [hasManualInvoiceEntry, setHasManualInvoiceEntry] = useState(false);
   const [autoFilledInvoiceNumber, setAutoFilledInvoiceNumber] = useState('');
   const [customerType, setCustomerType] = useState('walk_in');
+  const [isCustomerTypeOpen, setIsCustomerTypeOpen] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerTin, setCustomerTin] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
@@ -1066,6 +1084,7 @@ export function SalesModule({ user }) {
   const [paymentReference, setPaymentReference] = useState('');
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
   const [paymentConfirmedAmount, setPaymentConfirmedAmount] = useState(null);
+  const [remarks, setRemarks] = useState('');
   const [actualTransactionAt, setActualTransactionAt] = useState('');
   const [backdateReason, setBackdateReason] = useState('');
   const [saleLines, setSaleLines] = useState([emptySaleLine()]);
@@ -1390,17 +1409,26 @@ export function SalesModule({ user }) {
       String(sale.officialInvoiceNumber || '').trim() === cleanOfficialInvoiceNumber
     ) || null;
   }, [cleanOfficialInvoiceNumber, salesTransactions]);
+  const hasDuplicateOfficialInvoiceNumber = Boolean(duplicateOfficialInvoiceSale);
   const expectedOfficialInvoiceNumber = OFFICIAL_INVOICE_NUMBER_PATTERN.test(suggestedOfficialInvoiceNumber)
     ? suggestedOfficialInvoiceNumber
     : '';
   const isExpectedInvoiceSelected = Boolean(expectedOfficialInvoiceNumber) && cleanOfficialInvoiceNumber === expectedOfficialInvoiceNumber;
   const invoiceNumberGuidanceText = isLoadingInvoiceSuggestion
     ? 'Checking the next Sales Invoice No. for this branch...'
-    : expectedOfficialInvoiceNumber
+    : hasDuplicateOfficialInvoiceNumber
+      ? 'This SI number is already recorded. Enter the correct unused number from the physical booklet.'
+      : expectedOfficialInvoiceNumber
       ? isExpectedInvoiceSelected
         ? `Auto-filled next expected SI No. ${expectedOfficialInvoiceNumber}. Confirm it matches the physical booklet.`
         : `Next expected SI No. is ${expectedOfficialInvoiceNumber}. Continue only if the physical booklet shows a different valid number.`
       : 'Enter the 6-digit SI number printed on the physical booklet.';
+  const shouldShowInvoiceSequenceNote = isOfficialInvoiceSkippingSequence && !hasDuplicateOfficialInvoiceNumber;
+  useEffect(() => {
+    if (!shouldShowInvoiceSequenceNote && invoiceSequenceExceptionReason) {
+      setInvoiceSequenceExceptionReason('');
+    }
+  }, [invoiceSequenceExceptionReason, shouldShowInvoiceSequenceNote]);
   const hasManualOfficialInvoiceValue =
     officialInvoiceNumber.trim() !== '' &&
     (hasManualInvoiceEntry || officialInvoiceNumber.trim() !== autoFilledInvoiceNumber);
@@ -1412,6 +1440,7 @@ export function SalesModule({ user }) {
     customerName.trim() !== '' ||
     customerTin.trim() !== '' ||
     customerAddress.trim() !== '' ||
+    remarks.trim() !== '' ||
     paymentMethod !== 'cash' ||
     discountType !== 'none' ||
     String(discountAmount || '').trim() !== '' ||
@@ -1425,7 +1454,7 @@ export function SalesModule({ user }) {
       String(line.quantity || '').trim() !== '' ||
       String(line.unitPrice || '').trim() !== ''
     ))
-  ), [amountReceived, customerAddress, customerName, customerTin, customerType, deliveryCharge, discountAmount, discountType, hasManualOfficialInvoiceValue, invoiceSequenceExceptionReason, paymentConfirmed, paymentMethod, paymentReference, saleLines]);
+  ), [amountReceived, customerAddress, customerName, customerTin, customerType, deliveryCharge, discountAmount, discountType, hasManualOfficialInvoiceValue, invoiceSequenceExceptionReason, paymentConfirmed, paymentMethod, paymentReference, remarks, saleLines]);
 
   const filteredSalesHistory = useMemo(() => {
     const now = new Date();
@@ -1476,6 +1505,7 @@ export function SalesModule({ user }) {
         ...(sale.items || []).flatMap(item => [
           item.itemName,
           item.category,
+          item.categoryNote,
           item.quantitySold,
           item.subtotal
         ])
@@ -1560,6 +1590,7 @@ export function SalesModule({ user }) {
           isManual: false,
           itemName: '',
           category: selectedItem?.category || 'Other',
+          categoryNote: selectedItem?.categoryNote || '',
           unitPrice: defaultPrice > 0 ? defaultPrice.toFixed(2) : ''
           }
         : line
@@ -1656,6 +1687,7 @@ export function SalesModule({ user }) {
     setNonInventoryDraft({
       itemName: String(line.itemName || '').trim(),
       category: line.category || 'Other',
+      categoryNote: line.category === 'Other' ? line.categoryNote || '' : '',
       quantity: String(line.quantity || '1'),
       unitPrice: String(line.unitPrice || '')
     });
@@ -1724,6 +1756,9 @@ export function SalesModule({ user }) {
       isManual: true,
       itemName,
       category: nonInventoryDraft.category || 'Other',
+      categoryNote: (nonInventoryDraft.category || 'Other') === 'Other'
+        ? String(nonInventoryDraft.categoryNote || '').trim().slice(0, 240)
+        : '',
       quantity: String(quantity),
       unitPrice: unitPrice.toFixed(2)
     };
@@ -1757,7 +1792,10 @@ export function SalesModule({ user }) {
       setNonInventorySessionCount(count => count + 1);
       setNonInventoryDraft({
         ...DEFAULT_NON_INVENTORY_DRAFT,
-        category: nonInventoryDraft.category || 'Other'
+        category: nonInventoryDraft.category || 'Other',
+        categoryNote: (nonInventoryDraft.category || 'Other') === 'Other'
+          ? nonInventoryDraft.categoryNote || ''
+          : ''
       });
       toast.success('Non-inventory item added.', {
         description: 'Enter the next manual item or tap Done when finished.'
@@ -1867,6 +1905,7 @@ export function SalesModule({ user }) {
     setPaymentReference('');
     setPaymentConfirmed(false);
     setPaymentConfirmedAmount(null);
+    setRemarks('');
     setActualTransactionAt('');
     setBackdateReason('');
     setSaleLines([emptySaleLine()]);
@@ -1931,6 +1970,11 @@ export function SalesModule({ user }) {
       toast.error('Enter the 6-digit Sales Invoice Number from the booklet.', {
         description: 'Use the exact number printed on the Sales Invoice.'
       });
+      return false;
+    }
+
+    if (!enteredInvoiceSequenceNumber) {
+      toast.error('Enter a valid Sales Invoice Number from 000001 to 999999.');
       return false;
     }
 
@@ -2129,7 +2173,7 @@ export function SalesModule({ user }) {
         customerName: customerName.trim() || 'C',
         customerTin: customerTin.trim(),
         customerAddress: customerAddress.trim() || 'C',
-        remarks: '',
+        remarks: remarks.trim(),
         paymentMethod,
         discountType,
         discountAmount: safeDiscountAmount,
@@ -2144,6 +2188,7 @@ export function SalesModule({ user }) {
           isManual: Boolean(line.isManual),
           itemName: line.itemName,
           category: line.category,
+          categoryNote: line.categoryNote,
           quantity: line.quantity,
           unitPrice: line.unitPrice
         }))
@@ -6829,7 +6874,12 @@ export function SalesModule({ user }) {
                               <Label>Category</Label>
                               <Select
                                 value={line.category || 'Other'}
-                                onValueChange={value => updateLine(index, 'category', value)}
+                                onValueChange={value => {
+                                  updateLine(index, 'category', value);
+                                  if (value !== 'Other') {
+                                    updateLine(index, 'categoryNote', '');
+                                  }
+                                }}
                                 disabled={isSaving}
                               >
                                 <SelectTrigger className="sales-customer-control">
@@ -6841,6 +6891,19 @@ export function SalesModule({ user }) {
                                   ))}
                                 </SelectContent>
                               </Select>
+                              {(line.category || 'Other') === 'Other' && (
+                                <div className="space-y-1">
+                                  <Label className="text-xs font-semibold text-slate-700">Optional: note</Label>
+                                  <Textarea
+                                    value={line.categoryNote || ''}
+                                    maxLength={240}
+                                    placeholder="E.g., Special-order item not listed in inventory."
+                                    disabled={isSaving}
+                                    className="min-h-[64px] resize-y text-sm"
+                                    onChange={event => updateLine(index, 'categoryNote', event.target.value.slice(0, 240))}
+                                  />
+                                </div>
+                              )}
                             </div>
                           </>
                         ) : (
@@ -6995,7 +7058,7 @@ export function SalesModule({ user }) {
                           inputMode="numeric"
                           pattern="[0-9]*"
                           disabled={isSaving}
-                          aria-invalid={Boolean(duplicateOfficialInvoiceSale) || isOfficialInvoiceBehindSequence}
+                          aria-invalid={hasDuplicateOfficialInvoiceNumber || isOfficialInvoiceBehindSequence}
                           onChange={event => {
                             const nextValue = sanitizeInvoiceNumberInput(event.target.value);
                             if (event.target.value !== nextValue) {
@@ -7009,14 +7072,14 @@ export function SalesModule({ user }) {
                           }}
                           onBlur={() => setOfficialInvoiceNumber(prev => sanitizeInvoiceNumberInput(prev))}
                           placeholder="6-digit SI no."
-                          className={`sales-invoice-input sales-invoice-number-input ${duplicateOfficialInvoiceSale || isOfficialInvoiceBehindSequence ? 'sales-invoice-input-error' : ''}`}
+                          className={`sales-invoice-input sales-invoice-number-input ${hasDuplicateOfficialInvoiceNumber || isOfficialInvoiceBehindSequence ? 'sales-invoice-input-error' : ''}`}
                         />
                       </div>
                       <p className="sales-invoice-inline-note">
                         <ReceiptText />
                         <span>{invoiceNumberGuidanceText}</span>
                       </p>
-                      {isOfficialInvoiceSkippingSequence && (
+                      {shouldShowInvoiceSequenceNote && (
                         <div className="sales-invoice-sequence-note">
                           <p className="sales-invoice-helper sales-invoice-helper-warning">
                             <AlertTriangle />
@@ -7046,7 +7109,7 @@ export function SalesModule({ user }) {
                           </span>
                         </p>
                       )}
-                      {duplicateOfficialInvoiceSale && (
+                      {hasDuplicateOfficialInvoiceNumber && (
                         <p className="sales-invoice-helper sales-invoice-helper-error">
                           <AlertTriangle />
                           <span>This number is already recorded in Sales History.</span>
@@ -7056,12 +7119,31 @@ export function SalesModule({ user }) {
                   </div>
                   <div className="sales-customer-staff-row">
                     <div className="sales-pos-field">
-                      <Label htmlFor="customer-type">Customer Type</Label>
-                      <Select value={customerType} onValueChange={setCustomerType}>
-                        <SelectTrigger id="customer-type" className="sales-customer-control">
+                      <Label
+                        id="customer-type-label"
+                        role="button"
+                        tabIndex={0}
+                        className="cursor-pointer"
+                        onPointerDown={event => {
+                          event.preventDefault();
+                          if (!isSaving) {
+                            setIsCustomerTypeOpen(true);
+                          }
+                        }}
+                        onKeyDown={event => {
+                          if ((event.key === 'Enter' || event.key === ' ') && !isSaving) {
+                            event.preventDefault();
+                            setIsCustomerTypeOpen(true);
+                          }
+                        }}
+                      >
+                        Customer Type
+                      </Label>
+                      <Select value={customerType} open={isCustomerTypeOpen} onOpenChange={setIsCustomerTypeOpen} onValueChange={setCustomerType}>
+                        <SelectTrigger id="customer-type" aria-labelledby="customer-type-label" className="sales-customer-control">
                           <SelectValue placeholder="Select customer type" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent align="start" side="bottom" sideOffset={6}>
                           <SelectItem value="walk_in">Walk-in Customer</SelectItem>
                           <SelectItem value="sister_company">Sister Company</SelectItem>
                           <SelectItem value="hardware_reseller">Other Hardware / Reseller</SelectItem>
@@ -7337,6 +7419,18 @@ export function SalesModule({ user }) {
                         />
                       </div>
                     )}
+                    <div className="grid gap-2">
+                      <Label htmlFor="sale-remarks">Remarks, optional</Label>
+                      <Textarea
+                        id="sale-remarks"
+                        value={remarks}
+                        maxLength={500}
+                        disabled={isSaving}
+                        onChange={event => setRemarks(event.target.value.slice(0, 500))}
+                        placeholder="Add customer notes, special instructions, or other transaction remarks."
+                        className="min-h-[82px] resize-y rounded-xl border-slate-200 bg-white text-sm text-slate-950"
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -7774,7 +7868,12 @@ function NonInventoryItemDialog({
                 <Label>Category, optional</Label>
                 <Select
                   value={draft.category || 'Other'}
-                  onValueChange={value => onDraftChange('category', value)}
+                  onValueChange={value => {
+                    onDraftChange('category', value);
+                    if (value !== 'Other') {
+                      onDraftChange('categoryNote', '');
+                    }
+                  }}
                   disabled={isSaving}
                 >
                   <SelectTrigger className="sales-non-inventory-control">
@@ -7786,6 +7885,19 @@ function NonInventoryItemDialog({
                     ))}
                   </SelectContent>
                 </Select>
+                {(draft.category || 'Other') === 'Other' && (
+                  <div className="mt-2 space-y-1">
+                    <Label className="text-xs font-semibold text-slate-700">Optional: note</Label>
+                    <Textarea
+                      value={draft.categoryNote || ''}
+                      maxLength={240}
+                      placeholder="E.g., Special-order item not listed in inventory."
+                      disabled={isSaving}
+                      className="min-h-[64px] resize-y text-sm"
+                      onChange={event => onDraftChange('categoryNote', event.target.value.slice(0, 240))}
+                    />
+                  </div>
+                )}
               </div>
             </div>
             <div className="sales-non-inventory-total" aria-live="polite">
@@ -8619,6 +8731,7 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
   const originalInvoiceNumber = getReferenceOfficialInvoiceNumber(sale);
   const originalSystemNumber = getReferenceSystemNumber(sale);
   const originalDisplayNumber = originalInvoiceNumber || originalSystemNumber;
+  const remarksText = getSaleRemarksText(sale) || 'No remarks recorded.';
   return (
     <div className="space-y-5">
       <div className="sales-history-detail-header">
@@ -8797,6 +8910,11 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
                 <p className="mt-1 break-words text-xs leading-5 text-slate-700">
                   Category: {item.category || 'Uncategorized'}
                 </p>
+                {item.categoryNote && (
+                  <p className="mt-1 break-words text-xs leading-5 text-slate-700">
+                    Note: {item.categoryNote}
+                  </p>
+                )}
                 <p className="mt-1 text-xs leading-5 text-slate-700">Unit Price: {formatCurrency(item.unitPrice)}</p>
               </div>
               <div className="flex flex-wrap justify-start gap-2 sm:justify-end">
@@ -8819,7 +8937,7 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
         </span>
         <div className="min-w-0">
           <span className="block text-xs font-medium uppercase tracking-wide text-slate-700">Remarks</span>
-          <p className="mt-1 text-sm leading-6 text-slate-700">{sale.remarks || 'No remarks recorded.'}</p>
+          <p className="mt-1 whitespace-pre-line text-sm leading-6 text-slate-700">{remarksText}</p>
         </div>
       </div>
     </div>

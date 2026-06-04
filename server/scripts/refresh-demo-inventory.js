@@ -20,6 +20,7 @@ const PRESENTATION_NOW = new Date();
 const PRESENTATION_YEAR = PRESENTATION_NOW.getFullYear();
 const SALES_INVOICE_DOCUMENT_TYPE = 'sales_invoice';
 const SALES_INVOICE_SEQUENCE_DIGITS = 6;
+const SALES_INVOICE_MAX_NUMBER = Number('9'.repeat(SALES_INVOICE_SEQUENCE_DIGITS));
 const DEMO_OFFICIAL_INVOICE_START_NUMBER = 1;
 
 if (CATALOG.length === 0) {
@@ -384,7 +385,7 @@ async function refreshDemoInventory() {
         updated_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila'),
         PRIMARY KEY (document_type, invoice_year, branch),
         CHECK (invoice_year BETWEEN 2000 AND 9999),
-        CHECK (last_number >= 0)
+        CHECK (last_number BETWEEN 0 AND ${SALES_INVOICE_MAX_NUMBER})
       )
     `);
     await client.query(`
@@ -399,6 +400,19 @@ async function refreshDemoInventory() {
     await client.query(`
       ALTER TABLE invoice_number_sequences
       ALTER COLUMN branch SET NOT NULL;
+    `);
+    await client.query(`
+      ALTER TABLE invoice_number_sequences
+      DROP CONSTRAINT IF EXISTS invoice_number_sequences_last_number_check;
+    `);
+    await client.query(`
+      UPDATE invoice_number_sequences
+      SET last_number = LEAST(GREATEST(COALESCE(last_number, 0), 0), ${SALES_INVOICE_MAX_NUMBER});
+    `);
+    await client.query(`
+      ALTER TABLE invoice_number_sequences
+      ADD CONSTRAINT invoice_number_sequences_last_number_check
+      CHECK (last_number BETWEEN 0 AND ${SALES_INVOICE_MAX_NUMBER});
     `);
     await client.query(`
       ALTER TABLE invoice_number_sequences
