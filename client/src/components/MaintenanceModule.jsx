@@ -5,8 +5,10 @@ import axios from 'axios';
 import { API_BASE_URL } from '../utils/api';
 import {
   AlertTriangle,
+  ChevronDown,
   Database,
   Download,
+  FileDown,
   Info,
   Loader2,
   PieChart,
@@ -17,6 +19,7 @@ import {
   Trash2,
   TrendingUp,
   Upload,
+  X,
 } from 'lucide-react';
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
@@ -37,6 +40,20 @@ import {
 const API_BASE = API_BASE_URL;
 const MAX_RESTORE_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 const RESTORE_CONFIRMATION_TEXT = 'RESTORE';
+
+const SELECTIVE_EXPORT_DATASETS = [
+  { value: 'inventory', label: 'Inventory' },
+  { value: 'sales', label: 'Sales' },
+  { value: 'purchases', label: 'Purchases' },
+  { value: 'archive', label: 'Archive' },
+  { value: 'audit', label: 'Audit Trail' },
+];
+
+const EXPORT_BRANCH_OPTIONS = [
+  { value: 'all', label: 'All Branches' },
+  { value: 'San Rafael', label: 'San Rafael' },
+  { value: 'Manggahan', label: 'Manggahan' },
+];
 
 const compactDateTime = value => {
   if (!value) return 'No backup recorded yet';
@@ -94,7 +111,14 @@ const getFetchErrorMessage = async (res, fallback) => {
     const contentType = res.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
       const data = await res.json();
-      return data?.error || data?.message || fallback;
+      const primaryMessage = data?.error || data?.message || fallback;
+      const details = data?.details || data?.detail;
+
+      if (details && String(details).trim() && String(details).trim() !== primaryMessage) {
+        return String(details).trim();
+      }
+
+      return primaryMessage;
     }
     const text = await res.text();
     return text || fallback;
@@ -148,6 +172,12 @@ export function MaintenanceModule({ user }) {
   const [restoreConfirmation, setRestoreConfirmation] = useState('');
   const [showBackupDialog, setShowBackupDialog] = useState(false);
   const [showRestoreDialog, setShowRestoreDialog] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportDataset, setExportDataset] = useState('inventory');
+  const [exportBranch, setExportBranch] = useState(() => user?.branch || 'all');
+  const [exportColumns, setExportColumns] = useState('essential');
+  const [exportDateFrom, setExportDateFrom] = useState('');
+  const [exportDateTo, setExportDateTo] = useState('');
   const [pendingMaintenanceAction, setPendingMaintenanceAction] = useState(null);
   const [activeMaintenanceAction, setActiveMaintenanceAction] = useState(null);
   const [maintenanceResult, setMaintenanceResult] = useState(null);
@@ -160,7 +190,18 @@ export function MaintenanceModule({ user }) {
   });
 
   const isAdmin = isAdminRole(user?.role);
-  const currentBranch = user?.branch || 'All branches';
+  const signedInBranch = user?.branch || '';
+  const currentBranch = signedInBranch || 'All branches';
+  const exportUsesBranch = exportDataset !== 'audit';
+  const hasExportDateError = Boolean(exportDateFrom && exportDateTo && exportDateFrom > exportDateTo);
+  const exportDisabled = !isAdmin || isExporting || hasExportDateError;
+  const exportBranchOptions = React.useMemo(() => {
+    const options = [...EXPORT_BRANCH_OPTIONS];
+    if (signedInBranch && !options.some(option => option.value === signedInBranch)) {
+      options.push({ value: signedInBranch, label: signedInBranch });
+    }
+    return options;
+  }, [signedInBranch]);
 
   const loadSummary = async () => {
     try {
@@ -181,6 +222,19 @@ export function MaintenanceModule({ user }) {
   useEffect(() => {
     loadSummary();
   }, []);
+
+  useEffect(() => {
+    if (!signedInBranch) return;
+    setExportBranch(branch => branch && branch !== 'current' ? branch : signedInBranch);
+  }, [signedInBranch]);
+
+  const resetSelectiveExport = () => {
+    setExportDataset('inventory');
+    setExportBranch(signedInBranch || 'all');
+    setExportColumns('essential');
+    setExportDateFrom('');
+    setExportDateTo('');
+  };
 
   const confirmBackup = async () => {
     if (!isAdmin || isBackingUp) return;
@@ -281,9 +335,12 @@ export function MaintenanceModule({ user }) {
       await loadSummary();
       window.dispatchEvent(new Event('maintenance-action-completed'));
     } catch (err) {
+      const description = err.message && err.message !== 'Restore failed'
+        ? err.message
+        : 'The backup could not be restored. Please verify that the selected file is a valid backup from this system and try again.';
       toast.error('Restore failed', {
         id: restoreToastId,
-        description: err.message,
+        description,
         classNames: {
           toast: 'rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900',
         },
@@ -291,6 +348,57 @@ export function MaintenanceModule({ user }) {
     } finally {
       setIsRestoring(false);
       resetRestoreSelection();
+    }
+  };
+
+  const downloadSelectiveExport = async () => {
+    if (exportDisabled) {
+      if (hasExportDateError) {
+        toast.error('Export failed', { description: 'Start date cannot be later than end date.' });
+      }
+      return;
+    }
+
+    setIsExporting(true);
+    try {
+      const token = localStorage.getItem('token');
+      const params = new URLSearchParams({
+        dataset: exportDataset,
+        branch: exportUsesBranch ? exportBranch : 'all',
+        columns: exportColumns,
+      });
+      if (exportDateFrom) params.set('dateFrom', exportDateFrom);
+      if (exportDateTo) params.set('dateTo', exportDateTo);
+
+      const res = await fetch(`${API_BASE}/api/maintenance/selective-export?${params.toString()}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error(await getFetchErrorMessage(res, 'Export failed'));
+
+      const blob = await res.blob();
+      const disposition = res.headers.get('content-disposition') || '';
+      const filenameMatch = disposition.match(/filename="?([^"]+)"?/i);
+      const filename = filenameMatch?.[1] || `emcayetano-${exportDataset}-export-${new Date().toISOString().slice(0, 10)}.csv`;
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Selective data export downloaded.', {
+        description: 'This CSV is for reporting and review. It is not a restore-capable database backup.',
+      });
+      window.dispatchEvent(new Event('maintenance-action-completed'));
+    } catch (err) {
+      toast.error('Export failed', {
+        description: err.message && err.message !== 'Export failed'
+          ? err.message
+          : 'The selected data could not be exported. Please review the filters and try again.',
+      });
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -363,13 +471,20 @@ export function MaintenanceModule({ user }) {
 
         .maintenance-layout {
           display: grid;
-          grid-template-columns: minmax(0, 1.64fr) minmax(330px, 0.92fr);
+          grid-template-columns: minmax(0, 1.62fr) minmax(360px, 0.9fr);
           gap: 22px;
-          align-items: stretch;
+          align-items: start;
         }
 
         .maintenance-wide-card {
           grid-column: 1 / -1;
+        }
+
+        .maintenance-sidebar {
+          display: grid;
+          gap: 16px;
+          align-content: start;
+          min-width: 0;
         }
 
         .maintenance-card-content {
@@ -390,6 +505,16 @@ export function MaintenanceModule({ user }) {
           grid-template-columns: 56px minmax(0, 1fr);
           gap: 18px;
           align-items: start;
+        }
+
+        .maintenance-section-heading h2 {
+          font-size: 1.08rem;
+          line-height: 1.25;
+        }
+
+        .maintenance-section-heading p {
+          font-size: 0.92rem;
+          line-height: 1.45;
         }
 
         .maintenance-section-heading h2,
@@ -414,11 +539,11 @@ export function MaintenanceModule({ user }) {
 
         .maintenance-action-card {
           min-width: 0;
-          min-height: 280px;
+          min-height: 252px;
           display: grid;
-          grid-template-rows: 56px auto minmax(92px, 1fr) auto auto;
-          row-gap: 16px;
-          padding: 28px;
+          grid-template-rows: 48px auto minmax(82px, 1fr) auto auto;
+          row-gap: 14px;
+          padding: 24px;
           background: transparent;
         }
 
@@ -430,13 +555,259 @@ export function MaintenanceModule({ user }) {
         .maintenance-action-copy {
           margin: 0;
           color: #475569;
-          font-size: 16px;
-          line-height: 1.65;
+          font-size: 14px;
+          line-height: 1.55;
           max-width: 36ch;
+        }
+
+        .maintenance-action-card h3,
+        .maintenance-optimization-title h3 {
+          font-size: 0.95rem;
+          line-height: 1.3;
         }
 
         .maintenance-action-card + .maintenance-action-card {
           border-left: 1px solid #e5e7eb;
+        }
+
+        .maintenance-export-panel {
+          border: 1px solid #d7e0ea;
+          border-radius: 14px;
+          background: #ffffff;
+          overflow: hidden;
+          box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+          min-height: 540px;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .maintenance-export-panel .maintenance-section-heading {
+          grid-template-columns: 44px minmax(0, 1fr);
+          gap: 14px;
+          align-items: start;
+        }
+
+        .maintenance-export-panel .maintenance-section-heading .h-14 {
+          width: 44px;
+          height: 44px;
+          border-radius: 13px;
+        }
+
+        .maintenance-export-panel .maintenance-section-heading h2 {
+          color: #0f172a;
+          font-size: 1.18rem;
+          line-height: 1.2;
+          letter-spacing: 0;
+        }
+
+        .maintenance-export-panel .maintenance-section-heading p {
+          max-width: 44rem;
+          color: #475569;
+          font-size: 0.88rem;
+          line-height: 1.4;
+        }
+
+        .maintenance-export-body {
+          flex: 1;
+          padding: 24px 22px;
+        }
+
+        .maintenance-export-notice {
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+          width: min(100%, 500px);
+          margin-top: 18px;
+          border: 1px solid #bfdbfe;
+          border-radius: 12px;
+          background: #f8fbff;
+          color: #0f2a54;
+          font-size: 0.86rem;
+          font-weight: 600;
+          line-height: 1.35;
+          padding: 9px 12px;
+        }
+
+        .maintenance-export-notice svg {
+          flex: 0 0 auto;
+          color: #2563eb;
+        }
+
+        .maintenance-export-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(180px, 1fr));
+          column-gap: 14px;
+          row-gap: 14px;
+          margin-top: 24px;
+        }
+
+        .maintenance-export-field {
+          display: grid;
+          gap: 6px;
+          min-width: 0;
+        }
+
+        .maintenance-export-field label {
+          color: #475569;
+          font-size: 11px;
+          font-weight: 800;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+        }
+
+        .maintenance-export-control {
+          position: relative;
+          display: block;
+        }
+
+        .maintenance-export-control-chevron {
+          position: absolute;
+          top: 50%;
+          transform: translateY(-50%);
+          pointer-events: none;
+          z-index: 1;
+        }
+
+        .maintenance-export-control-chevron {
+          right: 14px;
+          color: #64748b;
+        }
+
+        .maintenance-export-field select,
+        .maintenance-export-field input {
+          height: 40px;
+          min-height: 0;
+          width: 100%;
+          border: 1px solid #cbd5e1;
+          border-radius: 10px;
+          background: #ffffff;
+          color: #0f172a;
+          font-size: 0.86rem;
+          line-height: 1.2;
+          padding: 0 38px 0 14px;
+        }
+
+        .maintenance-export-field select {
+          appearance: none;
+        }
+
+        .maintenance-export-field input[type="date"] {
+          color: #64748b;
+          padding: 0 14px;
+        }
+
+        .maintenance-export-review {
+          display: grid;
+          grid-template-columns: 30px minmax(0, 1fr);
+          gap: 10px;
+          align-items: start;
+          margin-top: 26px;
+          border: 1px solid #bfdbfe;
+          border-left: 4px solid #2563eb;
+          border-radius: 12px;
+          background: #f8fbff;
+          color: #334155;
+          padding: 12px 14px;
+        }
+
+        .maintenance-export-review-icon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 26px;
+          height: 26px;
+          border-radius: 999px;
+          background: #2563eb;
+          color: #ffffff;
+        }
+
+        .maintenance-export-review h3 {
+          margin: 0;
+          color: #1e3a5f;
+          font-size: 0.84rem;
+          font-weight: 800;
+          line-height: 1.25;
+        }
+
+        .maintenance-export-review p {
+          margin: 6px 0 0;
+          color: #475569;
+          font-size: 0.84rem;
+          line-height: 1.45;
+        }
+
+        .maintenance-export-actions {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+          border-top: 1px solid #e2e8f0;
+          background: #ffffff;
+          padding: 16px 20px;
+          margin-top: 0;
+        }
+
+        .maintenance-export-auth-note {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          min-width: 0;
+          color: #475569;
+          font-size: 0.86rem;
+          font-weight: 600;
+          line-height: 1.35;
+          flex: 1 1 280px;
+        }
+
+        .maintenance-export-button-group {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 12px;
+          flex: 0 0 auto;
+        }
+
+        .maintenance-export-cancel {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          height: 40px;
+          min-width: 108px;
+          padding: 0 14px;
+          border: 1px solid #cbd5e1;
+          border-radius: 10px;
+          background: #ffffff;
+          color: #0f172a;
+          font-weight: 800;
+          box-shadow: none;
+        }
+
+        .maintenance-export-button {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          height: 40px;
+          min-height: 0;
+          min-width: 140px;
+          padding: 0 16px;
+          border-radius: 10px;
+          background: #1d4ed8;
+          color: #ffffff;
+          font-weight: 800;
+          box-shadow: 0 10px 18px rgba(29, 78, 216, 0.16);
+        }
+
+        .maintenance-export-button:not(:disabled):hover {
+          background: #1e40af;
+          color: #ffffff;
+        }
+
+        .maintenance-export-button:disabled {
+          background: #94a3b8;
+          color: #ffffff;
+          opacity: 1;
+          box-shadow: none;
         }
 
         .maintenance-meta-row {
@@ -444,7 +815,7 @@ export function MaintenanceModule({ user }) {
           grid-template-columns: minmax(0, 1fr) auto;
           align-items: baseline;
           gap: 18px;
-          font-size: 14px;
+          font-size: 13px;
         }
 
         .maintenance-meta-label {
@@ -460,9 +831,10 @@ export function MaintenanceModule({ user }) {
         }
 
         .maintenance-action-button {
-          height: 48px;
+          height: 44px;
           width: 100%;
           border-radius: 10px;
+          font-size: 0.9rem;
           font-weight: 700;
           box-shadow: 0 10px 18px rgba(15, 23, 42, 0.08);
           transition: background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
@@ -623,6 +995,113 @@ export function MaintenanceModule({ user }) {
           color: #5b21b6;
         }
 
+        .maintenance-sidebar .maintenance-card-content {
+          padding: 20px;
+        }
+
+        .maintenance-sidebar .maintenance-info-header,
+        .maintenance-sidebar .maintenance-section-heading {
+          grid-template-columns: 40px minmax(0, 1fr);
+          gap: 12px;
+        }
+
+        .maintenance-sidebar .maintenance-info-header {
+          align-items: center;
+          padding: 12px;
+        }
+
+        .maintenance-sidebar .maintenance-info-header-icon,
+        .maintenance-sidebar .maintenance-section-heading .h-14 {
+          width: 40px;
+          height: 40px;
+          border-radius: 12px;
+        }
+
+        .maintenance-sidebar .maintenance-info-header h2,
+        .maintenance-sidebar .maintenance-section-heading h2 {
+          font-size: 1rem;
+          line-height: 1.25;
+        }
+
+        .maintenance-sidebar .maintenance-info-header p,
+        .maintenance-sidebar .maintenance-section-heading p {
+          margin-top: 4px;
+          font-size: 0.85rem;
+          line-height: 1.35;
+        }
+
+        .maintenance-sidebar .maintenance-info-list {
+          margin-top: 14px;
+          padding-top: 10px;
+        }
+
+        .maintenance-sidebar .maintenance-info-row {
+          min-height: 38px;
+          grid-template-columns: minmax(122px, 0.86fr) minmax(0, 1.14fr);
+          gap: 12px;
+          padding: 9px 0;
+          font-size: 13px;
+        }
+
+        .maintenance-sidebar .maintenance-info-label,
+        .maintenance-sidebar .maintenance-info-value {
+          font-size: 13px;
+          line-height: 1.35;
+        }
+
+        .maintenance-sidebar .maintenance-optimization-grid {
+          grid-template-columns: 1fr;
+          gap: 10px;
+          margin-top: 14px;
+        }
+
+        .maintenance-sidebar .maintenance-optimization-item {
+          min-height: 0;
+          grid-template-columns: minmax(0, 1fr) auto;
+          grid-template-rows: auto auto;
+          gap: 8px 12px;
+          padding: 14px;
+          border-radius: 12px;
+        }
+
+        .maintenance-sidebar .maintenance-optimization-title {
+          grid-column: 1 / -1;
+          grid-template-columns: 34px minmax(0, 1fr);
+          gap: 10px;
+        }
+
+        .maintenance-sidebar .maintenance-optimization-title .maintenance-title-icon {
+          width: 34px;
+          height: 34px;
+          border-radius: 10px;
+        }
+
+        .maintenance-sidebar .maintenance-optimization-title h3 {
+          font-size: 0.93rem;
+        }
+
+        .maintenance-sidebar .maintenance-optimization-item p {
+          max-width: none;
+          font-size: 0.84rem;
+          line-height: 1.4;
+        }
+
+        .maintenance-sidebar .maintenance-optimization-item .maintenance-tool-button {
+          width: auto;
+          min-width: 112px;
+          height: 36px;
+          align-self: center;
+          justify-self: end;
+          font-size: 0.82rem;
+          padding: 0 12px;
+        }
+
+        .maintenance-sidebar .maintenance-alert-row {
+          margin-top: 12px;
+          padding: 12px 14px;
+          font-size: 0.85rem;
+        }
+
         .maintenance-tool-button {
           height: 44px;
           min-width: 132px;
@@ -631,6 +1110,7 @@ export function MaintenanceModule({ user }) {
           border: 1px solid #bfdbfe;
           background: #eff6ff;
           color: #1d4ed8;
+          font-size: 0.88rem;
           font-weight: 700;
           box-shadow: 0 8px 16px rgba(37, 99, 235, 0.08);
         }
@@ -647,6 +1127,14 @@ export function MaintenanceModule({ user }) {
           gap: 10px;
           align-items: start;
           padding: 18px 22px;
+          font-size: 0.94rem;
+          line-height: 1.5;
+        }
+
+        .maintenance-alert-row p,
+        .maintenance-alert-row span {
+          font-size: inherit;
+          line-height: inherit;
         }
 
         .maintenance-restore-file-name,
@@ -721,6 +1209,11 @@ export function MaintenanceModule({ user }) {
             grid-template-columns: 1fr;
           }
 
+          .maintenance-sidebar {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            align-items: start;
+          }
+
         }
 
         @media (max-width: 760px) {
@@ -769,6 +1262,10 @@ export function MaintenanceModule({ user }) {
             gap: 16px;
           }
 
+          .maintenance-sidebar {
+            grid-template-columns: 1fr;
+          }
+
           .maintenance-card-content {
             padding: 20px;
           }
@@ -796,10 +1293,50 @@ export function MaintenanceModule({ user }) {
             line-height: 1.45;
           }
 
+          .maintenance-export-panel {
+            padding: 0;
+            min-height: auto;
+          }
+
+          .maintenance-export-panel .maintenance-section-heading {
+            grid-template-columns: 46px minmax(0, 1fr);
+            gap: 14px;
+          }
+
+          .maintenance-export-panel .maintenance-section-heading .h-14 {
+            width: 46px;
+            height: 46px;
+            border-radius: 13px;
+          }
+
+          .maintenance-export-panel .maintenance-section-heading h2 {
+            font-size: 1.12rem;
+          }
+
+          .maintenance-export-panel .maintenance-section-heading p {
+            font-size: 0.86rem;
+            line-height: 1.4;
+          }
+
+          .maintenance-export-body {
+            padding: 18px;
+          }
+
+          .maintenance-export-notice {
+            width: 100%;
+            font-size: 0.88rem;
+          }
+
           .maintenance-action-grid,
           .maintenance-optimization-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 12px;
+            overflow: visible;
+          }
+
+          .maintenance-export-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
             overflow: visible;
           }
 
@@ -821,6 +1358,16 @@ export function MaintenanceModule({ user }) {
           .maintenance-action-card + .maintenance-action-card {
             border-left: 1px solid #e5e7eb;
             border-top: 0;
+          }
+
+          .maintenance-export-actions {
+            align-items: center;
+            flex-direction: row;
+            padding: 16px 18px;
+          }
+
+          .maintenance-export-button {
+            width: auto;
           }
 
           .maintenance-optimization-item {
@@ -1083,6 +1630,44 @@ export function MaintenanceModule({ user }) {
             padding: 16px;
           }
 
+          .maintenance-export-panel {
+            padding: 0;
+          }
+
+          .maintenance-export-body {
+            padding: 18px;
+          }
+
+          .maintenance-export-panel .maintenance-section-heading {
+            grid-template-columns: 1fr;
+          }
+
+          .maintenance-export-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .maintenance-export-actions {
+            align-items: stretch;
+            flex-direction: column;
+          }
+
+          .maintenance-export-auth-note {
+            width: 100%;
+          }
+
+          .maintenance-export-button-group {
+            width: 100%;
+            flex-direction: column;
+          }
+
+          .maintenance-export-button {
+            width: 100%;
+          }
+
+          .maintenance-export-cancel {
+            width: 100%;
+          }
+
           .maintenance-section-heading {
             grid-template-columns: 1fr;
           }
@@ -1109,7 +1694,7 @@ export function MaintenanceModule({ user }) {
               description="Create or restore full-system database backups covering all branches, inventory, POS sales, purchases, users, and logs."
             />
 
-            <div className="maintenance-action-grid mt-7">
+            <div className="maintenance-action-grid mt-9">
               <div className="maintenance-action-card">
                 <IconTile tone="red" className="maintenance-action-icon">
                   <Download className="h-6 w-6" />
@@ -1175,49 +1760,197 @@ export function MaintenanceModule({ user }) {
                 <p>Backup and restore actions apply to the full database, including San Rafael, Manggahan, inventory, sales, purchases, users, archive records, and logs.</p>
               </div>
             </div>
+
+            <div className="maintenance-export-panel mt-6">
+              <div className="maintenance-export-body">
+                <SectionHeading
+                  icon={<FileDown className="h-6 w-6" />}
+                  tone="blue"
+                  title="Selective Data Export"
+                  description="Export filtered business records for review, reporting, and evaluation."
+                />
+
+                <div className="maintenance-export-notice">
+                  <Info className="h-5 w-5" />
+                  <span>This CSV is not a restore-capable database backup.</span>
+                </div>
+
+                <div className="maintenance-export-grid">
+                  <div className="maintenance-export-field">
+                    <label htmlFor="selective-export-dataset">Dataset</label>
+                    <div className="maintenance-export-control">
+                      <select
+                        id="selective-export-dataset"
+                        value={exportDataset}
+                        onChange={event => setExportDataset(event.target.value)}
+                        disabled={!isAdmin || isExporting}
+                      >
+                        {SELECTIVE_EXPORT_DATASETS.map(option => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="maintenance-export-control-chevron h-4 w-4" />
+                    </div>
+                  </div>
+
+                  {exportUsesBranch && (
+                    <div className="maintenance-export-field">
+                      <label htmlFor="selective-export-branch">Branch Scope</label>
+                      <div className="maintenance-export-control">
+                        <select
+                          id="selective-export-branch"
+                          value={exportBranch}
+                          onChange={event => setExportBranch(event.target.value)}
+                          disabled={!isAdmin || isExporting}
+                        >
+                          {exportBranchOptions.map(option => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                        <ChevronDown className="maintenance-export-control-chevron h-4 w-4" />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="maintenance-export-field">
+                    <label htmlFor="selective-export-columns">Column Set</label>
+                    <div className="maintenance-export-control">
+                      <select
+                        id="selective-export-columns"
+                        value={exportColumns}
+                        onChange={event => setExportColumns(event.target.value)}
+                        disabled={!isAdmin || isExporting}
+                      >
+                        <option value="essential">Essential Columns</option>
+                        <option value="detailed">Detailed Columns</option>
+                      </select>
+                      <ChevronDown className="maintenance-export-control-chevron h-4 w-4" />
+                    </div>
+                  </div>
+
+                  <div className="maintenance-export-field">
+                    <label htmlFor="selective-export-date-from">Start Date</label>
+                    <div className="maintenance-export-control">
+                      <input
+                        id="selective-export-date-from"
+                        type="date"
+                        value={exportDateFrom}
+                        onChange={event => setExportDateFrom(event.target.value)}
+                        disabled={!isAdmin || isExporting}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="maintenance-export-field">
+                    <label htmlFor="selective-export-date-to">End Date</label>
+                    <div className="maintenance-export-control">
+                      <input
+                        id="selective-export-date-to"
+                        type="date"
+                        value={exportDateTo}
+                        onChange={event => setExportDateTo(event.target.value)}
+                        disabled={!isAdmin || isExporting}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="maintenance-export-review">
+                  <div className="maintenance-export-review-icon">
+                    <ShieldCheck className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h3>Review Export</h3>
+                    <p>
+                      {exportUsesBranch
+                        ? `Exporting ${exportBranch === 'all' ? 'all branches' : exportBranch} records for review only.`
+                        : 'Audit Trail export covers system-level activity records.'}
+                      {' '}Use full database backup for disaster recovery.
+                    </p>
+                    {hasExportDateError && (
+                      <p className="font-semibold text-red-700">Start date cannot be later than end date.</p>
+                    )}
+                    {!isAdmin && (
+                      <p className="font-semibold text-slate-800">Only Admin / Owner accounts can export selected data.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="maintenance-export-actions">
+                <div className="maintenance-export-auth-note">
+                  <ShieldCheck className="h-4 w-4 text-slate-500" />
+                  <span>Only authorized administrators can access this page.</span>
+                </div>
+                <div className="maintenance-export-button-group">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="maintenance-export-cancel"
+                    onClick={resetSelectiveExport}
+                    disabled={isExporting}
+                    title="Clear export filters"
+                  >
+                    <X className="mr-2 h-4 w-4" />
+                    Clear
+                  </Button>
+                  <Button
+                    type="button"
+                    className="maintenance-export-button"
+                    onClick={downloadSelectiveExport}
+                    disabled={exportDisabled}
+                    title={!isAdmin ? 'Only Admin / Owner accounts can export selected data.' : hasExportDateError ? 'Fix the date range before exporting.' : 'Download selected records as CSV'}
+                  >
+                    {isExporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                    {isExporting ? 'Exporting...' : 'Export CSV'}
+                  </Button>
+                </div>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
-        <Card className="rounded-xl border-gray-200 bg-white shadow-sm">
-          <CardContent className="maintenance-card-content">
-            <div className="maintenance-info-header">
-              <div className="maintenance-info-header-icon">
-                <Info className="h-6 w-6" />
+        <div className="maintenance-sidebar">
+          <Card className="rounded-xl border-gray-200 bg-white shadow-sm">
+            <CardContent className="maintenance-card-content">
+              <div className="maintenance-info-header">
+                <div className="maintenance-info-header-icon">
+                  <Info className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="font-bold text-slate-950">System Information</h2>
+                  <p className="text-slate-600">View important system details and maintenance scope.</p>
+                </div>
               </div>
-              <div>
-                <h2 className="text-lg font-bold text-slate-950">System Information</h2>
-                <p className="mt-1.5 text-base leading-6 text-slate-600">View important system details and maintenance scope.</p>
-              </div>
-            </div>
 
-            <div className="maintenance-info-list mt-4">
-              <InfoRow
-                label="Database Status"
-                value={databaseOnline ? 'Online' : summary.databaseStatus}
-                valueClassName={databaseOnline ? 'text-green-600' : 'text-red-600'}
+              <div className="maintenance-info-list">
+                <InfoRow
+                  label="Database Status"
+                  value={databaseOnline ? 'Online' : summary.databaseStatus}
+                  valueClassName={databaseOnline ? 'text-green-600' : 'text-red-600'}
+                />
+                <InfoRow label="Application Version" value={appVersion} />
+                <InfoRow label="Environment" value={appEnvironment} />
+                <InfoRow label="Current Branch" value={currentBranch} />
+                <InfoRow label="Backup/Restore Scope" value="Full system, all branches" full />
+                <InfoRow label="Integrity Check Scope" value={`Signed-in branch (${currentBranch}) plus shared user/log links`} full />
+                <InfoRow label="System Time" value={displayedTime} />
+                <InfoRow label="Last Backup" value={lastBackup} />
+                <InfoRow label="Last Restore" value={lastRestore} />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-xl border-gray-200 bg-white shadow-sm">
+            <CardContent className="maintenance-card-content">
+              <SectionHeading
+                icon={<TrendingUp className="h-5 w-5" />}
+                tone="blue"
+                title="System Optimization"
+                description="Run routine upkeep without leaving this page."
               />
-              <InfoRow label="Application Version" value={appVersion} />
-              <InfoRow label="Environment" value={appEnvironment} />
-              <InfoRow label="Current Branch" value={currentBranch} />
-              <InfoRow label="Backup/Restore Scope" value="Full system, all branches" full />
-              <InfoRow label="Integrity Check Scope" value={`Signed-in branch (${currentBranch}) plus shared user/log links`} full />
-              <InfoRow label="System Time" value={displayedTime} />
-              <InfoRow label="Last Backup" value={lastBackup} />
-              <InfoRow label="Last Restore" value={lastRestore} />
-            </div>
-          </CardContent>
-        </Card>
 
-        <Card className="maintenance-wide-card rounded-xl border-gray-200 bg-white shadow-sm">
-          <CardContent className="maintenance-card-content">
-            <SectionHeading
-              icon={<TrendingUp className="h-6 w-6" />}
-              tone="blue"
-              title="System Optimization"
-              description="Optimize application database table performance, clean eligible non-critical logs, and review data relationships."
-            />
-
-            <div className="maintenance-optimization-grid mt-8">
+              <div className="maintenance-optimization-grid">
               <div className="maintenance-optimization-item">
                 <div className="maintenance-optimization-title">
                   <span className="maintenance-title-icon">
@@ -1322,14 +2055,10 @@ export function MaintenanceModule({ user }) {
                 </div>
               </div>
             )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>
 
-      </div>
-
-      <div className="maintenance-alert-row mt-6 rounded-lg border border-blue-100 bg-blue-50 text-base text-slate-700">
-        <ShieldCheck className="mt-0.5 h-5 w-5 text-slate-600" />
-        <span>Only authorized administrators can access this page.</span>
       </div>
 
       <AlertDialog open={showBackupDialog} onOpenChange={(open) => {

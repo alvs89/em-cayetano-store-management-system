@@ -3143,6 +3143,7 @@ function getPostgresToolError(err, commandName) {
 
 const RESTORE_APP_TABLES = [
   'schema_migrations',
+  'invoice_number_sequences',
   'system_logs',
   'sales_items',
   'sales_transactions',
@@ -3154,6 +3155,7 @@ const RESTORE_APP_TABLES = [
   'products',
   'audit_logs',
   'backup_logs',
+  'branch_settings',
   'users'
 ];
 
@@ -3162,6 +3164,7 @@ function getRestoreValidationError(sql) {
   const requiredMarkers = [
     'postgresql database dump',
     'create table public.schema_migrations',
+    'create table public.invoice_number_sequences',
     'create table public.users',
     'create table public.products',
     'create table public.branch_inventory',
@@ -3173,6 +3176,7 @@ function getRestoreValidationError(sql) {
     'create table public.archived_inventory',
     'create table public.audit_logs',
     'create table public.backup_logs',
+    'create table public.branch_settings',
     'create table public.system_logs'
   ];
 
@@ -3198,6 +3202,8 @@ function buildRestoreScript(sql) {
   const stagingSchema = `restore_validation_${Date.now()}`;
   const escapedStagingSchema = stagingSchema.replace(/"/g, '""');
   const stagedSql = sql
+    .replace(/\bSET\s+search_path\s*=\s*public\s*,\s*pg_catalog\s*;/gi, `SET search_path = "${escapedStagingSchema}", pg_catalog;`)
+    .replace(/\bSELECT\s+pg_catalog\.set_config\(\s*'search_path'\s*,\s*'public'\s*,\s*false\s*\)\s*;/gi, `SELECT pg_catalog.set_config('search_path', '"${escapedStagingSchema}"', false);`)
     .replace(/\bpublic\./g, `${stagingSchema}.`)
     .replace(/'public\./g, `'${stagingSchema}.`);
   const dropStatements = RESTORE_APP_TABLES
@@ -5197,6 +5203,63 @@ app.post('/api/sales', authenticate, async (req, res) => {
   }
 });
 
+async function findActiveInventoryForSalesRestore(client, historicalItem, branch) {
+  if (!historicalItem || historicalItem.is_inventory_item === false) return null;
+
+  const baseSelect = `
+    SELECT
+      bi.inventory_id,
+      bi.product_id,
+      p.name,
+      p.category,
+      p.category_note,
+      p.supplier_name,
+      p.default_selling_price,
+      bi.branch,
+      bi.stock_level,
+      bi.min_stock_level,
+      bi.lead_time_days,
+      bi.safety_stock,
+      bi.average_daily_sales,
+      bi.status,
+      bi.last_updated
+    FROM branch_inventory bi
+    INNER JOIN products p ON p.product_id = bi.product_id
+  `;
+
+  if (historicalItem.inventory_id) {
+    const exactResult = await client.query(
+      `${baseSelect}
+       WHERE bi.inventory_id = $1
+         AND bi.branch = $2
+       FOR UPDATE`,
+      [historicalItem.inventory_id, branch]
+    );
+
+    if (exactResult.rowCount > 0) {
+      return exactResult.rows[0];
+    }
+  }
+
+  if (historicalItem.product_id) {
+    const productResult = await client.query(
+      `${baseSelect}
+       WHERE bi.product_id = $1
+         AND bi.branch = $2
+       ORDER BY bi.inventory_id DESC
+       LIMIT 1
+       FOR UPDATE`,
+      [historicalItem.product_id, branch]
+    );
+
+    if (productResult.rowCount > 0) {
+      return productResult.rows[0];
+    }
+  }
+
+  return null;
+}
+
 app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
   const salesTransactionId = Number(req.params.id);
   const cleanReason = String(req.body?.refund_reason || req.body?.reason || '').trim().slice(0, 500);
@@ -5371,37 +5434,15 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
       let newQuantity = null;
 
       if (originalItem.is_inventory_item !== false && originalItem.inventory_id) {
-        const inventoryResult = await client.query(
-          `SELECT
-             bi.inventory_id,
-             bi.product_id,
-             p.name,
-             p.category,
-             p.category_note,
-             p.supplier_name,
-             p.default_selling_price,
-             bi.branch,
-             bi.stock_level,
-             bi.min_stock_level,
-             bi.lead_time_days,
-             bi.safety_stock,
-             bi.average_daily_sales,
-             bi.status,
-             bi.last_updated
-           FROM branch_inventory bi
-           INNER JOIN products p ON p.product_id = bi.product_id
-           WHERE bi.inventory_id = $1
-             AND bi.branch = $2
-           FOR UPDATE`,
-          [originalItem.inventory_id, req.user.branch]
-        );
+        const currentItem = await findActiveInventoryForSalesRestore(client, originalItem, req.user.branch);
 
-        if (inventoryResult.rowCount === 0) {
+        if (!currentItem) {
           await client.query('ROLLBACK');
-          return res.status(404).json({ error: `${originalItem.item_name} is no longer available in active inventory. Refund cannot restore stock safely.` });
+          return res.status(404).json({ error: `${originalItem.item_name} is not available in active inventory. Restore the item from Archive first, then try the refund again.` });
         }
 
-        const currentItem = inventoryResult.rows[0];
+        const restoreInventoryId = currentItem.inventory_id;
+        const restoreProductId = currentItem.product_id || originalItem.product_id;
         previousQuantity = Number(currentItem.stock_level || 0);
         newQuantity = previousQuantity + refundQuantity;
         const nextStatus = computeInventoryStatus(newQuantity, getEffectiveReorderThreshold(currentItem));
@@ -5414,12 +5455,12 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
            WHERE inventory_id = $3
              AND branch = $4
            RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
-          [newQuantity, nextStatus, originalItem.inventory_id, req.user.branch]
+          [newQuantity, nextStatus, restoreInventoryId, req.user.branch]
         );
 
         await recordStockMovement(client, {
-          inventoryId: originalItem.inventory_id,
-          productId: originalItem.product_id,
+          inventoryId: restoreInventoryId,
+          productId: restoreProductId,
           itemName: originalItem.item_name,
           category: originalItem.category,
           branch: originalItem.branch,
@@ -5434,7 +5475,7 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
           backdateReason: transactionTiming.backdateReason
         });
 
-        await refreshAverageDailySalesForInventory(client, originalItem.inventory_id);
+        await refreshAverageDailySalesForInventory(client, restoreInventoryId);
 
         restoredItems.push({
           ...updatedResult.rows[0],
@@ -5448,12 +5489,15 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
         });
 
         stockRestoreDetails.push({
-          inventoryId: originalItem.inventory_id,
+          inventoryId: restoreInventoryId,
           itemName: originalItem.item_name,
           quantity: refundQuantity,
           previousQuantity,
           newQuantity
         });
+
+        line.restoreInventoryId = restoreInventoryId;
+        line.restoreProductId = restoreProductId;
       }
 
       line.previousQuantity = previousQuantity;
@@ -5567,8 +5611,8 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
         [
           refundTransaction.sales_transaction_id,
           originalItem.item_type || (originalItem.is_inventory_item === false ? 'non_inventory' : 'inventory'),
-          originalItem.inventory_id,
-          originalItem.product_id,
+          line.restoreInventoryId || originalItem.inventory_id,
+          line.restoreProductId || originalItem.product_id,
           originalItem.is_inventory_item !== false,
           originalItem.item_name,
           originalItem.category,
@@ -5717,37 +5761,15 @@ app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) =
         continue;
       }
 
-      const inventoryResult = await client.query(
-        `SELECT
-           bi.inventory_id,
-           bi.product_id,
-           p.name,
-           p.category,
-           p.category_note,
-           p.supplier_name,
-           p.default_selling_price,
-           bi.branch,
-           bi.stock_level,
-           bi.min_stock_level,
-           bi.lead_time_days,
-           bi.safety_stock,
-           bi.average_daily_sales,
-           bi.status,
-           bi.last_updated
-         FROM branch_inventory bi
-         INNER JOIN products p ON p.product_id = bi.product_id
-         WHERE bi.inventory_id = $1
-           AND bi.branch = $2
-         FOR UPDATE`,
-        [saleItem.inventory_id, req.user.branch]
-      );
+      const currentItem = await findActiveInventoryForSalesRestore(client, saleItem, req.user.branch);
 
-      if (inventoryResult.rowCount === 0) {
+      if (!currentItem) {
         await client.query('ROLLBACK');
-        return res.status(404).json({ error: `${saleItem.item_name} is no longer available in active inventory. Restore cannot be completed safely.` });
+        return res.status(404).json({ error: `${saleItem.item_name} is not available in active inventory. Restore the item from Archive first, then try the cancellation again.` });
       }
 
-      const currentItem = inventoryResult.rows[0];
+      const restoreInventoryId = currentItem.inventory_id;
+      const restoreProductId = currentItem.product_id || saleItem.product_id;
       const previousQuantity = Number(currentItem.stock_level || 0);
       const restoredQuantity = Number(saleItem.quantity_sold || 0);
       const newQuantity = previousQuantity + restoredQuantity;
@@ -5761,12 +5783,12 @@ app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) =
          WHERE inventory_id = $3
            AND branch = $4
          RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
-        [newQuantity, nextStatus, saleItem.inventory_id, req.user.branch]
+        [newQuantity, nextStatus, restoreInventoryId, req.user.branch]
       );
 
       await recordStockMovement(client, {
-        inventoryId: saleItem.inventory_id,
-        productId: saleItem.product_id,
+        inventoryId: restoreInventoryId,
+        productId: restoreProductId,
         itemName: saleItem.item_name,
         category: saleItem.category,
         branch: saleItem.branch,
@@ -5779,7 +5801,7 @@ app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) =
         actorId: req.user.id
       });
 
-      await refreshAverageDailySalesForInventory(client, saleItem.inventory_id);
+      await refreshAverageDailySalesForInventory(client, restoreInventoryId);
 
       restoredItems.push({
         ...updatedResult.rows[0],
@@ -7849,6 +7871,297 @@ app.get('/api/maintenance/backup', authenticate, requireAdmin, async (req, res) 
   );
 });
 
+const SELECTIVE_EXPORT_DEFINITIONS = {
+  inventory: {
+    label: 'Inventory',
+    dateColumn: 'bi.last_updated',
+    branchColumn: 'bi.branch',
+    from: `branch_inventory bi
+      INNER JOIN products p ON p.product_id = bi.product_id`,
+    orderBy: 'p.name ASC, bi.inventory_id ASC',
+    columns: {
+      essential: [
+        ['Item Code', 'bi.inventory_id::text'],
+        ['Product ID', 'bi.product_id::text'],
+        ['Item Name', 'p.name'],
+        ['Category', 'p.category'],
+        ['Supplier', "COALESCE(NULLIF(p.supplier_name, ''), 'Unassigned')"],
+        ['Branch', 'bi.branch'],
+        ['Quantity', 'bi.stock_level::text'],
+        ['Status', 'bi.status'],
+        ['Last Updated', 'bi.last_updated::text']
+      ],
+      detailed: [
+        ['Item Code', 'bi.inventory_id::text'],
+        ['Product ID', 'bi.product_id::text'],
+        ['Item Name', 'p.name'],
+        ['Category', 'p.category'],
+        ['Category Note', "COALESCE(p.category_note, '')"],
+        ['Supplier', "COALESCE(NULLIF(p.supplier_name, ''), 'Unassigned')"],
+        ['Branch', 'bi.branch'],
+        ['Quantity', 'bi.stock_level::text'],
+        ['Reorder Level', 'bi.min_stock_level::text'],
+        ['Lead Time Days', 'bi.lead_time_days::text'],
+        ['Safety Stock', 'bi.safety_stock::text'],
+        ['Average Daily Sales', 'bi.average_daily_sales::text'],
+        ['Status', 'bi.status'],
+        ['Last Updated', 'bi.last_updated::text']
+      ]
+    }
+  },
+  sales: {
+    label: 'Sales',
+    dateColumn: 'st.created_at',
+    branchColumn: 'st.branch',
+    from: 'sales_transactions st',
+    orderBy: 'st.created_at DESC, st.sales_transaction_id DESC',
+    columns: {
+      essential: [
+        ['System Ref', 'st.sales_number'],
+        ['Invoice Number', "COALESCE(st.official_invoice_number, '')"],
+        ['Branch', 'st.branch'],
+        ['Customer', 'st.customer_name'],
+        ['Transaction Type', 'st.transaction_type'],
+        ['Status', 'st.status'],
+        ['Total Quantity', 'st.total_quantity::text'],
+        ['Total Amount', 'st.total_amount::text'],
+        ['Payment Method', 'st.payment_method'],
+        ['Transaction Date', 'st.created_at::text']
+      ],
+      detailed: [
+        ['System Ref', 'st.sales_number'],
+        ['Invoice Number', "COALESCE(st.official_invoice_number, '')"],
+        ['Branch', 'st.branch'],
+        ['Customer Type', 'st.customer_type'],
+        ['Customer', 'st.customer_name'],
+        ['Customer TIN', "COALESCE(st.customer_tin, '')"],
+        ['Customer Address', "COALESCE(st.customer_address, '')"],
+        ['Transaction Type', 'st.transaction_type'],
+        ['Status', 'st.status'],
+        ['Total Quantity', 'st.total_quantity::text'],
+        ['Subtotal', 'st.subtotal_amount::text'],
+        ['Discount', 'st.discount_amount::text'],
+        ['VAT Amount', 'st.vat_amount::text'],
+        ['Total Amount', 'st.total_amount::text'],
+        ['Payment Method', 'st.payment_method'],
+        ['Encoded By', "COALESCE(st.sold_by_name, '')"],
+        ['Transaction Date', 'st.created_at::text'],
+        ['Encoded Date', 'st.encoded_at::text'],
+        ['Remarks', "COALESCE(st.remarks, '')"]
+      ]
+    }
+  },
+  purchases: {
+    label: 'Purchases',
+    dateColumn: 'pt.created_at',
+    branchColumn: 'pt.branch',
+    from: 'purchase_transactions pt',
+    orderBy: 'pt.created_at DESC, pt.purchase_transaction_id DESC',
+    columns: {
+      essential: [
+        ['Purchase Number', 'pt.purchase_number'],
+        ['Branch', 'pt.branch'],
+        ['Supplier', 'pt.supplier_name'],
+        ['Document Type', 'pt.document_type'],
+        ['Document Number', "COALESCE(pt.document_number, '')"],
+        ['Status', 'pt.status'],
+        ['Total Quantity', 'pt.total_quantity::text'],
+        ['Subtotal Amount', 'pt.subtotal_amount::text'],
+        ['Transaction Date', 'pt.created_at::text']
+      ],
+      detailed: [
+        ['Purchase Number', 'pt.purchase_number'],
+        ['Branch', 'pt.branch'],
+        ['Supplier', 'pt.supplier_name'],
+        ['Document Type', 'pt.document_type'],
+        ['Document Note', "COALESCE(pt.document_type_note, '')"],
+        ['Document Number', "COALESCE(pt.document_number, '')"],
+        ['Payment Terms', 'pt.payment_terms'],
+        ['Status', 'pt.status'],
+        ['Total Quantity', 'pt.total_quantity::text'],
+        ['Subtotal Amount', 'pt.subtotal_amount::text'],
+        ['Encoded By', "COALESCE(pt.encoded_by_name, '')"],
+        ['Transaction Date', 'pt.created_at::text'],
+        ['Encoded Date', 'pt.encoded_at::text'],
+        ['Remarks', "COALESCE(pt.remarks, '')"]
+      ]
+    }
+  },
+  archive: {
+    label: 'Archive',
+    dateColumn: 'ai.archived_at',
+    branchColumn: 'ai.branch',
+    from: 'archived_inventory ai',
+    orderBy: 'ai.archived_at DESC, ai.archived_inventory_id DESC',
+    columns: {
+      essential: [
+        ['Archive ID', 'ai.archived_inventory_id::text'],
+        ['Original Inventory ID', 'ai.original_inventory_id::text'],
+        ['Item Name', 'ai.name'],
+        ['Category', 'ai.category'],
+        ['Supplier', "COALESCE(NULLIF(ai.supplier_name, ''), 'Unassigned')"],
+        ['Branch', 'ai.branch'],
+        ['Quantity', 'ai.stock_level::text'],
+        ['Status', 'ai.status'],
+        ['Archived Date', 'ai.archived_at::text']
+      ],
+      detailed: [
+        ['Archive ID', 'ai.archived_inventory_id::text'],
+        ['Original Inventory ID', 'ai.original_inventory_id::text'],
+        ['Product ID', 'ai.product_id::text'],
+        ['Item Name', 'ai.name'],
+        ['Category', 'ai.category'],
+        ['Category Note', "COALESCE(ai.category_note, '')"],
+        ['Supplier', "COALESCE(NULLIF(ai.supplier_name, ''), 'Unassigned')"],
+        ['Branch', 'ai.branch'],
+        ['Quantity', 'ai.stock_level::text'],
+        ['Reorder Level', 'ai.min_stock_level::text'],
+        ['Status', 'ai.status'],
+        ['Archive Reason', "COALESCE(ai.archive_reason, '')"],
+        ['Archive Note', "COALESCE(ai.archive_reason_note, '')"],
+        ['Archived Date', 'ai.archived_at::text']
+      ]
+    }
+  },
+  audit: {
+    label: 'Audit Trail',
+    dateColumn: 'al.created_at',
+    branchColumn: null,
+    from: 'audit_logs al',
+    orderBy: 'al.created_at DESC, al.id DESC',
+    columns: {
+      essential: [
+        ['Audit ID', 'al.id::text'],
+        ['Actor', "COALESCE(al.actor_name, 'System')"],
+        ['Action', 'al.action'],
+        ['Target Type', "COALESCE(al.target_type, '')"],
+        ['Target Name', "COALESCE(al.target_name, '')"],
+        ['Reason', "COALESCE(al.reason, '')"],
+        ['Created At', 'al.created_at::text']
+      ],
+      detailed: [
+        ['Audit ID', 'al.id::text'],
+        ['Actor ID', "COALESCE(al.actor_id::text, '')"],
+        ['Actor', "COALESCE(al.actor_name, 'System')"],
+        ['Action', 'al.action'],
+        ['Target ID', "COALESCE(al.target_id::text, '')"],
+        ['Target Type', "COALESCE(al.target_type, '')"],
+        ['Target Name', "COALESCE(al.target_name, '')"],
+        ['Reason', "COALESCE(al.reason, '')"],
+        ['Created At', 'al.created_at::text']
+      ]
+    }
+  }
+};
+
+function escapeCsvValue(value) {
+  const text = value === null || value === undefined ? '' : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function buildCsv(headers, rows) {
+  const headerLine = headers.map(escapeCsvValue).join(',');
+  const rowLines = rows.map(row => headers.map(header => escapeCsvValue(row[header])).join(','));
+  return [headerLine, ...rowLines].join('\r\n');
+}
+
+function cleanExportDate(value, label) {
+  if (!value) return null;
+  const text = String(value).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    const err = new Error(`${label} must use YYYY-MM-DD format.`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return text;
+}
+
+app.get('/api/maintenance/selective-export', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const datasetKey = String(req.query.dataset || 'inventory').trim();
+    const definition = SELECTIVE_EXPORT_DEFINITIONS[datasetKey];
+    if (!definition) {
+      return res.status(400).json({ error: 'Please select a valid export dataset.' });
+    }
+
+    const columnPreset = String(req.query.columns || 'essential').trim();
+    const selectedColumns = definition.columns[columnPreset];
+    if (!selectedColumns) {
+      return res.status(400).json({ error: 'Please select a valid export column set.' });
+    }
+
+    const branch = String(req.query.branch || 'current').trim();
+    const dateFrom = cleanExportDate(req.query.dateFrom, 'Start date');
+    const dateTo = cleanExportDate(req.query.dateTo, 'End date');
+    if (dateFrom && dateTo && dateFrom > dateTo) {
+      return res.status(400).json({ error: 'Start date cannot be later than end date.' });
+    }
+
+    const where = [];
+    const params = [];
+
+    if (definition.branchColumn && branch !== 'all') {
+      const scopedBranch = branch === 'current' ? req.user.branch : branch;
+      if (!scopedBranch) {
+        return res.status(400).json({ error: 'Please select a branch for this export.' });
+      }
+      params.push(scopedBranch);
+      where.push(`${definition.branchColumn} = $${params.length}`);
+    }
+
+    if (dateFrom) {
+      params.push(dateFrom);
+      where.push(`${definition.dateColumn} >= $${params.length}::date`);
+    }
+
+    if (dateTo) {
+      params.push(dateTo);
+      where.push(`${definition.dateColumn} < ($${params.length}::date + INTERVAL '1 day')`);
+    }
+
+    const selectList = selectedColumns
+      .map(([header, expression]) => `${expression} AS "${header.replace(/"/g, '""')}"`)
+      .join(',\n      ');
+    const query = `
+      SELECT
+        ${selectList}
+      FROM ${definition.from}
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY ${definition.orderBy}
+      LIMIT 50000
+    `;
+    const result = await pool.query(query, params);
+    const headers = selectedColumns.map(([header]) => header);
+    const csv = buildCsv(headers, result.rows);
+    const exportDate = new Date().toISOString().slice(0, 10);
+    const fileBranch = definition.branchColumn ? (branch === 'all' ? 'all-branches' : (branch === 'current' ? req.user.branch : branch)) : 'system';
+    const filename = `emcayetano-${datasetKey}-${columnPreset}-${String(fileBranch || 'branch').replace(/[^a-z0-9-]+/gi, '-')}-${exportDate}.csv`;
+
+    await recordAuditLogSafely(pool, {
+      actorId: req.user.id,
+      targetName: `${definition.label} selective export`,
+      targetType: 'maintenance_export',
+      action: 'EXPORT_SELECTIVE_DATA',
+      reason: 'Admin / Owner exported filtered business records.',
+      details: {
+        dataset: datasetKey,
+        columns: columnPreset,
+        branch,
+        dateFrom,
+        dateTo,
+        rowCount: result.rowCount
+      }
+    });
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(`\uFEFF${csv}`);
+  } catch (err) {
+    console.error('Selective export error:', err);
+    return res.status(err.statusCode || 500).json({ error: err.message || 'Failed to export selected data.' });
+  }
+});
+
 app.post('/api/maintenance/clear-logs', authenticate, requireAdmin, async (req, res) => {
   const client = await pool.connect();
   try {
@@ -8513,7 +8826,10 @@ app.post(
           if (err) {
             const details = stderr || getPostgresToolError(err, 'psql');
             console.error('Restore failed:', details);
-            return res.status(500).json({ error: 'Restore failed', details });
+            return res.status(500).json({
+              error: 'Database restore failed',
+              details: details || 'The backup could not be restored. Please verify that the SQL file is a valid backup from this system.'
+            });
           }
 
           try {
@@ -8556,7 +8872,10 @@ app.post(
       );
     } catch (err) {
       console.error('Restore write failed:', err);
-      return res.status(500).json({ error: 'Restore failed', details: err.message });
+      return res.status(500).json({
+        error: 'Database restore failed',
+        details: err.message || 'The backup could not be prepared for restore. Please try again with a valid SQL backup file.'
+      });
     }
   }
 );

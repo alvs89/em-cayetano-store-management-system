@@ -1,8 +1,7 @@
-// Search module: provides cross-module lookup for inventory, transactions,
+// Search module: provides indexed cross-module lookup for inventory, sales,
 // purchases, and archived records.
-import React, { useEffect, useState } from "react";
-import { ArrowRight, Box, BriefcaseBusiness, CalendarDays, ExternalLink, Filter, Package, Search, UserRound } from "lucide-react";
-import { linearSearchAll, sortByNameAsc, sortByNameDesc } from "../utils/algorithms";
+import React, { useEffect, useMemo, useState } from "react";
+import { Archive, ArrowRight, Box, BriefcaseBusiness, CalendarDays, ExternalLink, Filter, Package, ReceiptText, Search, ShoppingCart, UserRound } from "lucide-react";
 import { formatDateTime } from "../utils/format";
 import { getStockStatusBadgeClass } from "../utils/statusStyles";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -18,21 +17,298 @@ const getCategoryDisplay = product => {
   return note ? `${category}: ${note}` : category;
 };
 
+const SEARCH_DEBOUNCE_MS = 140;
+const MAX_SEARCH_RESULTS = 60;
+
+const normalizeSearchText = value => String(value ?? "")
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, " ")
+  .trim();
+
+const tokenize = value => normalizeSearchText(value).split(/\s+/).filter(Boolean);
+
+const compactJoin = values => values
+  .flat()
+  .filter(value => value !== null && value !== undefined && String(value).trim() !== "")
+  .map(value => String(value).trim())
+  .join(" ");
+
+const uniqueCompactJoin = values => Array.from(new Set(values
+  .flat()
+  .filter(value => value !== null && value !== undefined && String(value).trim() !== "")
+  .map(value => String(value).trim()))).join(", ");
+
+const formatCurrency = value => new Intl.NumberFormat("en-PH", {
+  style: "currency",
+  currency: "PHP",
+  minimumFractionDigits: 2,
+}).format(Number(value || 0));
+
+const getSaleItems = sale => Array.isArray(sale?.items) ? sale.items : [];
+const getPurchaseItems = purchase => Array.isArray(purchase?.items) ? purchase.items : [];
+
+const getRecordIcon = type => {
+  switch (type) {
+    case "inventory":
+      return Package;
+    case "archive":
+      return Archive;
+    case "sale":
+      return ReceiptText;
+    case "purchase":
+      return ShoppingCart;
+    default:
+      return Search;
+  }
+};
+
+const getRecordTypeLabel = type => {
+  switch (type) {
+    case "inventory":
+      return "Inventory";
+    case "archive":
+      return "Archive";
+    case "sale":
+      return "Sales";
+    case "purchase":
+      return "Purchases";
+    default:
+      return "Record";
+  }
+};
+
 export function SearchModule({ onNavigate }) {
-  const { inventory } = useData();
+  const { inventory, archivedInventory, salesTransactions, purchaseTransactions } = useData();
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [searchResults, setSearchResults] = useState([]);
   const [sortBy, setSortBy] = useState("relevance");
   const [sortOrder, setSortOrder] = useState("asc");
 
-  const categories = Array.from(new Set(inventory.map(product => product.category).filter(Boolean)));
+  const categories = useMemo(
+    () => Array.from(new Set([...(inventory || []), ...(archivedInventory || [])].map(product => product.category).filter(Boolean))).sort(),
+    [archivedInventory, inventory]
+  );
+
+  const searchIndex = useMemo(() => {
+    const records = [];
+
+    (inventory || []).forEach(product => {
+      const categoryDisplay = getCategoryDisplay(product);
+      records.push({
+        key: `inventory-${product.id}`,
+        type: "inventory",
+        module: "inventory",
+        record: product,
+        title: product.name || "Unnamed product",
+        subtitle: categoryDisplay,
+        code: product.itemCode || product.id,
+        category: product.category || "",
+        status: product.status || "",
+        date: product.lastUpdated || "",
+        details: [
+          { label: "Category", value: categoryDisplay, icon: BriefcaseBusiness },
+          { label: "Quantity", value: product.quantity ?? 0, icon: Box },
+          { label: "Supplier", value: product.supplierName || "Unassigned", icon: UserRound },
+          { label: "Last Updated", value: formatDateTime(product.lastUpdated), icon: CalendarDays },
+        ],
+        searchableText: compactJoin([
+          product.id,
+          product.productId,
+          product.itemCode,
+          product.name,
+          product.category,
+          product.categoryNote,
+          product.supplierName,
+          product.status,
+          product.branch,
+          product.quantity,
+          product.reorderLevel,
+        ]),
+        importantText: compactJoin([product.itemCode, product.name, product.category, product.supplierName]),
+      });
+    });
+
+    (archivedInventory || []).forEach(product => {
+      const categoryDisplay = getCategoryDisplay(product);
+      records.push({
+        key: `archive-${product.id}`,
+        type: "archive",
+        module: "archive",
+        record: product,
+        title: product.name || "Archived product",
+        subtitle: categoryDisplay,
+        code: product.archiveCode || product.itemCode || product.id,
+        category: product.category || "",
+        status: product.status || "Archived",
+        date: product.archivedAt || product.lastUpdated || "",
+        details: [
+          { label: "Category", value: categoryDisplay, icon: BriefcaseBusiness },
+          { label: "Archive Reason", value: product.archiveReasonNote || product.archiveReason || "Archived", icon: Archive },
+          { label: "Supplier", value: product.supplierName || "Unassigned", icon: UserRound },
+          { label: "Archived", value: formatDateTime(product.archivedAt || product.lastUpdated), icon: CalendarDays },
+        ],
+        searchableText: compactJoin([
+          product.id,
+          product.originalInventoryId,
+          product.productId,
+          product.itemCode,
+          product.archiveCode,
+          product.name,
+          product.category,
+          product.categoryNote,
+          product.supplierName,
+          product.status,
+          product.archiveReason,
+          product.archiveReasonNote,
+        ]),
+        importantText: compactJoin([product.itemCode, product.archiveCode, product.name, product.category, product.supplierName]),
+      });
+    });
+
+    (salesTransactions || []).forEach(sale => {
+      const items = getSaleItems(sale);
+      const itemNames = uniqueCompactJoin(items.map(item => item.itemName));
+      const categoriesText = uniqueCompactJoin(items.map(item => item.categoryNote ? `${item.category}: ${item.categoryNote}` : item.category));
+      records.push({
+        key: `sale-${sale.id}`,
+        type: "sale",
+        module: "sales",
+        record: sale,
+        title: sale.salesNumber || sale.officialInvoiceNumber || `Sale ${sale.id}`,
+        subtitle: itemNames || `${sale.totalQuantity || 0} sold item${Number(sale.totalQuantity) === 1 ? "" : "s"}`,
+        code: sale.officialInvoiceNumber || sale.salesNumber || sale.id,
+        category: "",
+        status: sale.status || "completed",
+        date: sale.createdAt || sale.encodedAt || "",
+        details: [
+          { label: "Customer", value: sale.customerName || "Walk-in", icon: UserRound },
+          { label: "Amount", value: formatCurrency(sale.totalAmount), icon: ReceiptText },
+          { label: "Items", value: itemNames || `${sale.totalQuantity || 0} unit${Number(sale.totalQuantity) === 1 ? "" : "s"}`, icon: Package },
+          { label: "Transaction Date", value: formatDateTime(sale.createdAt), icon: CalendarDays },
+        ],
+        searchableText: compactJoin([
+          sale.id,
+          sale.salesNumber,
+          sale.officialInvoiceNumber,
+          sale.officialInvoiceExpectedNumber,
+          sale.branch,
+          sale.customerType,
+          sale.customerName,
+          sale.customerTin,
+          sale.customerAddress,
+          sale.paymentMethod,
+          sale.paymentReference,
+          sale.status,
+          sale.transactionType,
+          sale.remarks,
+          sale.backdateReason,
+          sale.cancelReason,
+          itemNames,
+          categoriesText,
+          items.flatMap(item => [item.productId, item.inventoryId, item.itemName, item.category, item.categoryNote, item.branch]),
+        ]),
+        importantText: compactJoin([sale.salesNumber, sale.officialInvoiceNumber, sale.customerName, itemNames]),
+      });
+    });
+
+    (purchaseTransactions || []).forEach(purchase => {
+      const items = getPurchaseItems(purchase);
+      const itemNames = uniqueCompactJoin(items.map(item => item.itemName));
+      const categoriesText = uniqueCompactJoin(items.map(item => item.categoryNote ? `${item.category}: ${item.categoryNote}` : item.category));
+      records.push({
+        key: `purchase-${purchase.id}`,
+        type: "purchase",
+        module: "purchases",
+        record: purchase,
+        title: purchase.purchaseNumber || `Purchase ${purchase.id}`,
+        subtitle: purchase.supplierName || itemNames || "Purchase record",
+        code: purchase.documentNumber || purchase.purchaseNumber || purchase.id,
+        category: "",
+        status: purchase.status || "completed",
+        date: purchase.createdAt || purchase.encodedAt || "",
+        details: [
+          { label: "Supplier", value: purchase.supplierName || "No supplier", icon: UserRound },
+          { label: "Amount", value: formatCurrency(purchase.subtotalAmount), icon: ShoppingCart },
+          { label: "Items", value: itemNames || `${purchase.totalQuantity || 0} unit${Number(purchase.totalQuantity) === 1 ? "" : "s"}`, icon: Package },
+          { label: "Transaction Date", value: formatDateTime(purchase.createdAt), icon: CalendarDays },
+        ],
+        searchableText: compactJoin([
+          purchase.id,
+          purchase.purchaseNumber,
+          purchase.branch,
+          purchase.supplierName,
+          purchase.documentType,
+          purchase.documentTypeNote,
+          purchase.documentNumber,
+          purchase.paymentTerms,
+          purchase.remarks,
+          purchase.status,
+          purchase.encodedByName,
+          purchase.backdateReason,
+          purchase.cancelReason,
+          itemNames,
+          categoriesText,
+          items.flatMap(item => [item.productId, item.inventoryId, item.itemName, item.category, item.categoryNote, item.branch]),
+        ]),
+        importantText: compactJoin([purchase.purchaseNumber, purchase.documentNumber, purchase.supplierName, itemNames]),
+      });
+    });
+
+    const tokenMap = new Map();
+    const indexedRecords = records.map((record, index) => {
+      const normalizedText = normalizeSearchText(record.searchableText);
+      const normalizedImportantText = normalizeSearchText(record.importantText);
+      const tokens = Array.from(new Set(tokenize(record.searchableText)));
+
+      tokens.forEach(token => {
+        if (!tokenMap.has(token)) tokenMap.set(token, new Set());
+        tokenMap.get(token).add(index);
+      });
+
+      return {
+        ...record,
+        index,
+        normalizedText,
+        normalizedImportantText,
+        tokens,
+      };
+    });
+
+    return {
+      records: indexedRecords,
+      tokenMap,
+      totals: {
+        inventory: (inventory || []).length,
+        archive: (archivedInventory || []).length,
+        sale: (salesTransactions || []).length,
+        purchase: (purchaseTransactions || []).length,
+      },
+    };
+  }, [archivedInventory, inventory, purchaseTransactions, salesTransactions]);
+
+  const statusOptions = useMemo(
+    () => Array.from(new Set(searchIndex.records.map(record => record.status).filter(Boolean))).sort(),
+    [searchIndex]
+  );
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
 
   useEffect(() => {
     const applyDashboardStatusFilter = status => {
       if (!status) return;
       setSearchQuery("");
+      setTypeFilter("inventory");
       setCategoryFilter("all");
       setStatusFilter(status);
       setSortBy("name");
@@ -53,39 +329,114 @@ export function SearchModule({ onNavigate }) {
     return () => window.removeEventListener("dashboard-search-filter", handleDashboardSearchFilter);
   }, []);
 
-  useEffect(() => {
-    let results = [];
+  const searchResults = useMemo(() => {
+    const queryTokens = tokenize(debouncedSearchQuery);
+    const hasQuery = queryTokens.length > 0;
+    const candidateIndexes = new Set();
 
-    results = linearSearchAll(inventory, product => {
-      const productName = (product.name || "").toLowerCase();
-      const productId = String(product.id || "").toLowerCase();
-      const productCode = (product.itemCode || "").toLowerCase();
-      const productDatabaseId = String(product.productId || "").toLowerCase();
-      const productCategory = getCategoryDisplay(product).toLowerCase();
-      const query = searchQuery.toLowerCase();
-      const matchesSearch =
-        searchQuery === "" ||
-        productName.includes(query) ||
-        productCategory.includes(query) ||
-        productCode.includes(query) ||
-        productId.includes(query) ||
-        productDatabaseId.includes(query);
-      const matchesCategory = categoryFilter === "all" || product.category === categoryFilter;
-      const matchesStatus = statusFilter === "all" || product.status === statusFilter;
-      return matchesSearch && matchesCategory && matchesStatus;
-    });
-
-    if (sortBy === "name") {
-      results = sortOrder === "asc" ? sortByNameAsc(results) : sortByNameDesc(results);
+    if (hasQuery) {
+      queryTokens.forEach(queryToken => {
+        searchIndex.tokenMap.forEach((indexes, token) => {
+          if (token === queryToken || token.startsWith(queryToken) || token.includes(queryToken)) {
+            indexes.forEach(index => candidateIndexes.add(index));
+          }
+        });
+      });
+    } else {
+      searchIndex.records.forEach(record => candidateIndexes.add(record.index));
     }
 
-    setSearchResults(results);
-  }, [searchQuery, categoryFilter, statusFilter, inventory, sortBy, sortOrder]);
+    const scoredResults = Array.from(candidateIndexes)
+      .map(index => {
+        const record = searchIndex.records[index];
+        if (!record) return null;
+        if (typeFilter !== "all" && record.type !== typeFilter) return null;
+        if (categoryFilter !== "all" && !["inventory", "archive"].includes(record.type)) return null;
+        if (categoryFilter !== "all" && record.category !== categoryFilter) return null;
+        if (statusFilter !== "all" && record.status !== statusFilter) return null;
 
-  const hasActiveFilters = searchQuery !== "" || categoryFilter !== "all" || statusFilter !== "all";
-  const openInventoryRecord = product => {
-    if (!product?.id) return;
-    const focusId = String(product.id);
+        let score = hasQuery ? 0 : 1;
+        const normalizedTitle = normalizeSearchText(record.title);
+        const normalizedCode = normalizeSearchText(record.code);
+        const normalizedSubtitle = normalizeSearchText(record.subtitle);
+
+        queryTokens.forEach(queryToken => {
+          if (normalizedCode === queryToken) score += 90;
+          if (normalizedCode.startsWith(queryToken)) score += 60;
+          if (normalizedTitle === queryToken) score += 70;
+          if (normalizedTitle.startsWith(queryToken)) score += 45;
+          if (record.normalizedImportantText.includes(queryToken)) score += 25;
+          if (normalizedSubtitle.includes(queryToken)) score += 14;
+          if (record.normalizedText.includes(queryToken)) score += 8;
+          if (record.tokens.some(token => token.startsWith(queryToken))) score += 6;
+          if (record.tokens.some(token => token.includes(queryToken))) score += 3;
+        });
+
+        if (hasQuery && score <= 0) return null;
+        return { ...record, score };
+      })
+      .filter(Boolean);
+
+    const sortedResults = [...scoredResults].sort((a, b) => {
+      if (sortBy === "name") {
+        const result = a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: "base" });
+        return sortOrder === "asc" ? result : -result;
+      }
+
+      if (sortBy === "date") {
+        const aTime = new Date(a.date || 0).getTime();
+        const bTime = new Date(b.date || 0).getTime();
+        const result = (Number.isNaN(aTime) ? 0 : aTime) - (Number.isNaN(bTime) ? 0 : bTime);
+        return sortOrder === "asc" ? result : -result;
+      }
+
+      if (b.score !== a.score) return b.score - a.score;
+      return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: "base" });
+    });
+
+    return sortedResults.slice(0, MAX_SEARCH_RESULTS);
+  }, [categoryFilter, debouncedSearchQuery, searchIndex, sortBy, sortOrder, statusFilter, typeFilter]);
+
+  const hasActiveFilters = searchQuery.trim() !== "" || typeFilter !== "all" || categoryFilter !== "all" || statusFilter !== "all";
+  const openSearchRecord = result => {
+    if (!result) return;
+
+    if (result.type === "inventory" && result.record?.id) {
+      const focusId = String(result.record.id);
+      localStorage.setItem("inventoryFocusItemId", focusId);
+      onNavigate?.("inventory");
+      window.setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("inventory-focus-item", {
+          detail: { id: focusId }
+        }));
+      }, 80);
+      return;
+    }
+
+    if (result.type === "archive" && result.record?.originalInventoryId) {
+      localStorage.setItem("archiveRowHighlightOriginalId", String(result.record.originalInventoryId));
+      onNavigate?.("archive");
+      return;
+    }
+
+    if (result.type === "sale") {
+      localStorage.setItem("sales_history_target_period", "all");
+      onNavigate?.("sales");
+      window.setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("sales-history-target-view", {
+          detail: { period: "all" }
+        }));
+      }, 80);
+      return;
+    }
+
+    if (result.type === "purchase") {
+      onNavigate?.("purchases");
+      return;
+    }
+
+    if (!result.record?.id) return;
+    const focusId = String(result.record.id);
     localStorage.setItem("inventoryFocusItemId", focusId);
     onNavigate?.("inventory");
     window.setTimeout(() => {
@@ -136,7 +487,7 @@ export function SearchModule({ onNavigate }) {
 
         .search-controls-grid {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(12rem, 0.32fr) minmax(11rem, 0.28fr);
+          grid-template-columns: minmax(0, 1fr) minmax(10rem, 0.22fr) minmax(12rem, 0.26fr) minmax(11rem, 0.24fr);
           gap: 1rem;
           align-items: center;
         }
@@ -213,6 +564,20 @@ export function SearchModule({ onNavigate }) {
           justify-content: space-between;
           gap: 0.75rem;
           margin-bottom: 0.85rem;
+        }
+
+        .search-result-type {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.4rem;
+          color: #475569;
+          font-size: 0.82rem;
+          font-weight: 800;
+        }
+
+        .search-result-type svg {
+          height: 1rem;
+          width: 1rem;
         }
 
         .search-result-card [data-slot="card-header"] {
@@ -378,10 +743,10 @@ export function SearchModule({ onNavigate }) {
 
         @media (max-width: 980px) {
           .search-controls-grid {
-            grid-template-columns: minmax(0, 1fr) minmax(11rem, 0.42fr);
+            grid-template-columns: minmax(0, 1fr) minmax(10rem, 0.34fr);
           }
 
-          .search-select-wrap:last-child {
+          .search-select-wrap:nth-child(4) {
             grid-column: 1 / -1;
           }
 
@@ -452,7 +817,7 @@ export function SearchModule({ onNavigate }) {
             grid-column: 1 / -1;
           }
 
-          .search-select-wrap:last-child {
+          .search-select-wrap:nth-child(4) {
             grid-column: auto;
           }
 
@@ -702,8 +1067,8 @@ export function SearchModule({ onNavigate }) {
       `}</style>
 
       <PageHeader
-        title="Search Products"
-        subtitle="Quickly find and view product details"
+        title="System Search"
+        subtitle="Find products, archived records, sales, and purchases from one place"
         icon={<Search className="h-8 w-8" />}
       />
 
@@ -715,10 +1080,25 @@ export function SearchModule({ onNavigate }) {
                 <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
                 <Input
                   className="h-12 pl-10"
-                  placeholder="Search active products by name or item code"
+                  placeholder="Search item code, product, supplier, invoice, customer, remarks..."
                   value={searchQuery}
                   onChange={event => setSearchQuery(event.target.value)}
                 />
+              </div>
+
+              <div className="search-select-wrap">
+                <Select value={typeFilter} onValueChange={setTypeFilter}>
+                  <SelectTrigger className="h-12">
+                    <SelectValue placeholder="Record Type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Records</SelectItem>
+                    <SelectItem value="inventory">Inventory</SelectItem>
+                    <SelectItem value="archive">Archive</SelectItem>
+                    <SelectItem value="sale">Sales</SelectItem>
+                    <SelectItem value="purchase">Purchases</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="search-select-wrap">
@@ -744,9 +1124,11 @@ export function SearchModule({ onNavigate }) {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="In Stock">In Stock</SelectItem>
-                    <SelectItem value="Low Stock">Low Stock</SelectItem>
-                    <SelectItem value="Out of Stock">Out of Stock</SelectItem>
+                    {statusOptions.map(status => (
+                      <SelectItem key={status} value={status}>
+                        {status}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -759,6 +1141,11 @@ export function SearchModule({ onNavigate }) {
                 {searchQuery && (
                   <Badge variant="secondary" className="border border-slate-200 bg-slate-100 text-slate-800">
                     Search: &quot;{searchQuery}&quot;
+                  </Badge>
+                )}
+                {typeFilter !== "all" && (
+                  <Badge variant="secondary" className="bg-emerald-100 text-emerald-800">
+                    Type: {getRecordTypeLabel(typeFilter)}
                   </Badge>
                 )}
                 {categoryFilter !== "all" && (
@@ -781,7 +1168,8 @@ export function SearchModule({ onNavigate }) {
             <CardHeader>
               <CardTitle>Search Results</CardTitle>
               <CardDescription>
-                {searchResults.length} {searchResults.length === 1 ? "product" : "products"} found
+                {searchResults.length} {searchResults.length === 1 ? "record" : "records"} found
+                {searchResults.length === MAX_SEARCH_RESULTS ? ` - showing top ${MAX_SEARCH_RESULTS} matches` : ""}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -789,84 +1177,73 @@ export function SearchModule({ onNavigate }) {
                 <div className="search-empty-state text-center">
                   <Package className="mx-auto mb-4 h-16 w-16 text-slate-300" />
                   <h3 className="mb-2 text-xl text-slate-600">No records found</h3>
-                  <p className="text-slate-700">Try adjusting your search criteria</p>
+                  <p className="text-slate-700">Try a product name, item code, supplier, invoice number, customer, or transaction reference.</p>
                 </div>
               ) : (
                 <div className="search-results-grid">
-                  {searchResults.map(product => (
-                    <Card
-                      key={product.id}
-                      className="search-result-card hover:shadow-lg"
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`View ${product.name} in Inventory`}
-                      onClick={() => openInventoryRecord(product)}
-                      onKeyDown={event => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          openInventoryRecord(product);
-                        }
-                      }}
-                    >
-                      <CardHeader>
-                        <div className="search-result-header">
-                          <span className="search-result-code-badge">
-                            <span className="search-result-code-bars" aria-hidden="true">||||</span>
-                            {product.itemCode || product.id}
+                  {searchResults.map(result => {
+                    const RecordIcon = getRecordIcon(result.type);
+                    return (
+                      <Card
+                        key={result.key}
+                        className="search-result-card hover:shadow-lg"
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`View ${result.title} in ${getRecordTypeLabel(result.type)}`}
+                        onClick={() => openSearchRecord(result)}
+                        onKeyDown={event => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            openSearchRecord(result);
+                          }
+                        }}
+                      >
+                        <CardHeader>
+                          <div className="search-result-header">
+                            <span className="search-result-code-badge">
+                              <span className="search-result-code-bars" aria-hidden="true">||||</span>
+                              {result.code || result.record?.id || result.key}
+                            </span>
+                            <span className="search-result-type">
+                              <RecordIcon aria-hidden="true" />
+                              {getRecordTypeLabel(result.type)}
+                            </span>
+                          </div>
+                          <CardTitle className="search-result-name">{result.title}</CardTitle>
+                          {result.status && (
+                            <Badge
+                              variant={result.status === "In Stock" ? "default" : result.status === "Low Stock" ? "secondary" : "outline"}
+                              className={`${["In Stock", "Low Stock", "Out of Stock"].includes(result.status) ? getStockStatusBadgeClass(result.status) : ""} search-result-status-badge`}
+                            >
+                              {result.status}
+                            </Badge>
+                          )}
+                        </CardHeader>
+                        <CardContent>
+                          <div className="search-result-detail-grid">
+                            {result.details.slice(0, 4).map(detail => {
+                              const DetailIcon = detail.icon;
+                              return (
+                                <div key={`${result.key}-${detail.label}`} className="search-result-detail">
+                                  <span className="search-result-detail-icon" aria-hidden="true"><DetailIcon /></span>
+                                  <span>
+                                    <span className="search-result-detail-label">{detail.label}</span>
+                                    <span className="search-result-detail-value">
+                                      {detail.value === null || detail.value === undefined || detail.value === "" ? "-" : detail.value}
+                                    </span>
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <span className="search-result-action">
+                            <span className="inline-flex items-center gap-2"><ExternalLink aria-hidden="true" /> View in {getRecordTypeLabel(result.type)}</span>
+                            <ArrowRight aria-hidden="true" />
                           </span>
-                          <Badge
-                            variant={
-                              product.status === "In Stock"
-                                ? "default"
-                                : product.status === "Low Stock"
-                                  ? "secondary"
-                                  : "destructive"
-                            }
-                            className={`${getStockStatusBadgeClass(product.status)} search-result-status-badge`}
-                          >
-                            {product.status}
-                          </Badge>
-                        </div>
-                        <CardTitle className="search-result-name">{product.name}</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="search-result-detail-grid">
-                          <div className="search-result-detail search-result-detail-category">
-                            <span className="search-result-detail-icon" aria-hidden="true"><BriefcaseBusiness /></span>
-                            <span>
-                              <span className="search-result-detail-label">Category</span>
-                              <span className="search-result-detail-value">{getCategoryDisplay(product)}</span>
-                            </span>
-                          </div>
-                          <div className="search-result-detail search-result-detail-quantity">
-                            <span className="search-result-detail-icon" aria-hidden="true"><Box /></span>
-                            <span>
-                              <span className="search-result-detail-label">Quantity</span>
-                              <span className="search-result-detail-value">{product.quantity}</span>
-                            </span>
-                          </div>
-                          <div className="search-result-detail search-result-detail-supplier">
-                            <span className="search-result-detail-icon" aria-hidden="true"><UserRound /></span>
-                            <span>
-                              <span className="search-result-detail-label">Supplier</span>
-                              <span className="search-result-detail-value">{product.supplierName || "Unassigned"}</span>
-                            </span>
-                          </div>
-                          <div className="search-result-detail search-result-detail-updated">
-                            <span className="search-result-detail-icon" aria-hidden="true"><CalendarDays /></span>
-                            <span>
-                              <span className="search-result-detail-label">Last Updated</span>
-                              <span className="search-result-detail-value">{formatDateTime(product.lastUpdated)}</span>
-                            </span>
-                          </div>
-                        </div>
-                        <span className="search-result-action">
-                          <span className="inline-flex items-center gap-2"><ExternalLink aria-hidden="true" /> View in Inventory</span>
-                          <ArrowRight aria-hidden="true" />
-                        </span>
-                      </CardContent>
-                    </Card>
-                  ))}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
@@ -876,8 +1253,8 @@ export function SearchModule({ onNavigate }) {
             <CardContent className="py-16">
               <div className="search-empty-state text-center text-slate-700">
                 <Search className="mx-auto mb-4 h-16 w-16 opacity-50" />
-                <p className="mb-2 text-lg">Start searching for products</p>
-                <p className="text-sm">Type in the search box or select filters to see results automatically</p>
+                <p className="mb-2 text-lg">Start searching across the system</p>
+                <p className="text-sm">Type a product, item code, supplier, invoice, customer, or record reference.</p>
               </div>
             </CardContent>
           </Card>

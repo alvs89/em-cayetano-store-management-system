@@ -21,6 +21,7 @@ import {
 } from './ui/alert-dialog';
 
 const NEW_BADGE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const ALERTS_PER_PAGE = 10;
 
 const formatRelativeTime = value => {
   if (!value) return 'No date available';
@@ -125,6 +126,21 @@ const alertResponsiveStyles = `
   .alerts-summary-grid {
     grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   }
+
+  .alerts-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding-top: 14px;
+    flex-wrap: wrap;
+  }
+
+  .alerts-pagination-summary {
+    margin-left: 8px;
+    font-size: 14px;
+    color: #475569;
+  }
 `;
 
 export function AlertsModule({ user, onNavigate }) {
@@ -142,6 +158,7 @@ export function AlertsModule({ user, onNavigate }) {
   } = useData();
   const [alertToDismiss, setAlertToDismiss] = useState(null);
   const [activeTab, setActiveTab] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
   const isAdmin = isAdminRole(user?.role);
 
   const handleMarkAsRead = id => {
@@ -208,11 +225,42 @@ export function AlertsModule({ user, onNavigate }) {
   const activeTabAlerts = alertsByTab[activeTab] || sortedAlerts;
   const activeTabUnreadAlerts = activeTabAlerts.filter(alert => !alert.read);
 
+  const paginateAlerts = list => {
+    const totalItems = list.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / ALERTS_PER_PAGE));
+    const numericPage = Number(currentPage);
+    const safePage = Number.isFinite(numericPage) && numericPage > 0 ? numericPage : 1;
+    const page = Math.min(safePage, totalPages);
+    const start = (page - 1) * ALERTS_PER_PAGE;
+    const end = start + ALERTS_PER_PAGE;
+
+    return {
+      pageItems: list.slice(start, end),
+      page,
+      totalPages,
+      totalItems,
+    };
+  };
+
+  const goToPage = nextPage => {
+    setCurrentPage(previousPage => {
+      const previous = Number(previousPage);
+      const safePrevious = Number.isFinite(previous) && previous > 0 ? previous : 1;
+      const resolvedNext = typeof nextPage === 'function' ? nextPage(safePrevious) : nextPage;
+      const numericNext = Number(resolvedNext);
+      return Number.isFinite(numericNext) && numericNext > 0 ? numericNext : 1;
+    });
+  };
+
   useEffect(() => {
     if (!isAdmin && activeTab === 'info') {
       setActiveTab('all');
     }
   }, [activeTab, isAdmin]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab]);
 
   useEffect(() => {
     const scrollToTopIfRequested = () => {
@@ -273,6 +321,89 @@ export function AlertsModule({ user, onNavigate }) {
       onGoToRelated={handleGoToRelated}
     />
   ));
+
+  const renderPaginationControls = ({ page, totalPages, totalItems }) => {
+    if (totalPages <= 1) return null;
+
+    const rangeStart = Math.min(totalItems, (page - 1) * ALERTS_PER_PAGE + 1);
+    const rangeEnd = Math.min(totalItems, page * ALERTS_PER_PAGE);
+    const pages = [];
+
+    if (totalPages <= 7) {
+      for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
+        pages.push(pageNumber);
+      }
+    } else {
+      const start = Math.max(2, page - 2);
+      const end = Math.min(totalPages - 1, page + 2);
+
+      pages.push(1);
+      if (start > 2) pages.push('left-ellipsis');
+      for (let pageNumber = start; pageNumber <= end; pageNumber += 1) {
+        pages.push(pageNumber);
+      }
+      if (end < totalPages - 1) pages.push('right-ellipsis');
+      pages.push(totalPages);
+    }
+
+    return (
+      <div className="alerts-pagination">
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => goToPage(previousPage => Math.max(1, previousPage - 1))}
+          disabled={page <= 1}
+        >
+          Previous
+        </Button>
+        {pages.map((pageNumber, index) => {
+          if (pageNumber === 'left-ellipsis' || pageNumber === 'right-ellipsis') {
+            return (
+              <Button key={`${pageNumber}-${index}`} type="button" size="sm" variant="ghost" disabled>
+                ...
+              </Button>
+            );
+          }
+
+          return (
+            <Button
+              key={pageNumber}
+              type="button"
+              size="sm"
+              variant={pageNumber === page ? undefined : 'outline'}
+              onClick={() => goToPage(pageNumber)}
+            >
+              {pageNumber}
+            </Button>
+          );
+        })}
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => goToPage(previousPage => Math.min(totalPages, previousPage + 1))}
+          disabled={page >= totalPages}
+        >
+          Next
+        </Button>
+        <div className="alerts-pagination-summary">
+          {rangeStart}-{rangeEnd} of {totalItems} results
+        </div>
+      </div>
+    );
+  };
+
+  const renderAlertList = list => {
+    const pagedAlerts = paginateAlerts(list);
+
+    return (
+      <>
+        {renderAlertCards(pagedAlerts.pageItems)}
+        {renderPaginationControls(pagedAlerts)}
+      </>
+    );
+  };
 
   return (
     <div className="alerts-page min-h-screen bg-gray-50 p-4 md:p-8">
@@ -399,6 +530,17 @@ export function AlertsModule({ user, onNavigate }) {
 
           .alerts-tab-content {
             margin-top: 14px;
+          }
+
+          .alerts-pagination {
+            gap: 6px;
+            padding-top: 12px;
+          }
+
+          .alerts-pagination-summary {
+            width: 100%;
+            margin-left: 0;
+            text-align: center;
           }
 
           .alert-card {
@@ -621,26 +763,26 @@ export function AlertsModule({ user, onNavigate }) {
             <TabsContent value="all" className="alerts-tab-content space-y-3">
               {alerts.length === 0 ? (
                 <EmptyAlerts icon={<Bell className="mx-auto mb-4 h-16 w-16 text-slate-300" />} message="No alerts to display" />
-              ) : renderAlertCards(sortedAlerts)}
+              ) : renderAlertList(sortedAlerts)}
             </TabsContent>
 
             <TabsContent value="unread" className="alerts-tab-content space-y-3">
               {unreadAlertCount === 0 ? (
                 <EmptyAlerts icon={<CheckCircle className="mx-auto mb-4 h-16 w-16 text-green-300" />} message="All caught up! No unread alerts." />
-              ) : renderAlertCards(sortedUnreadAlerts)}
+              ) : renderAlertList(sortedUnreadAlerts)}
             </TabsContent>
 
             <TabsContent value="warnings" className="alerts-tab-content space-y-3">
               {warningAlertCount === 0 ? (
                 <EmptyAlerts icon={<CheckCircle className="mx-auto mb-4 h-16 w-16 text-green-300" />} message="No warnings at this time" />
-              ) : renderAlertCards(sortedWarningAlerts)}
+              ) : renderAlertList(sortedWarningAlerts)}
             </TabsContent>
 
             {isAdmin && (
               <TabsContent value="info" className="alerts-tab-content space-y-3">
                 {infoAlertCount === 0 ? (
                   <EmptyAlerts icon={<Info className="mx-auto mb-4 h-16 w-16 text-blue-300" />} message="No info alerts at this time" />
-                ) : renderAlertCards(sortedInfoAlerts)}
+                ) : renderAlertList(sortedInfoAlerts)}
               </TabsContent>
             )}
           </Tabs>

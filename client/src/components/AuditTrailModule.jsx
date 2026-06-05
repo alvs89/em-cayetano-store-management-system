@@ -175,6 +175,9 @@ export function AuditTrailModule({ user }) {
   const [floatingButtonPosition, setFloatingButtonPosition] = useState(null);
   const auditRecordsPanelRef = useRef(null);
   const viewAllFooterRef = useRef(null);
+  // Pagination state (page size aligned with reports module)
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
 
   const fetchAuditLogs = async () => {
     setLoading(true);
@@ -236,8 +239,68 @@ export function AuditTrailModule({ user }) {
   }, [auditLogs, searchQuery, actionFilter, dateFilter, customStartDate, customEndDate]);
 
   const latestLog = auditLogs[0];
-  const visibleLogs = showAllRecords ? filteredLogs : filteredLogs.slice(0, DEFAULT_VISIBLE_RECORDS);
-  const hasMoreRecords = filteredLogs.length > DEFAULT_VISIBLE_RECORDS;
+  // Paginate filtered logs
+  const paginateItems = (items, pageOverride) => {
+    const totalItems = (items?.length || 0);
+    const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
+    const page = Math.min(Math.max(1, Number(pageOverride ?? currentPage)), totalPages);
+    const start = (page - 1) * itemsPerPage;
+    const end = start + itemsPerPage;
+    return {
+      pageItems: (items || []).slice(start, end),
+      totalPages,
+      page,
+      totalItems
+    };
+  };
+
+  const renderPaginationControls = (totalPages, page, setPage, totalItems) => {
+    const activePage = Number(page ?? currentPage);
+    const setActivePage = setPage ?? setCurrentPage;
+    if (!totalPages || totalPages <= 1) return null;
+    // Windowed pagination like reports module
+    const pages = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      let start = Math.max(2, activePage - 2);
+      let end = Math.min(totalPages - 1, activePage + 2);
+      if (start > 2) pages.push('left-ellipsis');
+      for (let p = start; p <= end; p++) pages.push(p);
+      if (end < totalPages - 1) pages.push('right-ellipsis');
+      pages.push(totalPages);
+    }
+    const rangeStart = Math.min(totalItems || totalPages * itemsPerPage, (activePage - 1) * itemsPerPage + 1);
+    const rangeEnd = Math.min(totalItems || totalPages * itemsPerPage, activePage * itemsPerPage);
+    return (
+      <div className="reports-pagination mt-3 flex items-center justify-center gap-2">
+        <Button type="button" size="sm" variant="ghost" onClick={() => setActivePage(p => Math.max(1, Number(p) - 1))} disabled={activePage <= 1}>Previous</Button>
+        {pages.map((p, idx) => {
+          if (p === 'left-ellipsis' || p === 'right-ellipsis') {
+            return (
+              <Button key={`${p}-${idx}`} type="button" size="sm" variant="ghost" disabled>
+                …
+              </Button>
+            );
+          }
+          return (
+            <Button key={p} type="button" size="sm" variant={p === activePage ? undefined : 'outline'} onClick={() => setActivePage(p)}>
+              {p}
+            </Button>
+          );
+        })}
+        <Button type="button" size="sm" variant="ghost" onClick={() => setActivePage(p => Math.min(totalPages, Number(p) + 1))} disabled={activePage >= totalPages}>Next</Button>
+        {typeof totalItems === 'number' && (
+          <div className="text-sm text-slate-600 ml-2">{rangeStart}-{rangeEnd} of {totalItems} results</div>
+        )}
+      </div>
+    );
+  };
+
+  const paged = paginateItems(filteredLogs);
+  const visibleLogs = paged.pageItems;
+  const hasMoreRecords = paged.totalItems > itemsPerPage;
   const customRangeStart = parseDateInput(customStartDate);
   const customRangeEnd = parseDateInput(customEndDate, true);
   const hasInvalidCustomRange = dateFilter === 'custom' && customRangeStart && customRangeEnd && customRangeStart > customRangeEnd;
@@ -248,53 +311,11 @@ export function AuditTrailModule({ user }) {
   }, [searchQuery, actionFilter, dateFilter, customStartDate, customEndDate]);
 
   useEffect(() => {
-    if (!showAllRecords || !floatingButtonPosition) return undefined;
+    // reset to page 1 when filters change
+    setCurrentPage(1);
+  }, [searchQuery, actionFilter, dateFilter, customStartDate, customEndDate]);
 
-    let frameId = null;
-    const updateFloatingButtonPosition = () => {
-      if (frameId) cancelAnimationFrame(frameId);
-      frameId = requestAnimationFrame(() => {
-        const panelBounds = auditRecordsPanelRef.current?.getBoundingClientRect();
-        if (!panelBounds) return;
-        setFloatingButtonPosition(prev => prev ? {
-          ...prev,
-          left: panelBounds.left + panelBounds.width / 2
-        } : prev);
-      });
-    };
-
-    updateFloatingButtonPosition();
-
-    const resizeObserver = typeof ResizeObserver !== 'undefined' && auditRecordsPanelRef.current
-      ? new ResizeObserver(updateFloatingButtonPosition)
-      : null;
-
-    resizeObserver?.observe(auditRecordsPanelRef.current);
-    window.addEventListener('resize', updateFloatingButtonPosition);
-
-    return () => {
-      if (frameId) cancelAnimationFrame(frameId);
-      resizeObserver?.disconnect();
-      window.removeEventListener('resize', updateFloatingButtonPosition);
-    };
-  }, [showAllRecords]);
-
-  const handleShowAllRecords = () => {
-    const footerBounds = viewAllFooterRef.current?.getBoundingClientRect();
-    const panelBounds = auditRecordsPanelRef.current?.getBoundingClientRect();
-    if (footerBounds) {
-      setFloatingButtonPosition({
-        left: panelBounds ? panelBounds.left + panelBounds.width / 2 : footerBounds.left + footerBounds.width / 2,
-        top: footerBounds.top + footerBounds.height / 2 + 10
-      });
-    }
-    setShowAllRecords(true);
-  };
-
-  const handleShowFewerRecords = () => {
-    setShowAllRecords(false);
-    setFloatingButtonPosition(null);
-  };
+  // pagination handlers use setCurrentPage directly
 
   return (
     <div className="audit-trail-page min-h-screen bg-gray-50 p-4 md:p-8">
@@ -861,17 +882,9 @@ export function AuditTrailModule({ user }) {
                   </article>
                 );
               })}
-              {hasMoreRecords && !showAllRecords && (
-                <div ref={viewAllFooterRef} className="border-t border-slate-200 bg-white px-4 py-4 text-center">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="audit-view-all-button h-10 rounded-xl px-5"
-                    onClick={handleShowAllRecords}
-                  >
-                    {`View all records (${filteredLogs.length})`}
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Button>
+              {paged.totalPages > 1 && (
+                <div className="border-t border-slate-200 bg-white px-4 py-4 text-center">
+                  {renderPaginationControls(paged.totalPages, paged.page, setCurrentPage, paged.totalItems)}
                 </div>
               )}
             </div>
@@ -879,27 +892,7 @@ export function AuditTrailModule({ user }) {
         </CardContent>
       </Card>
 
-      {hasMoreRecords && showAllRecords && (
-        <div
-          className="audit-floating-collapse"
-          aria-live="polite"
-          style={{
-            left: floatingButtonPosition ? `${floatingButtonPosition.left}px` : '50%',
-            top: floatingButtonPosition ? `${floatingButtonPosition.top}px` : 'auto',
-            bottom: floatingButtonPosition ? 'auto' : '28px'
-          }}
-        >
-          <Button
-            type="button"
-            variant="outline"
-            className="audit-view-all-button h-10 rounded-xl px-5"
-            onClick={handleShowFewerRecords}
-          >
-            Show fewer records
-            <ArrowRight className="ml-2 h-4 w-4 -rotate-90" />
-          </Button>
-        </div>
-      )}
+      {/* pagination replaces the previous View All behavior */}
     </div>
   );
 }

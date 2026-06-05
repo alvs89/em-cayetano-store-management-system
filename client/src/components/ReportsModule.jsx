@@ -84,6 +84,11 @@ export function ReportsModule({
   const [acknowledgeSimilarItem, setAcknowledgeSimilarItem] = useState(false);
   const [isConvertingItem, setIsConvertingItem] = useState(false);
   const reportDateInputRef = useRef(null);
+  // Pagination state: limit displayed results to 10 per page
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+  // Per-category pagination state (category -> page)
+  const [categoryPages, setCategoryPages] = useState({});
   const allowedReportTypes = React.useMemo(() => getReportTypeOptionsForRole(user?.role), [user?.role]);
   const defaultReportType = React.useMemo(() => getDefaultReportTypeForRole(user?.role), [user?.role]);
   const inventorySnapshotReportTypes = ['summary', 'detailed', 'low-stock', 'supplier-reorder', 'category'];
@@ -99,6 +104,94 @@ export function ReportsModule({
     }, 500);
     return () => clearTimeout(timer);
   }, [reportPeriod, selectedReportDate, customStartDate, customEndDate]);
+
+  // Reset page when report filters change
+  useEffect(() => {
+    setCurrentPage(1);
+    setCategoryPages({});
+  }, [reportType, selectedCategory, reportPeriod, selectedReportDate, customStartDate, customEndDate]);
+
+  const paginateItems = (items, pageOverride) => {
+    const totalItems = (items?.length || 0);
+    const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
+    const page = Math.min(Math.max(1, Number(pageOverride ?? currentPage)), totalPages);
+    const start = (page - 1) * itemsPerPage;
+    const end = start + itemsPerPage;
+    return {
+      pageItems: (items || []).slice(start, end),
+      totalPages,
+      page,
+      totalItems
+    };
+  };
+
+  // Render pagination controls. Optional `page` and `setPage` allow per-list pagination.
+  const renderPaginationControls = (totalPages, page, setPage, totalItems) => {
+    const activePageValue = Number(page ?? currentPage);
+    const activePage = Number.isFinite(activePageValue) && activePageValue > 0 ? activePageValue : 1;
+    const setActivePage = updater => {
+      const resolvePage = previousPage => {
+        const previous = Number(previousPage);
+        const safePrevious = Number.isFinite(previous) && previous > 0 ? previous : 1;
+        const next = typeof updater === 'function' ? updater(safePrevious) : updater;
+        const numericNext = Number(next);
+        const safeNext = Number.isFinite(numericNext) && numericNext > 0 ? numericNext : 1;
+        return Math.min(totalPages, Math.max(1, safeNext));
+      };
+
+      if (setPage) {
+        setPage(resolvePage(activePage));
+      } else {
+        setCurrentPage(previousPage => resolvePage(previousPage));
+      }
+    };
+    if (!totalPages || totalPages <= 1) return null;
+    // Windowed pagination: show first, last, and current +/- 2 pages with ellipses
+    const pages = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      let start = Math.max(2, activePage - 2);
+      let end = Math.min(totalPages - 1, activePage + 2);
+      if (start > 2) pages.push('left-ellipsis');
+      for (let p = start; p <= end; p++) pages.push(p);
+      if (end < totalPages - 1) pages.push('right-ellipsis');
+      pages.push(totalPages);
+    }
+
+    const rangeStart = Math.min(totalItems || totalPages * itemsPerPage, (activePage - 1) * itemsPerPage + 1);
+    const rangeEnd = Math.min(totalItems || totalPages * itemsPerPage, activePage * itemsPerPage);
+
+    return (
+      <div className="reports-pagination mt-3 flex items-center justify-center gap-2">
+        <Button type="button" size="sm" variant="ghost" onClick={() => setActivePage(p => Math.max(1, Number(p) - 1))} disabled={activePage <= 1}>Previous</Button>
+        {pages.map((p, idx) => {
+          if (p === 'left-ellipsis' || p === 'right-ellipsis') {
+            return (
+              <Button key={`${p}-${idx}`} type="button" size="sm" variant="ghost" disabled>
+                …
+              </Button>
+            );
+          }
+          return (
+            <Button key={p} type="button" size="sm" variant={p === activePage ? undefined : 'outline'} onClick={() => setActivePage(p)}>
+              {p}
+            </Button>
+          );
+        })}
+        <Button type="button" size="sm" variant="ghost" onClick={() => setActivePage(p => Math.min(totalPages, Number(p) + 1))} disabled={activePage >= totalPages}>Next</Button>
+        {typeof totalItems === 'number' && (
+          <div className="text-sm text-slate-600 ml-2">{rangeStart}-{rangeEnd} of {totalItems} results</div>
+        )}
+      </div>
+    );
+  };
+
+  const getCategoryPage = category => Number(categoryPages[category] ?? 1);
+  const setCategoryPage = (category, page) => {
+    setCategoryPages(prev => ({ ...prev, [category]: Number(page) }));
+  };
 
   useEffect(() => {
     if (!canAccessReportType(user?.role, reportType)) {
@@ -2791,6 +2884,13 @@ export function ReportsModule({
           border-radius: 14px;
         }
 
+        .reports-pagination {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
+        }
+
         .reports-desktop-table table,
         .reports-movement-desktop-table table,
         .reports-category-table table {
@@ -4213,7 +4313,11 @@ export function ReportsModule({
             ) : (
               <>
                 <div className="reports-top-products-table">
-                  <Table>
+                  {(() => {
+                    const rows = (reportType === 'sales-movements' ? getSalesMovementRows() : getFilteredMovements({ salesOnly: false }));
+                    const paged = paginateItems(rows);
+                    return (
+                      <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Rank</TableHead>
@@ -4240,7 +4344,9 @@ export function ReportsModule({
                         </TableRow>
                       ))}
                     </TableBody>
-                  </Table>
+                    </Table>
+                      );
+                    })()}
                 </div>
                 <div className="reports-top-products-mobile">
                   {getEarningsProductRows().map(product => (
@@ -4385,41 +4491,50 @@ export function ReportsModule({
               })
             ) : (
               <>
-                <div className="reports-desktop-table reports-purchase-table">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Item Code</TableHead>
-                        <TableHead>Item Name</TableHead>
-                        <TableHead>Category</TableHead>
-                        <TableHead>Supplier</TableHead>
-                        <TableHead>Quantity</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Last Updated</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {getFilteredInventory().map(item => (
-                        <TableRow key={item.id}>
-                          <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
-                          <TableCell>{item.name}</TableCell>
-                          <TableCell>{getCategoryDisplay(item)}</TableCell>
-                          <TableCell>{item.supplierName || 'Unassigned'}</TableCell>
-                          <TableCell>{item.quantity}</TableCell>
-                          <TableCell>
-                            <Badge className={getStockStatusBadgeClass(item.status)}>
-                              {item.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>{formatDateTime(item.lastUpdated)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-                <div className="reports-mobile-record-list">
-                  {getFilteredInventory().map(item => renderInventoryMobileCard(item))}
-                </div>
+                {(() => {
+                  const filtered = getFilteredInventory();
+                  const paged = paginateItems(filtered);
+                  return (
+                    <>
+                      <div className="reports-desktop-table reports-purchase-table">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Item Code</TableHead>
+                              <TableHead>Item Name</TableHead>
+                              <TableHead>Category</TableHead>
+                              <TableHead>Supplier</TableHead>
+                              <TableHead>Quantity</TableHead>
+                              <TableHead>Status</TableHead>
+                              <TableHead>Last Updated</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {paged.pageItems.map(item => (
+                              <TableRow key={item.id}>
+                                <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
+                                <TableCell>{item.name}</TableCell>
+                                <TableCell>{getCategoryDisplay(item)}</TableCell>
+                                <TableCell>{item.supplierName || 'Unassigned'}</TableCell>
+                                <TableCell>{item.quantity}</TableCell>
+                                <TableCell>
+                                  <Badge className={getStockStatusBadgeClass(item.status)}>
+                                    {item.status}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>{formatDateTime(item.lastUpdated)}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                      <div className="reports-mobile-record-list">
+                        {paged.pageItems.map(item => renderInventoryMobileCard(item))}
+                      </div>
+                      {renderPaginationControls(paged.totalPages, paged.page, undefined, paged.totalItems)}
+                    </>
+                  );
+                })()}
               </>
             )}
           </CardContent>
@@ -4443,41 +4558,50 @@ export function ReportsModule({
               })
             ) : (
               <>
-                <div className="reports-desktop-table">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Item Code</TableHead>
-                        <TableHead>Item Name</TableHead>
-                        <TableHead>Category</TableHead>
-                        <TableHead>Supplier</TableHead>
-                        <TableHead>Quantity</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Last Updated</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {getLowStockItems().map(item => (
-                        <TableRow key={item.id}>
-                          <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
-                          <TableCell>{item.name}</TableCell>
-                          <TableCell>{getCategoryDisplay(item)}</TableCell>
-                          <TableCell>{item.supplierName || 'Unassigned'}</TableCell>
-                          <TableCell className="font-bold">{item.quantity}</TableCell>
-                          <TableCell>
-                            <Badge className={getStockStatusBadgeClass(item.status)}>
-                              {item.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>{formatDateTime(item.lastUpdated)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-                <div className="reports-mobile-record-list">
-                  {getLowStockItems().map(item => renderInventoryMobileCard(item))}
-                </div>
+                {(() => {
+                  const rows = getLowStockItems();
+                  const paged = paginateItems(rows);
+                  return (
+                    <>
+                      <div className="reports-desktop-table">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Item Code</TableHead>
+                              <TableHead>Item Name</TableHead>
+                              <TableHead>Category</TableHead>
+                              <TableHead>Supplier</TableHead>
+                              <TableHead>Quantity</TableHead>
+                              <TableHead>Status</TableHead>
+                              <TableHead>Last Updated</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {paged.pageItems.map(item => (
+                              <TableRow key={item.id}>
+                                <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
+                                <TableCell>{item.name}</TableCell>
+                                <TableCell>{getCategoryDisplay(item)}</TableCell>
+                                <TableCell>{item.supplierName || 'Unassigned'}</TableCell>
+                                <TableCell className="font-bold">{item.quantity}</TableCell>
+                                <TableCell>
+                                  <Badge className={getStockStatusBadgeClass(item.status)}>
+                                    {item.status}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>{formatDateTime(item.lastUpdated)}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                      <div className="reports-mobile-record-list">
+                        {paged.pageItems.map(item => renderInventoryMobileCard(item))}
+                      </div>
+                      {renderPaginationControls(paged.totalPages, paged.page, undefined, paged.totalItems)}
+                    </>
+                  );
+                })()}
               </>
             )}
           </CardContent>
@@ -4651,105 +4775,113 @@ export function ReportsModule({
             <CardDescription>Non-inventory items recorded in sales only - {getUntrackedSalesItems().length} item groups</CardDescription>
           </CardHeader>
           <CardContent>
-            {getUntrackedSalesItems().length === 0 ? (
-              renderReportsEmptyState({
-                icon: FileText,
-                title: 'No untracked sales items found',
-                message: `No non-inventory sale items match the selected ${reportPeriod} period.`
-              })
-            ) : (
-              <>
-                <div className="reports-desktop-table">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Item Description</TableHead>
-                        <TableHead>Category</TableHead>
-                        <TableHead>Total Qty Sold</TableHead>
-                        <TableHead>Total Sales</TableHead>
-                        <TableHead>Times Sold</TableHead>
-                        <TableHead>Last Sold</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead className="text-right">Review</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {getUntrackedSalesItems().map(item => (
-                        <TableRow key={`${item.itemName}-${item.category}`}>
-                          <TableCell className="font-semibold">{item.itemName}</TableCell>
-                          <TableCell>{getCategoryDisplay(item)}</TableCell>
-                          <TableCell>{item.totalQuantity}</TableCell>
-                          <TableCell>{formatCurrency(item.totalSalesAmount)}</TableCell>
-                          <TableCell>{item.timesSold}</TableCell>
-                          <TableCell>{formatDateTime(item.lastSoldAt)}</TableCell>
-                          <TableCell>
-                            {item.reviewStatus === 'tracked' ? (
-                              <Badge className="border-green-200 bg-green-50 text-green-700 hover:bg-green-50">Now Tracked</Badge>
-                            ) : (
-                              <Badge variant="outline">Non-Inventory</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              className="reports-review-button"
-                              onClick={() => openConvertUntrackedItemDialog(item)}
-                              disabled={!isAdminRole(user?.role) || item.reviewStatus === 'tracked'}
-                              title={
-                                item.reviewStatus === 'tracked'
-                                  ? `Already tracked as ${item.activeInventoryMatch?.name || 'an inventory item'}`
-                                  : isAdminRole(user?.role)
-                                    ? 'Review and add this manual item to Inventory'
-                                    : 'Only Admin / Owner can add items to Inventory'
-                              }
-                            >
-                              <PackagePlus className="mr-2 h-4 w-4" />
-                              {item.reviewStatus === 'tracked' ? 'Tracked' : 'Review'}
-                            </Button>
-                          </TableCell>
+            {(() => {
+              const rows = getUntrackedSalesItems();
+              const paged = paginateItems(rows);
+              if (!rows || rows.length === 0) {
+                return renderReportsEmptyState({
+                  icon: FileText,
+                  title: 'No untracked sales items found',
+                  message: `No non-inventory sale items match the selected ${reportPeriod} period.`
+                });
+              }
+              return (
+                <>
+                  <div className="reports-desktop-table">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Item Description</TableHead>
+                          <TableHead>Category</TableHead>
+                          <TableHead>Total Qty Sold</TableHead>
+                          <TableHead>Total Sales</TableHead>
+                          <TableHead>Times Sold</TableHead>
+                          <TableHead>Last Sold</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">Review</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-                <div className="reports-mobile-record-list">
-                  {getUntrackedSalesItems().map(item => (
-                    <article key={`${item.itemName}-${item.category}`} className="reports-record-card">
-                      <div className="reports-record-top">
-                        <div className="min-w-0">
-                          <h4 className="reports-record-name">{item.itemName}</h4>
-                          <p className="reports-record-meta">{getCategoryDisplay(item)}</p>
+                      </TableHeader>
+                      <TableBody>
+                        {paged.pageItems.map(item => (
+                          <TableRow key={`${item.itemName}-${item.category}`}>
+                            <TableCell className="font-semibold">{item.itemName}</TableCell>
+                            <TableCell>{getCategoryDisplay(item)}</TableCell>
+                            <TableCell>{item.totalQuantity}</TableCell>
+                            <TableCell>{formatCurrency(item.totalSalesAmount)}</TableCell>
+                            <TableCell>{item.timesSold}</TableCell>
+                            <TableCell>{formatDateTime(item.lastSoldAt)}</TableCell>
+                            <TableCell>
+                              {item.reviewStatus === 'tracked' ? (
+                                <Badge className="border-green-200 bg-green-50 text-green-700 hover:bg-green-50">Now Tracked</Badge>
+                              ) : (
+                                <Badge variant="outline">Non-Inventory</Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="reports-review-button"
+                                onClick={() => openConvertUntrackedItemDialog(item)}
+                                disabled={!isAdminRole(user?.role) || item.reviewStatus === 'tracked'}
+                                title={
+                                  item.reviewStatus === 'tracked'
+                                    ? `Already tracked as ${item.activeInventoryMatch?.name || 'an inventory item'}`
+                                    : isAdminRole(user?.role)
+                                      ? 'Review and add this manual item to Inventory'
+                                      : 'Only Admin / Owner can add items to Inventory'
+                                }
+                              >
+                                <PackagePlus className="mr-2 h-4 w-4" />
+                                {item.reviewStatus === 'tracked' ? 'Tracked' : 'Review'}
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  <div className="reports-mobile-record-list">
+                    {paged.pageItems.map(item => (
+                      <article key={`${item.itemName}-${item.category}`} className="reports-record-card">
+                        <div className="reports-record-top">
+                          <div className="min-w-0">
+                            <h4 className="reports-record-name">{item.itemName}</h4>
+                            <p className="reports-record-meta">{getCategoryDisplay(item)}</p>
+                          </div>
+                          {item.reviewStatus === 'tracked' ? (
+                            <Badge className="shrink-0 border-green-200 bg-green-50 text-green-700 hover:bg-green-50">Now Tracked</Badge>
+                          ) : (
+                            <Badge variant="outline">Non-Inventory</Badge>
+                          )}
                         </div>
-                        {item.reviewStatus === 'tracked' ? (
-                          <Badge className="shrink-0 border-green-200 bg-green-50 text-green-700 hover:bg-green-50">Now Tracked</Badge>
-                        ) : (
-                          <Badge className="shrink-0" variant="outline">Non-Inventory</Badge>
-                        )}
-                      </div>
-                      <div className="reports-record-grid reports-record-grid-four">
-                        <div className="reports-record-stat"><span>Qty Sold</span><strong>{item.totalQuantity}</strong></div>
-                        <div className="reports-record-stat"><span>Total Sales</span><strong>{formatCurrency(item.totalSalesAmount)}</strong></div>
-                        <div className="reports-record-stat"><span>Times Sold</span><strong>{item.timesSold}</strong></div>
-                        <div className="reports-record-stat"><span>Last Sold</span><strong>{formatDateTime(item.lastSoldAt)}</strong></div>
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="reports-review-button mt-3 w-full justify-center"
-                        onClick={() => openConvertUntrackedItemDialog(item)}
-                        disabled={!isAdminRole(user?.role) || item.reviewStatus === 'tracked'}
-                      >
-                        <PackagePlus className="mr-2 h-4 w-4" />
-                        {item.reviewStatus === 'tracked' ? 'Already in Inventory' : 'Review for Inventory'}
-                      </Button>
-                    </article>
-                  ))}
-                </div>
-              </>
-            )}
+                        <div className="reports-record-grid reports-record-grid-four">
+                          <div className="reports-record-stat"><span>Qty Sold</span><strong>{item.totalQuantity}</strong></div>
+                          <div className="reports-record-stat"><span>Total Sales</span><strong>{formatCurrency(item.totalSalesAmount)}</strong></div>
+                          <div className="reports-record-stat"><span>Times Sold</span><strong>{item.timesSold}</strong></div>
+                          <div className="reports-record-stat"><span>Last Sold</span><strong>{formatDateTime(item.lastSoldAt)}</strong></div>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="reports-review-button mt-3 w-full justify-center"
+                          onClick={() => openConvertUntrackedItemDialog(item)}
+                          disabled={!isAdminRole(user?.role) || item.reviewStatus === 'tracked'}
+                        >
+                          <PackagePlus className="mr-2 h-4 w-4" />
+                          {item.reviewStatus === 'tracked' ? 'Already in Inventory' : 'Review for Inventory'}
+                        </Button>
+                      </article>
+                    ))}
+                  </div>
+
+                  {renderPaginationControls(paged.totalPages, paged.page, undefined, paged.totalItems)}
+                </>
+              );
+            })()}
           </CardContent>
         </Card>
       )}
@@ -4877,41 +5009,49 @@ export function ReportsModule({
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent>
-                  <div className="reports-desktop-table">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Item Code</TableHead>
-                          <TableHead>Item Name</TableHead>
-                          <TableHead>Supplier</TableHead>
-                          <TableHead>Quantity</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Last Updated</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {categoryItems.map(item => (
-                          <TableRow key={item.id}>
-                            <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
-                            <TableCell>{item.name}</TableCell>
-                            <TableCell>{item.supplierName || 'Unassigned'}</TableCell>
-                            <TableCell>{item.quantity}</TableCell>
-                            <TableCell>
-                              <Badge className={getStockStatusBadgeClass(item.status)}>
-                                {item.status}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>{formatDateTime(item.lastUpdated)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                  <div className="reports-mobile-record-list">
-                    {categoryItems.map(item => renderInventoryMobileCard(item, { showCategory: false }))}
-                  </div>
-                </CardContent>
+                      <CardContent>
+                        {(() => {
+                          const paged = paginateItems(categoryItems, getCategoryPage(category));
+                          return (
+                            <>
+                              <div className="reports-desktop-table">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>Item Code</TableHead>
+                                      <TableHead>Item Name</TableHead>
+                                      <TableHead>Supplier</TableHead>
+                                      <TableHead>Quantity</TableHead>
+                                      <TableHead>Status</TableHead>
+                                      <TableHead>Last Updated</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {paged.pageItems.map(item => (
+                                      <TableRow key={item.id}>
+                                        <TableCell className="font-mono text-sm">{getDisplayItemCode(item)}</TableCell>
+                                        <TableCell>{item.name}</TableCell>
+                                        <TableCell>{item.supplierName || 'Unassigned'}</TableCell>
+                                        <TableCell>{item.quantity}</TableCell>
+                                        <TableCell>
+                                          <Badge className={getStockStatusBadgeClass(item.status)}>
+                                            {item.status}
+                                          </Badge>
+                                        </TableCell>
+                                        <TableCell>{formatDateTime(item.lastUpdated)}</TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                              <div className="reports-mobile-record-list">
+                                {paged.pageItems.map(item => renderInventoryMobileCard(item, { showCategory: false }))}
+                              </div>
+                              {renderPaginationControls(paged.totalPages, paged.page, p => setCategoryPage(category, p), paged.totalItems)}
+                            </>
+                          );
+                        })()}
+                      </CardContent>
               </Card>
             );
           })}
@@ -5083,56 +5223,65 @@ export function ReportsModule({
                     )}
                   </>
                 )}
-                <div className="reports-movement-desktop-table">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Transaction Date</TableHead>
-                        <TableHead>Encoded Date</TableHead>
-                        <TableHead>Item</TableHead>
-                        <TableHead>Category</TableHead>
-                        <TableHead>Action</TableHead>
-                        <TableHead>{reportType === 'sales-movements' ? 'Payment' : 'Reason'}</TableHead>
-                        <TableHead>{reportType === 'sales-movements' ? 'Qty Sold' : 'Qty'}</TableHead>
-                        <TableHead>Before</TableHead>
-                        <TableHead>After</TableHead>
-                        <TableHead>Handled By</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                  {(reportType === 'sales-movements' ? getSalesMovementRows() : getFilteredMovements({ salesOnly: false })).map(movement => {
-                    const itemNameDetails = getMovementItemNameDetails(movement);
-                    return (
-                        <TableRow key={movement.id}>
-                          <TableCell>{formatDateTime(movement.createdAt)}</TableCell>
-                          <TableCell>{formatEncodedDate(movement)}</TableCell>
-                          <TableCell>
-                            <div className="space-y-1">
-                              <div className="font-medium text-slate-900">{itemNameDetails.historicalName}</div>
-                              {itemNameDetails.currentName && (
-                                <div className="text-xs text-slate-700">Current name: {itemNameDetails.currentName}</div>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>{movement.category}</TableCell>
-                          <TableCell>
-                            <Badge className={getMovementBadgeClass(movement.action)}>
-                              {getMovementLabel(movement.action)}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>{reportType === 'sales-movements' ? getPaymentMethodLabel(movement.paymentMethod) : getMovementReasonDisplay(movement)}</TableCell>
-                          <TableCell className="font-semibold">{movement.quantityChanged}</TableCell>
-                          <TableCell>{movement.previousQuantity}</TableCell>
-                          <TableCell>{movement.newQuantity}</TableCell>
-                          <TableCell>{movement.actorName || 'System'}</TableCell>
-                        </TableRow>
-                    );
-                  })}
-                    </TableBody>
-                  </Table>
-                </div>
+                {(() => {
+                  const rows = (reportType === 'sales-movements' ? getSalesMovementRows() : getFilteredMovements({ salesOnly: false }));
+                  const paged = paginateItems(rows);
+                  return (
+                    <div className="reports-movement-desktop-table">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Transaction Date</TableHead>
+                            <TableHead>Encoded Date</TableHead>
+                            <TableHead>Item</TableHead>
+                            <TableHead>Category</TableHead>
+                            <TableHead>Action</TableHead>
+                            <TableHead>{reportType === 'sales-movements' ? 'Payment' : 'Reason'}</TableHead>
+                            <TableHead>{reportType === 'sales-movements' ? 'Qty Sold' : 'Qty'}</TableHead>
+                            <TableHead>Before</TableHead>
+                            <TableHead>After</TableHead>
+                            <TableHead>Handled By</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {paged.pageItems.map(movement => {
+                            const itemNameDetails = getMovementItemNameDetails(movement);
+                            return (
+                              <TableRow key={movement.id}>
+                                <TableCell>{formatDateTime(movement.createdAt)}</TableCell>
+                                <TableCell>{formatEncodedDate(movement)}</TableCell>
+                                <TableCell>
+                                  <div className="space-y-1">
+                                    <div className="font-medium text-slate-900">{itemNameDetails.historicalName}</div>
+                                    {itemNameDetails.currentName && (
+                                      <div className="text-xs text-slate-700">Current name: {itemNameDetails.currentName}</div>
+                                    )}
+                                  </div>
+                                </TableCell>
+                                <TableCell>{movement.category}</TableCell>
+                                <TableCell>
+                                  <Badge className={getMovementBadgeClass(movement.action)}>
+                                    {getMovementLabel(movement.action)}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>{reportType === 'sales-movements' ? getPaymentMethodLabel(movement.paymentMethod) : getMovementReasonDisplay(movement)}</TableCell>
+                                <TableCell className="font-semibold">{movement.quantityChanged}</TableCell>
+                                <TableCell>{movement.previousQuantity}</TableCell>
+                                <TableCell>{movement.newQuantity}</TableCell>
+                                <TableCell>{movement.actorName || 'System'}</TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  );
+                })()}
                 <div className="reports-movement-mobile-list">
-                  {(reportType === 'sales-movements' ? getSalesMovementRows() : getFilteredMovements({ salesOnly: false })).map(movement => {
+                  {(() => {
+                    const rows = (reportType === 'sales-movements' ? getSalesMovementRows() : getFilteredMovements({ salesOnly: false }));
+                    const paged = paginateItems(rows);
+                    return paged.pageItems.map(movement => {
                     const itemNameDetails = getMovementItemNameDetails(movement);
                     return (
                     <article key={movement.id} className="reports-movement-card">
@@ -5185,8 +5334,14 @@ export function ReportsModule({
                       </div>
                     </article>
                     );
-                  })}
+                    });
+                  })()}
                 </div>
+                {(() => {
+                  const rows = (reportType === 'sales-movements' ? getSalesMovementRows() : getFilteredMovements({ salesOnly: false }));
+                  const paged = paginateItems(rows);
+                  return renderPaginationControls(paged.totalPages, paged.page, undefined, paged.totalItems);
+                })()}
               </>
             )}
           </CardContent>
