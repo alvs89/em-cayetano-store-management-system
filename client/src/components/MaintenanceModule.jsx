@@ -195,6 +195,9 @@ export function MaintenanceModule({ user }) {
   const exportUsesBranch = exportDataset !== 'audit';
   const hasExportDateError = Boolean(exportDateFrom && exportDateTo && exportDateFrom > exportDateTo);
   const exportDisabled = !isAdmin || isExporting || hasExportDateError;
+  const exportDateScopeText = exportDateFrom || exportDateTo
+    ? `Date range: ${exportDateFrom || 'earliest record'} to ${exportDateTo || 'latest record'}.`
+    : 'Date range: all available dates.';
   const exportBranchOptions = React.useMemo(() => {
     const options = [...EXPORT_BRANCH_OPTIONS];
     if (signedInBranch && !options.some(option => option.value === signedInBranch)) {
@@ -675,7 +678,7 @@ export function MaintenanceModule({ user }) {
 
         .maintenance-export-field select,
         .maintenance-export-field input {
-          height: 40px;
+          height: 44px;
           min-height: 0;
           width: 100%;
           border: 1px solid #cbd5e1;
@@ -683,12 +686,14 @@ export function MaintenanceModule({ user }) {
           background: #ffffff;
           color: #0f172a;
           font-size: 0.86rem;
-          line-height: 1.2;
+          line-height: 1.5;
           padding: 0 38px 0 14px;
         }
 
         .maintenance-export-field select {
           appearance: none;
+          padding-top: 1px;
+          padding-bottom: 3px;
         }
 
         .maintenance-export-field input[type="date"] {
@@ -781,6 +786,26 @@ export function MaintenanceModule({ user }) {
           color: #0f172a;
           font-weight: 800;
           box-shadow: none;
+          transition:
+            background-color 150ms ease,
+            border-color 150ms ease,
+            box-shadow 150ms ease,
+            color 150ms ease;
+        }
+
+        .maintenance-export-cancel:not(:disabled):hover {
+          border-color: #2563eb;
+          background: #eff6ff;
+          color: #1d4ed8;
+          box-shadow: 0 10px 18px rgba(37, 99, 235, 0.12);
+        }
+
+        .maintenance-export-cancel:not(:disabled):focus-visible {
+          border-color: #2563eb;
+          outline: none;
+          box-shadow:
+            0 0 0 3px rgba(37, 99, 235, 0.18),
+            0 10px 18px rgba(37, 99, 235, 0.12);
         }
 
         .maintenance-export-button {
@@ -796,11 +821,22 @@ export function MaintenanceModule({ user }) {
           color: #ffffff;
           font-weight: 800;
           box-shadow: 0 10px 18px rgba(29, 78, 216, 0.16);
+          transition:
+            background-color 150ms ease,
+            box-shadow 150ms ease;
         }
 
         .maintenance-export-button:not(:disabled):hover {
           background: #1e40af;
           color: #ffffff;
+          box-shadow: 0 14px 24px rgba(29, 78, 216, 0.24);
+        }
+
+        .maintenance-export-button:not(:disabled):focus-visible {
+          outline: none;
+          box-shadow:
+            0 0 0 3px rgba(37, 99, 235, 0.2),
+            0 14px 24px rgba(29, 78, 216, 0.24);
         }
 
         .maintenance-export-button:disabled {
@@ -837,12 +873,11 @@ export function MaintenanceModule({ user }) {
           font-size: 0.9rem;
           font-weight: 700;
           box-shadow: 0 10px 18px rgba(15, 23, 42, 0.08);
-          transition: background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+          transition: background-color 160ms ease, box-shadow 160ms ease;
         }
 
         .maintenance-action-button:not(:disabled):hover {
           box-shadow: 0 12px 22px rgba(15, 23, 42, 0.12);
-          transform: translateY(-1px);
         }
 
         .maintenance-restore-button {
@@ -1057,15 +1092,17 @@ export function MaintenanceModule({ user }) {
 
         .maintenance-sidebar .maintenance-optimization-item {
           min-height: 0;
-          grid-template-columns: minmax(0, 1fr) auto;
+          grid-template-columns: minmax(0, 1fr) 140px;
           grid-template-rows: auto auto;
           gap: 8px 12px;
           padding: 14px;
           border-radius: 12px;
+          align-items: center;
         }
 
         .maintenance-sidebar .maintenance-optimization-title {
-          grid-column: 1 / -1;
+          grid-column: 1;
+          grid-row: 1;
           grid-template-columns: 34px minmax(0, 1fr);
           gap: 10px;
         }
@@ -1081,17 +1118,21 @@ export function MaintenanceModule({ user }) {
         }
 
         .maintenance-sidebar .maintenance-optimization-item p {
+          grid-column: 1;
+          grid-row: 2;
           max-width: none;
           font-size: 0.84rem;
           line-height: 1.4;
         }
 
         .maintenance-sidebar .maintenance-optimization-item .maintenance-tool-button {
-          width: auto;
-          min-width: 112px;
+          grid-column: 2;
+          grid-row: 1 / span 2;
+          width: 100%;
+          min-width: 0;
           height: 36px;
           align-self: center;
-          justify-self: end;
+          justify-self: center;
           font-size: 0.82rem;
           padding: 0 12px;
         }
@@ -1865,7 +1906,7 @@ export function MaintenanceModule({ user }) {
                       {exportUsesBranch
                         ? `Exporting ${exportBranch === 'all' ? 'all branches' : exportBranch} records for review only.`
                         : 'Audit Trail export covers system-level activity records.'}
-                      {' '}Use full database backup for disaster recovery.
+                      {' '}{exportDateScopeText} Use full database backup for disaster recovery.
                     </p>
                     {hasExportDateError && (
                       <p className="font-semibold text-red-700">Start date cannot be later than end date.</p>
