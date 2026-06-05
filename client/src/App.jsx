@@ -74,6 +74,19 @@ const hiddenPasswordVisibility = {
   confirm: false,
 };
 const REQUIRED_PASSWORD_TOAST_ID = 'required-password-change-error';
+const AUTH_SESSION_KEY = 'authSessionActive';
+const AUTH_LAST_ACTIVITY_KEY = 'authLastActivityAt';
+const AUTH_ADMIN_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+const AUTH_EMPLOYEE_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+const AUTH_IDLE_WARNING_MS = 60 * 1000;
+const AUTH_ACTIVITY_EVENTS = ['click', 'keydown', 'mousemove', 'touchstart', 'focus'];
+const getIdleTimeoutMsForRole = role => (
+  isAdminRole(role) ? AUTH_ADMIN_IDLE_TIMEOUT_MS : AUTH_EMPLOYEE_IDLE_TIMEOUT_MS
+);
+const formatDurationMinutes = ms => {
+  const minutes = Math.max(1, Math.round(ms / (60 * 1000)));
+  return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+};
 
 function AppContent() {
   const navigate = useNavigate();
@@ -84,7 +97,6 @@ function AppContent() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const { unreadAlertCount } = useData();
-  const AUTH_SESSION_KEY = 'authSessionActive';
   // Normalize user fields coming from localStorage/server to a consistent shape
   const normalizeUser = (user) => {
     if (!user) return null;
@@ -105,8 +117,19 @@ function AppContent() {
     try {
       const hasActiveSession = sessionStorage.getItem(AUTH_SESSION_KEY) === 'true';
       const savedUser = localStorage.getItem('user');
+      const lastActivityAt = Number(sessionStorage.getItem(AUTH_LAST_ACTIVITY_KEY) || 0);
       if (hasActiveSession && savedUser && savedUser !== "undefined") {
-        return normalizeUser(JSON.parse(savedUser));
+        const parsedUser = JSON.parse(savedUser);
+        const sessionExpired = lastActivityAt && Date.now() - lastActivityAt > getIdleTimeoutMsForRole(parsedUser?.role);
+        if (sessionExpired) {
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          sessionStorage.removeItem(AUTH_SESSION_KEY);
+          sessionStorage.removeItem(AUTH_LAST_ACTIVITY_KEY);
+          return null;
+        }
+        sessionStorage.setItem(AUTH_LAST_ACTIVITY_KEY, Date.now().toString());
+        return normalizeUser(parsedUser);
       }
     } catch (error) {
       console.error("Error parsing user data:", error);
@@ -123,12 +146,37 @@ function AppContent() {
   const [passwordVisibility, setPasswordVisibility] = useState(hiddenPasswordVisibility);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [showPasswordChangeLogoutDialog, setShowPasswordChangeLogoutDialog] = useState(false);
+  const [showIdleWarningDialog, setShowIdleWarningDialog] = useState(false);
+  const [idleWarningSecondsLeft, setIdleWarningSecondsLeft] = useState(Math.ceil(AUTH_IDLE_WARNING_MS / 1000));
   const POST_LOGOUT_MSG_KEY = 'postLogoutToast';
+
+  const markSessionActivity = () => {
+    sessionStorage.setItem(AUTH_LAST_ACTIVITY_KEY, Date.now().toString());
+  };
+
+  const keepSessionActive = () => {
+    markSessionActivity();
+    setIdleWarningSecondsLeft(Math.ceil(AUTH_IDLE_WARNING_MS / 1000));
+    setShowIdleWarningDialog(false);
+  };
+
+  const clearAuthStorage = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    localStorage.removeItem('temp_username');
+    localStorage.removeItem('temp_email');
+    localStorage.removeItem('temp_branch_selected');
+    localStorage.removeItem('temp_account_branch');
+    localStorage.removeItem('active_branch');
+    sessionStorage.removeItem(AUTH_SESSION_KEY);
+    sessionStorage.removeItem(AUTH_LAST_ACTIVITY_KEY);
+  };
 
   // Called after password+2FA success to enter the app
   const handleLogin = (user) => {
     const normalized = normalizeUser(user);
     sessionStorage.setItem(AUTH_SESSION_KEY, 'true');
+    markSessionActivity();
     setCurrentUser(normalized);
     window.dispatchEvent(new Event('auth-state-changed'));
     setCurrentScreen("dashboard");
@@ -146,6 +194,7 @@ function AppContent() {
   const handle2FASuccess = (user) => {
     const normalized = normalizeUser(user);
     sessionStorage.setItem(AUTH_SESSION_KEY, 'true');
+    markSessionActivity();
     setCurrentUser(normalized);
     setPendingUser(null);
     window.dispatchEvent(new Event('auth-state-changed'));
@@ -162,14 +211,7 @@ function AppContent() {
 
   // Clear all auth-related storage and return to login
   const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('temp_username');
-    localStorage.removeItem('temp_email');
-    localStorage.removeItem('temp_branch_selected');
-    localStorage.removeItem('temp_account_branch');
-    localStorage.removeItem('active_branch');
-    sessionStorage.removeItem(AUTH_SESSION_KEY);
+    clearAuthStorage();
     setCurrentUser(null);
     setPasswordChangeForm(emptyPasswordChangeForm);
     setPasswordVisibility(hiddenPasswordVisibility);
@@ -234,6 +276,7 @@ function AppContent() {
       const updatedUser = normalizeUser(response.data.user);
       localStorage.setItem('token', response.data.token);
       localStorage.setItem('user', JSON.stringify(updatedUser));
+      markSessionActivity();
       setCurrentUser(updatedUser);
       setPasswordChangeForm(emptyPasswordChangeForm);
       setPasswordVisibility(hiddenPasswordVisibility);
@@ -316,6 +359,64 @@ function AppContent() {
       setVisitedScreens(new Set(["dashboard"]));
     }
   }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return undefined;
+
+    markSessionActivity();
+    let lastRecordedActivity = Date.now();
+    const timeoutMs = getIdleTimeoutMsForRole(currentUser.role);
+    const warningMs = Math.min(AUTH_IDLE_WARNING_MS, timeoutMs);
+    const refreshActivity = () => {
+      const now = Date.now();
+      if (now - lastRecordedActivity < 15000) return;
+      lastRecordedActivity = now;
+      markSessionActivity();
+      setShowIdleWarningDialog(false);
+      setIdleWarningSecondsLeft(Math.ceil(warningMs / 1000));
+    };
+    const endExpiredSession = () => {
+      const lastActivityAt = Number(sessionStorage.getItem(AUTH_LAST_ACTIVITY_KEY) || 0);
+      if (!lastActivityAt) return;
+      const idleMs = Date.now() - lastActivityAt;
+      const remainingMs = timeoutMs - idleMs;
+
+      if (remainingMs > warningMs) {
+        setShowIdleWarningDialog(false);
+        setIdleWarningSecondsLeft(Math.ceil(warningMs / 1000));
+        return;
+      }
+
+      if (remainingMs > 0) {
+        setIdleWarningSecondsLeft(Math.max(1, Math.ceil(remainingMs / 1000)));
+        setShowIdleWarningDialog(true);
+        return;
+      }
+
+      localStorage.setItem(POST_LOGOUT_MSG_KEY, JSON.stringify({
+        title: "Session timed out",
+        description: `You were logged out after ${formatDurationMinutes(timeoutMs)} of inactivity.`
+      }));
+      clearAuthStorage();
+      setShowIdleWarningDialog(false);
+      setCurrentUser(null);
+      setCurrentScreen("login");
+      window.dispatchEvent(new Event('auth-state-changed'));
+      navigate("/login", { replace: true });
+    };
+
+    AUTH_ACTIVITY_EVENTS.forEach(eventName => {
+      window.addEventListener(eventName, refreshActivity, { passive: true });
+    });
+    const intervalId = window.setInterval(endExpiredSession, 1000);
+
+    return () => {
+      AUTH_ACTIVITY_EVENTS.forEach(eventName => {
+        window.removeEventListener(eventName, refreshActivity);
+      });
+      window.clearInterval(intervalId);
+    };
+  }, [currentUser, navigate]);
 
   useEffect(() => {
     setPasswordChangeForm(emptyPasswordChangeForm);
@@ -413,10 +514,7 @@ function AppContent() {
     window.fetch = async (...args) => {
       const response = await originalFetch(...args);
       if (response.status === 401) {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        localStorage.removeItem('active_branch');
-        sessionStorage.removeItem(AUTH_SESSION_KEY);
+        clearAuthStorage();
         setCurrentUser(null);
         setCurrentScreen("login");
         navigate("/");
@@ -870,6 +968,111 @@ function AppContent() {
               Logout
             </AlertDialogAction>
           </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={showIdleWarningDialog} onOpenChange={setShowIdleWarningDialog}>
+        <AlertDialogContent
+          className="session-timeout-dialog rounded-xl border-2 border-[#FFFF00] bg-white p-0 shadow-xl outline-none ring-0 before:hidden"
+          style={{ borderColor: '#FFFF00' }}
+        >
+          <style>{`
+            .session-timeout-dialog {
+              width: min(92vw, 540px) !important;
+              max-width: 540px !important;
+            }
+
+            .session-timeout-body {
+              padding: 30px 32px 28px;
+            }
+
+            .session-timeout-title {
+              font-size: 26px;
+              line-height: 1.2;
+              font-weight: 700;
+              color: #0f172a;
+              letter-spacing: 0;
+            }
+
+            .session-timeout-message {
+              margin-top: 14px;
+              max-width: 460px;
+              font-size: 16px;
+              line-height: 1.65;
+              color: #334155;
+            }
+
+            .session-timeout-actions {
+              display: flex;
+              justify-content: flex-end;
+              align-items: center;
+              gap: 12px;
+              margin-top: 28px;
+            }
+
+            .session-timeout-button {
+              width: auto !important;
+              min-width: 138px;
+              min-height: 44px;
+              border-radius: 10px;
+              padding: 0 18px;
+              font-size: 15px;
+            }
+
+            @media (max-width: 520px) {
+              .session-timeout-dialog {
+                width: calc(100vw - 28px) !important;
+              }
+
+              .session-timeout-body {
+                padding: 24px 20px 20px;
+              }
+
+              .session-timeout-title {
+                font-size: 22px;
+              }
+
+              .session-timeout-message {
+                margin-top: 12px;
+                font-size: 15px;
+                line-height: 1.6;
+              }
+
+              .session-timeout-actions {
+                flex-direction: column-reverse;
+                align-items: stretch;
+                margin-top: 24px;
+              }
+
+              .session-timeout-button {
+                width: 100% !important;
+              }
+            }
+          `}</style>
+          <div className="session-timeout-body">
+            <AlertDialogTitle className="session-timeout-title text-left">
+              Session Expiring Soon
+            </AlertDialogTitle>
+            <AlertDialogDescription className="session-timeout-message text-left">
+              You have been inactive for a while. Your session will expire in {idleWarningSecondsLeft} second{idleWarningSecondsLeft === 1 ? '' : 's'}.
+              Do you want to stay logged in?
+            </AlertDialogDescription>
+
+            <div className="session-timeout-actions">
+              <AlertDialogCancel
+                onClick={handleLogout}
+                className="session-timeout-button"
+              >
+                Log Out Now
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={keepSessionActive}
+                className="session-timeout-button bg-[#FF0000] text-white hover:bg-[#cc0000]"
+              >
+                Stay Logged In
+              </AlertDialogAction>
+            </div>
+          </div>
         </AlertDialogContent>
       </AlertDialog>
 

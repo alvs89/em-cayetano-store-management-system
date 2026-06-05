@@ -210,7 +210,7 @@ export function Dashboard({
 
   const role = normalizeRole(user?.role);
   const isAdmin = isAdminRole(role);
-  const isCashier = role === ROLE_VALUES.CASHIER;
+  const isCashier = role === ROLE_VALUES.SALES_ENCODER;
   const isInventoryStaff = role === ROLE_VALUES.INVENTORY_STAFF;
   const canUseSales = canRecordSales(role);
   const canUseInventoryMovement = canPerformInventoryMovement(role);
@@ -382,9 +382,19 @@ export function Dashboard({
   const stockOutTodayCount = stockMovementsToday.filter(movement => String(movement.action || '').toLowerCase() === 'stock out').length;
   const unitsMovedToday = stockMovementsToday.reduce((sum, movement) => sum + Number(movement.quantityChanged || 0), 0);
   const pendingUserCount = isAdmin ? (users || []).filter(account => account.status === 'Pending').length : 0;
+  const getTodayDateKey = () => todayKey || getLocalDateKey();
+  const manualReviewSales = completedSales.filter(sale => (sale.items || []).some(isNonInventorySaleItem));
+  const manualReviewDates = manualReviewSales
+    .map(sale => new Date(sale.createdAt))
+    .filter(date => !Number.isNaN(date.getTime()));
+  const manualReviewStartDate = manualReviewDates.length
+    ? getLocalDateKey(new Date(Math.min(...manualReviewDates.map(date => date.getTime()))))
+    : getTodayDateKey();
+  const manualReviewEndDate = manualReviewDates.length
+    ? getLocalDateKey(new Date(Math.max(...manualReviewDates.map(date => date.getTime()))))
+    : getTodayDateKey();
   const manualReviewCount = new Set(
-    (salesTransactions || [])
-      .filter(sale => sale.status !== 'cancelled')
+    manualReviewSales
       .flatMap(sale => sale.items || [])
       .filter(isNonInventorySaleItem)
       .map(manualItemKey)
@@ -596,11 +606,15 @@ export function Dashboard({
     onNavigate('inventory', { preserveInventoryNavigationState: true });
   };
 
-  const getTodayDateKey = () => todayKey || getLocalDateKey();
-
   const openTargetReport = (reportType, options = {}) => {
     if (!canUseReports) return;
-    const { period, date = getTodayDateKey(), category = 'all' } = options;
+    const {
+      period,
+      date = getTodayDateKey(),
+      category = 'all',
+      customStartDate = '',
+      customEndDate = ''
+    } = options;
     localStorage.setItem('reports_target_type', reportType);
     localStorage.setItem('reports_target_category', category);
     if (period) {
@@ -610,8 +624,15 @@ export function Dashboard({
       localStorage.removeItem('reports_target_period');
       localStorage.removeItem('reports_target_date');
     }
+    if (period === 'custom' && customStartDate && customEndDate) {
+      localStorage.setItem('reports_target_custom_start', customStartDate);
+      localStorage.setItem('reports_target_custom_end', customEndDate);
+    } else {
+      localStorage.removeItem('reports_target_custom_start');
+      localStorage.removeItem('reports_target_custom_end');
+    }
     window.dispatchEvent(new CustomEvent('reports-target-view', {
-      detail: { reportType, category, period, date }
+      detail: { reportType, category, period, date, customStartDate, customEndDate }
     }));
     onNavigate('reports');
   };
@@ -951,7 +972,12 @@ export function Dashboard({
       value: manualReviewCount,
       icon: ClipboardCheck,
       tone: 'amber',
-      action: () => openTargetReport('untracked-sales')
+      action: () => openTargetReport('untracked-sales', {
+        period: 'custom',
+        date: manualReviewEndDate,
+        customStartDate: manualReviewStartDate,
+        customEndDate: manualReviewEndDate
+      })
     }
   ].filter(Boolean);
 

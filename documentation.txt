@@ -219,7 +219,7 @@ The study is significant to E.M. Cayetano Trading because it provides a centrali
 
 Employees benefit from clearer and more structured workflows. Cashiers can record sales, generate receipts, and review sales history within their assigned operational context. Inventory staff can monitor stock, encode supplier receiving entries, access inventory reports, and respond to low-stock conditions. The system reduces repetitive manual work and provides immediate feedback when entries are incomplete, invalid, or outside the user's role permissions.
 
-The business also benefits from stronger accountability. Audit trails, stock movement history, backup logs, and system logs make it easier to review important events and administrative actions. The separation of user roles between Admin, Cashier, and Inventory Staff ensures that sensitive functions such as account management, database restoration, cancellation of sales, and audit review remain under administrative control.
+The business also benefits from stronger accountability. Audit trails, stock movement history, backup logs, and system logs make it easier to review important events and administrative actions. The separation of user roles between Admin, Sales Encoder, and Inventory Staff ensures that sensitive functions such as account management, database restoration, cancellation of sales, and audit review remain under administrative control.
 
 For the proponents, the study provides practical experience in software engineering, database design, web application development, security, system testing, and Agile project management. The iterative development process strengthens the proponents' ability to analyze changing requirements, deliver working increments, evaluate feedback, and revise the system without losing coherence in the overall design.
 
@@ -228,7 +228,7 @@ For future researchers, the study may serve as a reference for developing web-ba
 Scope
 The proposed system covers the development of a web-based store management platform for E.M. Cayetano Trading. It is designed for authorized business users and supports the Manggahan and San Rafael branches. The system includes modules for security, dashboard monitoring, inventory, search, archive, reports, sales, purchases, alerts, maintenance, user management, audit trail, and help.
 
-The Security Module manages login, two-factor verification, password recovery, password change, token-based sessions, password policy validation, and role-based access. User registration is administratively controlled through account approval, rejection, role assignment, branch assignment, activation, and deactivation. The supported roles are Admin, Cashier, and Inventory Staff.
+The Security Module manages login, two-factor verification, password recovery, password change, token-based sessions, password policy validation, and role-based access. User registration is administratively controlled through account approval, rejection, role assignment, branch assignment, activation, and deactivation. The supported roles are Admin, Sales Encoder, and Inventory Staff.
 
 The Inventory Module manages the product catalog and branch-specific stock records. It stores product names, categories, suppliers, prices, costs, stock levels, minimum stock thresholds, lead times, safety stock, average daily sales values, and status values such as In Stock, Low Stock, and Out of Stock. It also records stock movements, including stock in, stock out, initial stock, and adjustment actions.
 

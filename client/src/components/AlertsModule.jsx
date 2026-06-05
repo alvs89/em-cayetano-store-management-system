@@ -56,6 +56,23 @@ const isWithinNewBadgeWindow = value => {
   return ageMs >= 0 && ageMs < NEW_BADGE_WINDOW_MS;
 };
 
+const ALERT_FILTER_OPTIONS = [
+  { value: 'all', label: 'All Alerts' },
+  { value: 'stock', label: 'Stock Alerts' },
+  { value: 'out-of-stock', label: 'Out of Stock' },
+  { value: 'low-stock', label: 'Low Stock' },
+  { value: 'user-management', label: 'User Accounts' },
+  { value: 'maintenance', label: 'Maintenance' }
+];
+
+const getAlertFilterKey = alert => {
+  if (alert.title === 'Out of Stock') return 'out-of-stock';
+  if (alert.title === 'Low Stock Alert') return 'low-stock';
+  if (alert.relatedModule === 'user-management') return 'user-management';
+  if (alert.relatedModule === 'maintenance') return 'maintenance';
+  return 'system';
+};
+
 const alertResponsiveStyles = `
   .alert-card-timestamp {
     display: inline-flex;
@@ -141,6 +158,37 @@ const alertResponsiveStyles = `
     font-size: 14px;
     color: #475569;
   }
+
+  .alerts-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 16px;
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    background: #f8fafc;
+    padding: 8px;
+  }
+
+  .alerts-filter-button {
+    min-height: 34px;
+    border-radius: 999px;
+    padding: 0 12px;
+    font-size: 13px;
+    font-weight: 750;
+    white-space: nowrap;
+  }
+
+  .alerts-filter-button[data-active="true"] {
+    border-color: #111827;
+    background: #111827;
+    color: #ffffff;
+  }
+
+  .alerts-filter-count {
+    margin-left: 6px;
+    opacity: 0.72;
+  }
 `;
 
 export function AlertsModule({ user, onNavigate }) {
@@ -158,6 +206,7 @@ export function AlertsModule({ user, onNavigate }) {
   } = useData();
   const [alertToDismiss, setAlertToDismiss] = useState(null);
   const [activeTab, setActiveTab] = useState('all');
+  const [alertFilter, setAlertFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const isAdmin = isAdminRole(user?.role);
 
@@ -208,6 +257,7 @@ export function AlertsModule({ user, onNavigate }) {
   };
 
   const sortedAlerts = [...alerts].sort((a, b) => {
+    if (a.read !== b.read) return a.read ? 1 : -1;
     const aTime = new Date(a.timestampRaw || a.timestamp || 0).getTime();
     const bTime = new Date(b.timestampRaw || b.timestamp || 0).getTime();
     return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
@@ -222,7 +272,30 @@ export function AlertsModule({ user, onNavigate }) {
     warnings: sortedWarningAlerts,
     ...(isAdmin ? { info: sortedInfoAlerts } : {}),
   };
-  const activeTabAlerts = alertsByTab[activeTab] || sortedAlerts;
+  const filterAlerts = list => {
+    if (alertFilter === 'all') return list;
+    if (alertFilter === 'stock') {
+      return list.filter(alert => ['out-of-stock', 'low-stock'].includes(getAlertFilterKey(alert)));
+    }
+    return list.filter(alert => getAlertFilterKey(alert) === alertFilter);
+  };
+  const getFilterCount = filterValue => {
+    if (filterValue === 'all') return sortedAlerts.length;
+    if (filterValue === 'stock') {
+      return sortedAlerts.filter(alert => ['out-of-stock', 'low-stock'].includes(getAlertFilterKey(alert))).length;
+    }
+    return sortedAlerts.filter(alert => getAlertFilterKey(alert) === filterValue).length;
+  };
+  const filterOptions = ALERT_FILTER_OPTIONS
+    .map(option => ({ ...option, count: getFilterCount(option.value) }))
+    .filter(option => option.value === 'all' || option.count > 0);
+  const activeFilterAvailable = filterOptions.some(option => option.value === alertFilter);
+  const activeFilterLabel = filterOptions.find(option => option.value === alertFilter)?.label || 'selected filter';
+  const filteredSortedAlerts = filterAlerts(sortedAlerts);
+  const filteredUnreadAlerts = filterAlerts(sortedUnreadAlerts);
+  const filteredWarningAlerts = filterAlerts(sortedWarningAlerts);
+  const filteredInfoAlerts = filterAlerts(sortedInfoAlerts);
+  const activeTabAlerts = filterAlerts(alertsByTab[activeTab] || sortedAlerts);
   const activeTabUnreadAlerts = activeTabAlerts.filter(alert => !alert.read);
 
   const paginateAlerts = list => {
@@ -259,8 +332,14 @@ export function AlertsModule({ user, onNavigate }) {
   }, [activeTab, isAdmin]);
 
   useEffect(() => {
+    if (alertFilter !== 'all' && !activeFilterAvailable) {
+      setAlertFilter('all');
+    }
+  }, [activeFilterAvailable, alertFilter]);
+
+  useEffect(() => {
     setCurrentPage(1);
-  }, [activeTab]);
+  }, [activeTab, alertFilter]);
 
   useEffect(() => {
     const scrollToTopIfRequested = () => {
@@ -733,7 +812,7 @@ export function AlertsModule({ user, onNavigate }) {
           <div className="alerts-panel-header flex items-center justify-between gap-4">
             <div className="alerts-panel-title">
               <CardTitle>Notifications</CardTitle>
-              <CardDescription>All system alerts and notifications</CardDescription>
+              <CardDescription>Filter alerts by workflow area, then review unread and latest activity first</CardDescription>
             </div>
             {activeTabAlerts.length > 0 && (
               activeTabUnreadAlerts.length > 0 ? (
@@ -760,29 +839,46 @@ export function AlertsModule({ user, onNavigate }) {
               {isAdmin && <TabsTrigger value="info">Info ({infoAlertCount})</TabsTrigger>}
             </TabsList>
 
+            <div className="alerts-filter-bar" aria-label="Filter alerts by category">
+              {filterOptions.map(option => (
+                <Button
+                  key={option.value}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="alerts-filter-button"
+                  data-active={alertFilter === option.value}
+                  onClick={() => setAlertFilter(option.value)}
+                >
+                  {option.label}
+                  <span className="alerts-filter-count">{option.count}</span>
+                </Button>
+              ))}
+            </div>
+
             <TabsContent value="all" className="alerts-tab-content space-y-3">
-              {alerts.length === 0 ? (
-                <EmptyAlerts icon={<Bell className="mx-auto mb-4 h-16 w-16 text-slate-300" />} message="No alerts to display" />
-              ) : renderAlertList(sortedAlerts)}
+              {filteredSortedAlerts.length === 0 ? (
+                <EmptyAlerts icon={<Bell className="mx-auto mb-4 h-16 w-16 text-slate-300" />} message={`No alerts match ${activeFilterLabel}.`} />
+              ) : renderAlertList(filteredSortedAlerts)}
             </TabsContent>
 
             <TabsContent value="unread" className="alerts-tab-content space-y-3">
-              {unreadAlertCount === 0 ? (
-                <EmptyAlerts icon={<CheckCircle className="mx-auto mb-4 h-16 w-16 text-green-300" />} message="All caught up! No unread alerts." />
-              ) : renderAlertList(sortedUnreadAlerts)}
+              {filteredUnreadAlerts.length === 0 ? (
+                <EmptyAlerts icon={<CheckCircle className="mx-auto mb-4 h-16 w-16 text-green-300" />} message={`No unread alerts match ${activeFilterLabel}.`} />
+              ) : renderAlertList(filteredUnreadAlerts)}
             </TabsContent>
 
             <TabsContent value="warnings" className="alerts-tab-content space-y-3">
-              {warningAlertCount === 0 ? (
-                <EmptyAlerts icon={<CheckCircle className="mx-auto mb-4 h-16 w-16 text-green-300" />} message="No warnings at this time" />
-              ) : renderAlertList(sortedWarningAlerts)}
+              {filteredWarningAlerts.length === 0 ? (
+                <EmptyAlerts icon={<CheckCircle className="mx-auto mb-4 h-16 w-16 text-green-300" />} message={`No warning alerts match ${activeFilterLabel}.`} />
+              ) : renderAlertList(filteredWarningAlerts)}
             </TabsContent>
 
             {isAdmin && (
               <TabsContent value="info" className="alerts-tab-content space-y-3">
-                {infoAlertCount === 0 ? (
-                  <EmptyAlerts icon={<Info className="mx-auto mb-4 h-16 w-16 text-blue-300" />} message="No info alerts at this time" />
-                ) : renderAlertList(sortedInfoAlerts)}
+                {filteredInfoAlerts.length === 0 ? (
+                  <EmptyAlerts icon={<Info className="mx-auto mb-4 h-16 w-16 text-blue-300" />} message={`No info alerts match ${activeFilterLabel}.`} />
+                ) : renderAlertList(filteredInfoAlerts)}
               </TabsContent>
             )}
           </Tabs>

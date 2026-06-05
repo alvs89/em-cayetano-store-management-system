@@ -21,6 +21,9 @@ const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
 const OTP_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const OTP_RATE_LIMIT_MAX_RESENDS = 5;
 const OTP_RATE_LIMIT_MAX_REQUESTS = OTP_RATE_LIMIT_MAX_RESENDS + 1; // initial send + allowed resends
+const LOGIN_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_LOCKOUT_MS = 10 * 60 * 1000;
+const LOGIN_MAX_FAILED_ATTEMPTS = 5;
 const APP_TIME_ZONE = 'Asia/Manila';
 const APP_TIMESTAMP_OFFSET = '+08:00';
 const PASSWORD_MIN_LENGTH = 8;
@@ -66,7 +69,7 @@ const CORS_ALLOWED_ORIGINS = (process.env.CORS_ORIGIN || process.env.CLIENT_URL 
   .split(',')
   .map(origin => origin.trim())
   .filter(Boolean);
-const ALLOWED_ROLES = ['Admin', 'Cashier', 'Inventory Staff'];
+const ALLOWED_ROLES = ['Admin', 'Sales Encoder', 'Inventory Staff'];
 const ALLOWED_BRANCHES = ['Manggahan', 'San Rafael'];
 const OFFICIAL_INVENTORY_CATEGORIES = [
   'Roofing',
@@ -173,6 +176,7 @@ const INVENTORY_UNIT_ALIASES = {
 // For multi-instance production deployments, replace this with database-backed
 // or Redis-backed rate limiting so attempts are shared across server instances.
 const otpRequestBuckets = new Map();
+const loginAttemptBuckets = new Map();
 
 // PostgreSQL TIMESTAMP values are stored without timezone metadata. This system
 // stores them as Philippine local time, so parse them with an explicit +08:00
@@ -187,16 +191,51 @@ if (process.env.NODE_ENV === 'production' && CORS_ALLOWED_ORIGINS.length === 0) 
   throw new Error('CORS_ORIGIN must be configured in production.');
 }
 
+app.disable('x-powered-by');
+
+function isLocalDevelopmentOrigin(origin) {
+  if (!origin || process.env.NODE_ENV === 'production') return false;
+
+  try {
+    const { protocol, hostname } = new URL(origin);
+    return ['http:', 'https:'].includes(protocol)
+      && ['localhost', '127.0.0.1', '::1'].includes(hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isTrustedRequestOrigin(origin) {
+  if (!origin) return true;
+  if (CORS_ALLOWED_ORIGINS.includes(origin)) return true;
+  return CORS_ALLOWED_ORIGINS.length === 0 && isLocalDevelopmentOrigin(origin);
+}
+
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+
+  const origin = req.get('origin');
+  const isStateChangingRequest = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
+  if (isStateChangingRequest && !isTrustedRequestOrigin(origin)) {
+    return res.status(403).json({ error: 'Request origin is not allowed' });
+  }
+
+  return next();
+});
+
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || CORS_ALLOWED_ORIGINS.length === 0 || CORS_ALLOWED_ORIGINS.includes(origin)) {
+    if (isTrustedRequestOrigin(origin)) {
       return callback(null, true);
     }
 
     return callback(new Error('Not allowed by CORS'));
   }
 }));
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -308,7 +347,7 @@ async function ensureSchema() {
       username VARCHAR(50) UNIQUE NOT NULL,
       email VARCHAR(100) UNIQUE NOT NULL,
       password_hash VARCHAR(255) NOT NULL,
-      role VARCHAR(30) CHECK (role IN ('Admin', 'Cashier', 'Inventory Staff')) NOT NULL,
+      role VARCHAR(30) CHECK (role IN ('Admin', 'Sales Encoder', 'Inventory Staff')) NOT NULL,
       branch VARCHAR(50),
       status VARCHAR(20) DEFAULT 'Active',
       must_change_password BOOLEAN DEFAULT false,
@@ -596,9 +635,15 @@ async function ensureSchema() {
   `);
 
   await pool.query(`
+    UPDATE users
+    SET role = 'Sales Encoder'
+    WHERE role = 'Cashier';
+  `);
+
+  await pool.query(`
     ALTER TABLE users
     ADD CONSTRAINT users_role_check
-    CHECK (role IN ('Admin', 'Cashier', 'Inventory Staff'));
+    CHECK (role IN ('Admin', 'Sales Encoder', 'Inventory Staff'));
   `);
 
   await pool.query(`
@@ -2731,17 +2776,18 @@ async function recordAuditLog(db, {
   reason = null,
   details = null
 }) {
-  if (!actorId || !action) return;
+  if (!action) return;
 
   const safeDetails = details && typeof details === 'object' && !Array.isArray(details)
     ? details
     : {};
+  const safeActorId = Number.isInteger(Number(actorId)) ? Number(actorId) : null;
 
   await db.query(
     `INSERT INTO audit_logs (actor_id, actor_name, target_id, target_name, target_type, action, reason, details)
-     VALUES ($1, COALESCE($2, (SELECT full_name FROM users WHERE user_id = $1), 'Unknown User'), $3, $4, $5, $6, $7, $8::jsonb)`,
+     VALUES ($1, COALESCE($2, (SELECT full_name FROM users WHERE user_id = $1), 'Security Monitor'), $3, $4, $5, $6, $7, $8::jsonb)`,
     [
-      actorId,
+      safeActorId,
       actorName || null,
       Number.isInteger(Number(targetId)) ? Number(targetId) : null,
       targetName || null,
@@ -2785,6 +2831,122 @@ async function recordSystemLog(db, {
       Boolean(isSecurity)
     ]
   );
+}
+
+function getClientIp(req) {
+  const rawIp = String(req.headers['x-forwarded-for'] || req.ip || req.socket?.remoteAddress || 'unknown')
+    .split(',')[0]
+    .trim();
+  if (rawIp === '::1') return '127.0.0.1';
+  if (rawIp.startsWith('::ffff:')) return rawIp.slice('::ffff:'.length);
+  return rawIp;
+}
+
+function normalizeLoginAttemptKey(username, req) {
+  const cleanLoginName = cleanUsername(username).toLowerCase() || 'unknown-user';
+  return `${cleanLoginName}:${getClientIp(req)}`;
+}
+
+function formatLoginLockoutDuration(ms) {
+  const minutes = Math.max(1, Math.ceil(ms / (60 * 1000)));
+  return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+}
+
+function getLoginAttemptState(key) {
+  const now = Date.now();
+  const state = loginAttemptBuckets.get(key) || { failures: [], lockedUntil: 0 };
+  const failures = (state.failures || []).filter(timestamp => now - timestamp < LOGIN_ATTEMPT_WINDOW_MS);
+  const lockedUntil = Number(state.lockedUntil || 0);
+
+  if (lockedUntil && lockedUntil <= now) {
+    const nextState = { failures, lockedUntil: 0 };
+    loginAttemptBuckets.set(key, nextState);
+    return nextState;
+  }
+
+  const nextState = { failures, lockedUntil };
+  loginAttemptBuckets.set(key, nextState);
+  return nextState;
+}
+
+function getLoginLockout(key) {
+  const state = getLoginAttemptState(key);
+  if (state.lockedUntil > Date.now()) {
+    return {
+      locked: true,
+      retryAfterMs: state.lockedUntil - Date.now()
+    };
+  }
+  return { locked: false, retryAfterMs: 0 };
+}
+
+async function recordSecurityEvidence({
+  action,
+  message,
+  username,
+  req,
+  severity = 'warning',
+  reason = null,
+  details = {}
+}) {
+  const context = {
+    username: cleanUsername(username) || 'unknown',
+    ip: getClientIp(req),
+    userAgent: String(req.headers['user-agent'] || '').slice(0, 180),
+    ...details
+  };
+
+  await Promise.allSettled([
+    recordAuditLog(pool, {
+      actorName: 'Security Monitor',
+      targetName: context.username,
+      targetType: 'auth_security_event',
+      action,
+      reason,
+      details: context
+    }),
+    recordSystemLog(pool, {
+      eventType: action,
+      severity,
+      message,
+      context,
+      actorName: 'Security Monitor',
+      isSecurity: true
+    })
+  ]);
+}
+
+async function recordFailedLoginAttempt(username, req, reason) {
+  const key = normalizeLoginAttemptKey(username, req);
+  const state = getLoginAttemptState(key);
+  const now = Date.now();
+  const failures = [...state.failures, now].filter(timestamp => now - timestamp < LOGIN_ATTEMPT_WINDOW_MS);
+  const lockedUntil = failures.length >= LOGIN_MAX_FAILED_ATTEMPTS
+    ? now + LOGIN_LOCKOUT_MS
+    : state.lockedUntil;
+
+  loginAttemptBuckets.set(key, { failures, lockedUntil });
+
+  await recordSecurityEvidence({
+    action: lockedUntil > now ? 'AUTH_ACCOUNT_LOCKED' : 'AUTH_FAILED_LOGIN',
+    message: lockedUntil > now
+      ? 'Login temporarily locked after repeated failed attempts.'
+      : 'Failed login attempt recorded.',
+    username,
+    req,
+    reason,
+    details: {
+      failureCount: failures.length,
+      maxFailedAttempts: LOGIN_MAX_FAILED_ATTEMPTS,
+      lockedUntil: lockedUntil > now ? new Date(lockedUntil).toISOString() : null
+    }
+  });
+
+  return { failures: failures.length, lockedUntil };
+}
+
+function clearFailedLoginAttempts(username, req) {
+  loginAttemptBuckets.delete(normalizeLoginAttemptKey(username, req));
 }
 
 function normalizeBranch(value) {
@@ -2895,12 +3057,14 @@ function isAdmin(user) {
 }
 
 function normalizeRole(role) {
-  return role === 'Employee' ? 'Inventory Staff' : role;
+  if (role === 'Employee') return 'Inventory Staff';
+  if (role === 'Cashier') return 'Sales Encoder';
+  return role;
 }
 
 function canRecordSales(user) {
   const role = normalizeRole(user?.role);
-  return role === 'Admin' || role === 'Cashier';
+  return role === 'Admin' || role === 'Sales Encoder';
 }
 
 function canPerformInventoryMovement(user) {
@@ -2911,7 +3075,7 @@ function canPerformInventoryMovement(user) {
 function getRoleLabel(role) {
   const normalized = normalizeRole(role);
   if (normalized === 'Admin') return 'Admin / Owner';
-  if (normalized === 'Cashier') return 'Cashier / Encoder';
+  if (normalized === 'Sales Encoder') return 'Sales Encoder';
   if (normalized === 'Inventory Staff') return 'Inventory Staff';
   return role || 'User';
 }
@@ -3333,8 +3497,8 @@ async function authenticate(req, res, next) {
       id: dbUser.user_id,
       fullName: dbUser.full_name,
       username: dbUser.username,
-      role: decoded.role,
-      branch: decoded.branch || dbUser.branch
+      role: dbUser.role,
+      branch: isAdmin(dbUser) && decoded.branch ? decoded.branch : dbUser.branch
     };
 
     return next();
@@ -3440,11 +3604,20 @@ app.post('/api/auth/register', async (req, res) => {
 
 app.post('/api/auth/login', async (req, res) => {
   const { username, password, branch } = req.body;
+  const cleanLoginUsername = cleanUsername(username);
   const selectedBranch = normalizeBranch(branch);
+  const lockout = getLoginLockout(normalizeLoginAttemptKey(cleanLoginUsername, req));
+
+  if (lockout.locked) {
+    return res.status(429).json({
+      error: `Too many failed login attempts. Please try again in ${formatLoginLockoutDuration(lockout.retryAfterMs)}.`
+    });
+  }
 
   try {
-    const userResult = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+    const userResult = await pool.query('SELECT * FROM users WHERE username = $1', [cleanLoginUsername]);
     if (userResult.rowCount === 0) {
+      await recordFailedLoginAttempt(cleanLoginUsername, req, 'Username was not found.');
       return res.status(401).json({ error: 'Invalid username or password' });
     }
 
@@ -3452,10 +3625,19 @@ app.post('/api/auth/login', async (req, res) => {
     const validPassword = await bcrypt.compare(password || '', user.password_hash);
 
     if (!validPassword) {
+      await recordFailedLoginAttempt(cleanLoginUsername, req, 'Password verification failed.');
       return res.status(401).json({ error: 'Invalid username or password' });
     }
 
     if (user.status !== 'Active') {
+      await recordSecurityEvidence({
+        action: 'AUTH_INACTIVE_ACCOUNT_LOGIN',
+        message: 'Inactive account login attempt blocked.',
+        username: cleanLoginUsername,
+        req,
+        reason: `Account status is ${user.status}.`,
+        details: { accountStatus: user.status }
+      });
       return res.status(403).json({ error: 'Your account does not have access. Please contact an administrator.' });
     }
 
@@ -3464,11 +3646,20 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     if (!isAdmin(user) && user.branch && user.branch !== selectedBranch) {
+      await recordSecurityEvidence({
+        action: 'AUTH_BRANCH_MISMATCH',
+        message: 'Login blocked because the selected branch did not match the assigned branch.',
+        username: cleanLoginUsername,
+        req,
+        reason: 'Selected branch did not match assigned branch.',
+        details: { selectedBranch, assignedBranch: user.branch }
+      });
       return res.status(403).json({
         error: `Access denied: Your registered branch is ${user.branch}. Please log in using that branch.`
       });
     }
 
+    clearFailedLoginAttempts(cleanLoginUsername, req);
     return res.json({
       message: '2FA Required',
       require2fa: true,
@@ -3504,25 +3695,43 @@ app.post('/api/auth/assigned-branch', async (req, res) => {
     return res.status(400).json({ error: 'Enter username and password first.' });
   }
 
+  const lockout = getLoginLockout(normalizeLoginAttemptKey(username, req));
+  if (lockout.locked) {
+    return res.status(429).json({
+      error: `Too many failed login attempts. Please try again in ${formatLoginLockoutDuration(lockout.retryAfterMs)}.`
+    });
+  }
+
   try {
     const userResult = await pool.query(
       'SELECT user_id, username, password_hash, role, branch, status FROM users WHERE username = $1',
       [username]
     );
     if (userResult.rowCount === 0) {
+      await recordFailedLoginAttempt(username, req, 'Assigned branch lookup username was not found.');
       return res.status(401).json({ error: 'Invalid username or password' });
     }
 
     const user = userResult.rows[0];
     const validPassword = await bcrypt.compare(password, user.password_hash);
     if (!validPassword) {
+      await recordFailedLoginAttempt(username, req, 'Assigned branch password verification failed.');
       return res.status(401).json({ error: 'Invalid username or password' });
     }
 
     if (user.status !== 'Active') {
+      await recordSecurityEvidence({
+        action: 'AUTH_INACTIVE_ACCOUNT_BRANCH_LOOKUP',
+        message: 'Assigned branch lookup blocked for inactive account.',
+        username,
+        req,
+        reason: `Account status is ${user.status}.`,
+        details: { accountStatus: user.status }
+      });
       return res.status(403).json({ error: 'Your account does not have access. Please contact an administrator.' });
     }
 
+    clearFailedLoginAttempts(username, req);
     return res.json({
       branch: isAdmin(user) ? '' : normalizeBranch(user.branch),
       branchLocked: !isAdmin(user),
@@ -3619,14 +3828,36 @@ app.post('/api/auth/verify-otp', async (req, res) => {
     }
 
     if (user.login_otp_code !== code) {
+      await recordSecurityEvidence({
+        action: 'AUTH_INVALID_OTP',
+        message: 'Invalid two-factor verification code was submitted.',
+        username,
+        req,
+        reason: 'Submitted OTP did not match the active login challenge.'
+      });
       return res.status(400).json({ error: 'Invalid code' });
     }
 
     if (!user.login_otp_expires || new Date(user.login_otp_expires).getTime() + 15000 < Date.now()) {
+      await recordSecurityEvidence({
+        action: 'AUTH_EXPIRED_OTP',
+        message: 'Expired two-factor verification code was submitted.',
+        username,
+        req,
+        reason: 'Submitted OTP was expired.'
+      });
       return res.status(400).json({ error: 'Code expired' });
     }
 
     if (!isAdmin(user) && selectedBranch && selectedBranch !== user.branch) {
+      await recordSecurityEvidence({
+        action: 'AUTH_OTP_BRANCH_MISMATCH',
+        message: 'Two-factor verification blocked because the selected branch did not match the assigned branch.',
+        username,
+        req,
+        reason: 'Selected branch did not match assigned branch during OTP verification.',
+        details: { selectedBranch, assignedBranch: user.branch }
+      });
       return res.status(403).json({ error: 'Selected branch does not match your account' });
     }
 
@@ -3637,6 +3868,33 @@ app.post('/api/auth/verify-otp', async (req, res) => {
 
     const sessionBranch = isAdmin(user) && selectedBranch ? selectedBranch : user.branch;
     const token = signToken(user, sessionBranch);
+    await Promise.allSettled([
+      recordAuditLog(pool, {
+        actorId: user.user_id,
+        targetName: user.username,
+        targetType: 'auth_session',
+        action: 'AUTH_LOGIN_SUCCESS',
+        reason: 'Password and two-factor verification completed.',
+        details: {
+          branch: sessionBranch,
+          role: user.role,
+          ip: getClientIp(req)
+        }
+      }),
+      recordSystemLog(pool, {
+        eventType: 'AUTH_LOGIN_SUCCESS',
+        severity: 'info',
+        message: 'User completed login with two-factor verification.',
+        context: {
+          username: user.username,
+          branch: sessionBranch,
+          role: user.role,
+          ip: getClientIp(req)
+        },
+        actorId: user.user_id,
+        isSecurity: true
+      })
+    ]);
 
     return res.json({
       message: 'Login Verified',
@@ -4555,7 +4813,7 @@ app.get('/api/sales', authenticate, async (req, res) => {
 app.get('/api/sales/next-invoice-number', authenticate, async (req, res) => {
   if (!canRecordSales(req.user)) {
     return res.status(403).json({
-      error: 'Invoice number preview is available only to Admin / Owner and Cashier / Encoder accounts.'
+      error: 'Invoice number preview is available only to Admin / Owner and Sales Encoder accounts.'
     });
   }
 
@@ -4615,7 +4873,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
 
   if (!canRecordSales(req.user)) {
     return res.status(403).json({
-      error: 'Sales recording is available only to Admin / Owner and Cashier / Encoder accounts.'
+      error: 'Sales recording is available only to Admin / Owner and Sales Encoder accounts.'
     });
   }
 
@@ -5267,7 +5525,7 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
 
   if (!canRecordSales(req.user)) {
     return res.status(403).json({
-      error: 'Refund recording is available only to Admin / Owner and Cashier / Encoder accounts.'
+      error: 'Refund recording is available only to Admin / Owner and Sales Encoder accounts.'
     });
   }
 
@@ -8357,12 +8615,12 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
          FROM users
          WHERE (
              branch = $1
-             OR (role IN ('Cashier', 'Inventory Staff') AND (branch IS NULL OR TRIM(branch) = ''))
+             OR (role IN ('Sales Encoder', 'Inventory Staff') AND (branch IS NULL OR TRIM(branch) = ''))
            )
            AND (
-             role NOT IN ('Admin', 'Cashier', 'Inventory Staff')
+             role NOT IN ('Admin', 'Sales Encoder', 'Inventory Staff')
              OR status NOT IN ('Active', 'Pending', 'Inactive', 'Rejected')
-             OR (role IN ('Cashier', 'Inventory Staff') AND (branch IS NULL OR TRIM(branch) = ''))
+             OR (role IN ('Sales Encoder', 'Inventory Staff') AND (branch IS NULL OR TRIM(branch) = ''))
            )`,
         [scopeBranch]
       ),

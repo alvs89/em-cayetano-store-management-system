@@ -42,7 +42,7 @@ async function resetAdmin() {
         username VARCHAR(50) UNIQUE NOT NULL,
         email VARCHAR(100) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
-        role VARCHAR(30) CHECK (role IN ('Admin', 'Cashier', 'Inventory Staff')) NOT NULL,
+        role VARCHAR(30) CHECK (role IN ('Admin', 'Sales Encoder', 'Inventory Staff')) NOT NULL,
         branch VARCHAR(50),
         status VARCHAR(20) DEFAULT 'Active',
         otp_code VARCHAR(10),

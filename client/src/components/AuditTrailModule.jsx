@@ -16,6 +16,7 @@ import { HeaderTimeBadge } from './PageHeader';
 
 const ACTION_GROUPS = {
   all: 'All Actions',
+  security: 'Security / Login',
   inventory: 'Inventory',
   archive: 'Archive',
   users: 'User Accounts',
@@ -36,6 +37,7 @@ const DEFAULT_VISIBLE_RECORDS = 5;
 
 const getActionGroup = action => {
   const normalized = String(action || '').toUpperCase();
+  if (normalized.startsWith('AUTH_') || normalized.includes('LOGIN') || normalized.includes('OTP') || normalized.includes('SESSION')) return 'security';
   if (normalized.includes('STOCK') || normalized.includes('ITEM') || normalized.includes('DUPLICATE')) return 'inventory';
   if (normalized.includes('ARCHIVE') || normalized.includes('RESTORE_ITEM')) return 'archive';
   if (normalized.includes('USER') || normalized.includes('ROLE') || normalized.includes('BRANCH') || normalized.includes('APPROVE') || normalized.includes('DEACTIVATE')) return 'users';
@@ -46,6 +48,7 @@ const getActionGroup = action => {
 };
 
 const getActionBadgeClass = group => {
+  if (group === 'security') return 'border-amber-200 bg-amber-100 text-amber-800 hover:bg-amber-100';
   if (group === 'maintenance') return 'border-violet-200 bg-violet-100 text-violet-700 hover:bg-violet-100';
   if (group === 'users') return 'bg-blue-100 text-blue-700 hover:bg-blue-100';
   if (group === 'archive') return 'bg-slate-100 text-slate-700 hover:bg-slate-100';
@@ -66,13 +69,18 @@ const formatActionLabel = action => {
   return detail ? `${label}: ${detail}` : label;
 };
 
-const formatFieldLabel = value => String(value || '')
-  .replace(/([a-z])([A-Z])/g, '$1 $2')
-  .replace(/_/g, ' ')
-  .split(' ')
-  .filter(Boolean)
-  .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-  .join(' ');
+const formatFieldLabel = value => {
+  const normalized = String(value || '').replace(/[_\s-]/g, '').toLowerCase();
+  if (normalized === 'ip') return 'IP Address';
+  if (normalized === 'useragent') return 'Device';
+  return String(value || '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/_/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+};
 
 const formatTargetType = value => {
   const label = formatFieldLabel(value);
@@ -97,11 +105,41 @@ const formatCustomerType = value => {
 
 const isMovementReasonField = key => String(key || '').replace(/[_\s-]/g, '').toLowerCase() === 'movementreason';
 
+const formatIpAddress = value => {
+  const ip = String(value || '').trim();
+  if (ip === '::1') return '127.0.0.1';
+  if (ip.startsWith('::ffff:')) return ip.slice('::ffff:'.length);
+  return ip || 'None';
+};
+
+const formatUserAgent = value => {
+  const text = String(value || '').trim();
+  if (!text) return 'Unknown device';
+
+  const browser = text.includes('Edg/') ? 'Microsoft Edge'
+    : text.includes('OPR/') || text.includes('Opera') ? 'Opera'
+      : text.includes('Firefox/') ? 'Firefox'
+        : text.includes('Chrome/') ? 'Chrome'
+          : text.includes('Safari/') ? 'Safari'
+            : 'Browser';
+  const platform = text.includes('Windows') ? 'Windows'
+    : text.includes('Mac OS') || text.includes('Macintosh') ? 'macOS'
+      : text.includes('Android') ? 'Android'
+        : text.includes('iPhone') || text.includes('iPad') ? 'iOS'
+          : text.includes('Linux') ? 'Linux'
+            : 'Unknown device';
+
+  return `${browser} on ${platform}`;
+};
+
 const formatDetailValue = (value, key = '') => {
+  const normalizedKey = String(key || '').replace(/[_\s-]/g, '').toLowerCase();
   if (value === null || value === undefined || value === '') return 'None';
-  if (String(key || '').toLowerCase() === 'customertype') return formatCustomerType(value);
+  if (normalizedKey === 'ip') return formatIpAddress(value);
+  if (normalizedKey === 'useragent') return formatUserAgent(value);
+  if (normalizedKey === 'customertype') return formatCustomerType(value);
   if (isMovementReasonField(key)) return getStockMovementReasonLabel(value);
-  if (['actualtransactionat', 'encodedat', 'transactiondate', 'encodeddate'].includes(String(key || '').replace(/[_\s-]/g, '').toLowerCase())) {
+  if (['actualtransactionat', 'encodedat', 'transactiondate', 'encodeddate'].includes(normalizedKey)) {
     return formatDateTime(value);
   }
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';

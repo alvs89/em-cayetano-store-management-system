@@ -26,9 +26,9 @@ import { PageHeader } from './PageHeader';
 import { getRoleLabel, isAdminRole, normalizeRole, ROLE_VALUES } from '../utils/roles';
 
 const HELP_ROLES = {
-  ALL: [ROLE_VALUES.ADMIN, ROLE_VALUES.CASHIER, ROLE_VALUES.INVENTORY_STAFF],
+  ALL: [ROLE_VALUES.ADMIN, ROLE_VALUES.SALES_ENCODER, ROLE_VALUES.INVENTORY_STAFF],
   ADMIN: [ROLE_VALUES.ADMIN],
-  SALES: [ROLE_VALUES.ADMIN, ROLE_VALUES.CASHIER],
+  SALES: [ROLE_VALUES.ADMIN, ROLE_VALUES.SALES_ENCODER],
   INVENTORY: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF],
 };
 
@@ -104,8 +104,8 @@ const roleHelpAccess = {
       'Use maintenance, backup, restore, and audit trail tools.',
     ],
   },
-  [ROLE_VALUES.CASHIER]: {
-    title: 'Cashier / Encoder Guide',
+  [ROLE_VALUES.SALES_ENCODER]: {
+    title: 'Sales Encoder Guide',
     description: 'Sales-focused guide for recording customer transactions and checking item availability.',
     modules: ['Dashboard', 'Search Products', 'Inventory', 'Sales', 'Alerts', 'Help'],
     tasks: [
@@ -674,7 +674,7 @@ const glossaryTerms = [
   { term: 'Cancelled Sale', roles: HELP_ROLES.ADMIN, definition: 'A completed sale marked as cancelled by an Admin when the full transaction must be voided.' },
   { term: 'Category', roles: HELP_ROLES.ALL, definition: 'A product grouping such as roofing, paint, electrical, steel, or plumbing used for searching and reports.' },
   { term: 'Cost of Goods Sold', roles: HELP_ROLES.ADMIN, definition: 'The saved item cost multiplied by the sold quantity.' },
-  { term: 'Daily Quota', roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.CASHIER], definition: 'The sales target used to compare today\'s sales against the branch goal.' },
+  { term: 'Daily Quota', roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.SALES_ENCODER], definition: 'The sales target used to compare today\'s sales against the branch goal.' },
   { term: 'Delivery Charge', roles: HELP_ROLES.SALES, definition: 'An added amount charged to the customer when delivery is part of the sale.' },
   { term: 'Discount', roles: HELP_ROLES.SALES, definition: 'An amount deducted from the sale total before payment is completed.' },
   { term: 'Document Number', roles: HELP_ROLES.INVENTORY, definition: 'The supplier document reference used when recording purchases or deliveries.' },
@@ -698,7 +698,7 @@ const glossaryTerms = [
   { term: 'Supplier Reorder Report', roles: HELP_ROLES.INVENTORY, definition: 'A report that helps identify items that may need restocking from suppliers.' },
   { term: 'TIN', roles: HELP_ROLES.SALES, definition: 'The Tax Identification Number entered for customers who need invoice details.' },
   { term: 'Untracked Sales Item', roles: HELP_ROLES.INVENTORY, definition: 'A sold manual item that may need review before becoming a regular inventory record.' },
-  { term: 'User Role', roles: HELP_ROLES.ALL, definition: 'The access level assigned to a user, such as Admin, Cashier, or Inventory Staff.' },
+  { term: 'User Role', roles: HELP_ROLES.ALL, definition: 'The access level assigned to a user, such as Admin, Sales Encoder, or Inventory Staff.' },
 ];
 
 const roleFallback = roleHelpAccess[ROLE_VALUES.INVENTORY_STAFF];

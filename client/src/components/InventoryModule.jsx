@@ -1639,7 +1639,16 @@ export function InventoryModule({
       toast.error("Default Selling Price must be greater than zero.");
       return;
     }
-    const costPrice = newItem.costPrice || "";
+    const costPriceText = String(newItem.costPrice || "").trim();
+    if (costPriceText && !isDecimalNumberText(costPriceText)) {
+      toast.error("Cost Price must be a valid amount with up to 2 decimal places.");
+      return;
+    }
+    const costPrice = costPriceText ? Number(costPriceText) : "";
+    if (costPrice !== "" && costPrice <= 0) {
+      toast.error("Cost Price must be greater than zero.");
+      return;
+    }
     if (isNaN(quantity) || quantity < 0) {
       toast.error("Please enter a valid quantity.");
       return;
@@ -2085,9 +2094,16 @@ export function InventoryModule({
       toast.error("Default Selling Price must be greater than zero.");
       return;
     }
-    const costPrice = selectedItem.costPrice === null || selectedItem.costPrice === undefined || selectedItem.costPrice === ""
-      ? ""
-      : selectedItem.costPrice;
+    const costPriceText = String(editItem.costPrice || "").trim();
+    if (costPriceText && !isDecimalNumberText(costPriceText)) {
+      toast.error("Cost Price must be a valid amount with up to 2 decimal places.");
+      return;
+    }
+    const costPrice = costPriceText ? Number(costPriceText) : "";
+    if (costPrice !== "" && costPrice <= 0) {
+      toast.error("Cost Price must be greater than zero.");
+      return;
+    }
 
     if (!cleanName || !canonicalCategory) {
       toast.error("Please provide a valid item name and category.");
@@ -2450,6 +2466,34 @@ export function InventoryModule({
             />
             <p className="text-slate-700" style={{ fontSize: "12px" }}>
               Optional. This price will automatically appear as the Unit Price when the item is selected in Sales Recording.
+            </p>
+          </div>
+
+          <div className="inventory-add-field space-y-1.5">
+            <Label
+              htmlFor="edit-cost-price"
+              className="font-semibold text-slate-950"
+              style={{ display: "block", marginBottom: "8px", fontSize: "14px", lineHeight: "1.25" }}
+            >
+              Cost Price
+            </Label>
+            <Input
+              id="edit-cost-price"
+              type="text"
+              min="0.01"
+              step="0.01"
+              inputMode="decimal"
+              value={editItem.costPrice}
+              onChange={e => setEditItem({
+                ...editItem,
+                costPrice: sanitizeDecimalInput(e.target.value, "Cost Price", "edit-cost-price-numbers-only")
+              })}
+              placeholder="e.g., 205.00"
+              className="border-slate-300 bg-white text-slate-950"
+              style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
+            />
+            <p className="text-slate-700" style={{ fontSize: "12px" }}>
+              Optional. This is the amount paid per unit and becomes the default Unit Cost in purchase drafts.
             </p>
           </div>
 
@@ -3994,7 +4038,42 @@ export function InventoryModule({
     style: {
       fontSize: "12px"
     }
-  }, "Optional. This price will automatically appear as the Unit Price when the item is selected in Sales Recording.")), renderAddSectionHeader("Stock Level and Alert Threshold"), /*#__PURE__*/React.createElement("div", {
+  }, "Optional. This price will automatically appear as the Unit Price when the item is selected in Sales Recording.")), /*#__PURE__*/React.createElement("div", {
+    className: "inventory-add-field space-y-1.5"
+  }, /*#__PURE__*/React.createElement(Label, {
+    htmlFor: "cost-price",
+    className: "font-semibold text-slate-950",
+    style: {
+      display: "block",
+      marginBottom: "8px",
+      fontSize: "14px",
+      lineHeight: "1.25"
+    }
+  }, "Cost Price"), /*#__PURE__*/React.createElement(Input, {
+    id: "cost-price",
+    type: "text",
+    min: "0.01",
+    step: "0.01",
+    inputMode: "decimal",
+    value: newItem.costPrice,
+    onChange: e => setNewItem({
+      ...newItem,
+      costPrice: sanitizeDecimalInput(e.target.value, "Cost Price", "add-cost-price-numbers-only")
+    }),
+    placeholder: "e.g., 205.00",
+    className: "border-slate-300 bg-white text-slate-950",
+    style: {
+      height: "42px",
+      borderRadius: "10px",
+      fontSize: "14px",
+      padding: "0 14px"
+    }
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "text-slate-700",
+    style: {
+      fontSize: "12px"
+    }
+  }, "Optional. This is the amount paid per unit and becomes the default Unit Cost in purchase drafts.")), renderAddSectionHeader("Stock Level and Alert Threshold"), /*#__PURE__*/React.createElement("div", {
     className: "inventory-add-field space-y-1.5"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "quantity",

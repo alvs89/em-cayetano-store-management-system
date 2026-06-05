@@ -208,7 +208,15 @@ export function ReportsModule({
   };
 
   useEffect(() => {
-    const applyTargetReport = ({ reportType: nextReportType, category = 'all', period, date, supplier } = {}) => {
+    const applyTargetReport = ({
+      reportType: nextReportType,
+      category = 'all',
+      period,
+      date,
+      customStartDate: targetCustomStartDate,
+      customEndDate: targetCustomEndDate,
+      supplier
+    } = {}) => {
       if (!nextReportType) return;
       const safeReportType = canAccessReportType(user?.role, nextReportType)
         ? nextReportType
@@ -224,6 +232,14 @@ export function ReportsModule({
       if (date && /^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
         setSelectedReportDate(date);
       }
+      if (period === 'custom') {
+        if (targetCustomStartDate && /^\d{4}-\d{2}-\d{2}$/.test(String(targetCustomStartDate))) {
+          setCustomStartDate(targetCustomStartDate);
+        }
+        if (targetCustomEndDate && /^\d{4}-\d{2}-\d{2}$/.test(String(targetCustomEndDate))) {
+          setCustomEndDate(targetCustomEndDate);
+        }
+      }
       if (safeReportType === 'supplier-reorder' && supplier) {
         setSelectedReorderSupplier(supplier);
       }
@@ -236,12 +252,16 @@ export function ReportsModule({
         category: localStorage.getItem('reports_target_category') || 'all',
         period: localStorage.getItem('reports_target_period') || undefined,
         date: localStorage.getItem('reports_target_date') || undefined,
+        customStartDate: localStorage.getItem('reports_target_custom_start') || undefined,
+        customEndDate: localStorage.getItem('reports_target_custom_end') || undefined,
         supplier: localStorage.getItem('reports_target_supplier') || undefined
       });
       localStorage.removeItem('reports_target_type');
       localStorage.removeItem('reports_target_category');
       localStorage.removeItem('reports_target_period');
       localStorage.removeItem('reports_target_date');
+      localStorage.removeItem('reports_target_custom_start');
+      localStorage.removeItem('reports_target_custom_end');
       localStorage.removeItem('reports_target_supplier');
     }
 
@@ -251,6 +271,8 @@ export function ReportsModule({
       localStorage.removeItem('reports_target_category');
       localStorage.removeItem('reports_target_period');
       localStorage.removeItem('reports_target_date');
+      localStorage.removeItem('reports_target_custom_start');
+      localStorage.removeItem('reports_target_custom_end');
       localStorage.removeItem('reports_target_supplier');
     };
 

@@ -1275,6 +1275,23 @@ export function SalesModule({ user }) {
         : 0
     };
   });
+  const getBelowCostWarning = line => {
+    if (!line || line.isManual || !line.item) return null;
+    const costPrice = Number(line.item.costPrice || 0);
+    const unitPrice = Number(line.unitPrice || 0);
+    if (!Number.isFinite(costPrice) || !Number.isFinite(unitPrice) || costPrice <= 0 || unitPrice <= 0) return null;
+    if (unitPrice >= costPrice) return null;
+
+    return {
+      itemName: line.item.name,
+      costPrice,
+      unitPrice,
+      lossPerUnit: Number((costPrice - unitPrice).toFixed(2))
+    };
+  };
+  const belowCostSaleWarnings = selectedLineDetails
+    .map(getBelowCostWarning)
+    .filter(Boolean);
   const cartLines = selectedLineDetails.filter(line => line.isManual ? line.itemName : (line.inventoryId && line.item));
 
   const totalQuantity = selectedLineDetails.reduce((sum, line) => sum + (Number.isFinite(line.quantity) ? line.quantity : 0), 0);
@@ -2205,6 +2222,15 @@ export function SalesModule({ user }) {
 
   const handleRecordSale = async () => {
     if (!validateSale()) return;
+    if (belowCostSaleWarnings.length > 0) {
+      const firstWarning = belowCostSaleWarnings[0];
+      toast.warning('Selling price is below cost.', {
+        id: 'sales-below-cost-warning',
+        description: belowCostSaleWarnings.length === 1
+          ? `${firstWarning.itemName}: ${formatCurrency(firstWarning.unitPrice)} selling price is below ${formatCurrency(firstWarning.costPrice)} cost.`
+          : `${belowCostSaleWarnings.length} items are priced below cost. Review the highlighted lines before saving.`
+      });
+    }
     if (isOfficialInvoiceSkippingSequence) {
       setIsInvoiceSequenceConfirmOpen(true);
       return;
@@ -4168,7 +4194,7 @@ export function SalesModule({ user }) {
 
         .sales-stock-preview {
           display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
           gap: 0.55rem;
           border: 1px solid #e2e8f0;
           border-radius: 0.85rem;
@@ -4258,9 +4284,48 @@ export function SalesModule({ user }) {
           background: #fef2f2;
         }
 
+        .sales-stock-preview-item-cost {
+          border-color: #fdba74;
+          background: #fff7ed;
+        }
+
         .sales-stock-preview-item-muted {
           border-color: #e2e8f0;
           background: #ffffff;
+        }
+
+        .sales-cart-price-input-below-cost {
+          border-color: #fb923c !important;
+          background: #fff7ed !important;
+          color: #9a3412 !important;
+          box-shadow: 0 0 0 2px rgba(251, 146, 60, 0.12);
+        }
+
+        .sales-cart-below-cost-banner {
+          display: flex;
+          grid-column: 1 / -1;
+          align-items: center;
+          gap: 0.42rem;
+          margin-top: 0.08rem;
+          border: 1px solid #fed7aa;
+          border-radius: 0.72rem;
+          background: #fff7ed;
+          padding: 0.42rem 0.55rem;
+          color: #9a3412;
+          font-size: 0.74rem;
+          line-height: 1.2rem;
+          font-weight: 750;
+        }
+
+        .sales-cart-below-cost-banner svg {
+          width: 0.92rem;
+          height: 0.92rem;
+          flex-shrink: 0;
+        }
+
+        .sales-cart-below-cost-banner strong {
+          color: #7c2d12;
+          font-weight: 850;
         }
 
         .sales-history-dialog {
@@ -5545,9 +5610,9 @@ export function SalesModule({ user }) {
         }
 
         .sales-cart-secondary-controls {
-          display: inline-flex;
+          display: grid;
           width: auto;
-          flex-wrap: nowrap;
+          grid-template-columns: minmax(6.2rem, auto) auto;
           align-items: center;
           justify-content: flex-start;
           gap: var(--sales-cart-control-gap);
@@ -5669,9 +5734,10 @@ export function SalesModule({ user }) {
 
         .sales-cart-price-field {
           display: inline-grid;
-          min-width: 5.55rem;
-          width: 5.55rem;
+          min-width: 6.2rem;
+          width: 6.2rem;
           min-height: var(--sales-cart-control-height);
+          align-self: start;
         }
 
         .sales-cart-price-input {
@@ -6116,9 +6182,9 @@ export function SalesModule({ user }) {
           }
 
           .sales-cart-secondary-controls {
-            display: inline-flex;
+            display: grid;
             width: 100%;
-            flex-wrap: nowrap;
+            grid-template-columns: minmax(6.35rem, auto) minmax(0, 1fr);
             align-items: center;
             justify-content: flex-start;
             gap: 0.42rem;
@@ -6139,8 +6205,8 @@ export function SalesModule({ user }) {
           }
 
           .sales-cart-price-field {
-            width: 5.8rem;
-            min-width: 5.8rem;
+            width: 6.35rem;
+            min-width: 6.35rem;
           }
 
           .sales-cart-price-input {
@@ -6191,8 +6257,8 @@ export function SalesModule({ user }) {
             }
 
             .sales-cart-secondary-controls {
-              display: inline-flex;
-              flex-wrap: nowrap;
+              display: grid;
+              grid-template-columns: minmax(5.75rem, auto) minmax(0, 1fr);
               justify-content: flex-start;
               width: 100%;
               min-width: 0;
@@ -6200,8 +6266,8 @@ export function SalesModule({ user }) {
             }
 
             .sales-cart-price-field {
-              width: 5rem;
-              min-width: 5rem;
+              width: 5.75rem;
+              min-width: 5.75rem;
             }
 
             .sales-cart-price-input {
@@ -6826,6 +6892,7 @@ export function SalesModule({ user }) {
                 <div className="mt-4 space-y-3">
                   {saleLines.map((line, index) => {
                     const selectedItem = getInventoryById(line.inventoryId);
+                    const belowCostWarning = getBelowCostWarning(selectedLineDetails[index]);
                     const usedByOtherLine = new Set(
                       saleLines
                         .map((entry, entryIndex) => entryIndex !== index ? entry.inventoryId : '')
@@ -6998,6 +7065,19 @@ export function SalesModule({ user }) {
                             </strong>
                           </div>
                         </div>
+                        {belowCostWarning && (
+                          <div className="sales-stock-preview-item sales-stock-preview-item-cost">
+                            <span className="sales-stock-preview-icon">
+                              <AlertTriangle className="h-5 w-5" />
+                            </span>
+                            <div className="min-w-0">
+                              <span className="sales-stock-preview-label">Cost Rule Warning</span>
+                              <strong className="sales-stock-preview-value">
+                                Selling {formatCurrency(belowCostWarning.unitPrice)} below cost {formatCurrency(belowCostWarning.costPrice)}
+                              </strong>
+                            </div>
+                          </div>
+                        )}
                           </>
                         )}
                       </div>
@@ -7229,6 +7309,7 @@ export function SalesModule({ user }) {
                       const displayName = line.isManual ? detail.itemName : selectedItem.name;
                       const displayCategory = line.isManual ? detail.category : selectedItem.category;
                       const remainingStock = line.isManual ? null : Math.max(Number(selectedItem.quantity || 0) - Number(detail.quantity || 0), 0);
+                      const belowCostWarning = getBelowCostWarning(detail);
 
                       return (
                         <div key={`cart-line-${index}`} className="sales-cart-row">
@@ -7289,7 +7370,7 @@ export function SalesModule({ user }) {
                                 <input
                                   type="text"
                                   inputMode="decimal"
-                                  className="sales-cart-price-input"
+                                  className={`sales-cart-price-input ${belowCostWarning ? 'sales-cart-price-input-below-cost' : ''}`}
                                   value={line.unitPrice}
                                   placeholder="0.00"
                                   disabled={isSaving}
@@ -7339,6 +7420,14 @@ export function SalesModule({ user }) {
                               </div>
                             </div>
                           </div>
+                          {belowCostWarning && (
+                            <div className="sales-cart-below-cost-banner" role="status">
+                              <AlertTriangle />
+                              <span>
+                                Selling below cost by <strong>{formatCurrency(belowCostWarning.lossPerUnit)} per unit</strong>. Review before saving.
+                              </span>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -8008,7 +8097,7 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
               {isBackdatedRecord(sale) && (
                 <p>Encoded Date: {formatDateTime(sale?.encodedAt)}</p>
               )}
-              <p>Cashier: {sale?.soldByName || 'System'}</p>
+              <p>Sales Encoder: {sale?.soldByName || 'System'}</p>
               <p>Customer: {customerTypeLabels[sale?.customerType] || 'Walk-in Customer'}</p>
               <p>Registered Name: {getReceiptCustomerName(sale)}</p>
               <p>TIN: {getReceiptCustomerTin(sale)}</p>

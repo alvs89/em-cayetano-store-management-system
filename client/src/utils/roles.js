@@ -1,8 +1,9 @@
 // Role helpers centralize screen access and legacy role normalization so all
-// modules enforce the same owner-level admin, Cashier, and Inventory Staff permissions.
+// modules enforce the same owner-level admin, Sales Encoder, and Inventory Staff permissions.
 export const ROLE_VALUES = {
   ADMIN: "Admin",
-  CASHIER: "Cashier",
+  SALES_ENCODER: "Sales Encoder",
+  LEGACY_CASHIER: "Cashier",
   INVENTORY_STAFF: "Inventory Staff",
   LEGACY_EMPLOYEE: "Employee",
 };
@@ -14,8 +15,8 @@ export const ROLE_OPTIONS = [
     description: "Business owner or authorized owner-level access for users, reports, audit trail, maintenance, and full inventory control.",
   },
   {
-    value: ROLE_VALUES.CASHIER,
-    label: "Cashier / Encoder",
+    value: ROLE_VALUES.SALES_ENCODER,
+    label: "Sales Encoder",
     description: "Records customer sales and receipt-based data entry for the assigned branch.",
   },
   {
@@ -40,13 +41,14 @@ export const REPORT_TYPE_OPTIONS = [
 
 export function normalizeRole(role) {
   if (role === ROLE_VALUES.LEGACY_EMPLOYEE) return ROLE_VALUES.INVENTORY_STAFF;
+  if (role === ROLE_VALUES.LEGACY_CASHIER) return ROLE_VALUES.SALES_ENCODER;
   return role || "";
 }
 
 export function getRoleLabel(role) {
   const normalized = normalizeRole(role);
   if (normalized === ROLE_VALUES.ADMIN) return "Admin / Owner";
-  if (normalized === ROLE_VALUES.CASHIER) return "Cashier / Encoder";
+  if (normalized === ROLE_VALUES.SALES_ENCODER) return "Sales Encoder";
   if (normalized === ROLE_VALUES.INVENTORY_STAFF) return "Inventory Staff";
   return role || "User";
 }
@@ -62,7 +64,7 @@ export function canAccessScreen(role, screen) {
   if (commonScreens.has(screen)) return true;
   if (normalized === ROLE_VALUES.ADMIN) return true;
 
-  if (normalized === ROLE_VALUES.CASHIER) {
+  if (normalized === ROLE_VALUES.SALES_ENCODER) {
     return ["inventory", "sales"].includes(screen);
   }
 
@@ -79,7 +81,7 @@ export function canManageInventory(role) {
 
 export function canRecordSales(role) {
   const normalized = normalizeRole(role);
-  return normalized === ROLE_VALUES.ADMIN || normalized === ROLE_VALUES.CASHIER;
+  return normalized === ROLE_VALUES.ADMIN || normalized === ROLE_VALUES.SALES_ENCODER;
 }
 
 export function canPerformInventoryMovement(role) {

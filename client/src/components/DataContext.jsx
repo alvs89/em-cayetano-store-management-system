@@ -712,7 +712,13 @@ export function DataProvider({ children }) {
       .map(alert => ({
         ...alert,
         read: readAlertIds.includes(alert.id)
-      }));
+      }))
+      .sort((a, b) => {
+        if (a.read !== b.read) return a.read ? 1 : -1;
+        const aTime = new Date(a.timestampRaw || a.timestamp || 0).getTime();
+        const bTime = new Date(b.timestampRaw || b.timestamp || 0).getTime();
+        return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
+      });
   }, [activeUserRole, dismissedAlertIds, inventory, readAlertIds, systemSummary]);
 
   const unreadAlertCount = alerts.filter(alert => !alert.read).length;

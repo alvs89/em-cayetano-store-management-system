@@ -29,7 +29,7 @@ The E.M. Cayetano Trading POS-Integrated Inventory Management System is a web-ba
 
 ### Key Features
 - **Dual-Branch Support**: Manage inventory for Manggahan and San Rafael locations
-- **Role-Based Access**: Admin/Owner, Cashier, and Inventory Staff roles with clear responsibility boundaries
+- **Role-Based Access**: Admin/Owner, Sales Encoder, and Inventory Staff roles with clear responsibility boundaries
 - **POS-Integrated Sales**: Record sold items, unit prices, discounts, payment method, amount received, change, and completed sales records
 - **Automatic Inventory Deduction**: Successful sales reduce inventory immediately and create stock movement records
 - **Enhanced Security**: Bcrypt password hashing, Two-Factor Authentication (2FA)
@@ -39,7 +39,7 @@ The E.M. Cayetano Trading POS-Integrated Inventory Management System is a web-ba
 
 ### User Roles
 - **Admin / Owner**: Full system access for the business owner or authorized owner-level user, including user management, reports, archive, maintenance, inventory setup, reorder review, and business oversight
-- **Cashier**: Records customer purchases through the Sales/POS workflow and helps keep sales-based stock deduction accurate
+- **Sales Encoder**: Records customer purchases through the Sales/POS workflow and helps keep sales-based stock deduction accurate
 - **Inventory Staff**: Handles inventory operations such as Stock In, Stock Out, physical stock checking, and inventory monitoring
 
 ---
@@ -72,7 +72,7 @@ The system no longer supports public account requests. This is intentional. In a
    - **Username**: Unique username for login
    - **Email**: Valid email address
    - **Branch**: Manggahan or San Rafael
-   - **Role**: Admin/Owner, Cashier, or Inventory Staff
+   - **Role**: Admin/Owner, Sales Encoder, or Inventory Staff
 
 3. **Temporary Password**
    - The system generates a temporary password.
@@ -571,7 +571,7 @@ Manage user accounts, roles, and permissions across both branches.
   - Full Name
   - Email
   - Branch
-  - Role (Admin/Owner, Cashier, or Inventory Staff)
+  - Role (Admin/Owner, Sales Encoder, or Inventory Staff)
   - Status (Active/Inactive)
   - Created Date
   
@@ -591,7 +591,7 @@ Manage user accounts, roles, and permissions across both branches.
   - Username
   - Email (format validation)
   - Branch (dropdown)
-  - Role (Admin/Owner, Cashier, or Inventory Staff)
+  - Role (Admin/Owner, Sales Encoder, or Inventory Staff)
   
 - **Password Setup**:
   - System generates a temporary password
