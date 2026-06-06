@@ -1,1365 +1,250 @@
-# E.M. Cayetano Trading - POS-Integrated Inventory Management System
-## Complete User Guide (Updated Version with POS Workflow and Algorithm Integration)
+# E.M. Cayetano Store Management System
+## User Manual
 
 ---
 
-## Table of Contents
-1. [System Overview](#system-overview)
-2. [Getting Started](#getting-started)
-3. [User Authentication Flow](#user-authentication-flow)
-4. [Dashboard](#dashboard)
-5. [Inventory Module](#inventory-module)
-6. [Search Module](#search-module)
-7. [Sales / POS Module](#sales--pos-module)
-8. [Reports Module](#reports-module)
-9. [Alerts Module](#alerts-module)
-10. [Archive Module](#archive-module)
-11. [User Management Module](#user-management-module)
-12. [Maintenance Module](#maintenance-module)
-13. [Help Module](#help-module)
-14. [Logging Out](#logging-out)
-15. [Technical Features & Algorithm Integration](#technical-features--algorithm-integration)
+## 1. System Overview
+
+The E.M. Cayetano Store Management System supports daily hardware store operations for authorized users. It provides role-based access to inventory, sales, purchases, reports, alerts, archive records, maintenance tools, audit trail review, and help resources.
+
+The system is designed to keep store records accurate by saving official transactions through controlled workflows. Sales reduce stock, purchases and stock-in activities increase stock, non-sales stock-out records explain manual deductions, and sensitive actions are recorded for review.
 
 ---
 
-## System Overview
+## 2. User Roles
 
-### Purpose
-The E.M. Cayetano Trading POS-Integrated Inventory Management System is a web-based platform designed to support daily hardware store operations. It combines inventory tracking with a practical sales/POS workflow so customer purchases can be recorded accurately and inventory can be deducted automatically after each completed transaction.
+### Admin / Owner
+The Admin / Owner has full access to management functions, including user accounts, inventory master data, approvals, reports, archive restore, sales cancellation, maintenance, backup, restore, and audit review.
 
-### Key Features
-- **Dual-Branch Support**: Manage inventory for Manggahan and San Rafael locations
-- **Role-Based Access**: Admin/Owner, Sales Encoder, and Inventory Staff roles with clear responsibility boundaries
-- **POS-Integrated Sales**: Record sold items, unit prices, discounts, payment method, amount received, change, and completed sales records
-- **Automatic Inventory Deduction**: Successful sales reduce inventory immediately and create stock movement records
-- **Enhanced Security**: Bcrypt password hashing, Two-Factor Authentication (2FA)
-- **High Performance**: Merge Sort for efficient data sorting, Binary Search for fast lookups
-- **Real-Time Operations**: Live filtering, searching, and data updates
-- **Professional UI**: Yellow (#FFFF00) and Red (#FF0000) color scheme
+### Sales Encoder
+The Sales Encoder records customer sales, checks item availability, processes item refunds when allowed, and reviews sales-related information.
 
-### User Roles
-- **Admin / Owner**: Full system access for the business owner or authorized owner-level user, including user management, reports, archive, maintenance, inventory setup, reorder review, and business oversight
-- **Sales Encoder**: Records customer purchases through the Sales/POS workflow and helps keep sales-based stock deduction accurate
-- **Inventory Staff**: Handles inventory operations such as Stock In, Stock Out, physical stock checking, and inventory monitoring
+### Inventory Staff
+Inventory Staff can monitor inventory, record Stock In and Stock Out, receive supplier deliveries, review archived items, generate inventory-related reports, and prepare add/edit item requests for Admin review.
 
 ---
 
-## Getting Started
+## 3. Login and Account Security
 
-### Accessing the System
-1. Navigate to the application URL in your web browser
-2. You'll be greeted with the **Login Screen**
+1. Open the system in a supported browser.
+2. Enter your assigned username and password.
+3. Complete the verification step when required.
+4. Confirm that your role and branch are correct after login.
+5. Use only your own account.
+6. Log out after use, especially on shared devices.
 
-### System Requirements
-- Modern web browser (Chrome, Firefox, Safari, Edge)
-- Internet connection
-- Valid user credentials
-
----
-
-## User Authentication Flow
-
-### 1. Admin-Managed Account Creation
-
-The system no longer supports public account requests. This is intentional. In a real hardware store, access should be given only to approved store personnel. The Admin/Owner creates accounts, assigns roles, assigns the branch, and provides the temporary password.
-
-#### Step-by-Step Process:
-1. **Admin / Owner Opens User Management**
-   - The Admin/Owner creates the account from the official employee list.
-
-2. **Fill Account Details**
-   - **Full Name**: Complete employee name
-   - **Username**: Unique username for login
-   - **Email**: Valid email address
-   - **Branch**: Manggahan or San Rafael
-   - **Role**: Admin/Owner, Sales Encoder, or Inventory Staff
-
-3. **Temporary Password**
-   - The system generates a temporary password.
-   - The user must change this password during first login.
-   - Passwords are protected using **Bcrypt** before storage.
-
-4. **Access Control**
-   - If an employee resigns or should no longer use the system, the Admin/Owner can deactivate the account instead of deleting operational history.
-
-#### Technical Note:
-```
-🔒 Security: Bcrypt Algorithm
-- Password undergoes 10 rounds of hashing
-- Salt is automatically generated and included in hash
-- Stored format: $2b$10$[salt][hash]
-- Impossible to reverse-engineer original password
-```
+Passwords and verification codes must not be shared. If access is no longer needed, the Admin should deactivate the account instead of deleting operational history.
 
 ---
 
-### 2. Login Process
+## 4. Dashboard
 
-#### Step-by-Step Process:
-1. **Enter Credentials**
-   - **Username**: Your registered username
-   - **Password**: Your password (entered in plain text)
-   
-2. **Authentication** (Behind the Scenes)
-   - System retrieves the matching user account from the database
-   - Your entered password is compared with stored hash using **Bcrypt verification**
-   - Bcrypt re-hashes your input and compares with stored hash
-   - Only matching hashes grant access
-   
-3. **Two-Factor Authentication (2FA)**
-   - Upon successful password verification, you're redirected to **2FA Screen**
-   - A 6-digit code is displayed on screen
-   - **Enter the 6-digit code** in the input field
-   - Code validation occurs
-   
-4. **Access Granted**
-   - Successful 2FA verification redirects to Dashboard
-   - Session is established
-   - User context is set (role, branch, preferences)
+The Dashboard shows role-based business information and shortcuts. It may include sales activity, stock alerts, manual items for review, pending requests, and operational reminders depending on the signed-in role. Profit indicators and Actual Earnings information are shown only to Admin / Owner users.
 
-#### Authentication Flow Diagram:
-```
-Login Screen
-    ↓
-Enter Username/Password
-    ↓
-[Database Lookup] Find User
-    ↓
-[Bcrypt] Verify Password Hash
-    ↓
-2FA Screen - Display 6-Digit Code
-    ↓
-Enter Code → Validate
-    ↓
-Dashboard (Logged In)
-```
+Dashboard values are based on saved records. Drafts and unfinished forms are not included in official totals.
 
 ---
 
-### 3. Forgot Password
+## 5. Inventory Module
 
-If you forget your password:
-1. Click **"Forgot Password?"** on Login Screen
-2. Enter your **registered email**
-3. System validates email exists
-4. Redirected to **Set Password Screen**
-5. Create new password (hashed with Bcrypt)
-6. Return to Login Screen
+The Inventory Module is used to review active items, stock levels, supplier details, pricing, stock status, and reorder information.
 
----
+### Common Inventory Actions
 
-## Dashboard
+- Search active inventory by item name, item code, supplier, category, or other item details.
+- Filter items by category, supplier, and stock status.
+- Sort inventory columns to organize the list.
+- View stock level, stock status, selling price, cost price, and suggested reorder information.
+- Record Stock In and Stock Out when permitted by role.
+- Prepare Add Item or Edit Item requests when Admin approval is required.
 
-### Overview
-The Dashboard is your command center after successful login. It provides:
-- Quick access to all modules
-- System overview and statistics
-- Branch-specific information
-- User profile access
+### Add and Edit Item Requests
 
-### Dashboard Features:
-1. **Navigation Menu**
-   - Sidebar or top navigation with module icons
-   - Color-coded sections (Yellow/Red theme)
-   
-2. **Quick Stats** (Visible to all users)
-   - Total inventory items
-   - Low stock alerts count
-   - Recent activities
-   - Branch-specific metrics
-   
-3. **Module Access Buttons**
-   - **Inventory**: Manage products and stock
-   - **Search**: Quick product lookup
-   - **Reports**: Generate and view reports
-   - **Alerts**: Stock and system notifications
-   - **Archive**: View archived items
-   - **User Management**: (Admin only) Manage user accounts
-   - **Maintenance**: (Admin only) System settings
-   - **Help**: Documentation and support
+Inventory Staff can prepare add or edit item requests. These requests do not immediately change official inventory records. The item becomes official only after Admin approval.
 
-4. **User Profile Section**
-   - Display name and role
-   - Branch information
-   - Logout button
+Admin users can review pending requests from Inventory Approval Requests. The review screen shows the item name, requester, request date, and changed fields. Approved requests update the official inventory record. Rejected requests do not change inventory.
+
+### Concurrency and Record Protection
+
+When saving inventory edits, the system checks whether the item was changed by another user while the form was open. If the item was already updated, the system prevents the older save and asks the user to review the latest details.
 
 ---
 
-## Inventory Module
+## 6. Stock In and Stock Out
 
-### Purpose
-Centralized inventory management with advanced sorting, searching, and filtering capabilities powered by integrated algorithms.
+Stock In increases item quantity. Stock Out reduces item quantity for non-sales reasons. Inventory Staff and Admin users may perform these actions when allowed by role.
 
-### Features & Algorithm Integration:
+### Stock In
 
-#### 1. **View Inventory**
-- **Table Display**
-  - Product ID, Name, Description, Quantity, Price, Category, Branch, Status
-  - Responsive design for mobile/tablet/desktop
-  
-- **Sorting Functionality** 🔥 **[Merge Sort Algorithm]**
-  - Click any column header to sort
-  - **Behind the Scenes**:
-    - Merge Sort algorithm processes the entire inventory dataset
-    - Time Complexity: O(n log n) - efficient for large datasets
-    - Stable sort maintains relative order of equal elements
-    - Ascending/Descending toggle
-  - **Sortable Columns**: All columns support sorting
-  
-#### Technical Note - Merge Sort:
-```javascript
-// When you click a column header:
-1. Merge Sort divides inventory into smaller arrays
-2. Recursively sorts each sub-array
-3. Merges sorted sub-arrays back together
-4. Returns fully sorted inventory
-5. UI updates with sorted data
-```
+Use Stock In for corrections or operational stock additions. For supplier deliveries, use Purchase Entry when supplier document details must be recorded.
 
-#### 2. **Search & Filter** 🔥 **[Binary Search & Linear Search]**
+### Stock Out
 
-**Real-Time Search Bar**
-- Type product name, ID, or description
-- **Algorithm Selection**:
-  - If inventory is **sorted** by the search field → **Binary Search** used
-    - Time Complexity: O(log n) - extremely fast
-    - Divides search space in half each iteration
-  - If inventory is **unsorted** → **Linear Search** used
-    - Time Complexity: O(n) - checks each item
-    - Reliable for any dataset state
+Use Stock Out for non-sales deductions such as damage, missing item, transfer, correction, or other approved operational reasons.
 
-**Filter Options**
-- **By Branch**: Manggahan / San Rafael / All
-- **By Category**: Electronics, Clothing, Food, etc.
-- **By Status**: Available, Low Stock, Out of Stock
-- **Combination Filters**: Apply multiple filters simultaneously
-
-**Filter Algorithm Flow**:
-```
-User enters search term
-    ↓
-Is inventory sorted by search field?
-    ↓           ↓
-   YES         NO
-    ↓           ↓
-Binary Search  Linear Search
-    ↓           ↓
-Return matching items
-    ↓
-Display filtered results
-```
-
-#### 3. **Add New Product**
-- Click **"Add Product"** button
-- Fill form fields:
-  - Product Name
-  - Description
-  - Quantity (number)
-  - Price (decimal)
-  - Category (dropdown)
-  - Branch (dropdown)
-  
-- **Duplicate Prevention** 🔥 **[Linear Search]**
-  - Before adding, system searches existing inventory
-  - Linear Search checks if product ID/name already exists
-  - Prevents duplicate entries
-  
-- **Validation**
-  - All fields required
-  - Quantity must be positive number
-  - Price must be valid decimal
-  
-- **Automatic Status Assignment**
-  - Quantity > 20: "Available"
-  - Quantity 1-20: "Low Stock"
-  - Quantity 0: "Out of Stock"
-
-#### 4. **Edit Product**
-- Click **Edit** icon/button on any row
-- Modal/form opens with current data pre-filled
-- Modify any field
-- **Validation applies** (same as Add)
-- Click **"Save Changes"**
-- **Re-sorting**: If sort is active, Merge Sort re-processes data
-
-#### 5. **Delete Product**
-- Click **Delete** icon/button
-- **Confirmation Dialog** appears
-  - "Are you sure you want to delete [Product Name]?"
-  - Cancel / Confirm buttons
-- Upon confirmation:
-  - Product moved to Archive (soft delete)
-  - Removed from active inventory
-  - Can be restored from Archive Module
-
-#### 6. **Export Inventory**
-- **Export to CSV**: Download current view as spreadsheet
-- **Export to PDF**: Generate printable inventory report
-- **Filters Applied**: Exported data reflects current filters/sorting
+Before saving, review the current stock, quantity change, and resulting stock balance.
 
 ---
 
-## Search Module
+## 7. Sales Module
 
-### Purpose
-Quick product lookup across the entire inventory database with intelligent algorithm selection.
-
-### Features:
-
-#### 1. **Universal Search Bar**
-- Large search input field
-- Placeholder: "Search by product name, ID, category..."
-- Real-time results as you type
-
-#### 2. **Intelligent Search Algorithm** 🔥 **[Binary Search + Linear Search]**
-
-**How It Works**:
-```
-User enters search query
-    ↓
-System analyzes current inventory state
-    ↓
-Is inventory sorted by Product ID or Name?
-    ↓              ↓
-  YES             NO
-    ↓              ↓
-Binary Search    Linear Search
-(Fast - O(log n)) (Comprehensive - O(n))
-    ↓              ↓
-Return results in milliseconds
-```
-
-**Search Capabilities**:
-- **Exact Match**: "Product-001" finds exact ID
-- **Partial Match**: "Prod" finds all products starting with "Prod"
-- **Case Insensitive**: "laptop" = "LAPTOP" = "Laptop"
-- **Multi-Field**: Searches across Name, ID, Description, Category
-
-#### 3. **Search Results Display**
-- **Grid/List View Toggle**
-- **Result Count**: "Found 15 results for 'laptop'"
-- **Product Cards** showing:
-  - Product image (if available)
-  - Name
-  - ID
-  - Price
-  - Quantity
-  - Branch
-  - Quick Actions (View, Edit, Delete)
-
-#### 4. **Advanced Filters**
-- Same filtering options as Inventory Module
-- **Search Within Results**: Narrow down search results
-- **Sort Results**: Apply Merge Sort to search results
-
-#### 5. **Search History** (Optional Feature)
-- Recent searches saved
-- Quick re-search with one click
-
----
-
-## Sales / POS Module
-
-### Purpose
-The Sales / POS module records customer purchases and deducts inventory automatically after a successful transaction. This reduces manual stock updates, improves transaction accuracy, and makes sales-based stock movement traceable.
+The Sales Module records customer transactions using official sales invoice details.
 
 ### Standard Sales Workflow
-1. **Select Customer Type**
-   - Choose Walk-in Customer, Regular Customer, or Contractor / Project Buyer.
 
-2. **Add Sold Items**
-   - Select one or more inventory items.
-   - Enter the quantity sold.
-   - Confirm or enter the unit price.
-   - If the item has a default selling price, the Unit Price is auto-filled.
-   - The system prevents duplicate item lines and prevents selling more than the current stock.
+1. Enter the official Sales Invoice number.
+2. Choose the customer type.
+3. Add inventory items or approved manual items.
+4. Review quantity, unit price, discount, delivery charge, payment method, amount received, and total.
+5. Save the sale only after checking the transaction details.
 
-3. **Record Payment Details**
-   - Select the payment method: Cash, GCash, Bank Transfer, or Store Credit.
-   - Enter an optional discount.
-   - For cash payments, enter the amount received.
-   - The system computes the change automatically.
+Completed sales deduct tracked inventory and create stock movement records.
 
-4. **Save Sale**
-   - The system validates item quantity, unit price, discount, amount received, and available stock.
-   - The backend saves the sale as a database transaction.
-   - Inventory is deducted automatically.
-   - A stock movement is recorded as **Stock Out - Sales**.
-   - The audit trail records who saved the transaction.
+### Refunds
 
-### Important Business Rules
-- Sales require a valid unit price because totals depend on it.
-- Discounts cannot be greater than the sales subtotal.
-- Cash amount received must be equal to or greater than the amount due.
-- Non-cash payments are recorded with zero change.
-- Sales deductions are separate from non-sales Stock Out reasons such as damage, expiry, missing items, transfer, or correction.
+Refunds are recorded from completed sales. Select the refundable item, enter the refund quantity, choose or type a clear refund reason, and confirm the refund.
+
+Quick refund reason chips help standardize common reasons. Users may still edit the refund note or type a custom explanation.
+
+### Sale Cancellation
+
+Cancelling an entire sale is an Admin action. Use refund when only selected items are returned. Use cancellation only when the full transaction must be voided.
 
 ---
 
-## Reports Module
+## 8. Purchases Module
 
-### Purpose
-Generate comprehensive reports with advanced data analysis and efficient searching.
+The Purchases Module records supplier deliveries and purchase entries.
 
-### Report Types:
+1. Select or enter the supplier.
+2. Add received items.
+3. Enter quantity and unit cost.
+4. Review stock impact and subtotal.
+5. Save the purchase when all details are correct.
 
-#### 1. **Inventory Summary Report**
-- Total items per branch
-- Category breakdown
-- Stock value calculation
-- Status distribution (Available/Low/Out of Stock)
-
-#### 2. **Stock Level Report**
-- Products below the low-stock threshold
-- Overstocked items
-- Trending items
-
-#### 3. **Branch Comparison Report**
-- Side-by-side branch metrics
-- Performance indicators
-- Stock distribution
-
-#### 4. **Custom Reports**
-- Date range selection
-- Custom field selection
-- Filtered data reports
-
-### Report Generation Process:
-
-#### Step-by-Step:
-1. **Select Report Type** (dropdown)
-2. **Configure Parameters**
-   - Date Range (From/To)
-   - Branch (Manggahan / San Rafael / Both)
-   - Categories (Select multiple)
-   - Status filters
-   
-3. **Generate Report** (Click button)
-   - **Algorithm Integration** 🔥:
-     - **Merge Sort**: Sorts report data by selected criteria
-     - **Binary Search**: Quickly locates specific date ranges or categories
-     - Data aggregation and calculations
-   
-4. **View Report**
-   - Interactive table display
-   - Charts and graphs (if applicable)
-   - Summary statistics
-   
-5. **Export Options**
-   - **PDF**: Professional formatted report
-   - **CSV**: Spreadsheet format
-   - **Print**: Direct printing
-
-#### Report Features:
-- **Pagination**: Navigate large reports
-- **Search Within Report** 🔥 **[Binary/Linear Search]**
-  - Search bar to find specific entries
-  - Algorithm selection based on sort state
-- **Dynamic Filtering**: Real-time filter adjustments
-- **Auto-Save**: Save report configurations for reuse
+Saved purchase entries increase stock for tracked items and keep supplier receiving records available for reports.
 
 ---
 
-## Alerts Module
+## 9. Reports Module
 
-### Purpose
-Real-time notifications for stock levels, system events, and important updates.
+Reports help users review business activity based on role access.
 
-### Alert Types:
+Common report areas include:
 
-#### 1. **Low Stock Alerts**
-- **Trigger**: When product quantity ≤ 20
-- **Display**:
-  - Product name
-  - Current quantity
-  - Branch
-  - Suggested reorder amount
-- **Actions**: Restock button (navigates to Edit Product)
+- Inventory Summary
+- Detailed Inventory
+- Low Stock Alert
+- Supplier Reorder
+- Category Analysis
+- Purchases
+- Stock Movement History
+- Sales-Based Stock Movement
+- Actual Earnings for Admin users
+- Untracked Sales Items
 
-#### 2. **Out of Stock Alerts**
-- **Trigger**: When product quantity = 0
-- **Priority**: High (Red highlighting)
-- **Actions**: Immediate restock option
+Report values are calculated from saved official records. Drafts, unfinished forms, and unapproved requests are not included in official report totals.
 
-#### 3. **System Alerts**
-- Updates and maintenance notifications
-- User activity alerts (Admin only)
-- Security alerts (failed login attempts)
-
-### Alert Features:
-
-#### 1. **Alert Dashboard**
-- **Categorized Tabs**: Low Stock / Out of Stock / System / All
-- **Badge Counts**: Number of unread alerts
-- **Priority Sorting** 🔥 **[Merge Sort]**
-  - Alerts sorted by priority (High → Medium → Low)
-  - Then by date (Newest first)
-  - Merge Sort ensures efficient ordering
-
-#### 2. **Alert Search** 🔥 **[Linear Search]**
-- Search alerts by product name or alert type
-- Linear Search scans alert descriptions
-
-#### 3. **Alert Actions**
-- **Mark as Read**: Dismisses alert
-- **Take Action**: Direct link to fix issue (e.g., restock)
-- **Dismiss All**: Clear all read alerts
-
-#### 4. **Alert Settings** (Admin)
-- Configure alert thresholds
-- Email notifications toggle
-- Alert frequency settings
+CSV exports are intended for spreadsheet review and filtering. PDF exports are intended for printable summaries and formal review copies.
 
 ---
 
-## Archive Module
+## 10. Alerts and Notifications
 
-### Purpose
-View and manage soft-deleted inventory items with restoration capabilities.
+Alerts notify users about important operational items such as low stock, out of stock, pending review items, maintenance events, and other system reminders.
 
-### Features:
-
-#### 1. **Archived Items View**
-- **Table Display**: Similar to Inventory Module
-  - Product details
-  - Date archived
-  - Archived by (username)
-  - Reason (if provided)
-
-#### 2. **Search Archived Items** 🔥 **[Linear Search]**
-- Search bar for finding archived products
-- Linear Search through archived dataset
-- Filter by date range, branch, category
-
-#### 3. **Sort Archived Items** 🔥 **[Merge Sort]**
-- Sort by any column
-- Date archived (most common sort)
-- Merge Sort processes archived inventory
-
-#### 4. **Restore Products**
-- **Select Items**: Checkbox for bulk selection
-- **Restore Button**: Returns items to active inventory
-- **Confirmation Dialog**: Prevents accidental restoration
-- **Process**:
-  - Item removed from archive
-  - Added back to main inventory
-  - Status recalculated based on quantity
-
-#### 5. **Permanent Delete** (Admin Only)
-- **Hard Delete**: Permanently removes item
-- **Warning Dialog**: "This action cannot be undone"
-- **Confirmation Required**: Type product name to confirm
-
-#### 6. **Export Archive**
-- Export archived inventory to CSV/PDF
-- Useful for record-keeping and audits
+Use filters to focus on the alert type or workflow area that needs attention. Mark alerts as read after reviewing them.
 
 ---
 
-## User Management Module
+## 11. Archive Module
 
-**Access**: Admin / Owner Only
+Archived items are inactive inventory records kept for review. Archiving removes an item from active inventory without deleting its history.
 
-### Purpose
-Manage user accounts, roles, and permissions across both branches.
+Admin users can restore archived items when appropriate. Inventory Staff can review archived records and ask an Admin when an item should return to active inventory.
 
-### Features:
-
-#### 1. **User List View**
-- **Table Columns**:
-  - Username
-  - Full Name
-  - Email
-  - Branch
-  - Role (Admin/Owner, Sales Encoder, or Inventory Staff)
-  - Status (Active/Inactive)
-  - Created Date
-  
-- **Sorting** 🔥 **[Merge Sort]**
-  - Sort by any column
-  - Multi-level sorting (e.g., Branch → Role → Name)
-
-#### 2. **Search Users** 🔥 **[Binary/Linear Search]**
-- Search by username, name, or email
-- Algorithm selection based on sort state
-- Real-time filtering
-
-#### 3. **Create User Account**
-- Click **"Create User Account"** button
-- **Form Fields**:
-  - Full Name
-  - Username
-  - Email (format validation)
-  - Branch (dropdown)
-  - Role (Admin/Owner, Sales Encoder, or Inventory Staff)
-  
-- **Password Setup**:
-  - System generates a temporary password
-  - User changes password on first login
-  - **Bcrypt hashing** applied
-  
-- **Duplicate Prevention**:
-  - Linear Search checks existing usernames
-  - Email uniqueness validation
-
-#### 4. **Edit User**
-- Click **Edit** button on user row
-- **Editable Fields**:
-  - Full Name
-  - Email
-  - Branch
-  - Role (Admin/Owner can change roles)
-  - Status (Active/Inactive)
-  
-- **Password Reset**:
-  - "Reset Password" button
-  - User receives notification
-  - Redirected to Set Password Screen on next login
-
-#### 5. **Deactivate/Activate User**
-- **Toggle Status**: Active ↔ Inactive
-- **Inactive Users**:
-  - Cannot log in
-  - Data preserved
-  - Can be reactivated anytime
-
-#### 6. **Delete User**
-- **Confirmation Dialog**: Required
-- **Soft Delete**: Moved to archived users
-- **Data Retention**: User's activity history preserved
-
-#### 7. **User Activity Log** (Optional)
-- View user login history
-- Track actions performed
-- Audit trail for compliance
+If another browser still shows old archive information after a restore, refresh or revisit the page to load the latest database state.
 
 ---
 
-## Maintenance Module
+## 12. Maintenance Module
 
-**Access**: Admin Only
+The Maintenance Module is available to Admin users for system care and data safety.
 
-### Purpose
-System configuration, data maintenance, and administrative tools.
+Common maintenance functions include:
 
-### Features:
+- Database backup
+- Database restore
+- Data integrity check
+- Database optimization
+- Selective data export
+- System log review and cleanup
 
-#### 1. **System Settings**
-- **Branch Management**:
-  - Add/Edit branch details
-  - Branch-specific configurations
-  
-- **Category Management**:
-  - Add/Edit/Delete product categories
-  - Category sorting 🔥 **[Merge Sort]**
-  
-- **Alert Thresholds**:
-  - Set Low Stock threshold (default: 20)
-  - Configure Out of Stock notifications
-
-#### 2. **Database Maintenance**
-- **Backup Database**:
-  - Download complete system backup
-  - Scheduled automatic backups
-  
-- **Restore Database**:
-  - Upload backup file
-  - Restore to previous state
-  
-- **Clear Archive**:
-  - Permanently delete all archived items
-  - **Warning**: Irreversible action
-
-#### 3. **Data Integrity Tools**
-- **Duplicate Detection** 🔥 **[Binary Search + Linear Search]**:
-  - Scan inventory for duplicate Product IDs
-  - Binary Search on sorted IDs for efficiency
-  - Report and merge duplicates
-  
-- **Data Validation**:
-  - Check for missing required fields
-  - Identify data inconsistencies
-  
-- **Orphan Data Cleanup**:
-  - Remove references to deleted items
-  - Clean up broken relationships
-
-#### 4. **Security Settings**
-- **Password Policy**:
-  - Minimum length (default: 6)
-  - Complexity requirements toggle
-  
-- **2FA Settings**:
-  - Enable/Disable 2FA globally
-  - 2FA enforcement for Admins
-  
-- **Session Management**:
-  - Session timeout duration
-  - Concurrent login policy
-
-#### 5. **System Logs**
-- **Activity Logs**:
-  - All user actions timestamped
-  - Searchable log entries 🔥 **[Linear Search]**
-  
-- **Error Logs**:
-  - System errors and exceptions
-  - Debugging information
-  
-- **Export Logs**: Download as CSV for external analysis
-
-#### 6. **Performance Monitoring**
-- **Algorithm Performance**:
-  - Track Merge Sort execution times
-  - Binary Search vs Linear Search usage statistics
-  - Bcrypt hashing performance
-  
-- **System Metrics**:
-  - Active users count
-  - Database size
-  - Response times
+Backups should be stored securely. Restores should be performed only with valid system-generated SQL backup files and after confirming that the selected file is correct.
 
 ---
 
-## Help Module
+## 13. Draft Recovery
 
-### Purpose
-Comprehensive documentation and support resources.
+Some operational forms can save unfinished work as drafts. Drafts help prevent accidental data loss caused by browser refresh, tab closure, power interruption, or session interruption.
 
-### Features:
+Drafts are not official records. They do not deduct stock, add stock, create sales, create purchases, affect reports, or appear in dashboard totals.
 
-#### 1. **User Documentation**
-- **Getting Started Guide**: First-time user walkthrough
-- **Module Guides**: Detailed instructions for each module
-- **Video Tutorials**: Step-by-step video guides
-- **FAQ**: Frequently asked questions
-
-#### 2. **Search Help Articles** 🔥 **[Linear Search]**
-- Search bar for finding help topics
-- Linear Search through documentation
-- Related articles suggestions
-
-#### 3. **Algorithm Information**
-- **Educational Content**:
-  - "How Merge Sort Works"
-  - "Understanding Binary Search"
-  - "Why We Use Bcrypt"
-  
-- **Performance Explanations**:
-  - Time complexity basics
-  - When each algorithm is used
-  - Benefits to end-users
-
-#### 4. **Troubleshooting**
-- **Common Issues**:
-  - Login problems
-  - Password reset
-  - Data not displaying
-  
-- **Error Messages**: Explanations and solutions
-
-#### 5. **Contact Support**
-- **Support Form**:
-  - Submit issue description
-  - Attach screenshots
-  - Priority selection
-  
-- **Contact Information**:
-  - Email: support@emcayetano.com
-  - Phone: [Support Number]
-  - Business Hours
-
-#### 6. **System Information**
-- Current version
-- Release notes
-- Upcoming features
-- Known issues
+When a draft is detected, the user may resume editing or discard it.
 
 ---
 
-## Logging Out
+## 14. Multi-User Work
 
-### Step-by-Step:
+The system supports multiple users working at the same time. Important actions are validated by the server before saving.
 
-1. **Locate Logout Button**
-   - Usually in top-right corner
-   - Or in user profile dropdown menu
-
-2. **Click "Logout"**
-   - Confirmation dialog may appear (optional)
-   - "Are you sure you want to logout?"
-
-3. **Session Termination**
-   - User context cleared
-   - Authentication tokens invalidated
-   - Local data cleared
-
-4. **Redirect to Login Screen**
-   - Safely logged out
-   - Can log back in anytime
-
-### Security Note:
-- Always log out on shared computers
-- Session automatically expires after inactivity (configurable in Maintenance)
-- Closing browser doesn't log you out (session persists)
+When a record is being updated, the system uses database transactions, row locking, and timestamp checks where needed to protect official records. If another user updates the same item first, the system may ask the current user to review the latest record before saving.
 
 ---
 
-## Technical Features & Algorithm Integration
+## 15. Help Module
 
-### 1. Merge Sort Algorithm
+The Help Module provides role-based guides, FAQs, troubleshooting steps, support contact information, and a downloadable user manual PDF.
 
-**Purpose**: Efficient sorting of large datasets
-
-**Where It's Used**:
-- ✅ Inventory Module: Sorting inventory table by any column
-- ✅ Reports Module: Sorting report data
-- ✅ Alerts Module: Sorting alerts by priority and date
-- ✅ Archive Module: Sorting archived items
-- ✅ User Management: Sorting user lists
-- ✅ Maintenance Module: Sorting categories and logs
-
-**How It Works**:
-```javascript
-// Simplified concept:
-1. Divide inventory array into two halves
-2. Recursively sort each half
-3. Merge sorted halves back together
-4. Result: Fully sorted array
-
-// Example with 8 items:
-[38, 27, 43, 3, 9, 82, 10, 1]
-         ↓ (divide)
-[38, 27, 43, 3] [9, 82, 10, 1]
-         ↓ (divide more)
-[38, 27] [43, 3] [9, 82] [10, 1]
-         ↓ (divide to single)
-[38][27][43][3][9][82][10][1]
-         ↓ (merge & sort)
-[27,38][3,43][9,82][1,10]
-         ↓ (merge & sort)
-[3,27,38,43][1,9,10,82]
-         ↓ (final merge)
-[1,3,9,10,27,38,43,82] ✓
-```
-
-**Performance**:
-- Time Complexity: O(n log n)
-- Space Complexity: O(n)
-- Stable sort (maintains relative order)
-- Predictable performance
-
-**User Benefits**:
-- ⚡ Fast sorting even with thousands of products
-- 🎯 Consistent performance
-- 📊 Reliable data organization
+Use the search field to find a topic quickly. The downloaded manual includes the workflows and reminders available to the signed-in role.
 
 ---
 
-### 2. Binary Search Algorithm
+## 16. Best Practices
 
-**Purpose**: Ultra-fast searching in sorted datasets
-
-**Where It's Used**:
-- ✅ Search Module: When inventory is sorted
-- ✅ Inventory Module: Fast filtering on sorted columns
-- ✅ Reports Module: Date range searches
-- ✅ Maintenance Module: Duplicate detection
-
-**How It Works**:
-```javascript
-// Searching for "Product-045" in sorted array:
-
-Step 1: Check middle element
-[001, 012, 023, 034, 045, 056, 067, 078, 089]
-                    ↑ (middle: 045)
-                 Found! ✓
-
-// If not found, repeat in relevant half:
-Searching for "078":
-[001, 012, 023, 034, 045, 056, 067, 078, 089]
-                    ↑ (middle: 045)
-                   078 > 045, search right half
-                [056, 067, 078, 089]
-                      ↑ (middle: 067)
-                   078 > 067, search right half
-                      [078, 089]
-                       ↑ (middle: 078)
-                      Found! ✓
-```
-
-**Performance**:
-- Time Complexity: O(log n)
-- Example: Searching 1,000,000 items takes ~20 comparisons
-- Space Complexity: O(1)
-
-**Requirements**:
-- ⚠️ Data MUST be sorted
-- Only works on ordered datasets
-
-**User Benefits**:
-- ⚡⚡⚡ Extremely fast searches
-- 💨 Instant results even with massive inventories
-- 🎯 Pinpoint accuracy
+- Check your branch before saving records.
+- Search before creating a new item.
+- Use clear item names and supplier names.
+- Review totals and stock impact before confirming.
+- Use standard reasons where available.
+- Keep backup files secure.
+- Report incorrect access or suspicious activity to an Admin.
+- Do not refresh repeatedly during final transaction submission.
+- Wait for the success or error message before clicking again.
 
 ---
 
-### 3. Linear Search Algorithm
+## 17. Troubleshooting
 
-**Purpose**: Comprehensive searching in any dataset (sorted or unsorted)
+### A menu or button is not visible
+The action may not be included in your role. Ask an Admin to review your access if your job assignment changed.
 
-**Where It's Used**:
-- ✅ Search Module: When inventory is unsorted
-- ✅ Inventory Module: General filtering, duplicate checking
-- ✅ User Management: Username uniqueness validation
-- ✅ Alerts Module: Alert searching
-- ✅ Archive Module: Archived item searches
-- ✅ Help Module: Documentation search
+### A record looks outdated in another browser
+The other browser may still be showing data loaded earlier. Refresh the module or return to the page to reload the latest records.
 
-**How It Works**:
-```javascript
-// Searching for "Laptop" in unsorted array:
-Check item 1: "Mouse" ❌
-Check item 2: "Keyboard" ❌
-Check item 3: "Monitor" ❌
-Check item 4: "Laptop" ✓ Found!
+### An inventory save is blocked because the item changed
+Another user updated the item while the form was open. Reload the latest item details, review the current values, and save again if still needed.
 
-// Continues through entire array if needed
-```
+### A backup restore fails
+Use only SQL backups generated by this system. Confirm that the file is complete and belongs to the correct deployment.
 
-**Performance**:
-- Time Complexity: O(n)
-- Example: Searching 1,000 items may take up to 1,000 comparisons
-- Space Complexity: O(1)
-
-**Advantages**:
-- ✅ Works on any data (sorted or unsorted)
-- ✅ Simple and reliable
-- ✅ Finds all matches (not just first)
-- ✅ No preprocessing required
-
-**User Benefits**:
-- 🔍 Comprehensive search results
-- 📋 Works in all scenarios
-- 🎯 Never misses a match
+### Search shows no results
+Clear filters, check spelling, or use a shorter keyword.
 
 ---
 
-### 4. Bcrypt Password Hashing Algorithm
+## 18. Support
 
-**Purpose**: Secure password storage and verification
+For help, use the Help Module or contact support using the official contact details shown inside the system.
 
-**Where It's Used**:
-- ✅ Admin-created accounts: Protect temporary password setup
-- ✅ Login Screen: Verify entered passwords
-- ✅ Set Password Screen: Hash password changes
-- ✅ Forgot Password: Hash new passwords after reset
-- ✅ User Management: Hash passwords for new users
-
-**How It Works**:
-
-**Hashing Process** (Set Password / Password Change):
-```javascript
-User enters: "MyPassword123"
-         ↓
-Bcrypt generates random salt: "$2b$10$N9qo8uLOickgx2ZMRZoMye"
-         ↓
-Combines salt + password
-         ↓
-Applies 10 rounds of hashing (2^10 = 1,024 iterations)
-         ↓
-Final hash: "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
-         ↓
-Stored in database
-```
-
-**Verification Process** (Login):
-```javascript
-User enters: "MyPassword123"
-         ↓
-System retrieves stored hash from database
-         ↓
-Bcrypt extracts salt from stored hash
-         ↓
-Re-hashes entered password with same salt
-         ↓
-Compares new hash with stored hash
-         ↓
-Match? → Login successful ✓
-No match? → Login failed ❌
-```
-
-**Security Features**:
-- 🔐 **One-way hashing**: Cannot reverse to get original password
-- 🧂 **Unique salt**: Each password gets unique random salt
-- ⏱️ **Computational cost**: 10 rounds makes brute-force attacks impractical
-- 🛡️ **Industry standard**: Used by major platforms worldwide
-
-**Performance**:
-- Intentionally slow (security feature)
-- Hashing: ~60-100ms per password
-- Verification: ~60-100ms per attempt
-- Protects against rapid brute-force attacks
-
-**User Benefits**:
-- 🔒 Passwords never stored in readable form
-- 🛡️ Protected even if database is compromised
-- 🔐 Each user's password uniquely secured
-- ✅ Industry-standard security
-
----
-
-## Algorithm Selection Intelligence
-
-### Smart Algorithm Switching
-
-The system intelligently selects the optimal algorithm based on data state:
-
-#### Scenario 1: Sorted Inventory Search
-```
-User sorts inventory by Product ID (Merge Sort applied)
-    ↓
-User searches for "Product-045"
-    ↓
-System detects: Inventory is sorted by Product ID
-    ↓
-Uses: Binary Search (O(log n))
-    ↓
-Result: Ultra-fast search ⚡
-```
-
-#### Scenario 2: Unsorted Inventory Search
-```
-User hasn't sorted inventory
-    ↓
-User searches for "Laptop"
-    ↓
-System detects: Inventory is unsorted
-    ↓
-Uses: Linear Search (O(n))
-    ↓
-Result: Comprehensive search ✓
-```
-
-#### Scenario 3: Sorting Large Dataset
-```
-Inventory has 5,000 products
-    ↓
-User clicks "Sort by Price"
-    ↓
-Uses: Merge Sort (O(n log n))
-    ↓
-~12,000 operations (instead of 25,000,000 with bubble sort)
-    ↓
-Result: Sorted in milliseconds 🚀
-```
-
----
-
-## Performance Comparison
-
-### Real-World Examples
-
-**Dataset**: 10,000 products
-
-| Operation | Algorithm | Comparisons | Time |
-|-----------|-----------|-------------|------|
-| Sort entire inventory | Merge Sort | ~120,000 | ~50ms |
-| Sort entire inventory | Bubble Sort (not used) | ~50,000,000 | ~5000ms |
-| Search sorted data | Binary Search | ~14 | <1ms |
-| Search unsorted data | Linear Search | ~5,000 (avg) | ~10ms |
-| Hash password | Bcrypt | 1,024 rounds | ~80ms |
-| Verify password | Bcrypt | 1,024 rounds | ~80ms |
-
-**Key Takeaways**:
-- Merge Sort is **100x faster** than simple sorting algorithms
-- Binary Search is **350x faster** than Linear Search (when applicable)
-- Bcrypt intentionally slow for security (prevents attacks)
-
----
-
-## Data Flow Example: Complete User Journey
-
-### Scenario: Admin Adds Product, Employee Searches It
-
-```
-1. ADMIN LOGS IN
-   ├─ LoginScreen: Linear Search finds admin user
-   ├─ Bcrypt verifies password (80ms)
-   ├─ 2FA validation
-   └─ → Dashboard
-
-2. ADMIN NAVIGATES TO INVENTORY MODULE
-   ├─ Inventory data loaded
-   ├─ Initial display (unsorted)
-   └─ Shows 5,000 products
-
-3. ADMIN ADDS NEW PRODUCT "Gaming Laptop XL"
-   ├─ Clicks "Add Product"
-   ├─ Fills form (Name, Qty: 50, Price: 45000, Branch: Manggahan)
-   ├─ System checks duplicates (Linear Search through 5,000 items)
-   ├─ No duplicates found
-   ├─ Product added to inventory
-   ├─ Status auto-set: "Available" (Qty > 20)
-   └─ Success message displayed
-
-4. ADMIN SORTS BY PRODUCT NAME
-   ├─ Clicks "Product Name" column header
-   ├─ Merge Sort processes 5,001 products
-   ├─ ~60,000 operations in ~50ms
-   └─ Inventory displayed alphabetically
-
-5. ADMIN LOGS OUT
-   └─ Session cleared
-
-6. EMPLOYEE LOGS IN (Different Branch: San Rafael)
-   ├─ LoginScreen: Linear Search finds employee user
-   ├─ Bcrypt verifies password (75ms)
-   ├─ 2FA validation
-   └─ → Dashboard
-
-7. EMPLOYEE NAVIGATES TO SEARCH MODULE
-   └─ Empty search bar displayed
-
-8. EMPLOYEE SEARCHES FOR "Gaming"
-   ├─ Types "Gaming" in search bar
-   ├─ System checks: Inventory sorted? NO (branch filter applied)
-   ├─ Linear Search scans inventory
-   ├─ Finds multiple matches including "Gaming Laptop XL"
-   ├─ Results displayed: 12 products found
-   └─ Shows products from ALL branches (or filters by San Rafael)
-
-9. EMPLOYEE CLICKS "Gaming Laptop XL"
-   ├─ Product details displayed
-   ├─ Shows: Manggahan branch, Qty: 50, Price: 45000
-   └─ Option to view full details
-
-10. EMPLOYEE GENERATES REPORT
-    ├─ Navigates to Reports Module
-    ├─ Selects "Stock Level Report" for San Rafael
-    ├─ Merge Sort arranges report data
-    ├─ Binary Search finds date range
-    ├─ Report generated and displayed
-    └─ Export to PDF option available
-```
-
----
-
-## Troubleshooting Common Issues
-
-### Login Issues
-
-**Problem**: "Invalid username or password"
-- **Cause**: Incorrect credentials or user doesn't exist
-- **Solution**: 
-  - Double-check username (case-sensitive)
-  - Use "Forgot Password" if needed
-  - Contact admin if account doesn't exist
-
-**Problem**: 2FA code not working
-- **Cause**: Code mismatch
-- **Solution**: 
-  - Enter the exact 6-digit code displayed
-  - Check for typos
-  - Code is case-sensitive (if letters included)
-
----
-
-### Search Not Finding Results
-
-**Problem**: Product exists but search doesn't find it
-- **Cause**: Filters applied or typo in search term
-- **Solution**:
-  - Clear all filters (Branch, Category, Status)
-  - Check spelling of search term
-  - Try partial search (e.g., "Lap" instead of "Laptop")
-
-**Problem**: Search is slow
-- **Cause**: Large dataset with Linear Search
-- **Solution**:
-  - Sort inventory first (enables Binary Search)
-  - Apply filters to narrow dataset
-  - Contact admin if persistent
-
----
-
-### Sorting Not Working
-
-**Problem**: Clicking column header doesn't sort
-- **Cause**: JavaScript disabled or browser issue
-- **Solution**:
-  - Refresh page (F5)
-  - Clear browser cache
-  - Try different browser
-  - Check internet connection
-
----
-
-### Password Issues
-
-**Problem**: Can't set password (too short)
-- **Cause**: Minimum 6 characters required
-- **Solution**: Use password with at least 6 characters
-
-**Problem**: Password not accepted during login
-- **Cause**: Incorrect password or caps lock on
-- **Solution**:
-  - Check caps lock key
-  - Re-type carefully
-  - Use "Forgot Password" to reset
-
----
-
-## Best Practices
-
-### For Efficient Searching
-1. **Sort before searching**: Enable Binary Search for speed
-2. **Use specific terms**: "LAP-001" better than "laptop"
-3. **Apply filters first**: Narrow dataset before searching
-4. **Use wildcards wisely**: Partial terms find more results
-
-### For Data Entry
-1. **Check duplicates**: Search before adding new products
-2. **Use consistent naming**: "Laptop HP 15" vs "HP 15 Laptop"
-3. **Fill all fields**: Complete data improves searchability
-4. **Regular updates**: Keep quantities current
-
-### For Security
-1. **Strong passwords**: Mix letters, numbers, symbols
-2. **Don't share accounts**: Each user should have own login
-3. **Log out on shared PCs**: Prevent unauthorized access
-4. **Change passwords regularly**: Every 3-6 months
-5. **Report suspicious activity**: Contact admin immediately
-
-### For Performance
-1. **Close unused tabs**: Keep one instance open
-2. **Regular browser updates**: Use latest browser version
-3. **Clear cache periodically**: Helps with speed
-4. **Use filters**: Reduce data displayed for faster loading
-
----
-
-## Keyboard Shortcuts (Optional Feature)
-
-If implemented:
-- **Ctrl + F**: Focus search bar
-- **Ctrl + N**: Add new product (in Inventory)
-- **Ctrl + S**: Save changes
-- **Esc**: Close modal/dialog
-- **Alt + L**: Logout
-- **F5**: Refresh page
-
----
-
-## Glossary
-
-**Algorithm**: Step-by-step procedure for solving a problem or performing a task
-
-**Bcrypt**: Cryptographic hashing algorithm designed for password security
-
-**Binary Search**: Search algorithm that divides search space in half each iteration (requires sorted data)
-
-**Branch**: Physical location of business (Manggahan or San Rafael)
-
-**Hash**: One-way transformation of data (passwords) into fixed-length string
-
-**Inventory**: Collection of products and stock managed by the system
-
-**Linear Search**: Search algorithm that checks each item sequentially
-
-**Merge Sort**: Efficient sorting algorithm using divide-and-conquer approach
-
-**O(n)**: Big-O notation - Linear time complexity (proportional to data size)
-
-**O(log n)**: Big-O notation - Logarithmic time complexity (very fast)
-
-**O(n log n)**: Big-O notation - Linearithmic time complexity (efficient for sorting)
-
-**Salt**: Random data added to passwords before hashing for added security
-
-**Session**: Period of active user interaction with system after login
-
-**Soft Delete**: Marking data as deleted without permanently removing it
-
-**Two-Factor Authentication (2FA)**: Security process requiring two verification steps
-
-**Verification**: Process of confirming password matches stored hash
-
----
-
-## System Updates & Changelog
-
-### Version 2.0 (Current - Algorithm Integration)
-
-**New Features**:
-- ✅ Merge Sort for all table sorting operations
-- ✅ Binary Search for sorted dataset searches
-- ✅ Linear Search for unsorted/comprehensive searches
-- ✅ Bcrypt password hashing and verification
-- ✅ Intelligent algorithm selection
-- ✅ Performance monitoring
-
-**Improvements**:
-- 🚀 100x faster sorting vs previous version
-- 🚀 350x faster searching (when sorted)
-- 🔒 Enhanced password security
-- 📊 Better performance with large datasets
-- 🎯 More accurate search results
-
-**Bug Fixes**:
-- Fixed duplicate product entries
-- Resolved slow sorting on large datasets
-- Improved password validation
-- Enhanced error handling
-
----
-
-## Support & Contact
-
-**Technical Support**:
-- Email: support@emcayetano.com
-- Phone: [Your Support Number]
-- Hours: Monday-Friday, 8:00 AM - 5:00 PM
-
-**For Issues**:
-1. Check Help Module documentation
-2. Review Troubleshooting section
-3. Contact system administrator
-4. Email technical support with:
-   - Username (don't include password)
-   - Issue description
-   - Screenshots (if applicable)
-   - Steps to reproduce
-
-**Feature Requests**:
-- Submit through Help Module feedback form
-- Email: features@emcayetano.com
-
-**Emergency Support**:
-- Critical system down issues
-- Data loss incidents
-- Security concerns
-- Phone: [Emergency Number]
-
----
-
-## Conclusion
-
-The E.M. Cayetano Trading Inventory Management System combines modern web technology with proven algorithms to deliver a fast, secure, and efficient inventory management experience. The integration of Merge Sort, Binary Search, Linear Search, and Bcrypt ensures optimal performance while maintaining data security.
-
-**Key Benefits**:
-- ⚡ Lightning-fast operations
-- 🔒 Bank-level password security
-- 📊 Scalable to thousands of products
-- 🎯 Accurate and reliable
-- 👥 User-friendly interface
-- 🌐 Accessible from anywhere
-
-Welcome to the future of inventory management!
-
----
-
-**Document Version**: 2.0  
-**Last Updated**: November 2, 2025  
-**Prepared For**: E.M. Cayetano Trading Users  
-**System Version**: 2.0 (Algorithm Integration Update)
+Do not send passwords, verification codes, or confidential backup files through unsecured messages.

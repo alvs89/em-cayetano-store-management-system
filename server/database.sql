@@ -275,7 +275,27 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')
 );
 
--- 12. BACKUP LOGS TABLE
+-- 12. INVENTORY CHANGE REQUESTS TABLE
+-- Stores Inventory Staff add/edit item requests for Admin review.
+CREATE TABLE IF NOT EXISTS inventory_change_requests (
+    request_id SERIAL PRIMARY KEY,
+    request_type VARCHAR(20) NOT NULL CHECK (request_type IN ('add_item', 'edit_item')),
+    branch VARCHAR(50) NOT NULL,
+    inventory_id INT REFERENCES branch_inventory(inventory_id) ON DELETE SET NULL,
+    item_name VARCHAR(150) NOT NULL,
+    requested_payload JSONB NOT NULL,
+    current_snapshot JSONB,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    requested_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+    requested_by_name TEXT,
+    reviewed_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+    reviewed_by_name TEXT,
+    review_note TEXT,
+    requested_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila'),
+    reviewed_at TIMESTAMP
+);
+
+-- 13. BACKUP LOGS TABLE
 -- Records backup and restore activity.
 CREATE TABLE IF NOT EXISTS backup_logs (
     id SERIAL PRIMARY KEY,
@@ -286,7 +306,7 @@ CREATE TABLE IF NOT EXISTS backup_logs (
     created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')
 );
 
--- 13. BRANCH SETTINGS TABLE
+-- 14. BRANCH SETTINGS TABLE
 -- Stores branch-level dashboard business targets.
 CREATE TABLE IF NOT EXISTS branch_settings (
     branch VARCHAR(50) PRIMARY KEY,
@@ -296,7 +316,7 @@ CREATE TABLE IF NOT EXISTS branch_settings (
     updated_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')
 );
 
--- 14. SYSTEM LOGS TABLE
+-- 15. SYSTEM LOGS TABLE
 -- Stores operational and security events for maintenance checks.
 CREATE TABLE IF NOT EXISTS system_logs (
     id SERIAL PRIMARY KEY,
@@ -314,7 +334,7 @@ CREATE INDEX IF NOT EXISTS idx_system_logs_cleanup
 ON system_logs (created_at)
 WHERE is_security = false AND severity IN ('debug', 'info');
 
--- 15. INITIAL SEED DATA
+-- 16. INITIAL SEED DATA
 -- Creates the first admin account placeholder for initial setup.
 -- Replace password_hash with a real bcrypt hash before using this SQL directly,
 -- or run reset-admin.js with ADMIN_RESET_PASSWORD configured.
