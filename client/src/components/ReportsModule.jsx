@@ -84,6 +84,7 @@ export function ReportsModule({
   const [acknowledgeSimilarItem, setAcknowledgeSimilarItem] = useState(false);
   const [isConvertingItem, setIsConvertingItem] = useState(false);
   const reportDateInputRef = useRef(null);
+  const reorderQuantityDefaultsRef = useRef({});
   // Pagination state: limit displayed results to 10 per page
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
@@ -474,21 +475,50 @@ export function ReportsModule({
   const getReportLowStockThreshold = item =>
     Number(item?.activeLowStockThreshold ?? item?.reorderLevel ?? item?.lowStockThreshold ?? 0);
 
-  const getReportEstimatedReorderPoint = item => {
-    const value = item?.recommendedReorderPoint;
+  const getNonNegativeReportNumber = value => {
     if (value === null || value === undefined || value === '') return null;
     const number = Number(value);
-    return Number.isFinite(number) ? number : null;
+    return Number.isFinite(number) && number >= 0 ? number : null;
+  };
+
+  const getReportEstimatedReorderPoint = item => {
+    const value = item?.recommendedReorderPoint;
+    if (value !== null && value !== undefined && value !== '') {
+      const number = Number(value);
+      return Number.isFinite(number) ? number : null;
+    }
+
+    if (!String(item?.supplierName || '').trim()) return null;
+    const averageDailySales = getNonNegativeReportNumber(item?.averageDailySales);
+    const leadTimeDays = getNonNegativeReportNumber(item?.leadTimeDays);
+    const safetyStock = getNonNegativeReportNumber(item?.safetyStock) ?? 0;
+
+    if (leadTimeDays === null || leadTimeDays <= 0) return null;
+
+    return Math.ceil(
+      Math.max(0, averageDailySales ?? 0) * Math.max(0, leadTimeDays) +
+      Math.max(0, safetyStock)
+    );
+  };
+
+  const getReportSystemSuggestedPoint = item => {
+    const manualThreshold = getReportLowStockThreshold(item);
+    const calculatedPoint = getReportEstimatedReorderPoint(item);
+    if (calculatedPoint !== null) {
+      return Math.max(manualThreshold, calculatedPoint);
+    }
+
+    return manualThreshold;
   };
 
   const isSuggestedForReorderReview = item => {
     const quantity = Number(item?.quantity || 0);
     const manualThreshold = getReportLowStockThreshold(item);
-    const estimatedPoint = getReportEstimatedReorderPoint(item);
+    const suggestedPoint = getReportSystemSuggestedPoint(item);
     return (
-      estimatedPoint !== null &&
+      suggestedPoint > manualThreshold &&
       quantity > manualThreshold &&
-      quantity <= estimatedPoint
+      quantity <= suggestedPoint
     );
   };
 
@@ -497,6 +527,8 @@ export function ReportsModule({
     if (!Number.isFinite(days) || days <= 0) return 'Not set';
     return `${days} day${days === 1 ? '' : 's'}`;
   };
+
+  const getSuggestedPointValue = item => getReportSystemSuggestedPoint(item);
 
   const getComputedReportStockStatus = item => {
     const quantity = Number(item?.quantity || 0);
@@ -510,6 +542,7 @@ export function ReportsModule({
     status: getComputedReportStockStatus(item),
     lowStockThreshold: getReportLowStockThreshold(item),
     estimatedReorderPoint: getReportEstimatedReorderPoint(item),
+    systemSuggestedPoint: getReportSystemSuggestedPoint(item),
     reorderReviewSuggested: isSuggestedForReorderReview(item)
   });
 
@@ -1044,18 +1077,19 @@ export function ReportsModule({
       item.reorderReviewSuggested
     ))
       .filter(item => selectedCategory === 'all' || item.category === selectedCategory)
-      .map(item => ({
-        ...item,
-        lowStockThreshold: getReportLowStockThreshold(item),
-        reorderReviewPoint: item.reorderReviewSuggested
-          ? item.estimatedReorderPoint
-          : getReportLowStockThreshold(item),
-        neededQuantity: Math.max(
-          (item.reorderReviewSuggested ? item.estimatedReorderPoint : getReportLowStockThreshold(item)) - Number(item.quantity || 0),
-          0
-        ),
-        reorderReviewLabel: item.reorderReviewSuggested ? 'For Review' : item.status
-      }));
+      .map(item => {
+        const suggestedPoint = getReportSystemSuggestedPoint(item);
+        return {
+          ...item,
+          lowStockThreshold: getReportLowStockThreshold(item),
+          reorderReviewPoint: suggestedPoint,
+          neededQuantity: Math.max(
+            suggestedPoint - Number(item.quantity || 0),
+            0
+          ),
+          reorderReviewLabel: item.reorderReviewSuggested ? 'For Review' : item.status
+        };
+      });
 
   const getReorderQuantityDraftKey = item => String(item?.id ?? item?.inventoryId ?? item?.itemCode ?? item?.name ?? '');
 
@@ -1179,13 +1213,38 @@ export function ReportsModule({
     setReorderQuantities(prev => {
       let changed = false;
       const next = { ...prev };
+      const nextDefaults = { ...reorderQuantityDefaultsRef.current };
+      const activeKeys = new Set();
       reorderItems.forEach(item => {
         const key = getReorderQuantityDraftKey(item);
-        if (key && next[key] === undefined) {
-          next[key] = String(item.neededQuantity || 0);
+        if (!key) return;
+        activeKeys.add(key);
+
+        const suggestedQuantity = String(item.neededQuantity || 0);
+        const previousDefault = nextDefaults[key];
+        const currentQuantity = next[key];
+        const currentNumber = Number(currentQuantity || 0);
+        const suggestedNumber = Number(item.neededQuantity || 0);
+        const shouldUseSuggestedQuantity =
+          currentQuantity === undefined ||
+          currentQuantity === null ||
+          currentQuantity === '' ||
+          currentQuantity === previousDefault ||
+          (currentNumber <= 0 && suggestedNumber > 0);
+
+        if (shouldUseSuggestedQuantity && currentQuantity !== suggestedQuantity) {
+          next[key] = suggestedQuantity;
           changed = true;
         }
+
+        nextDefaults[key] = suggestedQuantity;
       });
+
+      Object.keys(nextDefaults).forEach(key => {
+        if (!activeKeys.has(key)) delete nextDefaults[key];
+      });
+
+      reorderQuantityDefaultsRef.current = nextDefaults;
       return changed ? next : prev;
     });
   }, [inventory, selectedCategory]);
@@ -1280,7 +1339,7 @@ export function ReportsModule({
       const preparedQuantity = selectedItems.reduce((sum, item) => sum + getPreparedReorderQuantity(item), 0);
       return [
         { label: 'Suggested Qty', value: reorderItems.reduce((sum, item) => sum + Number(item.neededQuantity || 0), 0), icon: <TrendingUp className="w-8 h-8 text-green-500" />, color: 'border-l-green-500' },
-        { label: 'Reorder Qty', value: preparedQuantity, icon: <PackagePlus className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
+        { label: 'Final Order Qty', value: preparedQuantity, icon: <PackagePlus className="w-8 h-8 text-violet-500" />, color: 'border-l-violet-500' },
       ];
     }
 
@@ -1708,9 +1767,13 @@ export function ReportsModule({
           reportTable({
             startY: currentY,
             tableWidth: pageWidth - pdfMargin * 2,
-            head: [['Item Name', 'Quantity to Order']],
+            head: [['Item Code', 'Item Name', 'Current', 'Suggested Point', 'Suggested Qty', 'Final Order Qty']],
             body: selectedItems.map(item => [
+              getDisplayItemCode(item),
               item.name,
+              String(item.quantity),
+              String(getSuggestedPointValue(item)),
+              String(item.neededQuantity),
               String(getPreparedReorderQuantity(item))
             ]),
             theme: 'striped',
@@ -1730,12 +1793,16 @@ export function ReportsModule({
               lineWidth: 0.1
             },
             columnStyles: {
-              0: { cellWidth: 130, halign: 'left' },
-              1: { cellWidth: 40, halign: 'center' }
+              0: { cellWidth: 24, halign: 'center' },
+              1: { cellWidth: 70, halign: 'left' },
+              2: { cellWidth: 16, halign: 'center' },
+              3: { cellWidth: 26, halign: 'center' },
+              4: { cellWidth: 22, halign: 'center' },
+              5: { cellWidth: 28, halign: 'center' }
             },
             didParseCell: data => {
               if (data.section === 'body') {
-                data.cell.styles.halign = data.column.index === 1 ? 'center' : 'left';
+                data.cell.styles.halign = data.column.index === 1 ? 'left' : 'center';
               }
             },
             alternateRowStyles: { fillColor: [248, 250, 252] }
@@ -2927,7 +2994,7 @@ export function ReportsModule({
         }
 
         .reports-supplier-reorder-table table {
-          min-width: 1080px;
+          min-width: 1160px;
           table-layout: fixed;
         }
 
@@ -3150,8 +3217,6 @@ export function ReportsModule({
         .reports-supplier-reorder-table td:nth-child(5),
         .reports-supplier-reorder-table th:nth-child(6),
         .reports-supplier-reorder-table td:nth-child(6),
-        .reports-supplier-reorder-table th:nth-child(7),
-        .reports-supplier-reorder-table td:nth-child(7),
         .reports-supplier-reorder-table th:nth-child(8),
         .reports-supplier-reorder-table td:nth-child(8),
         .reports-supplier-reorder-table th:nth-child(9),
@@ -3160,6 +3225,13 @@ export function ReportsModule({
         .reports-supplier-reorder-table td:nth-child(10) {
           width: 72px;
           min-width: 72px;
+          text-align: center;
+        }
+
+        .reports-supplier-reorder-table th:nth-child(7),
+        .reports-supplier-reorder-table td:nth-child(7) {
+          width: 120px;
+          min-width: 120px;
           text-align: center;
         }
 
@@ -4693,7 +4765,7 @@ export function ReportsModule({
                         <TableHead>Suggested Point</TableHead>
                         <TableHead>Lead Time</TableHead>
                         <TableHead>Suggested Qty</TableHead>
-                        <TableHead>Reorder Qty</TableHead>
+                        <TableHead>Final Order Qty</TableHead>
                         <TableHead>Status</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -4714,7 +4786,7 @@ export function ReportsModule({
                           <TableCell>{getCategoryDisplay(item)}</TableCell>
                           <TableCell className="font-semibold">{item.quantity}</TableCell>
                           <TableCell>{item.lowStockThreshold}</TableCell>
-                          <TableCell>{item.estimatedReorderPoint === null ? '-' : item.estimatedReorderPoint}</TableCell>
+                          <TableCell className="font-semibold">{getSuggestedPointValue(item)}</TableCell>
                           <TableCell>{formatSupplierLeadTime(item)}</TableCell>
                           <TableCell className="font-semibold">{item.neededQuantity}</TableCell>
                           <TableCell>
@@ -4722,7 +4794,8 @@ export function ReportsModule({
                               value={reorderQuantities[getReorderQuantityDraftKey(item)] ?? String(item.neededQuantity || 0)}
                               onChange={event => updatePreparedReorderQuantity(item, event.target.value)}
                               inputMode="numeric"
-                              aria-label={`Reorder quantity for ${item.name}`}
+                              aria-label={`Final order quantity for ${item.name}`}
+                              title="This quantity is used in the PDF export and purchase draft."
                               className="reports-reorder-quantity-input"
                             />
                           </TableCell>
@@ -4767,16 +4840,17 @@ export function ReportsModule({
                       <div className="reports-record-grid reports-record-grid-four">
                         <div className="reports-record-stat"><span>Current</span><strong>{item.quantity}</strong></div>
                         <div className="reports-record-stat"><span>Manual Limit</span><strong>{item.lowStockThreshold}</strong></div>
-                        <div className="reports-record-stat"><span>Suggested</span><strong>{item.estimatedReorderPoint === null ? '-' : item.estimatedReorderPoint}</strong></div>
+                        <div className="reports-record-stat"><span>Suggested Point</span><strong>{getSuggestedPointValue(item)}</strong></div>
                         <div className="reports-record-stat"><span>Lead Time</span><strong>{formatSupplierLeadTime(item)}</strong></div>
                         <div className="reports-record-stat"><span>Suggested</span><strong>{item.neededQuantity}</strong></div>
                         <div className="reports-record-stat reports-reorder-quantity-card-field">
-                          <span>Reorder Qty</span>
+                          <span>Final Order Qty</span>
                           <Input
                             value={reorderQuantities[getReorderQuantityDraftKey(item)] ?? String(item.neededQuantity || 0)}
                             onChange={event => updatePreparedReorderQuantity(item, event.target.value)}
                             inputMode="numeric"
-                            aria-label={`Reorder quantity for ${item.name}`}
+                            aria-label={`Final order quantity for ${item.name}`}
+                            title="This quantity is used in the PDF export and purchase draft."
                             className="reports-reorder-quantity-input"
                           />
                         </div>

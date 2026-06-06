@@ -8,7 +8,7 @@ export const STOCK_OUT_REASON_OPTIONS = [
   { value: "lost_missing", label: "Lost/Missing", description: "Items missing after checking actual stock." },
   { value: "manual_adjustment", label: "Manual Adjustment", description: "Stock corrected after a verified count." },
   { value: "branch_transfer", label: "Branch Transfer", description: "Items moved to another branch." },
-  { value: "correction", label: "Correction", description: "System correction or administrative inventory adjustment." }
+  { value: "correction", label: "Correction", description: "Verified inventory correction after checking actual stock." }
 ];
 
 export const STOCK_IN_REASON_OPTIONS = [
@@ -20,7 +20,7 @@ export const STOCK_IN_REASON_OPTIONS = [
   { value: "beginning_balance", label: "Beginning Balance", description: "Starting stock entered during setup or inventory reset." },
   { value: "manual_adjustment", label: "Manual Adjustment", description: "Stock corrected after a verified count." },
   { value: "sales_cancellation", label: "Cancellation", description: "Stock restored after a sales cancellation." },
-  { value: "correction", label: "Correction", description: "System correction or administrative inventory adjustment." },
+  { value: "correction", label: "Correction", description: "Verified inventory correction after checking actual stock." },
   { value: "found_stock", label: "Found Stock", description: "Items found during checking that were not reflected in the system." }
 ];
 

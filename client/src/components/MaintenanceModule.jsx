@@ -38,7 +38,7 @@ import {
 } from './ui/alert-dialog';
 
 const API_BASE = API_BASE_URL;
-const MAX_RESTORE_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_RESTORE_FILE_SIZE_BYTES = 25 * 1024 * 1024;
 const RESTORE_CONFIRMATION_TEXT = 'RESTORE';
 
 const SELECTIVE_EXPORT_DATASETS = [
@@ -282,7 +282,7 @@ export function MaintenanceModule({ user }) {
       return;
     }
     if (file.size > MAX_RESTORE_FILE_SIZE_BYTES) {
-      toast.error('Restore failed', { description: 'Backup file must be 10 MB or smaller.' });
+      toast.error('Restore failed', { description: 'Backup file must be 25 MB or smaller.' });
       setSelectedRestoreFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;

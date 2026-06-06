@@ -2,7 +2,7 @@
 // removed from active inventory views.
 import React from 'react';
 import { useState } from "react";
-import { ArchiveRestore, Search, Filter, Archive, CheckCircle, Info, ArrowUpDown } from "lucide-react";
+import { ArchiveRestore, Search, Filter, Archive, CheckCircle, Info, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -185,25 +185,34 @@ export function ArchiveModule({
   }, [archivedInventory, highlightArchiveRow]);
 
   const handleSort = column => {
-    if (sortBy === column) {
-      setSortOrder(sortOrder === "asc" ? "desc" : "asc");
-      return;
-    }
+    const nextSortOrder = sortBy === column
+      ? sortOrder === "asc" ? "desc" : "asc"
+      : column === "date" ? "desc" : "asc";
     setSortBy(column);
-    setSortOrder(column === "date" ? "desc" : "asc");
+    setSortOrder(nextSortOrder);
   };
 
-  const renderSortButton = (column, label, align = "left") => /*#__PURE__*/React.createElement(Button, {
-    variant: "ghost",
-    size: "sm",
+  const renderSortIndicator = column => {
+    const isActive = sortBy === column;
+    const isAscending = isActive && sortOrder === "asc";
+    const isDescending = isActive && sortOrder === "desc";
+    return /*#__PURE__*/React.createElement("span", {
+      className: `table-sort-direction ${isActive ? "table-sort-direction-active" : ""}`,
+      "aria-hidden": "true"
+    }, /*#__PURE__*/React.createElement(ArrowUp, {
+      className: `table-sort-direction-arrow table-sort-direction-arrow-up ${isAscending ? "table-sort-direction-arrow-current" : ""} ${isDescending ? "table-sort-direction-arrow-muted" : ""}`
+    }), /*#__PURE__*/React.createElement(ArrowDown, {
+      className: `table-sort-direction-arrow table-sort-direction-arrow-down ${isDescending ? "table-sort-direction-arrow-current" : ""} ${isAscending ? "table-sort-direction-arrow-muted" : ""}`
+    }));
+  };
+
+  const renderSortButton = (column, label, align = "left") => /*#__PURE__*/React.createElement("button", {
+    type: "button",
     onClick: () => handleSort(column),
-    className: `w-full px-0 hover:bg-transparent font-semibold ${align === "right" ? "justify-end text-right" : "justify-start text-left"}`
+    className: `table-sort-header-button inline-flex h-8 w-full appearance-none items-center border-0 bg-transparent px-0 py-0 font-semibold shadow-none ${align === "right" ? "justify-end text-right" : "justify-start text-left"}`
   }, /*#__PURE__*/React.createElement("span", {
     className: `flex w-full items-center gap-1 ${align === "right" ? "justify-end" : "justify-start"}`
-  }, /*#__PURE__*/React.createElement("span", null, label), /*#__PURE__*/React.createElement(ArrowUpDown, {
-    className: `h-4 w-4 shrink-0 transition-transform ${sortBy === column ? "opacity-100" : "opacity-45"} ${sortBy === column && sortOrder === "desc" ? "rotate-180" : ""}`,
-    "aria-hidden": "true"
-  })));
+  }, /*#__PURE__*/React.createElement("span", null, label), renderSortIndicator(column)));
 
   const renderArchivePagination = () => sortedArchive.length > ARCHIVE_ITEMS_PER_PAGE ? /*#__PURE__*/React.createElement("div", {
     className: "archive-pagination",
@@ -396,6 +405,19 @@ export function ArchiveModule({
       background: #f8fafc;
       border-color: #94a3b8;
       color: #0f172a;
+    }
+
+    .archive-restore-summary-layout {
+      min-width: 0;
+    }
+
+    .archive-restore-item-name {
+      display: block;
+      max-width: 100%;
+      white-space: normal;
+      overflow: visible;
+      overflow-wrap: anywhere;
+      word-break: normal;
     }
 
     @media (max-width: 760px) {
@@ -1140,10 +1162,10 @@ export function ArchiveModule({
       padding: "16px"
     }
   }, /*#__PURE__*/React.createElement("div", {
-    className: "archive-restore-detail-group",
+    className: "archive-restore-summary-layout",
     style: {
       display: "grid",
-      gridTemplateColumns: "58px 1fr",
+      gridTemplateColumns: "58px minmax(0, 1fr)",
       alignItems: "center",
       gap: "18px"
     }
@@ -1169,7 +1191,7 @@ export function ArchiveModule({
   })), /*#__PURE__*/React.createElement("div", {
     className: "min-w-0 flex-1"
   }, /*#__PURE__*/React.createElement("p", {
-    className: "archive-restore-item-name truncate font-bold text-slate-950",
+    className: "archive-restore-item-name font-bold text-slate-950",
     style: {
       marginBottom: "12px",
       fontSize: "21px",

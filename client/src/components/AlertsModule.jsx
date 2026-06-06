@@ -140,10 +140,6 @@ const alertResponsiveStyles = `
     white-space: nowrap;
   }
 
-  .alerts-summary-grid {
-    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  }
-
   .alerts-pagination {
     display: flex;
     align-items: center;
@@ -197,7 +193,6 @@ export function AlertsModule({ user, onNavigate }) {
     unreadAlertCount,
     warningAlertCount,
     infoAlertCount,
-    successAlertCount,
     markAlertRead,
     dismissAlert,
     markAllAlertsRead,
@@ -523,47 +518,6 @@ export function AlertsModule({ user, onNavigate }) {
             line-height: 1.35;
           }
 
-          .alerts-summary-grid {
-            grid-template-columns: repeat(2, minmax(150px, 1fr));
-            gap: 12px;
-            margin-bottom: 16px;
-          }
-
-          .alerts-summary-card [data-alert-summary-content] {
-            padding: 14px;
-          }
-
-          .alerts-summary-card [data-alert-summary-row] {
-            align-items: center;
-            gap: 8px;
-          }
-
-          .alerts-summary-card [data-alert-summary-row] > div:first-child {
-            min-width: 0;
-          }
-
-          .alerts-summary-card [data-alert-summary-label] {
-            font-size: 12px;
-            line-height: 1.2;
-            overflow-wrap: anywhere;
-          }
-
-          .alerts-summary-card [data-alert-summary-value] {
-            font-size: 26px;
-            line-height: 1.05;
-          }
-
-          .alerts-summary-icon {
-            height: 42px;
-            width: 42px;
-            border-radius: 12px;
-          }
-
-          .alerts-summary-icon svg {
-            height: 21px;
-            width: 21px;
-          }
-
           .alerts-panel [data-alerts-header] {
             padding: 18px 16px 10px;
           }
@@ -750,62 +704,17 @@ export function AlertsModule({ user, onNavigate }) {
             color: #0f172a;
           }
 
-          .alerts-summary-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 10px;
-          }
-
-          .alerts-summary-card [data-alert-summary-content] {
-            padding: 12px 10px;
-          }
-
-          .alerts-summary-card [data-alert-summary-label] {
-            font-size: 11px;
-          }
-
-          .alerts-summary-card [data-alert-summary-value] {
-            font-size: 24px;
-          }
-
-          .alerts-summary-icon {
-            height: 36px;
-            width: 36px;
-          }
-
-          .alerts-summary-icon svg {
-            height: 19px;
-            width: 19px;
-          }
-
           .alert-card-actions {
             grid-template-columns: 1fr;
           }
         }
 
-        @media (max-width: 340px) {
-          .alerts-summary-grid {
-            grid-template-columns: 1fr;
-          }
-
-          .alerts-summary-card [data-alert-summary-content] {
-            padding: 12px;
-          }
-        }
       `}</style>
       <PageHeader
         title="Alerts & Notifications"
         subtitle="Stay updated with important system events and real-time inventory alerts"
         icon={<Bell className="h-8 w-8" />}
       />
-
-      <div className={`alerts-summary-grid mb-6 grid grid-cols-1 gap-6 ${isAdmin ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
-        <SummaryCard label="Total Alerts" value={alerts.length} icon={<Bell className="h-6 w-6 text-blue-600" />} iconClassName="bg-blue-100" />
-        <SummaryCard label="Unread" value={unreadAlertCount} icon={<Bell className="h-6 w-6 text-orange-600" />} iconClassName="bg-orange-100" />
-        <SummaryCard label="Warnings" value={warningAlertCount} icon={<AlertTriangle className="h-6 w-6 text-red-600" />} iconClassName="bg-red-100" />
-        {isAdmin && (
-          <SummaryCard label="Info" value={infoAlertCount + successAlertCount} icon={<Info className="h-6 w-6 text-teal-600" />} iconClassName="bg-teal-100" />
-        )}
-      </div>
 
       <Card className="alerts-panel">
         <CardHeader data-alerts-header>
@@ -910,24 +819,6 @@ export function AlertsModule({ user, onNavigate }) {
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-}
-
-function SummaryCard({ label, value, icon, iconClassName }) {
-  return (
-    <Card className="alerts-summary-card">
-      <CardContent className="pt-6" data-alert-summary-content>
-        <div className="flex items-center justify-between" data-alert-summary-row>
-          <div>
-            <p className="mb-1 text-sm text-slate-600" data-alert-summary-label>{label}</p>
-            <p className="text-2xl text-slate-900" data-alert-summary-value>{value}</p>
-          </div>
-          <div className={`alerts-summary-icon flex h-12 w-12 items-center justify-center rounded-lg ${iconClassName}`}>
-            {icon}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 

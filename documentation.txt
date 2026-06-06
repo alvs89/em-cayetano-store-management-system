@@ -217,7 +217,7 @@ Specifically, the study aims to:
 Significance of the Study
 The study is significant to E.M. Cayetano Trading because it provides a centralized platform for monitoring core store operations. The admin gains improved visibility over branch inventory, sales, purchases, reports, users, and system health. This supports better decision-making, reduces dependence on manual reconciliation, and helps prevent losses caused by overstocking, understocking, inaccurate sales records, or delayed purchase updates.
 
-Employees benefit from clearer and more structured workflows. Cashiers can record sales, generate receipts, and review sales history within their assigned operational context. Inventory staff can monitor stock, encode supplier receiving entries, access inventory reports, and respond to low-stock conditions. The system reduces repetitive manual work and provides immediate feedback when entries are incomplete, invalid, or outside the user's role permissions.
+Employees benefit from clearer and more structured workflows. Sales Encoders can record sales, generate receipts, and review sales history within their assigned operational context. Inventory staff can monitor stock, encode supplier receiving entries, access inventory reports, and respond to low-stock conditions. The system reduces repetitive manual work and provides immediate feedback when entries are incomplete, invalid, or outside the user's role permissions.
 
 The business also benefits from stronger accountability. Audit trails, stock movement history, backup logs, and system logs make it easier to review important events and administrative actions. The separation of user roles between Admin, Sales Encoder, and Inventory Staff ensures that sensitive functions such as account management, database restoration, cancellation of sales, and audit review remain under administrative control.
 
@@ -1002,7 +1002,7 @@ System Architecture
 Figure 87 System Architecture
 The system architecture for the Web-Based Store Management System follows a three-tier structure composed of the Presentation Tier, Logic Tier, and Data Tier. This architecture separates the user interface, business processing, and database storage so that each layer can be developed, tested, maintained, and improved independently.
 
-The Presentation Tier is implemented using React v19, HTML5, and CSS3. It provides responsive interfaces for dashboard monitoring, inventory management, archive review, report generation, sales recording, purchase receiving, alerts, maintenance, user management, audit trail review, search, and help. The interface adapts available screens and controls according to user role. Admin users have access to system-wide administrative functions, Cashiers primarily handle sales recording, and Inventory Staff manage stock-related activities such as inventory review, purchase receiving, archive viewing, and inventory reports.
+The Presentation Tier is implemented using React v19, HTML5, and CSS3. It provides responsive interfaces for dashboard monitoring, inventory management, archive review, report generation, sales recording, purchase receiving, alerts, maintenance, user management, audit trail review, search, and help. The interface adapts available screens and controls according to user role. Admin users have access to system-wide administrative functions, Sales Encoders primarily handle sales recording, and Inventory Staff manage stock-related activities such as inventory review, purchase receiving, archive viewing, and inventory reports.
 
 The Logic Tier is implemented using JavaScript (ES2024) and Express.js version 5.1.0. It handles authentication, two-factor verification, password recovery, role-based authorization, sales and purchase processing, inventory updates, stock movement recording, report data retrieval, audit logging, backup and restore requests, log cleanup, database optimization, and data integrity checking. This tier validates user inputs and enforces business rules before records are stored or modified.
 
@@ -1030,7 +1030,7 @@ The system requires a server environment capable of running Node.js, connecting 
 Operational Feasibility
 The system is operationally feasible because its modules are aligned with the store's daily activities. Sales records directly support outgoing stock movement, purchase entries support incoming stock movement, inventory records show current branch quantities, and reports consolidate operational data for review. Role-based access improves usability by limiting users to the functions relevant to their responsibilities.
 
-Training remains necessary because the system introduces structured workflows that replace informal manual practices. Cashiers must understand sales recording, invoice entry, payment details, and receipt generation. Inventory Staff must understand product records, stock movement, supplier receiving, low-stock review, and purchase history. Admin users must understand user management, audit trail review, backup, restore, and system maintenance.
+Training remains necessary because the system introduces structured workflows that replace informal manual practices. Sales Encoders must understand sales recording, invoice entry, payment details, and receipt generation. Inventory Staff must understand product records, stock movement, supplier receiving, low-stock review, and purchase history. Admin users must understand user management, audit trail review, backup, restore, and system maintenance.
 
 Economic Feasibility
 The system is economically feasible because the anticipated benefits justify the initial cost. The estimated total cost remains 162,674.88 pesos, covering hardware, software development, system costs, stationeries and supplies, utility expenses, and training. The projected annual benefit is 138,273.65 pesos, based on improved accuracy and efficiency. The estimated return on investment is 85 percent, with an approximate payback period of fourteen months or one year and two months.
@@ -1072,7 +1072,7 @@ The system is evaluated using selected ISO 25010 quality characteristics:
 
 1. Functional suitability. The system must provide the required features for inventory, sales, purchases, reports, users, audit trail, alerts, archive, maintenance, search, and help.
 2. Security. The system must protect accounts and records through authentication, authorization, password hashing, token-based access, one-time verification, and audit logging.
-3. Usability. The system must be understandable to store personnel and must provide clear workflows for Cashiers, Inventory Staff, and Admin users.
+3. Usability. The system must be understandable to store personnel and must provide clear workflows for Sales Encoders, Inventory Staff, and Admin users.
 4. Reliability. The system must consistently process records, preserve data relationships, and support backup, restore, and integrity checking.
 5. Maintainability. The system must be organized so that future improvements, bug fixes, and module refinements can be introduced through Agile iterations.
 6. Performance efficiency. The system must provide responsive search, filtering, report preparation, and transaction processing for branch-level operations.
@@ -1089,7 +1089,7 @@ Table 2 Likert Scale
 Sampling Tools
 This study employs cluster sampling as its primary sampling method. The population is grouped into two clusters: IT-related professionals and non-IT professionals. This method allows the proponents to obtain feedback from participants who can evaluate both the technical and practical aspects of the system.
 
-A total of twenty participants will be involved in the study, consisting of ten IT professionals and ten non-IT professionals. IT professionals include individuals with backgrounds in Computer Science, Information Technology, Information Systems, Data Science, or related fields. Non-IT participants include store personnel such as the manager, cashier, and employees who handle stock, sales, purchases, and daily store operations.
+A total of twenty participants will be involved in the study, consisting of ten IT professionals and ten non-IT professionals. IT professionals include individuals with backgrounds in Computer Science, Information Technology, Information Systems, Data Science, or related fields. Non-IT participants include store personnel such as the manager, sales encoder, and employees who handle stock, sales, purchases, and daily store operations.
 
 Work Plan
 Figure 88 Gantt Chart

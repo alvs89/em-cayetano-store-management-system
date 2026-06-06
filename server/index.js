@@ -580,11 +580,32 @@ async function ensureSchema() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS inventory_change_requests (
+      request_id SERIAL PRIMARY KEY,
+      request_type VARCHAR(20) NOT NULL CHECK (request_type IN ('add_item', 'edit_item')),
+      branch VARCHAR(50) NOT NULL,
+      inventory_id INT REFERENCES branch_inventory(inventory_id) ON DELETE SET NULL,
+      item_name VARCHAR(150) NOT NULL,
+      requested_payload JSONB NOT NULL,
+      current_snapshot JSONB,
+      status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+      requested_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+      requested_by_name TEXT,
+      reviewed_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+      reviewed_by_name TEXT,
+      review_note TEXT,
+      requested_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL},
+      reviewed_at TIMESTAMP
+    );
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS backup_logs (
       id SERIAL PRIMARY KEY,
       action VARCHAR(20) NOT NULL,
       actor_id INT,
       actor_name TEXT,
+      details JSONB DEFAULT '{}'::jsonb,
       created_at TIMESTAMP DEFAULT ${PHILIPPINE_NOW_SQL}
     );
   `);
@@ -632,12 +653,6 @@ async function ensureSchema() {
     UPDATE users
     SET role = 'Inventory Staff'
     WHERE role = 'Employee';
-  `);
-
-  await pool.query(`
-    UPDATE users
-    SET role = 'Sales Encoder'
-    WHERE role = 'Cashier';
   `);
 
   await pool.query(`
@@ -1311,6 +1326,11 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE backup_logs
     ALTER COLUMN created_at SET DEFAULT ${PHILIPPINE_NOW_SQL};
+  `);
+
+  await pool.query(`
+    ALTER TABLE backup_logs
+    ADD COLUMN IF NOT EXISTS details JSONB DEFAULT '{}'::jsonb;
   `);
 
   await pool.query(`
@@ -2075,6 +2095,11 @@ async function findOrCreateProduct(client, { name, category, categoryNote = null
     throw error;
   }
 
+  await client.query(
+    `SELECT pg_advisory_xact_lock(hashtext($1))`,
+    [`product:${canonicalCategory.toLowerCase()}:${normalizeInventoryIdentityName(cleanName)}`]
+  );
+
   const existing = await findProductByIdentity(client, { name: cleanName, category: canonicalCategory });
 
   if (existing) {
@@ -2231,6 +2256,26 @@ function mapInventoryRow(row, options = {}) {
     mapped.cost_price = row.cost_price;
   }
   return mapped;
+}
+
+function mapInventoryChangeRequestRow(row) {
+  return {
+    request_id: row.request_id,
+    request_type: row.request_type,
+    branch: row.branch,
+    inventory_id: row.inventory_id,
+    item_name: row.item_name,
+    requested_payload: row.requested_payload || {},
+    current_snapshot: row.current_snapshot || null,
+    status: row.status,
+    requested_by: row.requested_by,
+    requested_by_name: row.requested_by_name,
+    reviewed_by: row.reviewed_by,
+    reviewed_by_name: row.reviewed_by_name,
+    review_note: row.review_note,
+    requested_at: row.requested_at,
+    reviewed_at: row.reviewed_at
+  };
 }
 
 function mapArchivedInventoryRow(row, options = {}) {
@@ -2807,6 +2852,516 @@ async function recordAuditLogSafely(db, details) {
   }
 }
 
+function getPayloadValue(payload, keys, fallback = undefined) {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(payload || {}, key)) {
+      return payload[key];
+    }
+  }
+  return fallback;
+}
+
+function assertFreshInventorySnapshot(expectedLastUpdated, currentLastUpdated) {
+  if (!expectedLastUpdated || !currentLastUpdated) return;
+
+  const expectedTime = new Date(expectedLastUpdated).getTime();
+  const currentTime = new Date(currentLastUpdated).getTime();
+  if (!Number.isFinite(expectedTime) || !Number.isFinite(currentTime)) return;
+
+  if (Math.abs(expectedTime - currentTime) > 1) {
+    const error = new Error('This inventory item was changed by another user before this save could be completed. Please review the latest item details before trying again.');
+    error.statusCode = 409;
+    throw error;
+  }
+}
+
+function prepareInventoryPayload(payload, { currentRow = null, preserveCurrentQuantity = false } = {}) {
+  const cleanName = cleanInventoryName(getPayloadValue(payload, ['name']));
+  const cleanSupplier = cleanSupplierName(getPayloadValue(payload, ['supplierName', 'supplier_name'], currentRow?.supplier_name || ''));
+  const canonicalCategory = canonicalizeInventoryCategory(getPayloadValue(payload, ['category'], currentRow?.category));
+  const categoryNote = cleanCategoryNote(getPayloadValue(payload, ['categoryNote', 'category_note'], currentRow?.category_note || ''), canonicalCategory);
+  const nameQualityError = validateInventoryNameQuality(cleanName);
+  if (nameQualityError || !canonicalCategory) {
+    const error = new Error(nameQualityError || 'Valid product name and category are required');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const supplierQualityError = validateSupplierNameQuality(cleanSupplier);
+  if (supplierQualityError) {
+    const error = new Error(supplierQualityError);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const quantity = preserveCurrentQuantity
+    ? Number(currentRow?.stock_level || 0)
+    : parseNonNegativeInteger(getPayloadValue(payload, ['quantity', 'stock_level'], 0), 'Stock level');
+  const reorderLevel = parseNonNegativeInteger(
+    getPayloadValue(payload, ['reorderLevel', 'min_stock_level'], currentRow?.min_stock_level ?? 5),
+    'Manual low-stock threshold'
+  );
+  const leadTimeDays = getPayloadValue(payload, ['leadTimeDays', 'lead_time_days'], currentRow?.lead_time_days ?? null);
+  const safetyStock = getPayloadValue(payload, ['safetyStock', 'safety_stock'], currentRow?.safety_stock ?? null);
+  const defaultSellingPrice = parseOptionalPositiveDecimal(
+    getPayloadValue(payload, ['defaultSellingPrice', 'default_selling_price'], currentRow?.default_selling_price ?? null),
+    'Default selling price',
+    { max: 100000000 }
+  );
+  const costPrice = parseOptionalPositiveDecimal(
+    getPayloadValue(payload, ['costPrice', 'cost_price'], currentRow?.cost_price ?? null),
+    'Cost price',
+    { max: 100000000 }
+  );
+  const averageDailySalesMode = normalizeAverageDailySalesMode(getPayloadValue(payload, ['averageDailySalesMode', 'average_daily_sales_mode'], currentRow?.average_daily_sales_mode || 'auto'));
+  const manualAverageDailySales = averageDailySalesMode === 'manual'
+    ? parseOptionalNonNegativeDecimal(
+        getPayloadValue(payload, ['manualAverageDailySales', 'manual_average_daily_sales', 'averageDailySales', 'average_daily_sales'], currentRow?.manual_average_daily_sales ?? currentRow?.average_daily_sales ?? null),
+        'Manual average daily sales',
+        { max: 100000 }
+      )
+    : null;
+  if (averageDailySalesMode === 'manual' && manualAverageDailySales === null) {
+    const error = new Error('Manual average daily sales is required when manual override is enabled.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const normalizedLeadTimeDays = leadTimeDays === '' || leadTimeDays === null || leadTimeDays === undefined
+    ? null
+    : parseOptionalNonNegativeInteger(leadTimeDays, 'Supplier lead time', { max: 365 });
+  const normalizedSafetyStock = safetyStock === '' || safetyStock === null || safetyStock === undefined
+    ? null
+    : parseOptionalNonNegativeInteger(safetyStock, 'Safety stock', { max: 100000 });
+  const averageDailySales = averageDailySalesMode === 'manual' ? manualAverageDailySales : null;
+
+  return {
+    cleanName,
+    cleanSupplier,
+    canonicalCategory,
+    categoryNote,
+    quantity,
+    reorderLevel,
+    leadTimeDays: normalizedLeadTimeDays,
+    safetyStock: normalizedSafetyStock,
+    averageDailySales,
+    averageDailySalesMode,
+    manualAverageDailySales,
+    averageDailySalesOverrideReason: averageDailySalesMode === 'manual'
+      ? cleanAverageDailySalesOverrideReason(getPayloadValue(payload, ['averageDailySalesOverrideReason', 'average_daily_sales_override_reason'], currentRow?.average_daily_sales_override_reason || ''))
+      : null,
+    defaultSellingPrice,
+    costPrice
+  };
+}
+
+async function applyApprovedInventoryAddRequest(client, { request, actorId }) {
+  const values = prepareInventoryPayload(request.requested_payload || {});
+
+  const activeExactNameDuplicate = await findExactActiveInventoryItemByName(client, {
+    branch: request.branch,
+    name: values.cleanName
+  });
+  if (activeExactNameDuplicate) {
+    const error = new Error(`This product already exists in the current branch inventory: ${activeExactNameDuplicate.name} (${activeExactNameDuplicate.category}).`);
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const archivedExactNameDuplicate = await findExactArchivedInventoryItemByName(client, {
+    branch: request.branch,
+    name: values.cleanName
+  });
+  if (archivedExactNameDuplicate) {
+    const error = new Error(`An archived item with the same name already exists: ${archivedExactNameDuplicate.name} (${archivedExactNameDuplicate.category}). Restore the archived item instead of creating a duplicate record.`);
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const productId = await findOrCreateProduct(client, {
+    name: values.cleanName,
+    category: values.canonicalCategory,
+    categoryNote: values.categoryNote,
+    supplierName: values.cleanSupplier,
+    defaultSellingPrice: values.defaultSellingPrice,
+    costPrice: values.costPrice
+  });
+
+  const duplicateCheck = await client.query(
+    `SELECT inventory_id
+     FROM branch_inventory
+     WHERE product_id = $1 AND branch = $2
+     FOR UPDATE`,
+    [productId, request.branch]
+  );
+  if (duplicateCheck.rowCount > 0) {
+    const error = new Error('This product already exists in the current branch inventory.');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const status = computeInventoryStatus(values.quantity, getEffectiveReorderThreshold({
+    min_stock_level: values.reorderLevel,
+    lead_time_days: values.leadTimeDays,
+    safety_stock: values.safetyStock,
+    average_daily_sales: values.averageDailySales
+  }));
+
+  const result = await client.query(
+    `INSERT INTO branch_inventory (
+       product_id,
+       branch,
+       stock_level,
+       min_stock_level,
+       lead_time_days,
+       safety_stock,
+       average_daily_sales,
+       average_daily_sales_mode,
+       manual_average_daily_sales,
+       average_daily_sales_override_reason,
+       status
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+     RETURNING inventory_id`,
+    [
+      productId,
+      request.branch,
+      values.quantity,
+      values.reorderLevel,
+      values.leadTimeDays,
+      values.safetyStock,
+      values.averageDailySales,
+      values.averageDailySalesMode,
+      values.manualAverageDailySales,
+      values.averageDailySalesOverrideReason,
+      status
+    ]
+  );
+
+  const merged = await client.query(
+    `SELECT
+       bi.inventory_id,
+       bi.product_id,
+       p.name,
+       p.category,
+       p.category_note,
+       p.supplier_name,
+       p.default_selling_price,
+       p.cost_price,
+       bi.stock_level,
+       bi.min_stock_level,
+       bi.lead_time_days,
+       bi.safety_stock,
+       bi.average_daily_sales,
+       bi.average_daily_sales_mode,
+       bi.manual_average_daily_sales,
+       bi.average_daily_sales_override_reason,
+       bi.status,
+       bi.branch,
+       bi.last_updated
+     FROM branch_inventory bi
+     INNER JOIN products p ON p.product_id = bi.product_id
+     WHERE bi.inventory_id = $1`,
+    [result.rows[0].inventory_id]
+  );
+  const createdItem = merged.rows[0];
+
+  await recordAuditLog(client, {
+    actorId,
+    targetId: createdItem.inventory_id,
+    targetName: createdItem.name,
+    targetType: 'inventory_item',
+    action: 'APPROVE_ADD_ITEM_REQUEST',
+    reason: 'Approved inventory item request.',
+    details: {
+      branch: request.branch,
+      requestId: request.request_id,
+      requestedBy: request.requested_by_name,
+      initialQuantity: values.quantity,
+      category: createdItem.category,
+      supplier: createdItem.supplier_name || 'Unassigned'
+    }
+  });
+
+  if (values.quantity > 0) {
+    await recordStockMovement(client, {
+      inventoryId: createdItem.inventory_id,
+      productId: createdItem.product_id,
+      itemName: createdItem.name,
+      category: createdItem.category,
+      branch: createdItem.branch,
+      action: 'initial_stock',
+      quantityChanged: values.quantity,
+      previousQuantity: 0,
+      newQuantity: values.quantity,
+      reason: 'beginning_balance',
+      note: `Initial stock recorded after approval request ${request.request_id}.`,
+      actorId
+    });
+  }
+
+  return createdItem;
+}
+
+async function applyApprovedInventoryEditRequest(client, { request, actorId }) {
+  const inventoryId = Number(request.inventory_id);
+  if (!Number.isInteger(inventoryId) || inventoryId <= 0) {
+    const error = new Error('This edit request no longer has a valid inventory item reference.');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const existingInventory = await client.query(
+    `SELECT
+       bi.inventory_id,
+       bi.product_id,
+       p.name,
+       p.category,
+       p.category_note,
+       p.supplier_name,
+       p.default_selling_price,
+       p.cost_price,
+       bi.branch,
+       bi.stock_level,
+       bi.min_stock_level,
+       bi.lead_time_days,
+       bi.safety_stock,
+       bi.average_daily_sales,
+       bi.average_daily_sales_mode,
+       bi.manual_average_daily_sales,
+       bi.average_daily_sales_override_reason,
+       bi.status,
+       bi.last_updated
+     FROM branch_inventory bi
+     INNER JOIN products p ON p.product_id = bi.product_id
+     WHERE bi.inventory_id = $1 AND bi.branch = $2
+     FOR UPDATE`,
+    [inventoryId, request.branch]
+  );
+
+  if (existingInventory.rowCount === 0) {
+    const error = new Error('The inventory item for this approval request was not found. It may have been archived or moved.');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const inventoryRow = existingInventory.rows[0];
+  assertFreshInventorySnapshot(
+    request.current_snapshot?.last_updated || request.current_snapshot?.lastUpdated,
+    inventoryRow.last_updated
+  );
+
+  const values = prepareInventoryPayload(request.requested_payload || {}, {
+    currentRow: inventoryRow,
+    preserveCurrentQuantity: true
+  });
+  const previousQuantity = Number(inventoryRow.stock_level || 0);
+  const nextAverageDailySales = values.averageDailySalesMode === 'manual'
+    ? values.averageDailySales
+    : await calculateRecentAverageDailySales(client, inventoryId);
+  const status = computeInventoryStatus(previousQuantity, getEffectiveReorderThreshold({
+    min_stock_level: values.reorderLevel,
+    lead_time_days: values.leadTimeDays,
+    safety_stock: values.safetyStock,
+    average_daily_sales: nextAverageDailySales
+  }));
+  const previousStatus = inventoryRow.status || computeInventoryStatus(previousQuantity, getEffectiveReorderThreshold(inventoryRow));
+  const identityChanged =
+    normalizeInventoryText(inventoryRow.name) !== normalizeInventoryText(values.cleanName) ||
+    canonicalizeInventoryCategory(inventoryRow.category) !== values.canonicalCategory;
+  const supplierChanged = values.cleanSupplier !== cleanSupplierName(inventoryRow.supplier_name);
+  const normalizeNullableNumber = value => (value === null || value === undefined ? null : Number(value));
+  const defaultSellingPriceChanged =
+    normalizeNullableNumber(inventoryRow.default_selling_price) !== normalizeNullableNumber(values.defaultSellingPrice);
+  const costPriceChanged =
+    normalizeNullableNumber(inventoryRow.cost_price) !== normalizeNullableNumber(values.costPrice);
+  const categoryNoteChanged = cleanOptionalContextNote(inventoryRow.category_note) !== values.categoryNote;
+  const reorderLevelChanged = Number(inventoryRow.min_stock_level || 0) !== values.reorderLevel;
+  const reorderPlanningChanged =
+    normalizeNullableNumber(inventoryRow.lead_time_days) !== normalizeNullableNumber(values.leadTimeDays) ||
+    normalizeNullableNumber(inventoryRow.safety_stock) !== normalizeNullableNumber(values.safetyStock) ||
+    normalizeNullableNumber(inventoryRow.average_daily_sales) !== normalizeNullableNumber(nextAverageDailySales) ||
+    normalizeAverageDailySalesMode(inventoryRow.average_daily_sales_mode) !== values.averageDailySalesMode ||
+    normalizeNullableNumber(inventoryRow.manual_average_daily_sales) !== normalizeNullableNumber(values.manualAverageDailySales) ||
+    cleanAverageDailySalesOverrideReason(inventoryRow.average_daily_sales_override_reason) !== values.averageDailySalesOverrideReason;
+  const shouldRefreshInventoryTimestamp =
+    previousStatus !== status ||
+    identityChanged ||
+    supplierChanged ||
+    categoryNoteChanged ||
+    defaultSellingPriceChanged ||
+    costPriceChanged ||
+    reorderLevelChanged ||
+    reorderPlanningChanged;
+
+  if (identityChanged) {
+    const activeExactNameDuplicate = await findExactActiveInventoryItemByName(client, {
+      branch: request.branch,
+      name: values.cleanName,
+      excludeInventoryId: inventoryId
+    });
+    if (activeExactNameDuplicate) {
+      const error = new Error(`Another active inventory item already uses this name: ${activeExactNameDuplicate.name} (${activeExactNameDuplicate.category}).`);
+      error.statusCode = 409;
+      throw error;
+    }
+  }
+
+  let targetProductId = inventoryRow.product_id;
+  if (identityChanged) {
+    targetProductId = await findOrCreateProduct(client, {
+      name: values.cleanName,
+      category: values.canonicalCategory,
+      categoryNote: values.categoryNote,
+      supplierName: values.cleanSupplier,
+      defaultSellingPrice: values.defaultSellingPrice,
+      costPrice: values.costPrice
+    });
+  } else {
+    await client.query(
+      `UPDATE products
+       SET name = $1,
+           category = $2,
+           category_note = $3,
+           supplier_name = $4,
+           default_selling_price = $5,
+           cost_price = $6
+       WHERE product_id = $7`,
+      [
+        values.cleanName,
+        values.canonicalCategory,
+        values.categoryNote,
+        values.cleanSupplier,
+        values.defaultSellingPrice,
+        values.costPrice,
+        inventoryRow.product_id
+      ]
+    );
+  }
+
+  const branchUsage = await client.query(
+    `SELECT COUNT(*)::int AS count
+     FROM branch_inventory
+     WHERE product_id = $1`,
+    [inventoryRow.product_id]
+  );
+
+  await client.query(
+    `UPDATE branch_inventory
+     SET product_id = $1,
+         min_stock_level = $2,
+         lead_time_days = $3,
+         safety_stock = $4,
+         average_daily_sales = $5,
+         average_daily_sales_mode = $6,
+         manual_average_daily_sales = $7,
+         average_daily_sales_override_reason = $8,
+         status = $9,
+         last_updated = CASE WHEN $12 THEN ${PHILIPPINE_NOW_SQL} ELSE last_updated END
+     WHERE inventory_id = $10 AND branch = $11`,
+    [
+      targetProductId,
+      values.reorderLevel,
+      values.leadTimeDays,
+      values.safetyStock,
+      nextAverageDailySales,
+      values.averageDailySalesMode,
+      values.manualAverageDailySales,
+      values.averageDailySalesOverrideReason,
+      status,
+      inventoryId,
+      request.branch,
+      shouldRefreshInventoryTimestamp
+    ]
+  );
+
+  if (identityChanged && (branchUsage.rows[0]?.count || 0) <= 1) {
+    await client.query(
+      `DELETE FROM products
+       WHERE product_id = $1
+         AND NOT EXISTS (
+           SELECT 1
+           FROM branch_inventory
+           WHERE product_id = $1
+         )`,
+      [inventoryRow.product_id]
+    );
+  }
+
+  const merged = await client.query(
+    `SELECT
+       bi.inventory_id,
+       bi.product_id,
+       p.name,
+       p.category,
+       p.category_note,
+       p.supplier_name,
+       p.default_selling_price,
+       p.cost_price,
+       bi.stock_level,
+       bi.min_stock_level,
+       bi.lead_time_days,
+       bi.safety_stock,
+       bi.average_daily_sales,
+       bi.average_daily_sales_mode,
+       bi.manual_average_daily_sales,
+       bi.average_daily_sales_override_reason,
+       bi.status,
+       bi.branch,
+       bi.last_updated
+     FROM branch_inventory bi
+     INNER JOIN products p ON p.product_id = bi.product_id
+     WHERE bi.inventory_id = $1`,
+    [inventoryId]
+  );
+  const updatedItem = merged.rows[0];
+
+  const changedFields = [];
+  if (inventoryRow.name !== values.cleanName) changedFields.push('name');
+  if (inventoryRow.category !== values.canonicalCategory) changedFields.push('category');
+  if (categoryNoteChanged) changedFields.push('category note');
+  if (supplierChanged) changedFields.push('supplier');
+  if (defaultSellingPriceChanged) changedFields.push('default selling price');
+  if (costPriceChanged) changedFields.push('cost price');
+  if (reorderLevelChanged) changedFields.push('reorder level');
+  if (reorderPlanningChanged) changedFields.push('reorder planning');
+
+  if (changedFields.length > 0) {
+    await recordAuditLog(client, {
+      actorId,
+      targetId: updatedItem.inventory_id,
+      targetName: updatedItem.name,
+      targetType: 'inventory_item',
+      action: 'APPROVE_EDIT_ITEM_REQUEST',
+      reason: `Approved ${changedFields.join(', ')} change request.`,
+      details: {
+        branch: request.branch,
+        requestId: request.request_id,
+        requestedBy: request.requested_by_name,
+        changedFields,
+        previous: {
+          name: inventoryRow.name,
+          category: inventoryRow.category,
+          supplier: inventoryRow.supplier_name || 'Unassigned',
+          defaultSellingPrice: normalizeNullableNumber(inventoryRow.default_selling_price),
+          costPrice: normalizeNullableNumber(inventoryRow.cost_price),
+          stockLevelPreserved: previousQuantity
+        },
+        current: {
+          name: updatedItem.name,
+          category: updatedItem.category,
+          supplier: updatedItem.supplier_name || 'Unassigned',
+          defaultSellingPrice: normalizeNullableNumber(updatedItem.default_selling_price),
+          costPrice: normalizeNullableNumber(updatedItem.cost_price),
+          stockLevelPreserved: Number(updatedItem.stock_level || 0)
+        }
+      }
+    });
+  }
+
+  return updatedItem;
+}
+
 async function recordSystemLog(db, {
   eventType,
   severity = 'info',
@@ -3058,7 +3613,6 @@ function isAdmin(user) {
 
 function normalizeRole(role) {
   if (role === 'Employee') return 'Inventory Staff';
-  if (role === 'Cashier') return 'Sales Encoder';
   return role;
 }
 
@@ -3322,6 +3876,23 @@ const RESTORE_APP_TABLES = [
   'branch_settings',
   'users'
 ];
+const APP_BACKUP_MARKER = 'E.M. Cayetano Store Management System Backup';
+
+function getSqlChecksum(sql) {
+  return crypto.createHash('sha256').update(String(sql || ''), 'utf8').digest('hex');
+}
+
+function buildBackupMetadataHeader({ generatedAt, actorName, checksum, byteLength }) {
+  return [
+    `-- ${APP_BACKUP_MARKER}`,
+    `-- Generated At: ${generatedAt}`,
+    `-- Generated By: ${actorName || 'System Admin'}`,
+    `-- SHA256: ${checksum}`,
+    `-- Size Bytes: ${byteLength}`,
+    '-- Keep this file secure. It contains full-system business records.',
+    ''
+  ].join('\n');
+}
 
 function getRestoreValidationError(sql) {
   const normalized = String(sql || '').toLowerCase();
@@ -3351,6 +3922,11 @@ function getRestoreValidationError(sql) {
   const blockedPatterns = [
     /\bdrop\s+database\b/i,
     /\bcreate\s+database\b/i,
+    /\bdrop\s+schema\b/i,
+    /\bdrop\s+role\b/i,
+    /\bdrop\s+user\b/i,
+    /\balter\s+system\b/i,
+    /\btruncate\s+table\b/i,
     /\\connect\b/i,
     /\\c\b/i
   ];
@@ -4622,6 +5198,223 @@ app.get('/api/inventory', authenticate, async (req, res) => {
   } catch (err) {
     console.error('Fetch products error:', err);
     return res.status(500).json({ error: 'Failed to load products' });
+  }
+});
+
+app.get('/api/inventory/change-requests', authenticate, async (req, res) => {
+  if (!isAdmin(req.user) && normalizeRole(req.user?.role) !== 'Inventory Staff') {
+    return res.status(403).json({
+      error: 'Inventory approval requests are available only to Admin / Owner and Inventory Staff accounts.'
+    });
+  }
+
+  try {
+    const whereClause = isAdmin(req.user)
+      ? 'WHERE branch = $1'
+      : 'WHERE branch = $1 AND requested_by = $2';
+    const queryParams = isAdmin(req.user)
+      ? [req.user.branch]
+      : [req.user.branch, req.user.id];
+    const result = await pool.query(
+      `SELECT *
+       FROM inventory_change_requests
+       ${whereClause}
+       ORDER BY
+         CASE status WHEN 'pending' THEN 0 WHEN 'rejected' THEN 1 ELSE 2 END,
+         requested_at DESC,
+         request_id DESC`,
+      queryParams
+    );
+    return res.json({ requests: result.rows.map(mapInventoryChangeRequestRow) });
+  } catch (err) {
+    console.error('Fetch inventory change requests error:', err);
+    return res.status(500).json({ error: 'Failed to load inventory approval requests.' });
+  }
+});
+
+app.post('/api/inventory/change-requests', authenticate, async (req, res) => {
+  if (!canPerformInventoryMovement(req.user)) {
+    return res.status(403).json({
+      error: 'Inventory change requests are available only to Admin / Owner and Inventory Staff accounts.'
+    });
+  }
+
+  const requestType = String(req.body?.request_type || '').trim();
+  const payload = req.body?.requested_payload || {};
+  const inventoryId = req.body?.inventory_id ? Number(req.body.inventory_id) : null;
+  const cleanItemName = String(payload?.name || req.body?.item_name || '').trim().replace(/\s+/g, ' ').slice(0, 150);
+
+  if (!['add_item', 'edit_item'].includes(requestType)) {
+    return res.status(400).json({ error: 'Please select a valid inventory request type.' });
+  }
+  if (!cleanItemName) {
+    return res.status(400).json({ error: 'Item name is required before submitting an approval request.' });
+  }
+  if (requestType === 'edit_item' && (!Number.isInteger(inventoryId) || inventoryId <= 0)) {
+    return res.status(400).json({ error: 'A valid inventory item is required for edit approval requests.' });
+  }
+
+  let currentSnapshot = null;
+  if (requestType === 'edit_item') {
+    const currentResult = await pool.query(
+      `SELECT
+         bi.inventory_id,
+         bi.product_id,
+         p.name,
+         p.category,
+         p.category_note,
+         p.supplier_name,
+         p.default_selling_price,
+         p.cost_price,
+         bi.stock_level,
+         bi.min_stock_level,
+         bi.lead_time_days,
+         bi.safety_stock,
+         bi.average_daily_sales,
+         bi.average_daily_sales_mode,
+         bi.manual_average_daily_sales,
+         bi.average_daily_sales_override_reason,
+         bi.status,
+         bi.branch,
+         bi.last_updated
+       FROM branch_inventory bi
+       INNER JOIN products p ON p.product_id = bi.product_id
+       WHERE bi.inventory_id = $1 AND bi.branch = $2
+       FOR UPDATE`,
+      [inventoryId, req.user.branch]
+    );
+    if (currentResult.rowCount === 0) {
+      return res.status(404).json({ error: 'The inventory item for this edit request was not found in your branch.' });
+    }
+    currentSnapshot = mapInventoryRow(currentResult.rows[0], { includeCostPrice: true });
+  }
+
+  try {
+    const actorName = req.user.fullName || req.user.username || 'System User';
+    const result = await pool.query(
+      `INSERT INTO inventory_change_requests (
+         request_type,
+         branch,
+         inventory_id,
+         item_name,
+         requested_payload,
+         current_snapshot,
+         requested_by,
+         requested_by_name,
+         requested_at
+       )
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, ${PHILIPPINE_NOW_SQL})
+       RETURNING *`,
+      [
+        requestType,
+        req.user.branch,
+        requestType === 'edit_item' ? inventoryId : null,
+        cleanItemName,
+        JSON.stringify(payload),
+        currentSnapshot ? JSON.stringify(currentSnapshot) : null,
+        req.user.id,
+        actorName
+      ]
+    );
+
+    await recordAuditLogSafely(pool, {
+      actorId: req.user.id,
+      targetId: requestType === 'edit_item' ? inventoryId : null,
+      targetName: cleanItemName,
+      targetType: 'inventory_change_request',
+      action: requestType === 'add_item' ? 'REQUEST_ADD_INVENTORY_ITEM' : 'REQUEST_EDIT_INVENTORY_ITEM',
+      details: { branch: req.user.branch, requestType, payload }
+    });
+
+    return res.status(201).json({ request: mapInventoryChangeRequestRow(result.rows[0]) });
+  } catch (err) {
+    console.error('Create inventory change request error:', err);
+    return res.status(500).json({ error: 'Failed to submit inventory approval request.' });
+  }
+});
+
+app.post('/api/inventory/change-requests/:id/status', authenticate, requireAdmin, async (req, res) => {
+  const requestId = Number(req.params.id);
+  const status = String(req.body?.status || '').trim();
+  const reviewNote = String(req.body?.review_note || '').trim().slice(0, 500);
+
+  if (!Number.isInteger(requestId) || requestId <= 0) {
+    return res.status(400).json({ error: 'Please select a valid approval request.' });
+  }
+  if (!['approved', 'rejected'].includes(status)) {
+    return res.status(400).json({ error: 'Approval request status must be approved or rejected.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const actorName = req.user.fullName || req.user.username || 'System Admin';
+    const lockedRequestResult = await client.query(
+      `SELECT *
+       FROM inventory_change_requests
+       WHERE request_id = $1 AND branch = $2
+       FOR UPDATE`,
+      [requestId, req.user.branch]
+    );
+
+    if (lockedRequestResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'This approval request was not found for your branch.' });
+    }
+
+    const lockedRequest = lockedRequestResult.rows[0];
+    if (lockedRequest.status !== 'pending') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'This approval request was already reviewed by another administrator.' });
+    }
+
+    let approvedItem = null;
+    if (status === 'approved') {
+      approvedItem = lockedRequest.request_type === 'add_item'
+        ? await applyApprovedInventoryAddRequest(client, { request: lockedRequest, actorId: req.user.id })
+        : await applyApprovedInventoryEditRequest(client, { request: lockedRequest, actorId: req.user.id });
+    }
+
+    const result = await client.query(
+      `UPDATE inventory_change_requests
+       SET status = $1,
+           reviewed_by = $2,
+           reviewed_by_name = $3,
+           review_note = $4,
+           reviewed_at = ${PHILIPPINE_NOW_SQL}
+       WHERE request_id = $5 AND branch = $6
+       RETURNING *`,
+      [status, req.user.id, actorName, reviewNote || null, requestId, req.user.branch]
+    );
+
+    await recordAuditLog(client, {
+      actorId: req.user.id,
+      targetId: requestId,
+      targetName: result.rows[0].item_name,
+      targetType: 'inventory_change_request',
+      action: status === 'approved' ? 'APPROVE_INVENTORY_CHANGE_REQUEST' : 'REJECT_INVENTORY_CHANGE_REQUEST',
+      reason: reviewNote || null,
+      details: {
+        branch: req.user.branch,
+        requestType: result.rows[0].request_type,
+        inventoryId: result.rows[0].inventory_id
+      }
+    });
+
+    await client.query('COMMIT');
+    return res.json({
+      request: mapInventoryChangeRequestRow(result.rows[0]),
+      product: approvedItem ? mapInventoryRow(approvedItem, { includeCostPrice: true }) : null
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+    console.error('Review inventory change request error:', err);
+    return res.status(500).json({ error: 'Failed to update inventory approval request.' });
+  } finally {
+    client.release();
   }
 });
 
@@ -7146,6 +7939,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     movement_quantity,
     movement_reason,
     movement_note,
+    expected_last_updated,
     allow_similar_duplicate = false
   } = req.body;
   let transactionTiming;
@@ -7178,10 +7972,12 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
          bi.average_daily_sales_mode,
          bi.manual_average_daily_sales,
          bi.average_daily_sales_override_reason,
-         bi.status
+         bi.status,
+         bi.last_updated
        FROM branch_inventory bi
        INNER JOIN products p ON p.product_id = bi.product_id
-       WHERE bi.inventory_id = $1 AND bi.branch = $2`,
+       WHERE bi.inventory_id = $1 AND bi.branch = $2
+       FOR UPDATE`,
       [id, req.user.branch]
     );
 
@@ -7191,6 +7987,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     }
 
     const inventoryRow = existingInventory.rows[0];
+    assertFreshInventorySnapshot(expected_last_updated, inventoryRow.last_updated);
     const productId = inventoryRow.product_id;
     const previousQuantity = Number(inventoryRow.stock_level || 0);
     const nextQuantity = parseNonNegativeInteger(stock_level, 'Stock level');
@@ -7732,7 +8529,8 @@ app.delete('/api/inventory/:id', authenticate, requireAdmin, async (req, res) =>
          bi.last_updated
        FROM branch_inventory bi
        INNER JOIN products p ON p.product_id = bi.product_id
-       WHERE bi.inventory_id = $1 AND bi.branch = $2`,
+       WHERE bi.inventory_id = $1 AND bi.branch = $2
+       FOR UPDATE`,
       [id, req.user.branch]
     );
 
@@ -7882,7 +8680,8 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
          average_daily_sales_override_reason,
          status
        FROM archived_inventory
-       WHERE archived_inventory_id = $1 AND branch = $2`,
+       WHERE archived_inventory_id = $1 AND branch = $2
+       FOR UPDATE`,
       [id, req.user.branch]
     );
 
@@ -7908,7 +8707,8 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
     const existingInventory = await client.query(
       `SELECT inventory_id, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated
        FROM branch_inventory
-       WHERE product_id = $1 AND branch = $2`,
+       WHERE product_id = $1 AND branch = $2
+       FOR UPDATE`,
       [productId, archivedItem.branch]
     );
 
@@ -8097,22 +8897,48 @@ app.get('/api/maintenance/backup', authenticate, requireAdmin, async (req, res) 
         return res.status(500).json({ error: 'Backup failed', details });
       }
 
+      const backupGeneratedAt = new Date().toISOString();
+      const backupChecksum = getSqlChecksum(stdout);
+      const backupByteLength = Buffer.byteLength(stdout, 'utf8');
+      const backupOutput = `${buildBackupMetadataHeader({
+        generatedAt: backupGeneratedAt,
+        actorName: req.user.fullName || req.user.username,
+        checksum: backupChecksum,
+        byteLength: backupByteLength
+      })}${stdout}`;
+
       const logResults = await Promise.allSettled([
         pool.query(
-          `INSERT INTO backup_logs (action, actor_id, actor_name)
-           VALUES ($1, $2, (SELECT full_name FROM users WHERE user_id = $2))`,
-          ['backup', req.user.id]
+          `INSERT INTO backup_logs (action, actor_id, actor_name, details)
+           VALUES ($1, $2, (SELECT full_name FROM users WHERE user_id = $2), $3::jsonb)`,
+          ['backup', req.user.id, JSON.stringify({
+            format: 'plain_sql',
+            checksumSha256: backupChecksum,
+            byteLength: backupByteLength,
+            generatedAt: backupGeneratedAt,
+            includesApplicationMarker: true
+          })]
         ),
         recordAuditLog(pool, {
           actorId: req.user.id,
           targetName: 'Database Backup',
-          action: 'CREATE_BACKUP'
+          action: 'CREATE_BACKUP',
+          details: {
+            format: 'plain_sql',
+            checksumSha256: backupChecksum,
+            byteLength: backupByteLength
+          }
         }),
         recordSystemLog(pool, {
           eventType: 'DATABASE_BACKUP',
           severity: 'info',
           message: 'Database backup was generated.',
-          context: { delivery: 'download' },
+          context: {
+            delivery: 'download',
+            format: 'plain_sql',
+            checksumSha256: backupChecksum,
+            byteLength: backupByteLength
+          },
           actorId: req.user.id
         })
       ]);
@@ -8124,7 +8950,7 @@ app.get('/api/maintenance/backup', authenticate, requireAdmin, async (req, res) 
 
       res.setHeader('Content-disposition', `attachment; filename=backup_${Date.now()}.sql`);
       res.setHeader('Content-Type', 'application/sql');
-      return res.send(stdout);
+      return res.send(backupOutput);
     }
   );
 });
@@ -8147,7 +8973,7 @@ const SELECTIVE_EXPORT_DEFINITIONS = {
         ['Branch', 'bi.branch'],
         ['Quantity', 'bi.stock_level::text'],
         ['Status', 'bi.status'],
-        ['Last Updated', 'bi.last_updated::text']
+        ['Last Updated', "TO_CHAR(bi.last_updated, 'YYYY-MM-DD HH12:MI:SS AM') || ' PHT'"]
       ],
       detailed: [
         ['Item Code', 'bi.inventory_id::text'],
@@ -8163,7 +8989,7 @@ const SELECTIVE_EXPORT_DEFINITIONS = {
         ['Safety Stock', 'bi.safety_stock::text'],
         ['Average Daily Sales', 'bi.average_daily_sales::text'],
         ['Status', 'bi.status'],
-        ['Last Updated', 'bi.last_updated::text']
+        ['Last Updated', "TO_CHAR(bi.last_updated, 'YYYY-MM-DD HH12:MI:SS AM') || ' PHT'"]
       ]
     }
   },
@@ -8184,7 +9010,7 @@ const SELECTIVE_EXPORT_DEFINITIONS = {
         ['Total Quantity', 'st.total_quantity::text'],
         ['Total Amount', 'st.total_amount::text'],
         ['Payment Method', 'st.payment_method'],
-        ['Transaction Date', 'st.created_at::text']
+        ['Transaction Date', "TO_CHAR(st.created_at, 'YYYY-MM-DD HH12:MI:SS AM') || ' PHT'"]
       ],
       detailed: [
         ['System Ref', 'st.sales_number'],
@@ -8203,8 +9029,8 @@ const SELECTIVE_EXPORT_DEFINITIONS = {
         ['Total Amount', 'st.total_amount::text'],
         ['Payment Method', 'st.payment_method'],
         ['Encoded By', "COALESCE(st.sold_by_name, '')"],
-        ['Transaction Date', 'st.created_at::text'],
-        ['Encoded Date', 'st.encoded_at::text'],
+        ['Transaction Date', "TO_CHAR(st.created_at, 'YYYY-MM-DD HH12:MI:SS AM') || ' PHT'"],
+        ['Encoded Date', "COALESCE(TO_CHAR(st.encoded_at, 'YYYY-MM-DD HH12:MI:SS AM') || ' PHT', '')"],
         ['Remarks', "COALESCE(st.remarks, '')"]
       ]
     }
@@ -8225,7 +9051,7 @@ const SELECTIVE_EXPORT_DEFINITIONS = {
         ['Status', 'pt.status'],
         ['Total Quantity', 'pt.total_quantity::text'],
         ['Subtotal Amount', 'pt.subtotal_amount::text'],
-        ['Transaction Date', 'pt.created_at::text']
+        ['Transaction Date', "TO_CHAR(pt.created_at, 'YYYY-MM-DD HH12:MI:SS AM') || ' PHT'"]
       ],
       detailed: [
         ['Purchase Number', 'pt.purchase_number'],
@@ -8239,8 +9065,8 @@ const SELECTIVE_EXPORT_DEFINITIONS = {
         ['Total Quantity', 'pt.total_quantity::text'],
         ['Subtotal Amount', 'pt.subtotal_amount::text'],
         ['Encoded By', "COALESCE(pt.encoded_by_name, '')"],
-        ['Transaction Date', 'pt.created_at::text'],
-        ['Encoded Date', 'pt.encoded_at::text'],
+        ['Transaction Date', "TO_CHAR(pt.created_at, 'YYYY-MM-DD HH12:MI:SS AM') || ' PHT'"],
+        ['Encoded Date', "COALESCE(TO_CHAR(pt.encoded_at, 'YYYY-MM-DD HH12:MI:SS AM') || ' PHT', '')"],
         ['Remarks', "COALESCE(pt.remarks, '')"]
       ]
     }
@@ -8261,7 +9087,7 @@ const SELECTIVE_EXPORT_DEFINITIONS = {
         ['Branch', 'ai.branch'],
         ['Quantity', 'ai.stock_level::text'],
         ['Status', 'ai.status'],
-        ['Archived Date', 'ai.archived_at::text']
+        ['Archived Date', "TO_CHAR(ai.archived_at, 'YYYY-MM-DD HH12:MI:SS AM') || ' PHT'"]
       ],
       detailed: [
         ['Archive ID', 'ai.archived_inventory_id::text'],
@@ -8277,7 +9103,7 @@ const SELECTIVE_EXPORT_DEFINITIONS = {
         ['Status', 'ai.status'],
         ['Archive Reason', "COALESCE(ai.archive_reason, '')"],
         ['Archive Note', "COALESCE(ai.archive_reason_note, '')"],
-        ['Archived Date', 'ai.archived_at::text']
+        ['Archived Date', "TO_CHAR(ai.archived_at, 'YYYY-MM-DD HH12:MI:SS AM') || ' PHT'"]
       ]
     }
   },
@@ -8295,7 +9121,7 @@ const SELECTIVE_EXPORT_DEFINITIONS = {
         ['Target Type', "COALESCE(al.target_type, '')"],
         ['Target Name', "COALESCE(al.target_name, '')"],
         ['Reason', "COALESCE(al.reason, '')"],
-        ['Created At', 'al.created_at::text']
+        ['Created At', "TO_CHAR(al.created_at, 'YYYY-MM-DD HH12:MI:SS AM') || ' PHT'"]
       ],
       detailed: [
         ['Audit ID', 'al.id::text'],
@@ -8306,7 +9132,7 @@ const SELECTIVE_EXPORT_DEFINITIONS = {
         ['Target Type', "COALESCE(al.target_type, '')"],
         ['Target Name', "COALESCE(al.target_name, '')"],
         ['Reason', "COALESCE(al.reason, '')"],
-        ['Created At', 'al.created_at::text']
+        ['Created At', "TO_CHAR(al.created_at, 'YYYY-MM-DD HH12:MI:SS AM') || ' PHT'"]
       ]
     }
   }
@@ -9050,7 +9876,7 @@ app.post(
   '/api/maintenance/restore',
   authenticate,
   requireAdmin,
-  express.raw({ type: 'application/sql', limit: '10mb' }),
+  express.raw({ type: 'application/sql', limit: '25mb' }),
   async (req, res) => {
     const dbUrl = process.env.DATABASE_URL;
     if (!dbUrl) {
@@ -9061,10 +9887,13 @@ app.post(
       return res.status(400).json({ error: 'No SQL file uploaded' });
     }
 
-    const tempFile = path.join(os.tmpdir(), `restore_${Date.now()}.sql`);
+    const tempFile = path.join(os.tmpdir(), `emc_restore_${Date.now()}_${crypto.randomBytes(8).toString('hex')}.sql`);
 
     try {
       const uploadedSql = req.body.toString('utf8');
+      const restoreChecksum = getSqlChecksum(uploadedSql);
+      const restoreByteLength = Buffer.byteLength(uploadedSql, 'utf8');
+      const hasApplicationMarker = uploadedSql.includes(APP_BACKUP_MARKER);
       const validationError = getRestoreValidationError(uploadedSql);
       if (validationError) {
         return res.status(400).json({ error: validationError });
@@ -9102,20 +9931,37 @@ app.post(
 
           const logResults = await Promise.allSettled([
             pool.query(
-              `INSERT INTO backup_logs (action, actor_id, actor_name)
-               VALUES ($1, $2, (SELECT full_name FROM users WHERE user_id = $2))`,
-              ['restore', req.user.id]
+              `INSERT INTO backup_logs (action, actor_id, actor_name, details)
+               VALUES ($1, $2, (SELECT full_name FROM users WHERE user_id = $2), $3::jsonb)`,
+              ['restore', req.user.id, JSON.stringify({
+                format: 'plain_sql',
+                checksumSha256: restoreChecksum,
+                byteLength: restoreByteLength,
+                includesApplicationMarker: hasApplicationMarker
+              })]
             ),
             recordAuditLog(pool, {
               actorId: req.user.id,
               targetName: 'Database Restore',
-              action: 'RESTORE_DATABASE'
+              action: 'RESTORE_DATABASE',
+              details: {
+                format: 'plain_sql',
+                checksumSha256: restoreChecksum,
+                byteLength: restoreByteLength,
+                includesApplicationMarker: hasApplicationMarker
+              }
             }),
             recordSystemLog(pool, {
               eventType: 'DATABASE_RESTORE',
               severity: 'warning',
               message: 'Database restore completed from an uploaded SQL backup.',
-              context: { source: 'uploaded_sql_backup' },
+              context: {
+                source: 'uploaded_sql_backup',
+                format: 'plain_sql',
+                checksumSha256: restoreChecksum,
+                byteLength: restoreByteLength,
+                includesApplicationMarker: hasApplicationMarker
+              },
               actorId: req.user.id
             })
           ]);

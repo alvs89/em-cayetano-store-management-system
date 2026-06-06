@@ -4,7 +4,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo } 
 import axios from "axios";
 import { apiUrl } from "../utils/api";
 import { formatArchiveReferenceId, formatItemCode } from "../utils/itemCodes";
-import { isAdminRole } from "../utils/roles";
+import { canPerformInventoryMovement, isAdminRole } from "../utils/roles";
 
 const DataContext = createContext(undefined);
 
@@ -41,6 +41,24 @@ const resolveOfficialInvoiceNumber = (officialInvoiceNumber, salesNumber) => {
 
 const getEffectiveLowStockThreshold = product =>
   normalizeOptionalNumber(product.active_low_stock_threshold ?? product.min_stock_level ?? 0);
+
+const mapInventoryChangeRequest = request => ({
+  id: request.request_id?.toString() ?? '',
+  requestType: request.request_type || '',
+  branch: request.branch || '',
+  inventoryId: request.inventory_id?.toString() || '',
+  itemName: request.item_name || '',
+  requestedPayload: request.requested_payload || {},
+  currentSnapshot: request.current_snapshot || null,
+  status: request.status || 'pending',
+  requestedBy: request.requested_by,
+  requestedByName: request.requested_by_name || 'System User',
+  reviewedBy: request.reviewed_by,
+  reviewedByName: request.reviewed_by_name || '',
+  reviewNote: request.review_note || '',
+  requestedAt: request.requested_at ? new Date(request.requested_at).toISOString() : '',
+  reviewedAt: request.reviewed_at ? new Date(request.reviewed_at).toISOString() : '',
+});
 
 const getStockAlertEventId = (prefix, item) => {
   const quantity = Number(item.quantity);
@@ -222,6 +240,7 @@ export function DataProvider({ children }) {
   const [stockMovements, setStockMovements] = useState([]);
   const [salesTransactions, setSalesTransactions] = useState([]);
   const [purchaseTransactions, setPurchaseTransactions] = useState([]);
+  const [inventoryChangeRequests, setInventoryChangeRequests] = useState([]);
   const [users, setUsers] = useState([]); // User logic remains as before
   const [loadingInventory, setLoadingInventory] = useState(true);
   const [inventoryError, setInventoryError] = useState(null);
@@ -259,9 +278,12 @@ export function DataProvider({ children }) {
   });
 
   // Fetch inventory from backend
-  const fetchInventory = useCallback(async () => {
-    setLoadingInventory(true);
-    setInventoryError(null);
+  const fetchInventory = useCallback(async (options = {}) => {
+    const { showLoading = true } = options;
+    if (showLoading) {
+      setLoadingInventory(true);
+      setInventoryError(null);
+    }
     try {
       const token = localStorage.getItem("token");
       if (!token) {
@@ -306,9 +328,13 @@ export function DataProvider({ children }) {
       setInventory(items);
     } catch (err) {
       setInventoryError(err?.response?.data?.error || err.message || "Failed to load inventory");
-      setInventory([]);
+      if (showLoading) {
+        setInventory([]);
+      }
     } finally {
-      setLoadingInventory(false);
+      if (showLoading) {
+        setLoadingInventory(false);
+      }
     }
   }, []);
 
@@ -363,6 +389,69 @@ export function DataProvider({ children }) {
       setArchivedInventory([]);
     }
   }, []);
+
+  const fetchInventoryChangeRequests = useCallback(async () => {
+    const token = localStorage.getItem("token");
+    let storedUser = null;
+    try {
+      storedUser = JSON.parse(localStorage.getItem("user") || "null");
+    } catch {
+      storedUser = null;
+    }
+    if (!token || !canPerformInventoryMovement(storedUser?.role)) {
+      setInventoryChangeRequests([]);
+      return [];
+    }
+    try {
+      const res = await axios.get(apiUrl("/api/inventory/change-requests"), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const requests = (res.data.requests || []).map(mapInventoryChangeRequest);
+      setInventoryChangeRequests(requests);
+      return requests;
+    } catch {
+      setInventoryChangeRequests([]);
+      return [];
+    }
+  }, []);
+
+  const submitInventoryChangeRequest = async ({ requestType, inventoryId = null, itemName, requestedPayload }) => {
+    const token = localStorage.getItem("token");
+    const res = await axios.post(
+      apiUrl("/api/inventory/change-requests"),
+      {
+        request_type: requestType,
+        inventory_id: inventoryId,
+        item_name: itemName,
+        requested_payload: requestedPayload,
+      },
+      { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+    );
+    try {
+      localStorage.setItem("inventory-change-request-submitted-at", new Date().toISOString());
+      window.dispatchEvent(new Event("inventory-change-request-submitted"));
+    } catch {
+      // Ignore browser storage/event failures; the server record has already been created.
+    }
+    await fetchInventoryChangeRequests();
+    await fetchInventory({ showLoading: false });
+    return mapInventoryChangeRequest(res.data.request || {});
+  };
+
+  const reviewInventoryChangeRequest = async ({ requestId, status, reviewNote = "" }) => {
+    const token = localStorage.getItem("token");
+    const res = await axios.post(
+      apiUrl(`/api/inventory/change-requests/${requestId}/status`),
+      { status, review_note: reviewNote },
+      { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+    );
+    await fetchInventoryChangeRequests();
+    await fetchInventory({ showLoading: false });
+    return {
+      request: mapInventoryChangeRequest(res.data.request || {}),
+      product: res.data.product || null,
+    };
+  };
 
   const fetchStockMovements = useCallback(async () => {
     try {
@@ -594,8 +683,9 @@ export function DataProvider({ children }) {
     fetchStockMovements();
     fetchSalesTransactions();
     fetchPurchaseTransactions();
+    fetchInventoryChangeRequests();
     refreshSystemSummary();
-  }, [fetchInventory, fetchArchivedInventory, fetchStockMovements, fetchSalesTransactions, fetchPurchaseTransactions, refreshSystemSummary]);
+  }, [fetchInventory, fetchArchivedInventory, fetchStockMovements, fetchSalesTransactions, fetchPurchaseTransactions, fetchInventoryChangeRequests, refreshSystemSummary]);
 
   useEffect(() => {
     const handleAuthStateChanged = () => {
@@ -610,6 +700,7 @@ export function DataProvider({ children }) {
       fetchStockMovements();
       fetchSalesTransactions();
       fetchPurchaseTransactions();
+      fetchInventoryChangeRequests();
       refreshSystemSummary();
     };
 
@@ -621,7 +712,7 @@ export function DataProvider({ children }) {
       window.removeEventListener('database-restored', handleAuthStateChanged);
       window.removeEventListener('maintenance-action-completed', handleAuthStateChanged);
     };
-  }, [fetchInventory, fetchArchivedInventory, fetchStockMovements, fetchSalesTransactions, fetchPurchaseTransactions, refreshSystemSummary]);
+  }, [fetchInventory, fetchArchivedInventory, fetchStockMovements, fetchSalesTransactions, fetchPurchaseTransactions, fetchInventoryChangeRequests, refreshSystemSummary]);
 
   useEffect(() => {
     const id = setInterval(fetchInventory, 30000);
@@ -676,6 +767,35 @@ export function DataProvider({ children }) {
       window.removeEventListener("storage", handleStorage);
     };
   }, [activeUserRole, refreshSystemSummary]);
+
+  useEffect(() => {
+    if (!canPerformInventoryMovement(activeUserRole)) return undefined;
+
+    const refreshApprovalRequests = () => {
+      fetchInventoryChangeRequests();
+      if (!isAdminRole(activeUserRole)) {
+        fetchInventory({ showLoading: false });
+      }
+    };
+    const handleStorage = event => {
+      if (event.key === "inventory-change-request-submitted-at") {
+        refreshApprovalRequests();
+      }
+    };
+
+    refreshApprovalRequests();
+    const intervalId = setInterval(refreshApprovalRequests, isAdminRole(activeUserRole) ? 15000 : 10000);
+    window.addEventListener("inventory-change-request-submitted", refreshApprovalRequests);
+    window.addEventListener("focus", refreshApprovalRequests);
+    window.addEventListener("storage", handleStorage);
+
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener("inventory-change-request-submitted", refreshApprovalRequests);
+      window.removeEventListener("focus", refreshApprovalRequests);
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, [activeUserRole, fetchInventory, fetchInventoryChangeRequests]);
 
   useEffect(() => {
     try {
@@ -872,6 +992,7 @@ export function DataProvider({ children }) {
           movement_quantity: updates.movementQuantity,
           movement_reason: updates.movementReason,
           movement_note: updates.movementNote,
+          expected_last_updated: updates.expectedLastUpdated,
           actual_transaction_at: updates.actualTransactionAt,
           backdate_reason: updates.backdateReason,
           allow_similar_duplicate: Boolean(updates.allowSimilarDuplicate),
@@ -1147,10 +1268,12 @@ export function DataProvider({ children }) {
         stockMovements,
         salesTransactions,
         purchaseTransactions,
+        inventoryChangeRequests,
         fetchStockMovements,
         fetchSalesTransactions,
         getNextSalesInvoiceNumber,
         fetchPurchaseTransactions,
+        fetchInventoryChangeRequests,
         users,
         setUsers,
         loadingInventory,
@@ -1159,6 +1282,8 @@ export function DataProvider({ children }) {
         fetchArchivedInventory,
         addInventoryItem,
         updateInventoryItem,
+        submitInventoryChangeRequest,
+        reviewInventoryChangeRequest,
         batchStockAdjustment,
         batchStockOut,
         recordSale,

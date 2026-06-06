@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { mergeSort } from '../utils/algorithms';
 import { formatPurchaseDocumentLabel, formatPurchasePaymentTerms } from '../utils/format';
 import { createNumericInputGuards } from '../utils/numericInputGuards';
+import { clearFormDraft, formatDraftSavedAt, loadFormDraft, saveFormDraft } from '../utils/formDrafts';
 import {
   PURCHASE_DRAFT_EVENT,
   clearPurchaseDraft,
@@ -266,9 +267,16 @@ export function PurchasesModule({ user, onNavigate }) {
   const [dismissedSupplierSuggestionKey, setDismissedSupplierSuggestionKey] = useState('');
   const [useSupplierFilter, setUseSupplierFilter] = useState(true);
   const [availableDraft, setAvailableDraft] = useState(() => loadPurchaseDraft());
+  const [recoverablePurchaseDraft, setRecoverablePurchaseDraft] = useState(null);
+  const [purchaseDraftStatus, setPurchaseDraftStatus] = useState('');
   const purchaseLinesScrollRef = useRef(null);
   const purchaseLineRefs = useRef({});
   const purchaseLineSelectRefs = useRef({});
+  const purchaseDraftScope = useMemo(() => ({
+    module: 'purchase-entry',
+    userId: user?.id || user?.user_id || user?.username || 'current-user',
+    branch: user?.branch || 'current-branch'
+  }), [user?.branch, user?.id, user?.user_id, user?.username]);
 
   const handleActualTransactionAtChange = value => {
     setActualTransactionAt(value);
@@ -278,6 +286,13 @@ export function PurchasesModule({ user, onNavigate }) {
       });
     }
   };
+
+  useEffect(() => {
+    const draft = loadFormDraft(purchaseDraftScope);
+    if (draft?.data) {
+      setRecoverablePurchaseDraft(draft);
+    }
+  }, [purchaseDraftScope]);
 
   const sortedInventory = useMemo(
     () => mergeSort([...inventory], (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' })),
@@ -439,6 +454,44 @@ export function PurchasesModule({ user, onNavigate }) {
   const selectedLines = lineDetails.filter(line => line.inventoryId && line.item);
   const totalQuantity = lineDetails.reduce((sum, line) => sum + (Number.isFinite(line.quantity) ? line.quantity : 0), 0);
   const subtotalAmount = lineDetails.reduce((sum, line) => sum + (Number.isFinite(line.subtotal) ? line.subtotal : 0), 0);
+  const hasPurchaseFormInput = useMemo(() => (
+    supplierName.trim() !== '' ||
+    documentType !== 'DR' ||
+    documentTypeNote.trim() !== '' ||
+    documentNumber.trim() !== '' ||
+    paymentTerms !== 'cash' ||
+    remarks.trim() !== '' ||
+    actualTransactionAt.trim() !== '' ||
+    backdateReason.trim() !== '' ||
+    purchaseLines.some(line => (
+      String(line.inventoryId || '').trim() !== '' ||
+      String(line.quantity || '').trim() !== '' ||
+      String(line.unitCost || '').trim() !== ''
+    ))
+  ), [actualTransactionAt, backdateReason, documentNumber, documentType, documentTypeNote, paymentTerms, purchaseLines, remarks, supplierName]);
+  const purchaseDraftData = useMemo(() => ({
+    supplierName,
+    supplierMode,
+    documentType,
+    documentTypeNote,
+    documentNumber,
+    paymentTerms,
+    remarks,
+    actualTransactionAt,
+    backdateReason,
+    purchaseLines
+  }), [
+    actualTransactionAt,
+    backdateReason,
+    documentNumber,
+    documentType,
+    documentTypeNote,
+    paymentTerms,
+    purchaseLines,
+    remarks,
+    supplierMode,
+    supplierName
+  ]);
   const selectedSupplierName = supplierName.trim();
   const supplierReview = (() => {
     const groups = new Map();
@@ -502,6 +555,95 @@ export function PurchasesModule({ user, onNavigate }) {
 
     return null;
   })();
+
+  const applyRecoveredPurchaseDraft = draft => {
+    const data = draft?.data || {};
+    const draftLines = Array.isArray(data.purchaseLines) ? data.purchaseLines : [];
+    const trackedDraftLineCount = draftLines.filter(line => line?.inventoryId).length;
+    if (trackedDraftLineCount > 0 && inventory.length === 0) {
+      toast.info('Inventory data is still loading.', {
+        description: 'Please try resuming the draft again in a few seconds.'
+      });
+      return;
+    }
+
+    let unavailableLineCount = 0;
+    const restoredLines = draftLines.length > 0
+      ? draftLines
+        .map(line => {
+          const inventoryId = String(line?.inventoryId || '');
+          if (inventoryId && !getInventoryById(inventoryId)) unavailableLineCount += 1;
+          return {
+            inventoryId: getInventoryById(inventoryId) ? inventoryId : '',
+            quantity: String(line?.quantity || ''),
+            unitCost: String(line?.unitCost || '')
+          };
+        })
+        .filter(line => line.inventoryId || line.quantity || line.unitCost)
+      : [];
+
+    setSupplierName(String(data.supplierName || '').slice(0, 160));
+    setSupplierMode(data.supplierMode || (isListedSupplier(data.supplierName) ? 'listed' : 'custom'));
+    setDocumentType(DOCUMENT_TYPES.includes(data.documentType) ? data.documentType : 'DR');
+    setDocumentTypeNote(String(data.documentTypeNote || '').slice(0, 80));
+    setDocumentNumber(String(data.documentNumber || '').slice(0, 80));
+    setPaymentTerms(PAYMENT_TERMS.some(term => term.value === data.paymentTerms) ? data.paymentTerms : 'cash');
+    setRemarks(String(data.remarks || '').slice(0, 240));
+    setActualTransactionAt(data.actualTransactionAt || '');
+    setBackdateReason(String(data.backdateReason || '').slice(0, 240));
+    setPurchaseLines(restoredLines.length > 0 ? restoredLines : [emptyPurchaseLine()]);
+    setRecoverablePurchaseDraft(null);
+    setPurchaseDraftStatus(`Draft recovered from ${formatDraftSavedAt(draft.savedAt)}`);
+    toast.success('Purchase draft recovered.', {
+      description: 'Review the receiving worksheet before saving the purchase.'
+    });
+    if (unavailableLineCount > 0) {
+      toast.warning('Some draft items need review.', {
+        description: `${unavailableLineCount} item${unavailableLineCount === 1 ? '' : 's'} could not be restored because the item is no longer available in active inventory.`
+      });
+    }
+  };
+
+  const discardRecoveredPurchaseDraft = () => {
+    clearFormDraft(purchaseDraftScope);
+    setRecoverablePurchaseDraft(null);
+    setPurchaseDraftStatus('');
+    toast.info('Purchase draft discarded.');
+  };
+
+  useEffect(() => {
+    if (recoverablePurchaseDraft || isSaving) return undefined;
+
+    if (!hasPurchaseFormInput) {
+      clearFormDraft(purchaseDraftScope);
+      setPurchaseDraftStatus('');
+      return undefined;
+    }
+
+    const savedDraft = saveFormDraft({
+      ...purchaseDraftScope,
+      data: purchaseDraftData
+    });
+    setPurchaseDraftStatus(`Draft saved ${formatDraftSavedAt(savedDraft.savedAt)}`);
+    return undefined;
+  }, [hasPurchaseFormInput, isSaving, purchaseDraftData, purchaseDraftScope, recoverablePurchaseDraft]);
+
+  useEffect(() => {
+    if (!hasPurchaseFormInput || isSaving || recoverablePurchaseDraft) return undefined;
+
+    const warnBeforeLeaving = event => {
+      saveFormDraft({
+        ...purchaseDraftScope,
+        data: purchaseDraftData
+      });
+      event.preventDefault();
+      event.returnValue = '';
+      return '';
+    };
+
+    window.addEventListener('beforeunload', warnBeforeLeaving);
+    return () => window.removeEventListener('beforeunload', warnBeforeLeaving);
+  }, [hasPurchaseFormInput, isSaving, purchaseDraftData, purchaseDraftScope, recoverablePurchaseDraft]);
 
   const getValidDraftLines = draft =>
     (draft?.items || [])
@@ -750,8 +892,10 @@ export function PurchasesModule({ user, onNavigate }) {
   };
 
   const handleConfirmClear = () => {
+    clearFormDraft(purchaseDraftScope);
     resetForm();
     setIsClearDialogOpen(false);
+    setPurchaseDraftStatus('');
     toast.success('Purchase draft cleared.');
   };
 
@@ -841,6 +985,8 @@ export function PurchasesModule({ user, onNavigate }) {
       toast.success('Purchase saved and inventory added.', {
         description: `${purchase.purchaseNumber || 'Purchase entry'} was recorded.`
       });
+      clearFormDraft(purchaseDraftScope);
+      setPurchaseDraftStatus('Transaction completed');
       resetForm();
       setIsConfirmPurchaseOpen(false);
     } catch (err) {
@@ -904,6 +1050,175 @@ export function PurchasesModule({ user, onNavigate }) {
       <style>{`
         .purchase-screen {
           min-height: 100vh;
+        }
+
+        .purchase-screen .draft-recovery-dialog {
+          width: min(560px, calc(100vw - 1.5rem)) !important;
+          max-width: min(560px, calc(100vw - 1.5rem)) !important;
+          overflow: hidden;
+          border-radius: 0.85rem;
+          padding: 0;
+          background: #ffffff;
+          box-shadow: 0 20px 44px rgba(15, 23, 42, 0.22);
+        }
+
+        .purchase-screen .draft-recovery-header {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr);
+          gap: 0.8rem;
+          padding: 1.15rem 1.25rem 1rem;
+          border-bottom: 1px solid #e2e8f0;
+        }
+
+        .purchase-screen .draft-recovery-icon {
+          display: inline-flex;
+          width: 2.65rem;
+          height: 2.65rem;
+          align-items: center;
+          justify-content: center;
+          border-radius: 0.75rem;
+          background: #eff6ff;
+          color: #1d4ed8;
+          flex-shrink: 0;
+        }
+
+        .purchase-screen .draft-recovery-title {
+          color: #0f172a;
+          font-size: clamp(1.08rem, 2.5vw, 1.32rem);
+          font-weight: 850;
+          line-height: 1.2;
+          letter-spacing: 0;
+        }
+
+        .purchase-screen .draft-recovery-description {
+          margin-top: 0.35rem;
+          color: #334155;
+          font-size: 0.92rem;
+          line-height: 1.45;
+        }
+
+        .purchase-screen .draft-recovery-body {
+          padding: 0.85rem 1.25rem;
+        }
+
+        .purchase-screen .draft-recovery-meta {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 1rem;
+          border: 1px solid #e5e7eb;
+          border-radius: 0.7rem;
+          background: #f9fafb;
+          padding: 0.65rem 0.8rem;
+          color: #475569;
+          font-size: 0.9rem;
+          line-height: 1.4;
+        }
+
+        .purchase-screen .draft-recovery-meta strong {
+          color: #0f172a;
+          font-weight: 850;
+        }
+
+        .purchase-screen .draft-recovery-actions {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.7rem;
+          border-top: 1px solid #e2e8f0;
+          background: #ffffff;
+          padding: 0.9rem 1.25rem 1rem;
+        }
+
+        .purchase-screen .draft-recovery-action {
+          display: inline-flex !important;
+          min-height: 2.55rem;
+          width: 100%;
+          align-items: center;
+          justify-content: center;
+          border-radius: 0.6rem;
+          padding: 0.55rem 0.9rem;
+          font-size: 0.92rem;
+          font-weight: 800;
+          line-height: 1.2;
+          text-align: center;
+          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+        }
+
+        .purchase-screen .draft-recovery-action-secondary {
+          border: 1px solid #cbd5e1 !important;
+          background: #ffffff !important;
+          color: #0f172a !important;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+        }
+
+        .purchase-screen .draft-recovery-action-secondary:hover,
+        .purchase-screen .draft-recovery-action-secondary:focus-visible {
+          border-color: #94a3b8 !important;
+          background: #f8fafc !important;
+          color: #0f172a !important;
+          box-shadow: 0 10px 18px rgba(15, 23, 42, 0.12);
+          transform: translateY(-1px);
+        }
+
+        .purchase-screen .draft-recovery-action-primary {
+          border: 1px solid #1d4ed8 !important;
+          background: #1d4ed8 !important;
+          color: #ffffff !important;
+          box-shadow: 0 10px 18px rgba(29, 78, 216, 0.22);
+        }
+
+        .purchase-screen .draft-recovery-action-primary:hover,
+        .purchase-screen .draft-recovery-action-primary:focus-visible {
+          border-color: #1e40af !important;
+          background: #1e40af !important;
+          color: #ffffff !important;
+          box-shadow: 0 14px 26px rgba(29, 78, 216, 0.28);
+          transform: translateY(-1px);
+        }
+
+        .purchase-screen .draft-recovery-action:active {
+          transform: translateY(0);
+        }
+
+        @media (max-width: 640px) {
+          .purchase-screen .draft-recovery-dialog {
+            width: min(100vw - 1rem, 620px) !important;
+            max-width: min(100vw - 1rem, 620px) !important;
+            max-height: calc(100dvh - 1rem);
+            overflow-y: auto;
+            border-radius: 0.9rem;
+          }
+
+          .purchase-screen .draft-recovery-header {
+            grid-template-columns: 1fr;
+            gap: 0.8rem;
+            padding: 1.15rem 1rem 1rem;
+          }
+
+          .purchase-screen .draft-recovery-icon {
+            width: 2.75rem;
+            height: 2.75rem;
+          }
+
+          .purchase-screen .draft-recovery-body {
+            padding: 0.85rem 1rem;
+          }
+
+          .purchase-screen .draft-recovery-meta {
+            align-items: flex-start;
+            flex-direction: column;
+            gap: 0.25rem;
+          }
+
+          .purchase-screen .draft-recovery-actions {
+            grid-template-columns: 1fr;
+            padding: 0.9rem 1rem 1rem;
+          }
+
+          .purchase-screen .draft-recovery-action {
+            min-height: 3rem;
+            font-size: 1rem;
+          }
         }
 
         .purchase-screen > .mb-8 {
@@ -2560,6 +2875,11 @@ export function PurchasesModule({ user, onNavigate }) {
       />
 
       <div className="purchase-page">
+        {purchaseDraftStatus && (
+          <div className="mb-4 inline-flex rounded-full border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-800" role="status" aria-live="polite">
+            {purchaseDraftStatus}
+          </div>
+        )}
         <div className="purchase-details-layout">
           <Card className="purchase-card">
             <CardHeader className="purchase-card-header">
@@ -3367,6 +3687,46 @@ export function PurchasesModule({ user, onNavigate }) {
             >
               Clear Draft
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(recoverablePurchaseDraft)} onOpenChange={() => {}}>
+        <DialogContent className="draft-recovery-dialog">
+          <DialogHeader className="draft-recovery-header text-left">
+            <span className="draft-recovery-icon" aria-hidden="true">
+              <FileText className="h-5 w-5" />
+            </span>
+            <div className="min-w-0">
+              <DialogTitle className="draft-recovery-title">
+                Unfinished purchase draft found
+              </DialogTitle>
+              <DialogDescription className="draft-recovery-description">
+                A purchase entry was saved before it was completed. You can resume editing it or discard it. No stock was added and no official purchase record was created.
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+          <div className="draft-recovery-body">
+            <div className="draft-recovery-meta">
+              <span>Last saved</span>
+              <strong>{formatDraftSavedAt(recoverablePurchaseDraft?.savedAt)}</strong>
+            </div>
+          </div>
+          <div className="draft-recovery-actions">
+            <button
+              type="button"
+              className="draft-recovery-action draft-recovery-action-secondary"
+              onClick={discardRecoveredPurchaseDraft}
+            >
+              Discard Draft
+            </button>
+            <button
+              type="button"
+              className="draft-recovery-action draft-recovery-action-primary"
+              onClick={() => applyRecoveredPurchaseDraft(recoverablePurchaseDraft)}
+            >
+              Resume Draft
+            </button>
           </div>
         </DialogContent>
       </Dialog>

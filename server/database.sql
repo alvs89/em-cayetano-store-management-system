@@ -282,6 +282,7 @@ CREATE TABLE IF NOT EXISTS backup_logs (
     action VARCHAR(20) NOT NULL,
     actor_id INT,
     actor_name TEXT,
+    details JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')
 );
 

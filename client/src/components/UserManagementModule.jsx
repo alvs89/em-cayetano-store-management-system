@@ -1,7 +1,7 @@
 // User Management module: lets administrators create, approve, update, and
 // deactivate system users while preserving role and branch controls.
-import React, { useEffect, useMemo, useState } from "react";
-import { ArrowUpDown, Copy, Edit, Info, KeyRound, Mail, MapPin, Plus, Search, User, UserCheck, UserX, Users } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowUp, ArrowDown, Copy, Edit, Info, KeyRound, Mail, MapPin, Plus, Search, User, UserCheck, UserX, Users } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -129,30 +129,59 @@ export function UserManagementModule() {
       : apiUser.createdDate,
   });
 
-  useEffect(() => {
-    const loadUsers = async () => {
-      if (!authToken) return;
-      try {
-        const res = await fetch(`${API_BASE}/api/admin/users`, {
-          headers: {
-            Authorization: `Bearer ${authToken}`
-          }
-        });
-        if (!res.ok) {
-          const message = await res.text();
-          toast.error("Unable to load users", { description: message || res.statusText });
-          return;
+  const loadUsers = useCallback(async ({ silent = false } = {}) => {
+    if (!authToken) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/users`, {
+        headers: {
+          Authorization: `Bearer ${authToken}`
         }
-        const data = await res.json();
-        const normalized = Array.isArray(data.users) ? data.users.map(normalizeUser) : [];
-        setUsers(normalized);
-      } catch (err) {
-        console.error(err);
+      });
+      if (!res.ok) {
+        const message = await res.text();
+        if (!silent) {
+          toast.error("Unable to load users", { description: message || res.statusText });
+        }
+        return;
+      }
+      const data = await res.json();
+      const normalized = Array.isArray(data.users) ? data.users.map(normalizeUser) : [];
+      setUsers(normalized);
+    } catch (err) {
+      console.error(err);
+      if (!silent) {
         toast.error("Network error while loading users");
       }
-    };
-    loadUsers();
+    }
   }, [API_BASE, authToken, setUsers]);
+
+  useEffect(() => {
+    loadUsers();
+  }, [loadUsers]);
+
+  useEffect(() => {
+    const reloadUsersAfterMaintenance = () => {
+      loadUsers({ silent: true });
+      refreshSystemSummary();
+      setSelectedUser(null);
+      setShowRejectDialog(false);
+      setShowApproveDialog(false);
+      setShowDeactivateDialog(false);
+      setShowReactivateDialog(false);
+      setShowRoleChangeDialog(false);
+      setShowBranchTransferDialog(false);
+      setIsEditDialogOpen(false);
+      setIsEditBranchDialogOpen(false);
+    };
+
+    window.addEventListener("database-restored", reloadUsersAfterMaintenance);
+    window.addEventListener("maintenance-action-completed", reloadUsersAfterMaintenance);
+
+    return () => {
+      window.removeEventListener("database-restored", reloadUsersAfterMaintenance);
+      window.removeEventListener("maintenance-action-completed", reloadUsersAfterMaintenance);
+    };
+  }, [loadUsers, refreshSystemSummary]);
 
   const activeUsers = users.filter(u => u.status === "Active");
   const inactiveUsers = users.filter(u => u.status !== "Active");
@@ -252,18 +281,23 @@ export function UserManagementModule() {
           desc: `Sort by ${label} (Z-A)`
         };
 
-    const iconClass = `h-4 w-4 shrink-0 transition-transform ${isActive ? 'opacity-100' : 'opacity-45'} ${isActive && cfg.direction === 'desc' ? 'rotate-180' : ''}`;
-
     return (
       <div className="flex items-center gap-1 text-left font-medium text-slate-700">
         <button
           type="button"
           onClick={() => handleSort(scope, key)}
-          className="flex items-center gap-1 hover:text-slate-900"
+          className="table-sort-header-button flex items-center gap-1 bg-transparent p-0 hover:text-slate-900"
           title={isActive ? titles[cfg.direction] : titles.asc}
         >
           <span>{label}</span>
-          <ArrowUpDown className={iconClass} aria-hidden="true" />
+          <span className={`table-sort-direction ${isActive ? "table-sort-direction-active" : ""}`} aria-hidden="true">
+            <ArrowUp
+              className={`table-sort-direction-arrow table-sort-direction-arrow-up ${isActive && cfg.direction === "asc" ? "table-sort-direction-arrow-current" : ""} ${isActive && cfg.direction === "desc" ? "table-sort-direction-arrow-muted" : ""}`}
+            />
+            <ArrowDown
+              className={`table-sort-direction-arrow table-sort-direction-arrow-down ${isActive && cfg.direction === "desc" ? "table-sort-direction-arrow-current" : ""} ${isActive && cfg.direction === "asc" ? "table-sort-direction-arrow-muted" : ""}`}
+            />
+          </span>
         </button>
       </div>
     );

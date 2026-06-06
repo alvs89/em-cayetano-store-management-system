@@ -210,7 +210,7 @@ export function Dashboard({
 
   const role = normalizeRole(user?.role);
   const isAdmin = isAdminRole(role);
-  const isCashier = role === ROLE_VALUES.SALES_ENCODER;
+  const isSalesEncoder = role === ROLE_VALUES.SALES_ENCODER;
   const isInventoryStaff = role === ROLE_VALUES.INVENTORY_STAFF;
   const canUseSales = canRecordSales(role);
   const canUseInventoryMovement = canPerformInventoryMovement(role);
@@ -429,6 +429,13 @@ export function Dashboard({
     year: 'previous year',
     day: formatDashboardDateLabel(selectedComparisonDate || getOffsetDateKey(selectedSalesDate || todayKey, -1))
   }[salesPeriod] || 'previous period';
+  const previousPeriodContext = {
+    today: 'yesterday',
+    week: 'during the previous week',
+    month: 'during the previous month',
+    year: 'during the previous year',
+    day: `on ${formatDashboardDateLabel(selectedComparisonDate || getOffsetDateKey(selectedSalesDate || todayKey, -1))}`
+  }[salesPeriod] || 'during the previous period';
   const formatComparison = (current, previous, {
     percentage = true,
     emptyLabel = 'No sales',
@@ -437,25 +444,25 @@ export function Dashboard({
   } = {}) => {
     const direction = getComparisonDirection(Number(current || 0), Number(previous || 0));
     if (previous <= 0 && current <= 0) {
-      return { direction: 'neutral', label: `${emptyLabel} in ${previousPeriodName}` };
+      return { direction: 'neutral', label: `${emptyLabel} recorded ${previousPeriodContext}` };
     }
     if (previous <= 0) {
-      return { direction: 'up', label: `New activity compared with ${previousPeriodName}` };
+      return { direction: 'up', label: `New activity compared with ${previousPeriodContext}` };
     }
 
     const difference = Number(current || 0) - Number(previous || 0);
     if (difference === 0) {
-      return { direction: 'neutral', label: `No change compared with ${previousPeriodName}` };
+      return { direction: 'neutral', label: `No change from ${previousPeriodContext}` };
     }
 
     if (percentage) {
       const percent = Math.abs((difference / previous) * 100);
       return {
         direction,
-        label: `${direction === 'up' ? 'Up' : 'Down'} ${percent.toLocaleString(undefined, {
+        label: `${direction === 'up' ? 'Increased' : 'Decreased'} by ${percent.toLocaleString(undefined, {
           minimumFractionDigits: 0,
           maximumFractionDigits: 1
-        })}% compared with ${previousPeriodName}`
+        })}% compared with ${previousPeriodContext}`
       };
     }
 
@@ -463,7 +470,7 @@ export function Dashboard({
     const unitLabel = absoluteDifference === 1 ? unitSingular : unitPlural;
     return {
       direction,
-      label: `${direction === 'up' ? 'Up' : 'Down'} ${absoluteDifference.toLocaleString()} ${unitLabel} compared with ${previousPeriodName}`
+      label: `${direction === 'up' ? 'Increased' : 'Decreased'} by ${absoluteDifference.toLocaleString()} ${unitLabel} compared with ${previousPeriodContext}`
     };
   };
   const salesAmountComparison = formatComparison(dashboardProfitSummary.totalSales, previousDashboardProfitSummary.totalSales);
@@ -819,7 +826,7 @@ export function Dashboard({
       comparison: actualProfitComparison,
       action: canUseReports ? () => openTargetReport('actual-earnings', salesReportTarget) : undefined
     },
-    (isAdmin || isCashier || canUseSales) && {
+    (isAdmin || isSalesEncoder || canUseSales) && {
       label: 'Daily Quota',
       value: hasDailySalesTarget ? `${quotaProgress}%` : 'Not set',
       detail: hasDailySalesTarget
@@ -830,7 +837,7 @@ export function Dashboard({
       progress: hasDailySalesTarget ? quotaProgress : undefined,
       action: isAdmin ? openQuotaDialog : undefined
     },
-    isCashier && {
+    isSalesEncoder && {
       label: 'Best Seller',
       value: topSellingDashboardPeriod ? `${topSellingDashboardPeriod.quantity} sold` : 'None',
       detail: topSellingDashboardPeriod
@@ -982,7 +989,7 @@ export function Dashboard({
   ].filter(Boolean);
 
   const quickActionsSection = (
-    <section className={`dashboard-panel ${isInventoryStaff ? 'dashboard-inventory-actions-panel' : ''} ${isCashier ? 'dashboard-cashier-actions-panel' : ''}`} aria-label="Quick actions">
+    <section className={`dashboard-panel ${isInventoryStaff ? 'dashboard-inventory-actions-panel' : ''} ${isSalesEncoder ? 'dashboard-sales-encoder-actions-panel' : ''}`} aria-label="Quick actions">
       <div className="dashboard-panel-header">
         <div className="min-w-0">
           <h2 className="dashboard-panel-title">Quick Actions</h2>
@@ -998,7 +1005,7 @@ export function Dashboard({
   );
 
   const attentionSection = (
-    <section className={`dashboard-panel ${isCashier ? 'dashboard-cashier-attention-panel' : ''}`} aria-label="Needs attention">
+    <section className={`dashboard-panel ${isSalesEncoder ? 'dashboard-sales-encoder-attention-panel' : ''}`} aria-label="Needs attention">
       <div className="dashboard-panel-header">
         <div className="min-w-0">
           <h2 className="dashboard-panel-title">Needs Attention</h2>
@@ -1660,7 +1667,7 @@ export function Dashboard({
           flex: 1;
         }
 
-        .dashboard-cashier-work-grid {
+        .dashboard-sales-encoder-work-grid {
           display: grid;
           grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
           grid-template-areas:
@@ -1670,27 +1677,27 @@ export function Dashboard({
           align-items: stretch;
         }
 
-        .dashboard-cashier-actions-panel {
+        .dashboard-sales-encoder-actions-panel {
           grid-area: actions;
         }
 
-        .dashboard-cashier-attention-panel {
+        .dashboard-sales-encoder-attention-panel {
           grid-area: attention;
         }
 
-        .dashboard-cashier-work-grid .dashboard-action-grid {
+        .dashboard-sales-encoder-work-grid .dashboard-action-grid {
           grid-template-columns: repeat(2, minmax(0, 1fr));
         }
 
-        .dashboard-cashier-work-grid .dashboard-operations-grid {
+        .dashboard-sales-encoder-work-grid .dashboard-operations-grid {
           grid-template-columns: 1fr;
         }
 
-        .dashboard-cashier-work-grid .dashboard-operations-panel {
+        .dashboard-sales-encoder-work-grid .dashboard-operations-panel {
           grid-area: operations;
         }
 
-        .dashboard-cashier-work-grid .dashboard-panel {
+        .dashboard-sales-encoder-work-grid .dashboard-panel {
           height: 100%;
         }
 
@@ -2064,22 +2071,22 @@ export function Dashboard({
             grid-template-columns: 1fr;
           }
 
-          .dashboard-cashier-work-grid {
+          .dashboard-sales-encoder-work-grid {
             grid-template-columns: 1fr;
             grid-template-areas: none;
           }
 
-          .dashboard-cashier-actions-panel,
-          .dashboard-cashier-attention-panel,
-          .dashboard-cashier-work-grid .dashboard-operations-panel {
+          .dashboard-sales-encoder-actions-panel,
+          .dashboard-sales-encoder-attention-panel,
+          .dashboard-sales-encoder-work-grid .dashboard-operations-panel {
             grid-area: auto;
           }
 
-          .dashboard-cashier-work-grid .dashboard-operations-panel {
+          .dashboard-sales-encoder-work-grid .dashboard-operations-panel {
             grid-column: auto;
           }
 
-          .dashboard-cashier-work-grid .dashboard-operations-grid {
+          .dashboard-sales-encoder-work-grid .dashboard-operations-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
@@ -2209,7 +2216,7 @@ export function Dashboard({
         showUserContext
       />
 
-      <div className={`dashboard-content ${isCashier ? 'dashboard-content-cashier' : ''}`}>
+      <div className={`dashboard-content ${isSalesEncoder ? 'dashboard-content-sales-encoder' : ''}`}>
         {!isInventoryStaff && (
           <section className="dashboard-panel dashboard-sales-filter-panel" aria-label="Sales date filter">
             <div className={`dashboard-sales-filter-row ${salesPeriod === 'day' ? 'is-date-mode' : ''}`}>
@@ -2285,8 +2292,8 @@ export function Dashboard({
           </div>
         </section>
 
-        {isCashier ? (
-          <div className="dashboard-cashier-work-grid">
+        {isSalesEncoder ? (
+          <div className="dashboard-sales-encoder-work-grid">
             {quickActionsSection}
             {attentionSection}
             {operationsSection}
@@ -2620,3 +2627,4 @@ function ActionButton({
     </button>
   );
 }
+

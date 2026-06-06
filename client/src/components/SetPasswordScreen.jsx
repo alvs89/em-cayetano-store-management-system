@@ -59,7 +59,7 @@ const SetPasswordScreen = () => {
   const issuedAt = useRef(Number(location.state?.otpIssuedAt) || Date.now());
   const expiresAt = useRef(location.state?.otpExpiresAt ? new Date(location.state.otpExpiresAt).getTime() : (issuedAt.current + 120000));
   // Align the countdown with the backend timestamp instead of trusting only
-  // the browser clock, which may be fast or slow on cashier workstations.
+  // the browser clock, which may be fast or slow on sales encoder workstations.
   const skewRef = useRef(issuedAt.current - Date.now());
   const timerIdRef = useRef(null);
   // Store resend cooldowns per email so refreshing the screen cannot bypass

@@ -22,7 +22,7 @@ function TableHeader({
 }) {
   return /*#__PURE__*/React.createElement("thead", _extends({
     "data-slot": "table-header",
-    className: cn("[&_tr]:border-b", className)
+    className: cn("[&_tr]:border-b [&_tr:hover]:bg-transparent [&_th:hover]:bg-transparent", className)
   }, props));
 }
 function TableBody({

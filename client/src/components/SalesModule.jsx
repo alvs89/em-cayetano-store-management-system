@@ -1,6 +1,6 @@
 // Sales module: handles POS checkout, receipt/invoice printing, sales history,
 // refunds, and inventory deductions for tracked items.
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Minus, ReceiptText, Trash2, ShoppingCart, History, CheckCircle, Info, PackageCheck, AlertTriangle, TrendingUp, User, Coins, ClipboardList, Search, CalendarDays, Clock, Tag, Wallet, MessageSquareText, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Pencil, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import jsPDF from 'jspdf';
@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { binarySearch, mergeSort } from '../utils/algorithms';
 import { createNumericInputGuards } from '../utils/numericInputGuards';
 import { canRecordSales, isAdminRole } from '../utils/roles';
+import { clearFormDraft, formatDraftSavedAt, loadFormDraft, saveFormDraft } from '../utils/formDrafts';
 
 const emptySaleLine = () => ({
   inventoryId: '',
@@ -965,6 +966,48 @@ const hasRefundedSaleItems = sale =>
 const getRefundableQuantityLimitMessage = maxQuantity =>
   `Only ${maxQuantity} unit${Number(maxQuantity) === 1 ? ' is' : 's are'} refundable for this item.`;
 
+const REFUND_REASON_SUGGESTIONS = [
+  { label: 'Incorrect Item', value: 'Incorrect item encoded during sale.' },
+  { label: 'Wrong Size', value: 'Customer received wrong size item.' },
+  { label: 'Wrong Specification', value: 'Customer received wrong product specification.' },
+  { label: 'Defective Product', value: 'Product was defective upon inspection.' },
+  { label: 'Damaged Before Use', value: 'Product was damaged before use.' },
+  { label: 'Incorrect Quantity', value: 'Incorrect quantity encoded during sale.' },
+  { label: 'Duplicate Transaction', value: 'Duplicate transaction recorded.' },
+  { label: 'Pricing Correction', value: 'Pricing correction requested.' },
+  { label: 'Wrong Item Purchased', value: 'Customer purchased the wrong item.' },
+  { label: 'Changed Decision', value: 'Customer changed purchase decision.' },
+  { label: 'Replacement Request', value: 'Customer requested item replacement.' },
+  { label: 'Sale Reversed', value: 'Sale transaction reversed after verification.' }
+];
+
+const normalizeRefundReasonText = value =>
+  String(value || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const escapeRegExp = value =>
+  String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const hasRefundReasonSuggestion = (reasonText, suggestionValue) => {
+  const normalizedReason = normalizeRefundReasonText(reasonText);
+  const normalizedSuggestion = normalizeRefundReasonText(suggestionValue);
+  return normalizedSuggestion !== '' && normalizedReason.includes(normalizedSuggestion);
+};
+
+const removeRefundReasonSuggestion = (reasonText, suggestionValue) => {
+  const escapedSuggestion = escapeRegExp(String(suggestionValue || '').trim()).replace(/\\ /g, '\\s+');
+  if (!escapedSuggestion) return String(reasonText || '').trim();
+
+  return String(reasonText || '')
+    .replace(new RegExp(`\\s*;?\\s*${escapedSuggestion}\\s*;?\\s*`, 'i'), ' ')
+    .replace(/\s*;\s*/g, '; ')
+    .replace(/(?:^;\s*|\s*;$)/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+};
+
 const getRefundAmountForQuantity = (line, quantity) => {
   const cleanQuantity = Math.max(0, Number(quantity || 0));
   if (cleanQuantity <= 0) return '';
@@ -1106,8 +1149,15 @@ export function SalesModule({ user }) {
   const [historyPeriod, setHistoryPeriod] = useState('all');
   const [selectedHistorySaleId, setSelectedHistorySaleId] = useState('');
   const [isClearItemsConfirmOpen, setIsClearItemsConfirmOpen] = useState(false);
+  const [recoverableSalesDraft, setRecoverableSalesDraft] = useState(null);
+  const [salesDraftStatus, setSalesDraftStatus] = useState('');
   const canCancelSales = isAdminRole(user?.role);
   const canRefundSales = canRecordSales(user?.role);
+  const salesDraftScope = useMemo(() => ({
+    module: 'sales-recording',
+    userId: user?.id || user?.user_id || user?.username || 'current-user',
+    branch: user?.branch || 'current-branch'
+  }), [user?.branch, user?.id, user?.user_id, user?.username]);
   const findInventoryItemByExactSalesName = itemName => {
     const normalizedItemName = normalizeSalesInventoryIdentityName(itemName);
     if (!normalizedItemName) return null;
@@ -1168,6 +1218,13 @@ export function SalesModule({ user }) {
     window.addEventListener('sales-entry-target-view', handleEntryTarget);
     return () => window.removeEventListener('sales-entry-target-view', handleEntryTarget);
   }, []);
+
+  useEffect(() => {
+    const draft = loadFormDraft(salesDraftScope);
+    if (draft?.data) {
+      setRecoverableSalesDraft(draft);
+    }
+  }, [salesDraftScope]);
 
   const activeInventory = useMemo(
     () => mergeSort(
@@ -1456,6 +1513,8 @@ export function SalesModule({ user }) {
     String(deliveryCharge || '').trim() !== '' ||
     String(amountReceived || '').trim() !== '' ||
     String(paymentReference || '').trim() !== '' ||
+    String(actualTransactionAt || '').trim() !== '' ||
+    String(backdateReason || '').trim() !== '' ||
     paymentConfirmed ||
     saleLines.some(line => (
       String(line.inventoryId || '').trim() !== '' ||
@@ -1463,7 +1522,167 @@ export function SalesModule({ user }) {
       String(line.quantity || '').trim() !== '' ||
       String(line.unitPrice || '').trim() !== ''
     ))
-  ), [amountReceived, customerAddress, customerName, customerTin, customerType, deliveryCharge, discountAmount, discountType, hasManualOfficialInvoiceValue, invoiceSequenceExceptionReason, paymentConfirmed, paymentMethod, paymentReference, remarks, saleLines]);
+  ), [actualTransactionAt, amountReceived, backdateReason, customerAddress, customerName, customerTin, customerType, deliveryCharge, discountAmount, discountType, hasManualOfficialInvoiceValue, invoiceSequenceExceptionReason, paymentConfirmed, paymentMethod, paymentReference, remarks, saleLines]);
+
+  const salesDraftData = useMemo(() => ({
+    officialInvoiceNumber,
+    invoiceSequenceExceptionReason,
+    hasManualInvoiceEntry,
+    customerType,
+    customerName,
+    customerTin,
+    customerAddress,
+    paymentMethod,
+    discountType,
+    discountAmount,
+    deliveryCharge,
+    amountReceived,
+    paymentReference,
+    remarks,
+    actualTransactionAt,
+    backdateReason,
+    saleLines,
+    nonInventoryDraft
+  }), [
+    actualTransactionAt,
+    amountReceived,
+    backdateReason,
+    customerAddress,
+    customerName,
+    customerTin,
+    customerType,
+    deliveryCharge,
+    discountAmount,
+    discountType,
+    hasManualInvoiceEntry,
+    invoiceSequenceExceptionReason,
+    nonInventoryDraft,
+    officialInvoiceNumber,
+    paymentMethod,
+    paymentReference,
+    remarks,
+    saleLines
+  ]);
+
+  const applyRecoveredSalesDraft = draft => {
+    const data = draft?.data || {};
+    const draftLines = Array.isArray(data.saleLines) ? data.saleLines : [];
+    const trackedDraftLineCount = draftLines.filter(line => !line?.isManual && line?.inventoryId).length;
+    if (trackedDraftLineCount > 0 && inventory.length === 0) {
+      toast.info('Inventory data is still loading.', {
+        description: 'Please try resuming the draft again in a few seconds.'
+      });
+      return;
+    }
+
+    let unavailableLineCount = 0;
+    const restoredLines = draftLines.length > 0
+      ? draftLines
+        .map(line => {
+          const isManual = Boolean(line?.isManual);
+          if (isManual) {
+            return {
+              ...emptySaleLine(),
+              isManual: true,
+              itemName: String(line?.itemName || '').slice(0, 150),
+              category: line?.category || 'Other',
+              categoryNote: String(line?.categoryNote || '').slice(0, 240),
+              quantity: String(line?.quantity || ''),
+              unitPrice: String(line?.unitPrice || '')
+            };
+          }
+          const inventoryId = String(line?.inventoryId || '');
+          if (inventoryId && !getInventoryById(inventoryId)) unavailableLineCount += 1;
+          return {
+            ...emptySaleLine(),
+            inventoryId: getInventoryById(inventoryId) ? inventoryId : '',
+            quantity: String(line?.quantity || ''),
+            unitPrice: String(line?.unitPrice || '')
+          };
+        })
+        .filter(line => (
+          line.isManual
+            ? line.itemName || line.quantity || line.unitPrice
+            : line.inventoryId || line.quantity || line.unitPrice
+        ))
+      : [];
+
+    setOfficialInvoiceNumber(String(data.officialInvoiceNumber || '').slice(0, 6));
+    setHasManualInvoiceEntry(Boolean(data.hasManualInvoiceEntry || data.officialInvoiceNumber));
+    setAutoFilledInvoiceNumber('');
+    setInvoiceSequenceExceptionReason(String(data.invoiceSequenceExceptionReason || '').slice(0, 240));
+    setCustomerType(data.customerType || 'walk_in');
+    setCustomerName(String(data.customerName || '').slice(0, 160));
+    setCustomerTin(String(data.customerTin || '').slice(0, 80));
+    setCustomerAddress(String(data.customerAddress || '').slice(0, 240));
+    setPaymentMethod(data.paymentMethod || 'cash');
+    setDiscountType(data.discountType || 'none');
+    setDiscountAmount(String(data.discountAmount || ''));
+    setDeliveryCharge(String(data.deliveryCharge || ''));
+    setAmountReceived(String(data.amountReceived || ''));
+    setPaymentReference(String(data.paymentReference || '').slice(0, 120));
+    setPaymentConfirmed(false);
+    setPaymentConfirmedAmount(null);
+    setRemarks(String(data.remarks || '').slice(0, 240));
+    setActualTransactionAt(data.actualTransactionAt || '');
+    setBackdateReason(String(data.backdateReason || '').slice(0, 240));
+    setSaleLines(restoredLines.length > 0 ? restoredLines : [emptySaleLine()]);
+    setNonInventoryDraft({
+      ...DEFAULT_NON_INVENTORY_DRAFT,
+      ...(data.nonInventoryDraft || {})
+    });
+    setRecoverableSalesDraft(null);
+    setSalesDraftStatus(`Draft recovered from ${formatDraftSavedAt(draft.savedAt)}`);
+    toast.success('Sales draft recovered.', {
+      description: 'Review the sale details before saving the transaction.'
+    });
+    if (unavailableLineCount > 0) {
+      toast.warning('Some draft items need review.', {
+        description: `${unavailableLineCount} tracked item${unavailableLineCount === 1 ? '' : 's'} could not be restored because the item is no longer available in active inventory.`
+      });
+    }
+  };
+
+  const discardRecoveredSalesDraft = () => {
+    clearFormDraft(salesDraftScope);
+    setRecoverableSalesDraft(null);
+    setSalesDraftStatus('');
+    toast.info('Sales draft discarded.');
+  };
+
+  useEffect(() => {
+    if (recoverableSalesDraft || isSaving) return undefined;
+
+    if (!hasSalesFormInput) {
+      clearFormDraft(salesDraftScope);
+      setSalesDraftStatus('');
+      return undefined;
+    }
+
+    const savedDraft = saveFormDraft({
+      ...salesDraftScope,
+      data: salesDraftData
+    });
+    setSalesDraftStatus(`Draft saved ${formatDraftSavedAt(savedDraft.savedAt)}`);
+    return undefined;
+  }, [hasSalesFormInput, isSaving, recoverableSalesDraft, salesDraftData, salesDraftScope]);
+
+  useEffect(() => {
+    if (!hasSalesFormInput || isSaving || recoverableSalesDraft) return undefined;
+
+    const warnBeforeLeaving = event => {
+      saveFormDraft({
+        ...salesDraftScope,
+        data: salesDraftData
+      });
+      event.preventDefault();
+      event.returnValue = '';
+      return '';
+    };
+
+    window.addEventListener('beforeunload', warnBeforeLeaving);
+    return () => window.removeEventListener('beforeunload', warnBeforeLeaving);
+  }, [hasSalesFormInput, isSaving, recoverableSalesDraft, salesDraftData, salesDraftScope]);
 
   const filteredSalesHistory = useMemo(() => {
     const now = new Date();
@@ -1952,8 +2171,10 @@ export function SalesModule({ user }) {
   };
 
   const confirmClearForm = () => {
+    clearFormDraft(salesDraftScope);
     resetForm();
     setIsClearConfirmOpen(false);
+    setSalesDraftStatus('');
     toast.success('Sales form cleared.');
   };
 
@@ -2209,6 +2430,8 @@ export function SalesModule({ user }) {
       if (!printStarted) {
         setCompletedSale(sale);
       }
+      clearFormDraft(salesDraftScope);
+      setSalesDraftStatus('Transaction completed');
       resetForm();
     } catch (err) {
       receiptPrintWindow?.close();
@@ -2380,7 +2603,9 @@ export function SalesModule({ user }) {
       .filter(line => line.quantityValue > 0 || line.refundAmountValue > 0);
 
     if (selectedRefundLines.length === 0) {
-      toast.error('Enter at least one refund quantity.');
+      toast.error('Refund input is required before recording.', {
+        description: 'Enter at least one refund quantity, then provide a clear refund reason.'
+      });
       return;
     }
 
@@ -2486,6 +2711,175 @@ export function SalesModule({ user }) {
           min-height: 0;
           max-width: 100%;
           overflow-x: hidden;
+        }
+
+        .sales-screen .draft-recovery-dialog {
+          width: min(560px, calc(100vw - 1.5rem)) !important;
+          max-width: min(560px, calc(100vw - 1.5rem)) !important;
+          overflow: hidden;
+          border-radius: 0.85rem;
+          padding: 0;
+          background: #ffffff;
+          box-shadow: 0 20px 44px rgba(15, 23, 42, 0.22);
+        }
+
+        .sales-screen .draft-recovery-header {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr);
+          gap: 0.8rem;
+          padding: 1.15rem 1.25rem 1rem;
+          border-bottom: 1px solid #e2e8f0;
+        }
+
+        .sales-screen .draft-recovery-icon {
+          display: inline-flex;
+          width: 2.65rem;
+          height: 2.65rem;
+          align-items: center;
+          justify-content: center;
+          border-radius: 0.75rem;
+          background: #eff6ff;
+          color: #1d4ed8;
+          flex-shrink: 0;
+        }
+
+        .sales-screen .draft-recovery-title {
+          color: #0f172a;
+          font-size: clamp(1.08rem, 2.5vw, 1.32rem);
+          font-weight: 850;
+          line-height: 1.2;
+          letter-spacing: 0;
+        }
+
+        .sales-screen .draft-recovery-description {
+          margin-top: 0.35rem;
+          color: #334155;
+          font-size: 0.92rem;
+          line-height: 1.45;
+        }
+
+        .sales-screen .draft-recovery-body {
+          padding: 0.85rem 1.25rem;
+        }
+
+        .sales-screen .draft-recovery-meta {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 1rem;
+          border: 1px solid #e5e7eb;
+          border-radius: 0.7rem;
+          background: #f9fafb;
+          padding: 0.65rem 0.8rem;
+          color: #475569;
+          font-size: 0.9rem;
+          line-height: 1.4;
+        }
+
+        .sales-screen .draft-recovery-meta strong {
+          color: #0f172a;
+          font-weight: 850;
+        }
+
+        .sales-screen .draft-recovery-actions {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.7rem;
+          border-top: 1px solid #e2e8f0;
+          background: #ffffff;
+          padding: 0.9rem 1.25rem 1rem;
+        }
+
+        .sales-screen .draft-recovery-action {
+          display: inline-flex !important;
+          min-height: 2.55rem;
+          width: 100%;
+          align-items: center;
+          justify-content: center;
+          border-radius: 0.6rem;
+          padding: 0.55rem 0.9rem;
+          font-size: 0.92rem;
+          font-weight: 800;
+          line-height: 1.2;
+          text-align: center;
+          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+        }
+
+        .sales-screen .draft-recovery-action-secondary {
+          border: 1px solid #cbd5e1 !important;
+          background: #ffffff !important;
+          color: #0f172a !important;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+        }
+
+        .sales-screen .draft-recovery-action-secondary:hover,
+        .sales-screen .draft-recovery-action-secondary:focus-visible {
+          border-color: #94a3b8 !important;
+          background: #f8fafc !important;
+          color: #0f172a !important;
+          box-shadow: 0 10px 18px rgba(15, 23, 42, 0.12);
+          transform: translateY(-1px);
+        }
+
+        .sales-screen .draft-recovery-action-primary {
+          border: 1px solid #1d4ed8 !important;
+          background: #1d4ed8 !important;
+          color: #ffffff !important;
+          box-shadow: 0 10px 18px rgba(29, 78, 216, 0.22);
+        }
+
+        .sales-screen .draft-recovery-action-primary:hover,
+        .sales-screen .draft-recovery-action-primary:focus-visible {
+          border-color: #1e40af !important;
+          background: #1e40af !important;
+          color: #ffffff !important;
+          box-shadow: 0 14px 26px rgba(29, 78, 216, 0.28);
+          transform: translateY(-1px);
+        }
+
+        .sales-screen .draft-recovery-action:active {
+          transform: translateY(0);
+        }
+
+        @media (max-width: 640px) {
+          .sales-screen .draft-recovery-dialog {
+            width: min(100vw - 1rem, 620px) !important;
+            max-width: min(100vw - 1rem, 620px) !important;
+            max-height: calc(100dvh - 1rem);
+            overflow-y: auto;
+            border-radius: 0.9rem;
+          }
+
+          .sales-screen .draft-recovery-header {
+            grid-template-columns: 1fr;
+            gap: 0.8rem;
+            padding: 1.15rem 1rem 1rem;
+          }
+
+          .sales-screen .draft-recovery-icon {
+            width: 2.75rem;
+            height: 2.75rem;
+          }
+
+          .sales-screen .draft-recovery-body {
+            padding: 0.85rem 1rem;
+          }
+
+          .sales-screen .draft-recovery-meta {
+            align-items: flex-start;
+            flex-direction: column;
+            gap: 0.25rem;
+          }
+
+          .sales-screen .draft-recovery-actions {
+            grid-template-columns: 1fr;
+            padding: 0.9rem 1rem 1rem;
+          }
+
+          .sales-screen .draft-recovery-action {
+            min-height: 3rem;
+            font-size: 1rem;
+          }
         }
 
         .sales-grid {
@@ -3646,21 +4040,129 @@ export function SalesModule({ user }) {
           min-width: 0;
           flex-direction: column;
           gap: 0.9rem;
+          height: 100%;
+          max-height: 100%;
+          min-height: 0;
+          overflow: hidden;
           align-self: start;
         }
 
         .sales-refund-side-form {
           display: grid;
           gap: 0.9rem;
+          flex: 1 1 auto;
+          max-height: 100%;
+          min-height: 0;
           min-width: 0;
+          overflow-y: auto;
+          overscroll-behavior: contain;
           border: 1px solid #e2e8f0;
           border-radius: 0.6rem;
           background: #ffffff;
           padding: 0.95rem;
+          padding-bottom: 1rem;
+          scrollbar-gutter: stable;
+        }
+
+        .sales-refund-side-form::-webkit-scrollbar {
+          width: 0.45rem;
+        }
+
+        .sales-refund-side-form::-webkit-scrollbar-track {
+          background: #f8fafc;
+          border-radius: 999px;
+        }
+
+        .sales-refund-side-form::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 999px;
+        }
+
+        .sales-refund-summary {
+          flex: 0 0 auto;
         }
 
         .sales-refund-side-form .sales-refund-textarea {
-          min-height: 5.25rem;
+          min-height: 4.35rem;
+        }
+
+        .sales-refund-reason-suggestions {
+          display: grid;
+          gap: 0.45rem;
+          border: 1px solid #dbeafe;
+          border-radius: 0.7rem;
+          background: #f8fbff;
+          max-height: 6.6rem;
+          overflow: hidden;
+          padding: 0.5rem;
+        }
+
+        .sales-refund-reason-suggestions-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.75rem;
+          color: #334155;
+          font-size: 0.74rem;
+          line-height: 1.35;
+        }
+
+        .sales-refund-reason-suggestions-header strong {
+          color: #0f172a;
+          font-weight: 800;
+        }
+
+        .sales-refund-reason-chip-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.45rem;
+          max-height: 4.05rem;
+          overflow-y: auto;
+          padding-right: 0.1rem;
+        }
+
+        .sales-refund-reason-chip-list::-webkit-scrollbar {
+          width: 0.35rem;
+        }
+
+        .sales-refund-reason-chip-list::-webkit-scrollbar-thumb {
+          border-radius: 999px;
+          background: #bfdbfe;
+        }
+
+        .sales-refund-reason-chip {
+          min-height: 1.85rem;
+          border: 1px solid #bfdbfe;
+          border-radius: 999px;
+          background: #ffffff;
+          color: #1e3a8a;
+          padding: 0.3rem 0.62rem;
+          font-size: 0.74rem;
+          font-weight: 750;
+          line-height: 1.2;
+          transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+        }
+
+        .sales-refund-reason-chip:hover,
+        .sales-refund-reason-chip:focus-visible {
+          border-color: #2563eb;
+          background: #dbeafe;
+          color: #1e40af;
+        }
+
+        .sales-refund-reason-chip[data-selected="true"] {
+          cursor: pointer;
+          border-color: #93c5fd;
+          background: #dbeafe;
+          color: #1e40af;
+          opacity: 1;
+        }
+
+        .sales-refund-reason-chip[data-selected="true"]:hover,
+        .sales-refund-reason-chip[data-selected="true"]:focus-visible {
+          border-color: #ef4444;
+          background: #fee2e2;
+          color: #991b1b;
         }
 
         .sales-refund-side-form .sales-refund-date-grid {
@@ -3789,18 +4291,21 @@ export function SalesModule({ user }) {
           .sales-refund-dialog {
             width: min(100% - 1.25rem, 48rem);
             max-width: min(100% - 1.25rem, 48rem) !important;
-            height: auto;
+            height: min(92dvh, 48rem);
+            max-height: min(92dvh, 48rem);
           }
 
           .sales-refund-body {
             display: flex;
             flex-direction: column;
             grid-template-columns: 1fr;
-            flex: 0 1 auto;
+            flex: 1 1 auto;
             align-items: stretch;
             width: 100%;
             min-width: 0;
+            min-height: 0;
             overflow-y: auto;
+            padding-bottom: 1rem;
           }
 
           .sales-refund-main {
@@ -3814,6 +4319,10 @@ export function SalesModule({ user }) {
           .sales-refund-side {
             order: 2;
             width: 100%;
+            height: auto;
+            max-height: none;
+            min-height: 0;
+            overflow: visible;
             align-self: stretch;
           }
 
@@ -3824,6 +4333,8 @@ export function SalesModule({ user }) {
 
           .sales-refund-side-form {
             width: 100%;
+            flex: 0 0 auto;
+            max-height: none;
           }
 
           .sales-refund-lines {
@@ -3844,13 +4355,13 @@ export function SalesModule({ user }) {
 
         @media (max-width: 640px) {
           .sales-refund-dialog {
-            height: auto;
+            height: calc(100dvh - 1rem);
             max-height: calc(100dvh - 1rem);
             border-radius: 0.9rem;
           }
 
           .sales-refund-content {
-            height: auto;
+            height: 100%;
             max-height: calc(100dvh - 1rem);
           }
 
@@ -3878,7 +4389,9 @@ export function SalesModule({ user }) {
           .sales-refund-body {
             gap: 0.85rem;
             padding: 0.85rem;
+            padding-bottom: 6.75rem;
             overflow-x: hidden;
+            overflow-y: auto;
           }
 
           .sales-refund-main {
@@ -3910,7 +4423,10 @@ export function SalesModule({ user }) {
           }
 
           .sales-refund-side-form {
+            max-height: none;
+            overflow-y: visible;
             padding: 0.85rem;
+            padding-bottom: 1rem;
           }
 
           .sales-refund-side-form .sales-refund-date-grid {
@@ -6636,6 +7152,11 @@ export function SalesModule({ user }) {
 
       <div className="sales-page">
         <div className="sales-page-toolbar">
+          {salesDraftStatus && (
+            <div className="rounded-full border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-800" role="status" aria-live="polite">
+              {salesDraftStatus}
+            </div>
+          )}
           <Button
             type="button"
             variant="outline"
@@ -7824,6 +8345,45 @@ export function SalesModule({ user }) {
         onDownload={handleDownloadSaleSummary}
         onStartNewSale={() => setCompletedSale(null)}
       />
+      <Dialog open={Boolean(recoverableSalesDraft)} onOpenChange={() => {}}>
+        <DialogContent className="draft-recovery-dialog">
+          <DialogHeader className="draft-recovery-header text-left">
+            <span className="draft-recovery-icon" aria-hidden="true">
+              <ClipboardList className="h-5 w-5" />
+            </span>
+            <div className="min-w-0">
+              <DialogTitle className="draft-recovery-title">
+                Unfinished sales draft found
+              </DialogTitle>
+              <DialogDescription className="draft-recovery-description">
+                A sales form was saved before it was completed. You can resume editing it or discard it. No inventory was deducted and no official sales record was created.
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+          <div className="draft-recovery-body">
+            <div className="draft-recovery-meta">
+              <span>Last saved</span>
+              <strong>{formatDraftSavedAt(recoverableSalesDraft?.savedAt)}</strong>
+            </div>
+          </div>
+          <div className="draft-recovery-actions">
+            <button
+              type="button"
+              className="draft-recovery-action draft-recovery-action-secondary"
+              onClick={discardRecoveredSalesDraft}
+            >
+              Discard Draft
+            </button>
+            <button
+              type="button"
+              className="draft-recovery-action draft-recovery-action-primary"
+              onClick={() => applyRecoveredSalesDraft(recoverableSalesDraft)}
+            >
+              Resume Draft
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -8314,6 +8874,19 @@ function RefundSaleDialog({
   const maxRefundTotal = (lines || []).reduce((sum, line) => sum + Number(line.maxAmount || 0), 0);
   const hasSelectedQuantities = refundQuantityTotal > 0;
   const hasUnfilledRefundableQuantity = (lines || []).some(line => Number(line.maxQuantity || 0) > Number(line.quantity || 0));
+  const handleReasonSuggestionSelect = suggestion => {
+    const currentReason = String(reason || '').trim();
+    const selectedReason = suggestion.value.trim();
+    if (hasRefundReasonSuggestion(currentReason, selectedReason)) {
+      onReasonChange(removeRefundReasonSuggestion(currentReason, selectedReason).slice(0, 500));
+      return;
+    }
+    if (!currentReason) {
+      onReasonChange(selectedReason);
+      return;
+    }
+    onReasonChange(`${currentReason}; ${selectedReason}`.slice(0, 500));
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -8482,12 +9055,45 @@ function RefundSaleDialog({
                     id="refund-reason"
                     value={reason}
                     onChange={event => onReasonChange(event.target.value.slice(0, 500))}
+                    onFocus={() => setIsReasonSuggestionPanelOpen(true)}
+                    onClick={() => setIsReasonSuggestionPanelOpen(true)}
                     placeholder="Example: Customer returned wrong size item."
                     disabled={isSubmitting}
                     required
                     className="sales-refund-textarea"
+                    aria-describedby="refund-reason-help refund-reason-suggestions"
                   />
-                  <p className="sales-refund-helper">Provide a reason for this refund (required).</p>
+                  <p id="refund-reason-help" className="sales-refund-helper">
+                    Select a common reason or type a custom explanation. You can edit any selected reason.
+                  </p>
+                  <div
+                    id="refund-reason-suggestions"
+                    className="sales-refund-reason-suggestions"
+                    onMouseDown={event => event.preventDefault()}
+                  >
+                    <div className="sales-refund-reason-suggestions-header">
+                      <strong>Quick reasons</strong>
+                      <span>Selected reasons are added to the refund note.</span>
+                    </div>
+                    <div className="sales-refund-reason-chip-list" aria-label="Common refund reasons">
+                      {REFUND_REASON_SUGGESTIONS.map(suggestion => {
+                        const isSelected = hasRefundReasonSuggestion(reason, suggestion.value);
+                        return (
+                          <button
+                            key={suggestion.label}
+                            type="button"
+                            className="sales-refund-reason-chip"
+                            data-selected={isSelected ? 'true' : 'false'}
+                            disabled={isSubmitting}
+                            aria-pressed={isSelected}
+                            onClick={() => handleReasonSuggestionSelect(suggestion)}
+                          >
+                            {suggestion.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
 
                 <div className="sales-refund-field">
@@ -8555,7 +9161,7 @@ function RefundSaleDialog({
               type="button"
               className="sales-refund-confirm-button bg-[#FF0000] text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-70"
               onClick={onConfirm}
-              disabled={isSubmitting || refundTotal <= 0}
+              disabled={isSubmitting}
             >
               {isSubmitting ? 'Recording...' : 'Record Refund'}
             </Button>

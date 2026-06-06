@@ -1,9 +1,8 @@
-// Role helpers centralize screen access and legacy role normalization so all
+// Role helpers centralize screen access and role normalization so all
 // modules enforce the same owner-level admin, Sales Encoder, and Inventory Staff permissions.
 export const ROLE_VALUES = {
   ADMIN: "Admin",
   SALES_ENCODER: "Sales Encoder",
-  LEGACY_CASHIER: "Cashier",
   INVENTORY_STAFF: "Inventory Staff",
   LEGACY_EMPLOYEE: "Employee",
 };
@@ -41,7 +40,6 @@ export const REPORT_TYPE_OPTIONS = [
 
 export function normalizeRole(role) {
   if (role === ROLE_VALUES.LEGACY_EMPLOYEE) return ROLE_VALUES.INVENTORY_STAFF;
-  if (role === ROLE_VALUES.LEGACY_CASHIER) return ROLE_VALUES.SALES_ENCODER;
   return role || "";
 }
 

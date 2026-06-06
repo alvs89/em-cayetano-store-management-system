@@ -2,7 +2,7 @@
 // archive actions, and reorder-support values.
 import React from 'react';
 import { useState } from "react";
-import { Plus, Minus, Archive, Search, Filter, ArrowUpDown, AlertTriangle, Info, PackagePlus, PackageMinus, CheckCircle, Box, Pencil } from "lucide-react";
+import { Plus, Minus, Archive, Search, Filter, ArrowUp, ArrowDown, AlertTriangle, Info, PackagePlus, PackageMinus, CheckCircle, Box, Pencil, X, Eye } from "lucide-react";
 import { linearSearch, linearSearchAll, mergeSort } from "../utils/algorithms";
 import { formatDateTime } from "../utils/format";
 import { getStockStatusBadgeClass } from "../utils/statusStyles";
@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import { useData } from "./DataContext";
 import { PageHeader } from "./PageHeader";
 import { canManageInventory, canPerformInventoryMovement } from "../utils/roles";
+import { clearFormDraft, formatDraftSavedAt, loadFormDraft, saveFormDraft } from "../utils/formDrafts";
 import {
   MANUAL_STOCK_IN_REASON_OPTIONS,
   MANUAL_STOCK_OUT_REASON_OPTIONS,
@@ -388,8 +389,11 @@ export function InventoryModule({
 }) {
   const {
     inventory,
+    inventoryChangeRequests,
     addInventoryItem,
     updateInventoryItem,
+    submitInventoryChangeRequest,
+    reviewInventoryChangeRequest,
     batchStockAdjustment,
     batchStockOut,
     archiveInventoryItem,
@@ -405,6 +409,12 @@ export function InventoryModule({
   const [isStockOutDialogOpen, setIsStockOutDialogOpen] = useState(false);
   const [isBatchStockAdjustmentDialogOpen, setIsBatchStockAdjustmentDialogOpen] = useState(false);
   const [isBatchStockOutDialogOpen, setIsBatchStockOutDialogOpen] = useState(false);
+  const [isApprovalDialogOpen, setIsApprovalDialogOpen] = useState(false);
+  const [approvalRequestFilter, setApprovalRequestFilter] = useState("all");
+  const [approvalRequestPage, setApprovalRequestPage] = useState(1);
+  const [approvalRequestSearch, setApprovalRequestSearch] = useState("");
+  const [approvalRequestSort, setApprovalRequestSort] = useState("newest");
+  const [isApprovalMobileView, setIsApprovalMobileView] = useState(false);
   const [isArchiveDialogOpen, setIsArchiveDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState(null);
@@ -423,7 +433,7 @@ export function InventoryModule({
   const [batchStockOutBackdateReason, setBatchStockOutBackdateReason] = useState("");
   const [archiveReason, setArchiveReason] = useState("");
   const [archiveReasonNote, setArchiveReasonNote] = useState("");
-  const [discardPrompt, setDiscardPrompt] = useState(null);
+  const [recoverableInventoryDraft, setRecoverableInventoryDraft] = useState(null);
   const [archivedDuplicatePrompt, setArchivedDuplicatePrompt] = useState(null);
   const [similarDuplicatePrompt, setSimilarDuplicatePrompt] = useState(null);
   const [isRestoringArchivedDuplicate, setIsRestoringArchivedDuplicate] = useState(false);
@@ -457,6 +467,10 @@ export function InventoryModule({
     stockStatusFilter !== "all";
   const canShowInventoryActions =
     canPerformInventoryMovement(user?.role) || canManageInventory(user?.role);
+  const canRequestInventoryMasterDataChange =
+    canPerformInventoryMovement(user?.role) && !canManageInventory(user?.role);
+  const canOpenInventoryMasterDataForm =
+    canManageInventory(user?.role) || canRequestInventoryMasterDataChange;
   const canEditReorderPlanning = canManageInventory(user?.role);
   const canViewReorderPlanning =
     canEditReorderPlanning || canPerformInventoryMovement(user?.role);
@@ -502,6 +516,20 @@ export function InventoryModule({
 
     return mergeSort([...supplierNames], (a, b) => a.localeCompare(b));
   }, [inventory]);
+  const pendingInventoryChangeRequests = React.useMemo(
+    () => (inventoryChangeRequests || []).filter(request => request.status === "pending"),
+    [inventoryChangeRequests]
+  );
+  React.useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 760px)");
+    const updateApprovalViewport = () => setIsApprovalMobileView(mediaQuery.matches);
+    updateApprovalViewport();
+    mediaQuery.addEventListener("change", updateApprovalViewport);
+    return () => mediaQuery.removeEventListener("change", updateApprovalViewport);
+  }, []);
+  React.useEffect(() => {
+    setApprovalRequestPage(1);
+  }, [isApprovalMobileView]);
   const currentBranch = normalizeDuplicateKeyPart(user?.branch);
   const buildDuplicateKey = item => [
     normalizeInventoryIdentityName(item.name),
@@ -520,6 +548,22 @@ export function InventoryModule({
     leadTimeDays: "",
     safetyStock: ""
   });
+  const inventoryDraftUserId = user?.id || user?.userId || user?.username || user?.name || "current-user";
+  const inventoryDraftBranch = user?.branch || "current-branch";
+  const getInventoryDraftScope = React.useCallback(module => ({
+    module,
+    userId: inventoryDraftUserId,
+    branch: inventoryDraftBranch
+  }), [inventoryDraftBranch, inventoryDraftUserId]);
+  const dismissedInventoryDraftScopesRef = React.useRef(new Set());
+  const getInventoryDraftScopeId = React.useCallback(scope => [
+    scope?.module || "",
+    scope?.branch || "",
+    scope?.userId || ""
+  ].join("|"), []);
+  const getInventoryEditDraftModule = itemId => `inventory-edit-item-${itemId || "unknown"}`;
+  const getInventoryStockInDraftModule = itemId => `inventory-stock-in-${itemId || "unknown"}`;
+  const getInventoryStockOutDraftModule = itemId => `inventory-stock-out-${itemId || "unknown"}`;
 
   const getStockPreview = direction => {
     const currentStock = Number(selectedItem?.quantity || 0);
@@ -913,28 +957,35 @@ export function InventoryModule({
   // 🔀 Handle column header click to change sort
   const handleSort = column => {
     markInventoryFiltersManual();
-    if (sortBy === column) {
-      // Toggle sort order if clicking the same column
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-    } else {
-      // Match archive sorting: dates default to newest first, other columns ascend first.
-      setSortBy(column);
-      setSortOrder(column === 'date' ? 'desc' : 'asc');
-    }
+    const nextSortOrder = sortBy === column
+      ? sortOrder === 'asc' ? 'desc' : 'asc'
+      : column === 'date' ? 'desc' : 'asc';
+    setSortBy(column);
+    setSortOrder(nextSortOrder);
   };
 
   // ➕ Add Item
-  const renderSortButton = (column, label, align = 'left') => /*#__PURE__*/React.createElement(Button, {
-    variant: "ghost",
-    size: "sm",
+  const renderSortIndicator = column => {
+    const isActive = sortBy === column;
+    const isAscending = isActive && sortOrder === "asc";
+    const isDescending = isActive && sortOrder === "desc";
+    return /*#__PURE__*/React.createElement("span", {
+      className: `table-sort-direction ${isActive ? "table-sort-direction-active" : ""}`,
+      "aria-hidden": "true"
+    }, /*#__PURE__*/React.createElement(ArrowUp, {
+      className: `table-sort-direction-arrow table-sort-direction-arrow-up ${isAscending ? "table-sort-direction-arrow-current" : ""} ${isDescending ? "table-sort-direction-arrow-muted" : ""}`
+    }), /*#__PURE__*/React.createElement(ArrowDown, {
+      className: `table-sort-direction-arrow table-sort-direction-arrow-down ${isDescending ? "table-sort-direction-arrow-current" : ""} ${isAscending ? "table-sort-direction-arrow-muted" : ""}`
+    }));
+  };
+
+  const renderSortButton = (column, label, align = 'left') => /*#__PURE__*/React.createElement("button", {
+    type: "button",
     onClick: () => handleSort(column),
-    className: `w-full px-0 hover:bg-transparent font-semibold ${align === 'right' ? 'justify-end text-right' : 'justify-start text-left'}`
+    className: `table-sort-header-button inventory-sort-header-button inline-flex h-8 w-full appearance-none items-center border-0 bg-transparent px-0 py-0 font-semibold shadow-none ${align === 'right' ? 'justify-end text-right' : 'justify-start text-left'}`
   }, /*#__PURE__*/React.createElement("span", {
     className: `flex w-full items-center gap-1 ${align === 'right' ? 'justify-end' : 'justify-start'}`
-  }, /*#__PURE__*/React.createElement("span", null, label), /*#__PURE__*/React.createElement(ArrowUpDown, {
-    className: `h-4 w-4 shrink-0 transition-transform ${sortBy === column ? 'opacity-100' : 'opacity-45'} ${sortBy === column && sortOrder === 'desc' ? 'rotate-180' : ''}`,
-    "aria-hidden": "true"
-  })));
+  }, /*#__PURE__*/React.createElement("span", null, label), renderSortIndicator(column)));
 
   const renderStaticHeaderLabel = (label, align = 'left') => /*#__PURE__*/React.createElement("span", {
     className: `block w-full font-semibold text-slate-950 ${align === 'right' ? 'text-right' : 'text-left'}`
@@ -966,6 +1017,7 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement(Button, {
     type: "button",
     variant: "outline",
+    className: "inventory-pagination-button",
     disabled: currentPage <= 1,
     onClick: () => {
       markInventoryFiltersManual();
@@ -976,6 +1028,7 @@ export function InventoryModule({
   }, "Page ", currentPage, " of ", totalPages), /*#__PURE__*/React.createElement(Button, {
     type: "button",
     variant: "outline",
+    className: "inventory-pagination-button",
     disabled: currentPage >= totalPages,
     onClick: () => {
       markInventoryFiltersManual();
@@ -1026,8 +1079,8 @@ export function InventoryModule({
   const applyDashboardInventoryAction = React.useCallback((action, itemId = "") => {
     if (!action) return;
     if (action === "add-item") {
-      if (!canManageInventory(user?.role)) {
-        toast.error("Admin / Owner access is required to add a new inventory item.");
+      if (!canOpenInventoryMasterDataForm) {
+        toast.error("Add Item is available only to Admin / Owner and Inventory Staff accounts.");
         return;
       }
       setDashboardPickerAction(null);
@@ -1063,7 +1116,7 @@ export function InventoryModule({
       setDashboardPickerItemId(itemId ? String(itemId) : "");
       setDashboardPickerAction("stock-out");
     }
-  }, [user?.role]);
+  }, [canOpenInventoryMasterDataForm, user?.role]);
 
   const applyDashboardInventoryStatusFilter = React.useCallback(status => {
     const allowedStatuses = new Set(["all", ...Object.keys(STATUS_PRIORITY)]);
@@ -1163,6 +1216,7 @@ export function InventoryModule({
   const hasAddItemChanges = () => {
     return newItem.name.trim() !== "" ||
       newItem.category.trim() !== "" ||
+      newItem.categoryNote.trim() !== "" ||
       newItem.supplierName.trim() !== "" ||
       newItem.defaultSellingPrice.trim() !== "" ||
       newItem.costPrice.trim() !== "" ||
@@ -1176,6 +1230,13 @@ export function InventoryModule({
     return stockAmount !== "" || stockInReason !== "" || stockOutReason !== "" || stockActualTransactionAt !== "" || stockBackdateReason !== "";
   };
 
+  const hasBatchStockAdjustmentChanges = () => {
+    return batchStockAdjustmentReason !== "" ||
+      batchStockAdjustmentActualTransactionAt !== "" ||
+      batchStockAdjustmentBackdateReason !== "" ||
+      batchStockAdjustmentRows.some(row => row.inventoryId || row.quantity);
+  };
+
   const hasBatchStockOutChanges = () => {
     return batchStockOutReason !== "" ||
       batchStockOutActualTransactionAt !== "" ||
@@ -1187,6 +1248,7 @@ export function InventoryModule({
     if (!selectedItem) return false;
     return editItem.name.trim() !== selectedItem.name ||
       normalizeCategory(editItem.category) !== normalizeCategory(selectedItem.category) ||
+      String(editItem.categoryNote || "").trim() !== String(selectedItem.categoryNote || "").trim() ||
       editItem.supplierName.trim() !== (selectedItem.supplierName || "") ||
       String(editItem.defaultSellingPrice || "") !== String(selectedItem.defaultSellingPrice ?? "") ||
       String(editItem.costPrice || "") !== String(selectedItem.costPrice ?? "") ||
@@ -1195,38 +1257,47 @@ export function InventoryModule({
       String(editItem.safetyStock || "") !== String(selectedItem.safetyStock ?? "");
   };
 
-  const closeAddItemDialog = () => {
-    setDiscardPrompt(null);
+  const closeAddItemDialog = ({ clearDraft = true } = {}) => {
+    if (clearDraft) clearFormDraft(getInventoryDraftScope("inventory-add-item"));
+    setRecoverableInventoryDraft(current => current?.kind === "addItem" ? null : current);
     setSimilarDuplicatePrompt(null);
     setArchivedDuplicatePrompt(null);
     setIsAddDialogOpen(false);
     resetAddItemForm();
   };
 
-  const closeStockInDialog = () => {
+  const closeStockInDialog = ({ clearDraft = true } = {}) => {
+    if (clearDraft && selectedItem?.id) clearFormDraft(getInventoryDraftScope(getInventoryStockInDraftModule(selectedItem.id)));
+    setRecoverableInventoryDraft(current => current?.kind === "stockIn" ? null : current);
     setIsStockInDialogOpen(false);
     setSelectedItem(null);
     resetStockForm();
   };
 
-  const closeBatchStockAdjustmentDialog = () => {
+  const closeBatchStockAdjustmentDialog = ({ clearDraft = true } = {}) => {
+    if (clearDraft) clearFormDraft(getInventoryDraftScope("inventory-batch-stock-adjustment"));
+    setRecoverableInventoryDraft(current => current?.kind === "batchStockAdjustment" ? null : current);
     setIsBatchStockAdjustmentDialogOpen(false);
     resetBatchStockAdjustmentForm();
   };
 
-  const closeBatchStockOutDialog = () => {
+  const closeBatchStockOutDialog = ({ clearDraft = true } = {}) => {
+    if (clearDraft) clearFormDraft(getInventoryDraftScope("inventory-batch-stock-out"));
+    setRecoverableInventoryDraft(current => current?.kind === "batchStockOut" ? null : current);
     setIsBatchStockOutDialogOpen(false);
     resetBatchStockOutForm();
   };
 
-  const closeEditDialog = () => {
-    setDiscardPrompt(null);
+  const closeEditDialog = ({ clearDraft = true } = {}) => {
+    if (clearDraft && selectedItem?.id) clearFormDraft(getInventoryDraftScope(getInventoryEditDraftModule(selectedItem.id)));
+    setRecoverableInventoryDraft(current => current?.kind === "editItem" ? null : current);
     setSimilarDuplicatePrompt(null);
     setIsEditDialogOpen(false);
     setSelectedItem(null);
     setEditItem({
       name: "",
       category: "",
+      categoryNote: "",
       supplierName: "",
       defaultSellingPrice: "",
       reorderLevel: "",
@@ -1238,77 +1309,86 @@ export function InventoryModule({
   };
 
   const requestCloseAddItemDialog = () => {
+    if (hasAddItemChanges()) {
+      saveCurrentInventoryDraftNow();
+      dismissedInventoryDraftScopesRef.current.delete(getInventoryDraftScopeId(getInventoryDraftScope("inventory-add-item")));
+      closeAddItemDialog({ clearDraft: false });
+      toast.info("Item draft saved.", {
+        description: "Open Add Item again to resume or discard the unfinished draft."
+      });
+      return;
+    }
     closeAddItemDialog();
   };
 
   const requestCloseStockInDialog = () => {
+    if (hasStockFormChanges()) {
+      saveCurrentInventoryDraftNow();
+      if (selectedItem?.id) dismissedInventoryDraftScopesRef.current.delete(getInventoryDraftScopeId(getInventoryDraftScope(getInventoryStockInDraftModule(selectedItem.id))));
+      closeStockInDialog({ clearDraft: false });
+      toast.info("Stock-in draft saved.", {
+        description: "Open the same Stock In form again to resume or discard it."
+      });
+      return;
+    }
     closeStockInDialog();
   };
 
   const requestCloseStockOutDialog = () => {
+    if (hasStockFormChanges()) {
+      saveCurrentInventoryDraftNow();
+      if (selectedItem?.id) dismissedInventoryDraftScopesRef.current.delete(getInventoryDraftScopeId(getInventoryDraftScope(getInventoryStockOutDraftModule(selectedItem.id))));
+      closeStockOutDialog({ clearDraft: false });
+      toast.info("Stock-out draft saved.", {
+        description: "Open the same Stock Out form again to resume or discard it."
+      });
+      return;
+    }
     closeStockOutDialog();
   };
 
   const requestCloseBatchStockAdjustmentDialog = () => {
+    if (hasBatchStockAdjustmentChanges()) {
+      saveCurrentInventoryDraftNow();
+      dismissedInventoryDraftScopesRef.current.delete(getInventoryDraftScopeId(getInventoryDraftScope("inventory-batch-stock-adjustment")));
+      closeBatchStockAdjustmentDialog({ clearDraft: false });
+      toast.info("Batch stock adjustment draft saved.", {
+        description: "Open Batch Stock Adjustment again to resume or discard it."
+      });
+      return;
+    }
     closeBatchStockAdjustmentDialog();
   };
 
   const requestCloseBatchStockOutDialog = () => {
+    if (hasBatchStockOutChanges()) {
+      saveCurrentInventoryDraftNow();
+      dismissedInventoryDraftScopesRef.current.delete(getInventoryDraftScopeId(getInventoryDraftScope("inventory-batch-stock-out")));
+      closeBatchStockOutDialog({ clearDraft: false });
+      toast.info("Batch stock-out draft saved.", {
+        description: "Open Batch Non-Sales Out again to resume or discard it."
+      });
+      return;
+    }
     closeBatchStockOutDialog();
   };
 
   const requestCloseEditDialog = () => {
+    if (hasEditItemChanges()) {
+      saveCurrentInventoryDraftNow();
+      if (selectedItem?.id) dismissedInventoryDraftScopesRef.current.delete(getInventoryDraftScopeId(getInventoryDraftScope(getInventoryEditDraftModule(selectedItem.id))));
+      closeEditDialog({ clearDraft: false });
+      toast.info("Item edit draft saved.", {
+        description: "Open the same item again to resume or discard the unfinished edits."
+      });
+      return;
+    }
     closeEditDialog();
   };
 
-  const discardDialogCopy = {
-    addItem: {
-      title: "Discard new item?",
-      description: "You have unsaved item details. Closing this form will remove the information you entered."
-    },
-    stockIn: {
-      title: "Discard stock-in entry?",
-      description: "You have entered stock-in details. Closing this form will clear the quantity and reason, and keep the inventory unchanged."
-    },
-    stockOut: {
-      title: "Discard stock-out entry?",
-      description: "You have entered stock-out details. Closing this form will clear the quantity and reason, and keep the inventory unchanged."
-    },
-    batchStockOut: {
-      title: "Discard batch stock-out entry?",
-      description: "You have entered batch stock-out details. Closing this form will clear all selected items and keep the inventory unchanged."
-    },
-    editItem: {
-      title: "Discard item edits?",
-      description: "You have unsaved item detail changes. Closing this form will keep the current inventory record unchanged."
-    }
-  };
-
-  const confirmDiscardChanges = promptOverride => {
-    const prompt = promptOverride || discardPrompt;
-    setDiscardPrompt(null);
-    if (prompt === "addItem") {
-      closeAddItemDialog();
-      return;
-    }
-    if (prompt === "stockIn") {
-      closeStockInDialog();
-      return;
-    }
-    if (prompt === "stockOut") {
-      closeStockOutDialog();
-      return;
-    }
-    if (prompt === "batchStockOut") {
-      closeBatchStockOutDialog();
-      return;
-    }
-    if (prompt === "editItem") {
-      closeEditDialog();
-    }
-  };
-
-  const closeStockOutDialog = () => {
+  const closeStockOutDialog = ({ clearDraft = true } = {}) => {
+    if (clearDraft && selectedItem?.id) clearFormDraft(getInventoryDraftScope(getInventoryStockOutDraftModule(selectedItem.id)));
+    setRecoverableInventoryDraft(current => current?.kind === "stockOut" ? null : current);
     setIsStockOutDialogOpen(false);
     setSelectedItem(null);
     resetStockForm();
@@ -1320,6 +1400,555 @@ export function InventoryModule({
     setArchiveReason("");
     setArchiveReasonNote("");
   };
+
+  const persistInventoryDraft = React.useCallback((scope, data) => {
+    saveFormDraft({ ...scope, data });
+  }, []);
+
+  const persistAddItemDraft = React.useCallback((nextItem, supplierMode = newItemSupplierMode) => {
+    const hasMeaningfulInput =
+      String(nextItem.name || "").trim() !== "" ||
+      String(nextItem.category || "").trim() !== "" ||
+      String(nextItem.categoryNote || "").trim() !== "" ||
+      String(nextItem.supplierName || "").trim() !== "" ||
+      String(nextItem.defaultSellingPrice || "").trim() !== "" ||
+      String(nextItem.costPrice || "").trim() !== "" ||
+      String(nextItem.quantity || "").trim() !== "" ||
+      String(nextItem.reorderLevel || "") !== "10" ||
+      String(nextItem.leadTimeDays || "").trim() !== "" ||
+      String(nextItem.safetyStock || "").trim() !== "";
+
+    if (!hasMeaningfulInput) return;
+    saveFormDraft({
+      ...getInventoryDraftScope("inventory-add-item"),
+      data: {
+        newItem: nextItem,
+        supplierMode
+      }
+    });
+  }, [getInventoryDraftScope, newItemSupplierMode]);
+
+  const updateNewItemDraft = React.useCallback(updater => {
+    setNewItem(previous => {
+      const nextItem = typeof updater === "function" ? updater(previous) : updater;
+      persistAddItemDraft(nextItem);
+      return nextItem;
+    });
+  }, [persistAddItemDraft]);
+
+  const persistEditItemDraft = React.useCallback((nextItem, supplierMode = editItemSupplierMode) => {
+    if (!selectedItem?.id) return;
+    saveFormDraft({
+      ...getInventoryDraftScope(getInventoryEditDraftModule(selectedItem.id)),
+      data: {
+        itemId: selectedItem.id,
+        editItem: nextItem,
+        supplierMode
+      }
+    });
+  }, [editItemSupplierMode, getInventoryDraftScope, selectedItem]);
+
+  const updateEditItemDraft = React.useCallback(updater => {
+    setEditItem(previous => {
+      const nextItem = typeof updater === "function" ? updater(previous) : updater;
+      persistEditItemDraft(nextItem);
+      return nextItem;
+    });
+  }, [persistEditItemDraft]);
+
+  const persistStockInDraft = React.useCallback(patch => {
+    if (!selectedItem?.id) return;
+    saveFormDraft({
+      ...getInventoryDraftScope(getInventoryStockInDraftModule(selectedItem.id)),
+      data: {
+        itemId: selectedItem.id,
+        stockAmount,
+        stockInReason,
+        stockActualTransactionAt,
+        stockBackdateReason,
+        ...patch
+      }
+    });
+  }, [getInventoryDraftScope, selectedItem, stockAmount, stockInReason, stockActualTransactionAt, stockBackdateReason]);
+
+  const persistStockOutDraft = React.useCallback(patch => {
+    if (!selectedItem?.id) return;
+    saveFormDraft({
+      ...getInventoryDraftScope(getInventoryStockOutDraftModule(selectedItem.id)),
+      data: {
+        itemId: selectedItem.id,
+        stockAmount,
+        stockOutReason,
+        stockActualTransactionAt,
+        stockBackdateReason,
+        ...patch
+      }
+    });
+  }, [getInventoryDraftScope, selectedItem, stockAmount, stockOutReason, stockActualTransactionAt, stockBackdateReason]);
+
+  const persistBatchStockAdjustmentDraft = React.useCallback(patch => {
+    saveFormDraft({
+      ...getInventoryDraftScope("inventory-batch-stock-adjustment"),
+      data: {
+        reason: batchStockAdjustmentReason,
+        rows: batchStockAdjustmentRows,
+        actualTransactionAt: batchStockAdjustmentActualTransactionAt,
+        backdateReason: batchStockAdjustmentBackdateReason,
+        ...patch
+      }
+    });
+  }, [batchStockAdjustmentActualTransactionAt, batchStockAdjustmentBackdateReason, batchStockAdjustmentReason, batchStockAdjustmentRows, getInventoryDraftScope]);
+
+  const persistBatchStockOutDraft = React.useCallback(patch => {
+    saveFormDraft({
+      ...getInventoryDraftScope("inventory-batch-stock-out"),
+      data: {
+        reason: batchStockOutReason,
+        rows: batchStockOutRows,
+        actualTransactionAt: batchStockOutActualTransactionAt,
+        backdateReason: batchStockOutBackdateReason,
+        ...patch
+      }
+    });
+  }, [batchStockOutActualTransactionAt, batchStockOutBackdateReason, batchStockOutReason, batchStockOutRows, getInventoryDraftScope]);
+
+  const showInventoryDraftRecovery = React.useCallback((kind, draft, scope, title, description) => {
+    if (!draft?.data) return;
+    if (dismissedInventoryDraftScopesRef.current.has(getInventoryDraftScopeId(scope))) return;
+    setRecoverableInventoryDraft(current => {
+      const nextScopeId = getInventoryDraftScopeId(scope);
+      const currentScopeId = current?.scope ? getInventoryDraftScopeId(current.scope) : "";
+      if (current && currentScopeId !== nextScopeId) return current;
+      return {
+        kind,
+        data: draft.data,
+        savedAt: draft.savedAt,
+        scope,
+        title,
+        description
+      };
+    });
+  }, [getInventoryDraftScopeId]);
+
+  React.useEffect(() => {
+    if (!isAddDialogOpen) return;
+    const scope = getInventoryDraftScope("inventory-add-item");
+    const draft = loadFormDraft(scope);
+    showInventoryDraftRecovery(
+      "addItem",
+      draft,
+      scope,
+      "Unfinished item draft found",
+      "An inventory item form was saved before it was completed. You can resume editing it or discard it. No inventory record was created."
+    );
+  }, [isAddDialogOpen, getInventoryDraftScope, showInventoryDraftRecovery]);
+
+  React.useEffect(() => {
+    if (!isEditDialogOpen || !selectedItem?.id) return;
+    const scope = getInventoryDraftScope(getInventoryEditDraftModule(selectedItem.id));
+    const draft = loadFormDraft(scope);
+    if (draft?.data?.itemId && String(draft.data.itemId) !== String(selectedItem.id)) return;
+    showInventoryDraftRecovery(
+      "editItem",
+      draft,
+      scope,
+      "Unfinished item edit found",
+      "Item detail changes were saved before they were completed. You can resume editing them or discard the draft. The active inventory record was not changed."
+    );
+  }, [isEditDialogOpen, selectedItem?.id, getInventoryDraftScope, showInventoryDraftRecovery]);
+
+  React.useEffect(() => {
+    if (!isStockInDialogOpen || !selectedItem?.id) return;
+    const scope = getInventoryDraftScope(getInventoryStockInDraftModule(selectedItem.id));
+    const draft = loadFormDraft(scope);
+    if (draft?.data?.itemId && String(draft.data.itemId) !== String(selectedItem.id)) return;
+    showInventoryDraftRecovery(
+      "stockIn",
+      draft,
+      scope,
+      "Unfinished stock-in draft found",
+      "A stock-in form was saved before it was confirmed. You can resume editing it or discard it. No stock was added and no movement record was created."
+    );
+  }, [isStockInDialogOpen, selectedItem?.id, getInventoryDraftScope, showInventoryDraftRecovery]);
+
+  React.useEffect(() => {
+    if (!isStockOutDialogOpen || !selectedItem?.id) return;
+    const scope = getInventoryDraftScope(getInventoryStockOutDraftModule(selectedItem.id));
+    const draft = loadFormDraft(scope);
+    if (draft?.data?.itemId && String(draft.data.itemId) !== String(selectedItem.id)) return;
+    showInventoryDraftRecovery(
+      "stockOut",
+      draft,
+      scope,
+      "Unfinished stock-out draft found",
+      "A stock-out form was saved before it was confirmed. You can resume editing it or discard it. No stock was removed and no movement record was created."
+    );
+  }, [isStockOutDialogOpen, selectedItem?.id, getInventoryDraftScope, showInventoryDraftRecovery]);
+
+  React.useEffect(() => {
+    if (!isBatchStockAdjustmentDialogOpen) return;
+    const scope = getInventoryDraftScope("inventory-batch-stock-adjustment");
+    const draft = loadFormDraft(scope);
+    showInventoryDraftRecovery(
+      "batchStockAdjustment",
+      draft,
+      scope,
+      "Unfinished batch stock adjustment found",
+      "A batch stock adjustment was saved before it was confirmed. You can resume editing it or discard it. No stock was added and no movement records were created."
+    );
+  }, [isBatchStockAdjustmentDialogOpen, getInventoryDraftScope, showInventoryDraftRecovery]);
+
+  React.useEffect(() => {
+    if (!isBatchStockOutDialogOpen) return;
+    const scope = getInventoryDraftScope("inventory-batch-stock-out");
+    const draft = loadFormDraft(scope);
+    showInventoryDraftRecovery(
+      "batchStockOut",
+      draft,
+      scope,
+      "Unfinished batch stock-out draft found",
+      "A batch stock-out form was saved before it was confirmed. You can resume editing it or discard it. No stock was removed and no movement records were created."
+    );
+  }, [isBatchStockOutDialogOpen, getInventoryDraftScope, showInventoryDraftRecovery]);
+
+  React.useEffect(() => {
+    if (!isAddDialogOpen || !hasAddItemChanges()) return;
+    persistInventoryDraft(getInventoryDraftScope("inventory-add-item"), {
+      newItem,
+      supplierMode: newItemSupplierMode
+    });
+  }, [isAddDialogOpen, newItem, newItemSupplierMode, getInventoryDraftScope, persistInventoryDraft]);
+
+  React.useEffect(() => {
+    if (!isEditDialogOpen || !selectedItem?.id || !hasEditItemChanges()) return;
+    persistInventoryDraft(getInventoryDraftScope(getInventoryEditDraftModule(selectedItem.id)), {
+      itemId: selectedItem.id,
+      editItem,
+      supplierMode: editItemSupplierMode
+    });
+  }, [isEditDialogOpen, selectedItem?.id, editItem, editItemSupplierMode, getInventoryDraftScope, persistInventoryDraft]);
+
+  React.useEffect(() => {
+    if (!isStockInDialogOpen || !selectedItem?.id || !hasStockFormChanges()) return;
+    persistInventoryDraft(getInventoryDraftScope(getInventoryStockInDraftModule(selectedItem.id)), {
+      itemId: selectedItem.id,
+      stockAmount,
+      stockInReason,
+      stockActualTransactionAt,
+      stockBackdateReason
+    });
+  }, [isStockInDialogOpen, selectedItem?.id, stockAmount, stockInReason, stockActualTransactionAt, stockBackdateReason, getInventoryDraftScope, persistInventoryDraft]);
+
+  React.useEffect(() => {
+    if (!isStockOutDialogOpen || !selectedItem?.id || !hasStockFormChanges()) return;
+    persistInventoryDraft(getInventoryDraftScope(getInventoryStockOutDraftModule(selectedItem.id)), {
+      itemId: selectedItem.id,
+      stockAmount,
+      stockOutReason,
+      stockActualTransactionAt,
+      stockBackdateReason
+    });
+  }, [isStockOutDialogOpen, selectedItem?.id, stockAmount, stockOutReason, stockActualTransactionAt, stockBackdateReason, getInventoryDraftScope, persistInventoryDraft]);
+
+  React.useEffect(() => {
+    if (!isBatchStockAdjustmentDialogOpen || !hasBatchStockAdjustmentChanges()) return;
+    persistInventoryDraft(getInventoryDraftScope("inventory-batch-stock-adjustment"), {
+      reason: batchStockAdjustmentReason,
+      rows: batchStockAdjustmentRows,
+      actualTransactionAt: batchStockAdjustmentActualTransactionAt,
+      backdateReason: batchStockAdjustmentBackdateReason
+    });
+  }, [isBatchStockAdjustmentDialogOpen, batchStockAdjustmentReason, batchStockAdjustmentRows, batchStockAdjustmentActualTransactionAt, batchStockAdjustmentBackdateReason, getInventoryDraftScope, persistInventoryDraft]);
+
+  React.useEffect(() => {
+    if (!isBatchStockOutDialogOpen || !hasBatchStockOutChanges()) return;
+    persistInventoryDraft(getInventoryDraftScope("inventory-batch-stock-out"), {
+      reason: batchStockOutReason,
+      rows: batchStockOutRows,
+      actualTransactionAt: batchStockOutActualTransactionAt,
+      backdateReason: batchStockOutBackdateReason
+    });
+  }, [isBatchStockOutDialogOpen, batchStockOutReason, batchStockOutRows, batchStockOutActualTransactionAt, batchStockOutBackdateReason, getInventoryDraftScope, persistInventoryDraft]);
+
+  const saveCurrentInventoryDraftNow = React.useCallback(() => {
+    if (isAddDialogOpen && hasAddItemChanges()) {
+      saveFormDraft({
+        ...getInventoryDraftScope("inventory-add-item"),
+        data: {
+          newItem,
+          supplierMode: newItemSupplierMode
+        }
+      });
+    }
+
+    if (isEditDialogOpen && selectedItem?.id && hasEditItemChanges()) {
+      saveFormDraft({
+        ...getInventoryDraftScope(getInventoryEditDraftModule(selectedItem.id)),
+        data: {
+          itemId: selectedItem.id,
+          editItem,
+          supplierMode: editItemSupplierMode
+        }
+      });
+    }
+
+    if (isStockInDialogOpen && selectedItem?.id && hasStockFormChanges()) {
+      saveFormDraft({
+        ...getInventoryDraftScope(getInventoryStockInDraftModule(selectedItem.id)),
+        data: {
+          itemId: selectedItem.id,
+          stockAmount,
+          stockInReason,
+          stockActualTransactionAt,
+          stockBackdateReason
+        }
+      });
+    }
+
+    if (isStockOutDialogOpen && selectedItem?.id && hasStockFormChanges()) {
+      saveFormDraft({
+        ...getInventoryDraftScope(getInventoryStockOutDraftModule(selectedItem.id)),
+        data: {
+          itemId: selectedItem.id,
+          stockAmount,
+          stockOutReason,
+          stockActualTransactionAt,
+          stockBackdateReason
+        }
+      });
+    }
+
+    if (isBatchStockAdjustmentDialogOpen && hasBatchStockAdjustmentChanges()) {
+      saveFormDraft({
+        ...getInventoryDraftScope("inventory-batch-stock-adjustment"),
+        data: {
+          reason: batchStockAdjustmentReason,
+          rows: batchStockAdjustmentRows,
+          actualTransactionAt: batchStockAdjustmentActualTransactionAt,
+          backdateReason: batchStockAdjustmentBackdateReason
+        }
+      });
+    }
+
+    if (isBatchStockOutDialogOpen && hasBatchStockOutChanges()) {
+      saveFormDraft({
+        ...getInventoryDraftScope("inventory-batch-stock-out"),
+        data: {
+          reason: batchStockOutReason,
+          rows: batchStockOutRows,
+          actualTransactionAt: batchStockOutActualTransactionAt,
+          backdateReason: batchStockOutBackdateReason
+        }
+      });
+    }
+  }, [
+    isAddDialogOpen,
+    newItem,
+    newItemSupplierMode,
+    isEditDialogOpen,
+    selectedItem,
+    editItem,
+    editItemSupplierMode,
+    isStockInDialogOpen,
+    isStockOutDialogOpen,
+    stockAmount,
+    stockInReason,
+    stockOutReason,
+    stockActualTransactionAt,
+    stockBackdateReason,
+    isBatchStockAdjustmentDialogOpen,
+    batchStockAdjustmentReason,
+    batchStockAdjustmentRows,
+    batchStockAdjustmentActualTransactionAt,
+    batchStockAdjustmentBackdateReason,
+    isBatchStockOutDialogOpen,
+    batchStockOutReason,
+    batchStockOutRows,
+    batchStockOutActualTransactionAt,
+    batchStockOutBackdateReason,
+    getInventoryDraftScope
+  ]);
+
+  const hasUnsavedInventoryDraftWork =
+    (isAddDialogOpen && hasAddItemChanges()) ||
+    (isEditDialogOpen && hasEditItemChanges()) ||
+    ((isStockInDialogOpen || isStockOutDialogOpen) && hasStockFormChanges()) ||
+    (isBatchStockAdjustmentDialogOpen && hasBatchStockAdjustmentChanges()) ||
+    (isBatchStockOutDialogOpen && hasBatchStockOutChanges());
+
+  React.useEffect(() => {
+    if (!hasUnsavedInventoryDraftWork) return undefined;
+    const handleBeforeUnload = event => {
+      saveCurrentInventoryDraftNow();
+      event.preventDefault();
+      event.returnValue = "";
+      return "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasUnsavedInventoryDraftWork, saveCurrentInventoryDraftNow]);
+
+  const discardRecoveredInventoryDraft = () => {
+    if (recoverableInventoryDraft?.scope) {
+      clearFormDraft(recoverableInventoryDraft.scope);
+      dismissedInventoryDraftScopesRef.current.add(getInventoryDraftScopeId(recoverableInventoryDraft.scope));
+    }
+    setRecoverableInventoryDraft(null);
+  };
+
+  const resumeRecoveredInventoryDraft = () => {
+    if (!recoverableInventoryDraft?.data) return;
+    const { kind, data } = recoverableInventoryDraft;
+    if (recoverableInventoryDraft.scope) {
+      dismissedInventoryDraftScopesRef.current.add(getInventoryDraftScopeId(recoverableInventoryDraft.scope));
+    }
+
+    if (kind === "addItem") {
+      setNewItem(previous => ({ ...previous, ...data.newItem }));
+      setNewItemSupplierMode(data.supplierMode || "listed");
+    }
+
+    if (kind === "editItem") {
+      const draftItem = inventory.find(item => String(item.id) === String(data.itemId));
+      if (!draftItem) {
+        discardRecoveredInventoryDraft();
+        toast.error("The draft item is no longer available in active inventory.");
+        return;
+      }
+      setSelectedItem(draftItem);
+      setEditItem(previous => ({ ...previous, ...data.editItem }));
+      setEditItemSupplierMode(data.supplierMode || "listed");
+    }
+
+    if (kind === "stockIn" || kind === "stockOut") {
+      const draftItem = inventory.find(item => String(item.id) === String(data.itemId));
+      if (!draftItem) {
+        discardRecoveredInventoryDraft();
+        toast.error("The draft item is no longer available in active inventory.");
+        return;
+      }
+      setSelectedItem(draftItem);
+      setStockAmount(data.stockAmount || "");
+      setStockActualTransactionAt(data.stockActualTransactionAt || "");
+      setStockBackdateReason(data.stockBackdateReason || "");
+      if (kind === "stockIn") {
+        setStockInReason(data.stockInReason || "");
+        setStockOutReason("");
+      } else {
+        setStockOutReason(data.stockOutReason || "");
+        setStockInReason("");
+      }
+    }
+
+    if (kind === "batchStockAdjustment") {
+      const validRows = (data.rows || []).filter(row => row.inventoryId && inventory.some(item => String(item.id) === String(row.inventoryId)));
+      setBatchStockAdjustmentReason(data.reason || "");
+      setBatchStockAdjustmentRows(validRows.length ? validRows : [{ inventoryId: "", quantity: "" }]);
+      setBatchStockAdjustmentActualTransactionAt(data.actualTransactionAt || "");
+      setBatchStockAdjustmentBackdateReason(data.backdateReason || "");
+      if ((data.rows || []).length > validRows.length) {
+        toast.warning("Some draft lines were skipped because the items are no longer active.");
+      }
+    }
+
+    if (kind === "batchStockOut") {
+      const validRows = (data.rows || []).filter(row => row.inventoryId && inventory.some(item => String(item.id) === String(row.inventoryId)));
+      setBatchStockOutReason(data.reason || "");
+      setBatchStockOutRows(validRows.length ? validRows : [{ inventoryId: "", quantity: "" }]);
+      setBatchStockOutActualTransactionAt(data.actualTransactionAt || "");
+      setBatchStockOutBackdateReason(data.backdateReason || "");
+      if ((data.rows || []).length > validRows.length) {
+        toast.warning("Some draft lines were skipped because the items are no longer active.");
+      }
+    }
+
+    setRecoverableInventoryDraft(null);
+    toast.success("Draft recovered", {
+      description: "Review the restored information before confirming the transaction."
+    });
+  };
+
+  const renderInlineInventoryDraftRecovery = kind => {
+    if (recoverableInventoryDraft?.kind !== kind) return null;
+    return (
+      <div
+        className="inventory-add-field inventory-add-field-full"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) auto",
+          alignItems: "center",
+          gap: "14px",
+          border: "1px solid #BFDBFE",
+          background: "#EFF6FF",
+          borderRadius: "12px",
+          padding: "12px 14px"
+        }}
+      >
+        <div className="min-w-0">
+          <p className="font-semibold text-slate-950" style={{ fontSize: "14px", lineHeight: "1.3" }}>
+            {recoverableInventoryDraft?.title || "Unfinished draft found"}
+          </p>
+          <p className="text-slate-700" style={{ marginTop: "3px", fontSize: "12px", lineHeight: "1.45" }}>
+            Last saved {formatDraftSavedAt(recoverableInventoryDraft?.savedAt)}. No official inventory record or stock movement was created.
+          </p>
+        </div>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="inventory-inline-draft-button inventory-inline-draft-button-secondary border-slate-200 bg-white text-slate-950"
+            style={{ height: "34px", borderRadius: "10px", padding: "0 12px", fontSize: "12px" }}
+            onClick={discardRecoveredInventoryDraft}
+          >
+            Discard
+          </Button>
+          <Button
+            type="button"
+            className="inventory-inline-draft-button inventory-inline-draft-button-primary bg-blue-600 text-white"
+            style={{ height: "34px", borderRadius: "10px", padding: "0 12px", fontSize: "12px" }}
+            onClick={resumeRecoveredInventoryDraft}
+          >
+            Resume Draft
+          </Button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderInventoryDraftRecoveryDialog = () => /*#__PURE__*/React.createElement(Dialog, {
+    open: Boolean(recoverableInventoryDraft),
+    onOpenChange: open => {
+      if (!open) setRecoverableInventoryDraft(null);
+    }
+  }, /*#__PURE__*/React.createElement(DialogContent, {
+    className: "draft-recovery-dialog"
+  }, /*#__PURE__*/React.createElement(DialogHeader, {
+    className: "draft-recovery-header text-left"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "draft-recovery-icon",
+    "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement(Info, {
+    className: "h-5 w-5"
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(DialogTitle, {
+    className: "draft-recovery-title"
+  }, recoverableInventoryDraft?.title || "Unfinished draft found"), /*#__PURE__*/React.createElement(DialogDescription, {
+    className: "draft-recovery-description"
+  }, recoverableInventoryDraft?.description || "You can resume editing this draft or discard it."))), /*#__PURE__*/React.createElement("div", {
+    className: "draft-recovery-body"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "draft-recovery-meta"
+  }, /*#__PURE__*/React.createElement("span", null, "Last saved"), /*#__PURE__*/React.createElement("strong", null, formatDraftSavedAt(recoverableInventoryDraft?.savedAt)))), /*#__PURE__*/React.createElement("div", {
+    className: "draft-recovery-actions"
+  }, /*#__PURE__*/React.createElement(Button, {
+    type: "button",
+    variant: "outline",
+    className: "draft-recovery-action draft-recovery-action-secondary",
+    onClick: discardRecoveredInventoryDraft
+  }, "Discard Draft"), /*#__PURE__*/React.createElement(Button, {
+    type: "button",
+    className: "draft-recovery-action draft-recovery-action-primary",
+    onClick: resumeRecoveredInventoryDraft
+  }, "Resume Draft"))));
   
   // Human-friendly sort labels depending on column type
   const sortLabel = (() => {
@@ -1334,6 +1963,949 @@ export function InventoryModule({
   })();
 
   const realtimeDisplayOrderLabel = filteredInventory.length === 0 ? "No items" : displayOrderLabel;
+
+  const getFirstDefinedApprovalValue = (source, keys) => {
+    for (const key of keys) {
+      if (source?.[key] !== undefined && source?.[key] !== null) return source[key];
+    }
+    return undefined;
+  };
+
+  const isBlankApprovalValue = value => value === null || value === undefined || String(value).trim() === "";
+
+  const normalizeApprovalCompareValue = (value, type = "text") => {
+    if (isBlankApprovalValue(value)) return "";
+    if (type === "money" || type === "stock") {
+      const numericValue = Number(value);
+      return Number.isFinite(numericValue) ? String(numericValue) : "";
+    }
+    return String(value).trim();
+  };
+
+  const formatApprovalValue = (value, type = "text", emptyLabel = "Not assigned") => {
+    if (isBlankApprovalValue(value)) return emptyLabel;
+    if (type === "money") {
+      const amount = Number(value);
+      return Number.isFinite(amount) ? `P${amount.toFixed(2)}` : emptyLabel;
+    }
+    if (type === "stock") {
+      const quantity = Number(value);
+      return Number.isFinite(quantity) ? String(quantity) : emptyLabel;
+    }
+    return String(value);
+  };
+
+  const approvalComparableFields = [
+    { label: "Item Name", beforeKeys: ["name"], afterKeys: ["name"] },
+    { label: "Category", beforeKeys: ["category"], afterKeys: ["category"] },
+    { label: "Category Note", beforeKeys: ["categoryNote", "category_note"], afterKeys: ["categoryNote"] },
+    { label: "Supplier", beforeKeys: ["supplierName", "supplier_name"], afterKeys: ["supplierName"] },
+    { label: "SRP", beforeKeys: ["defaultSellingPrice", "default_selling_price"], afterKeys: ["defaultSellingPrice"], type: "money" },
+    { label: "Cost", beforeKeys: ["costPrice", "cost_price"], afterKeys: ["costPrice"], type: "money" },
+    { label: "Stock", beforeKeys: ["quantity", "stock_level"], afterKeys: ["quantity"], type: "stock" },
+    { label: "Manual Low-Stock Limit", beforeKeys: ["reorderLevel", "min_stock_level"], afterKeys: ["reorderLevel"], type: "stock" },
+    { label: "Lead Time", beforeKeys: ["leadTimeDays", "lead_time_days"], afterKeys: ["leadTimeDays"], type: "stock" },
+    { label: "Safety Stock", beforeKeys: ["safetyStock", "safety_stock"], afterKeys: ["safetyStock"], type: "stock" }
+  ];
+
+  const getApprovalChangeRows = request => {
+    if (request.requestType !== "edit_item" || !request.currentSnapshot) return [];
+
+    const payload = request.requestedPayload || {};
+    const current = request.currentSnapshot || {};
+
+    return approvalComparableFields
+      .map(field => {
+        const before = getFirstDefinedApprovalValue(current, field.beforeKeys);
+        const after = getFirstDefinedApprovalValue(payload, field.afterKeys);
+        return {
+          label: field.label,
+          beforeRaw: before,
+          afterRaw: after,
+          before: formatApprovalValue(before, field.type, "Not previously assigned"),
+          after: formatApprovalValue(after, field.type, "Not provided"),
+          type: field.type || "text"
+        };
+      })
+      .filter(row => normalizeApprovalCompareValue(row.beforeRaw, row.type) !== normalizeApprovalCompareValue(row.afterRaw, row.type));
+  };
+
+  const getNewItemApprovalRows = request => {
+    const payload = request.requestedPayload || {};
+    return [
+      { label: "Category", value: formatApprovalValue(payload.category, "text", "Not provided") },
+      { label: "Category Note", value: formatApprovalValue(payload.categoryNote, "text", "Not provided") },
+      { label: "Supplier", value: formatApprovalValue(payload.supplierName, "text", "Not provided") },
+      { label: "SRP", value: formatApprovalValue(payload.defaultSellingPrice, "money", "Not provided") },
+      { label: "Cost", value: formatApprovalValue(payload.costPrice, "money", "Not provided") },
+      { label: "Initial Stock", value: formatApprovalValue(payload.quantity, "stock", "0") },
+      { label: "Manual Low-Stock Limit", value: formatApprovalValue(payload.reorderLevel, "stock", "Not provided") },
+      { label: "Lead Time", value: formatApprovalValue(payload.leadTimeDays, "stock", "Not provided") },
+      { label: "Safety Stock", value: formatApprovalValue(payload.safetyStock, "stock", "Not provided") }
+    ].filter(row => row.value !== "Not provided");
+  };
+
+  const getApprovalRequestMeta = (request, changeRows) => {
+    if (request.requestType === "add_item") {
+      return {
+        label: "New Item",
+        summary: "New inventory item awaiting approval",
+        className: "border-green-200 bg-green-50 text-green-800"
+      };
+    }
+
+    const changedLabels = new Set(changeRows.map(row => row.label));
+    if (changedLabels.has("Stock")) {
+      return {
+        label: "Stock Correction",
+        summary: `${changeRows.length} ${changeRows.length === 1 ? "field" : "fields"} modified`,
+        className: "border-orange-200 bg-orange-50 text-orange-800"
+      };
+    }
+    if (changedLabels.has("SRP") || changedLabels.has("Cost")) {
+      return {
+        label: "Price Update",
+        summary: `${changeRows.length} ${changeRows.length === 1 ? "field" : "fields"} modified`,
+        className: "border-blue-200 bg-blue-50 text-blue-800"
+      };
+    }
+    if (changedLabels.has("Category")) {
+      return {
+        label: "Category Change",
+        summary: `${changeRows.length} ${changeRows.length === 1 ? "field" : "fields"} modified`,
+        className: "border-amber-200 bg-amber-50 text-amber-800"
+      };
+    }
+    return {
+      label: "Item Update",
+      summary: changeRows.length > 0
+        ? `${changeRows.length} ${changeRows.length === 1 ? "field" : "fields"} modified`
+        : "No field differences detected",
+      className: "border-slate-200 bg-slate-50 text-slate-700"
+    };
+  };
+
+  const renderInventoryApprovalRequestsDialog = () => {
+    if (!canManageInventory(user?.role)) return null;
+
+    const enrichedApprovalRequests = pendingInventoryChangeRequests.map(request => {
+      const changeRows = getApprovalChangeRows(request);
+      const newItemRows = getNewItemApprovalRows(request);
+      const requestMeta = getApprovalRequestMeta(request, changeRows);
+      return {
+        request,
+        changeRows,
+        newItemRows,
+        requestMeta
+      };
+    });
+    const filterOptions = [
+      { value: "all", label: "All Requests", predicate: () => true },
+      { value: "new", label: "New Items", predicate: item => item.request.requestType === "add_item" },
+      { value: "update", label: "Updates", predicate: item => item.request.requestType === "edit_item" },
+      { value: "price", label: "Price", predicate: item => item.requestMeta.label === "Price Update" },
+      { value: "stock", label: "Stock", predicate: item => item.requestMeta.label === "Stock Correction" },
+      { value: "category", label: "Category", predicate: item => item.requestMeta.label === "Category Change" }
+    ];
+    const filterOptionsWithCounts = filterOptions.map(option => ({
+      ...option,
+      count: enrichedApprovalRequests.filter(option.predicate).length
+    }));
+    const visibleFilterOptions = filterOptionsWithCounts.filter(option => option.value === "all" || option.count > 0);
+    const activeFilterOption = visibleFilterOptions.find(option => option.value === approvalRequestFilter) || filterOptionsWithCounts[0];
+    const approvalSearchTerm = approvalRequestSearch.trim().toLowerCase();
+    const filteredApprovalRequests = enrichedApprovalRequests
+      .filter(activeFilterOption.predicate)
+      .filter(item => {
+        if (!approvalSearchTerm) return true;
+        const searchableText = [
+          item.request.itemName,
+          item.request.requestedByName,
+          item.requestMeta.label,
+          item.requestMeta.summary,
+          ...item.changeRows.flatMap(row => [row.label, row.before, row.after]),
+          ...item.newItemRows.flatMap(row => [row.label, row.value])
+        ].join(" ").toLowerCase();
+        return searchableText.includes(approvalSearchTerm);
+      })
+      .sort((a, b) => {
+        const aTime = new Date(a.request.requestedAt || 0).getTime();
+        const bTime = new Date(b.request.requestedAt || 0).getTime();
+        return approvalRequestSort === "oldest" ? aTime - bTime : bTime - aTime;
+      });
+    const approvalRequestsPerPage = 5;
+    const approvalTotalPages = Math.max(1, Math.ceil(filteredApprovalRequests.length / approvalRequestsPerPage));
+    const safeApprovalPage = Math.min(Math.max(1, approvalRequestPage), approvalTotalPages);
+    const approvalPageStart = filteredApprovalRequests.length === 0
+      ? 0
+      : (safeApprovalPage - 1) * approvalRequestsPerPage + 1;
+    const approvalPageEnd = Math.min(safeApprovalPage * approvalRequestsPerPage, filteredApprovalRequests.length);
+    const paginatedApprovalRequests = filteredApprovalRequests.slice(
+      (safeApprovalPage - 1) * approvalRequestsPerPage,
+      safeApprovalPage * approvalRequestsPerPage
+    );
+    const setApprovalFilter = value => {
+      setApprovalRequestFilter(value);
+      setApprovalRequestPage(1);
+    };
+
+    return (
+      <Dialog open={isApprovalDialogOpen} onOpenChange={setIsApprovalDialogOpen}>
+        <DialogContent
+          className="inventory-approval-dialog border border-slate-200 bg-white shadow-2xl"
+          style={{
+            display: "grid",
+            gridTemplateRows: "auto auto minmax(0, 1fr)",
+            width: isApprovalMobileView ? "calc(100vw - 24px)" : "min(1240px, calc(100vw - 56px))",
+            maxWidth: isApprovalMobileView ? "calc(100vw - 24px)" : "1240px",
+            maxHeight: isApprovalMobileView ? "calc(100dvh - 28px)" : "calc(100dvh - 72px)",
+            padding: 0,
+            overflow: "hidden",
+            borderRadius: isApprovalMobileView ? "16px" : "16px"
+          }}
+        >
+          <Button
+            type="button"
+            variant="ghost"
+            aria-label="Close inventory approval requests"
+            className="absolute right-4 top-4 z-10 h-10 w-10 rounded-full p-0 text-slate-500 hover:bg-slate-100 hover:text-slate-950"
+            onClick={() => setIsApprovalDialogOpen(false)}
+          >
+            <X className="h-5 w-5" />
+          </Button>
+          <DialogHeader
+            className="text-left"
+            style={{
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "flex-start",
+              gap: isApprovalMobileView ? "10px" : "14px",
+              padding: isApprovalMobileView ? "14px 48px 12px 14px" : "26px 78px 24px 28px",
+              borderBottom: "1px solid #E2E8F0"
+            }}
+          >
+            <span
+              aria-hidden="true"
+              className="shrink-0"
+              style={{
+                width: isApprovalMobileView ? "34px" : "42px",
+                height: isApprovalMobileView ? "34px" : "42px",
+                borderRadius: isApprovalMobileView ? "10px" : "12px",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "#FEF3C7",
+                color: "#B45309"
+              }}
+            >
+              <AlertTriangle className={isApprovalMobileView ? "h-4 w-4" : "h-5 w-5"} />
+            </span>
+            <div className="min-w-0">
+              <DialogTitle className={isApprovalMobileView ? "text-lg font-bold leading-tight text-slate-950" : "text-xl font-bold text-slate-950"}>
+                Inventory Approval Requests
+              </DialogTitle>
+              <DialogDescription className={isApprovalMobileView ? "mt-1 text-xs leading-snug text-slate-700" : "mt-1 text-sm leading-relaxed text-slate-700"}>
+                Review item records prepared by Inventory Staff before they become official inventory records.
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+
+          <style>{`
+            .inventory-approval-search-wrap {
+              border-radius: 14px;
+            }
+
+            .inventory-approval-body {
+              display: grid;
+              gap: 16px;
+              padding: 18px 28px 22px;
+              background: #ffffff;
+            }
+
+            .inventory-approval-summary-panel {
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              gap: 16px;
+              border: 1px solid #e2e8f0;
+              border-radius: 10px;
+              background: #ffffff;
+              padding: 16px 18px;
+            }
+
+            .inventory-approval-controls {
+              display: grid;
+              grid-template-columns: minmax(360px, 1fr) 160px auto;
+              align-items: center;
+              gap: 12px;
+              overflow: visible;
+              padding: 0;
+            }
+
+            .inventory-approval-filter-group {
+              display: flex;
+              flex-wrap: nowrap;
+              align-items: center;
+              gap: 8px;
+              justify-content: flex-end;
+              min-width: 0;
+            }
+
+            .inventory-approval-dialog-list {
+              min-height: 0;
+              overflow-y: auto;
+              overscroll-behavior: contain;
+              scrollbar-gutter: stable;
+            }
+
+            .inventory-approval-dialog-list::-webkit-scrollbar {
+              width: 10px;
+            }
+
+            .inventory-approval-dialog-list::-webkit-scrollbar-thumb {
+              background: #cbd5e1;
+              border: 3px solid #ffffff;
+              border-radius: 999px;
+            }
+
+            .inventory-approval-dialog-list::-webkit-scrollbar-track {
+              background: transparent;
+            }
+
+            .inventory-approval-request-card {
+              border-radius: 13px;
+              padding: 16px 18px 18px;
+            }
+
+            .inventory-approval-request-top {
+              display: grid;
+              grid-template-columns: minmax(280px, 1fr) minmax(190px, auto) auto;
+              align-items: center;
+              gap: 18px;
+              border-bottom: 0;
+              margin-bottom: 16px;
+              padding-bottom: 0;
+            }
+
+            .inventory-approval-item-summary {
+              min-width: 0;
+            }
+
+            .inventory-approval-request-title {
+              margin: 0;
+              color: #0f172a;
+              font-size: 16px;
+              font-weight: 800;
+              line-height: 1.25;
+              overflow-wrap: anywhere;
+            }
+
+            .inventory-approval-item-meta {
+              margin-top: 4px;
+              color: #475569;
+              font-size: 12px;
+              font-weight: 600;
+              line-height: 1.35;
+            }
+
+            .inventory-approval-rename-note {
+              margin-top: 6px;
+              color: #1d4ed8;
+              font-size: 12px;
+              font-weight: 700;
+              line-height: 1.35;
+              overflow-wrap: anywhere;
+            }
+
+            .inventory-approval-requester-summary {
+              min-width: 0;
+            }
+
+            .inventory-approval-request-actions {
+              display: flex;
+              align-items: center;
+              justify-content: flex-end;
+              gap: 12px;
+              margin-top: 0;
+            }
+
+            .inventory-approval-change-panel {
+              border-radius: 14px;
+              background: #f8fafc;
+            }
+
+            .inventory-approval-change-panel-header {
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              gap: 14px;
+              border-bottom: 1px solid #e2e8f0;
+              padding: 14px 16px;
+            }
+
+            .inventory-approval-change-panel-title {
+              display: flex;
+              align-items: flex-start;
+              gap: 12px;
+              min-width: 0;
+            }
+
+            .inventory-approval-change-icon {
+              margin-top: 2px;
+              color: #334155;
+            }
+
+            .inventory-approval-pagination {
+              margin-top: 8px;
+            }
+
+            .inventory-approval-search-wrap:focus-within::after {
+              content: "";
+              position: absolute;
+              inset: -3px;
+              border: 2px solid var(--emc-interactive-yellow-soft);
+              border-radius: 16px;
+              pointer-events: none;
+            }
+
+            #root .inventory-approval-search-wrap .inventory-approval-search-input:not(:disabled):not([aria-disabled="true"]):focus,
+            #root .inventory-approval-search-wrap .inventory-approval-search-input:not(:disabled):not([aria-disabled="true"]):focus-visible {
+              border-color: var(--emc-interactive-yellow);
+              outline: none;
+              box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+            }
+
+            .inventory-approval-change-table {
+              table-layout: fixed;
+              width: 100%;
+            }
+
+            .inventory-approval-change-table th:first-child,
+            .inventory-approval-change-table td:first-child {
+              width: 28%;
+            }
+
+            .inventory-approval-change-table th:nth-child(2),
+            .inventory-approval-change-table td:nth-child(2) {
+              width: 36%;
+            }
+
+            .inventory-approval-change-table th:nth-child(3),
+            .inventory-approval-change-table td:nth-child(3) {
+              width: 36%;
+            }
+
+            .inventory-approval-value-table {
+              table-layout: fixed;
+              width: 100%;
+            }
+
+            .inventory-approval-value-table th:first-child,
+            .inventory-approval-value-table td:first-child {
+              width: 34%;
+            }
+
+            .inventory-approval-value-table th:nth-child(2),
+            .inventory-approval-value-table td:nth-child(2) {
+              width: 66%;
+            }
+
+            .inventory-approval-change-table td,
+            .inventory-approval-value-table td {
+              vertical-align: top;
+              overflow-wrap: anywhere;
+            }
+
+            .inventory-approval-pagination-button {
+              background: #ffffff;
+              border-color: #cbd5e1;
+              color: #334155;
+              transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+            }
+
+            .inventory-approval-pagination-button:not(:disabled):hover {
+              background: #f1f5f9;
+              border-color: #94a3b8;
+              color: #0f172a;
+            }
+
+            @media (max-width: 760px) {
+              .inventory-approval-dialog {
+                display: grid;
+                grid-template-rows: auto auto minmax(0, 1fr);
+              }
+
+              .inventory-approval-body {
+                gap: 10px;
+                padding: 10px 14px 12px;
+              }
+
+              .inventory-approval-summary-panel {
+                align-items: flex-start;
+                padding: 10px 12px;
+                border-radius: 11px;
+              }
+
+              .inventory-approval-summary-row {
+                gap: 8px;
+              }
+
+              .inventory-approval-summary-row > div {
+                min-width: 0;
+              }
+
+              .inventory-approval-controls {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr);
+                gap: 8px;
+                padding: 0;
+                overflow: visible;
+              }
+
+              .inventory-approval-search-wrap {
+                min-width: 0;
+                width: 100%;
+              }
+
+              .inventory-approval-search-input {
+                height: 40px;
+                border-radius: 11px;
+                font-size: 13px;
+              }
+
+              .inventory-approval-sort-trigger {
+                width: 100%;
+                height: 38px;
+                min-width: 0;
+              }
+
+              .inventory-approval-filter-group {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 7px;
+                width: 100%;
+              }
+
+              .inventory-approval-filter-group button {
+                min-width: 0;
+                width: 100%;
+                height: 34px;
+                justify-content: center;
+                padding-left: 8px;
+                padding-right: 8px;
+                font-size: 11px;
+              }
+
+              .inventory-approval-dialog-list {
+                min-height: 0;
+              }
+
+              .inventory-approval-request-card {
+                padding: 12px;
+                border-radius: 12px;
+              }
+
+              .inventory-approval-request-top {
+                grid-template-columns: minmax(0, 1fr);
+                margin-bottom: 10px;
+                padding-bottom: 10px;
+                border-bottom: 1px solid #e2e8f0;
+              }
+
+              .inventory-approval-request-actions {
+                grid-column: 1 / -1;
+              }
+
+              .inventory-approval-request-title {
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+                font-size: 15px;
+              }
+
+              .inventory-approval-request-actions {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 8px;
+              }
+
+              .inventory-approval-request-actions button {
+                width: 100%;
+                min-height: 38px;
+              }
+
+              .inventory-approval-change-table,
+              .inventory-approval-value-table,
+              .inventory-approval-change-table thead,
+              .inventory-approval-value-table thead,
+              .inventory-approval-change-table tbody,
+              .inventory-approval-value-table tbody {
+                display: block;
+              }
+
+              .inventory-approval-change-table thead,
+              .inventory-approval-value-table thead {
+                position: absolute;
+                width: 1px;
+                height: 1px;
+                overflow: hidden;
+                clip: rect(0 0 0 0);
+              }
+
+              .inventory-approval-change-table tr,
+              .inventory-approval-value-table tr {
+                display: grid;
+                gap: 5px;
+                padding: 8px 10px;
+                border-bottom: 1px solid #e2e8f0;
+              }
+
+              .inventory-approval-change-table tr:last-child,
+              .inventory-approval-value-table tr:last-child {
+                border-bottom: 0;
+              }
+
+              .inventory-approval-change-table td,
+              .inventory-approval-value-table td {
+                display: grid;
+                grid-template-columns: 84px minmax(0, 1fr);
+                gap: 8px;
+                padding: 0;
+                white-space: normal;
+                overflow-wrap: anywhere;
+                font-size: 12px;
+                line-height: 1.3;
+              }
+
+              .inventory-approval-change-table td::before,
+              .inventory-approval-value-table td::before {
+                color: #64748b;
+                font-size: 10px;
+                font-weight: 800;
+                letter-spacing: 0.03em;
+                text-transform: uppercase;
+              }
+
+              .inventory-approval-change-table td:nth-child(1)::before,
+              .inventory-approval-value-table td:nth-child(1)::before {
+                content: "Field";
+              }
+
+              .inventory-approval-change-table td:nth-child(2)::before {
+                content: "Previous";
+              }
+
+              .inventory-approval-change-table td:nth-child(3)::before {
+                content: "New";
+              }
+
+              .inventory-approval-value-table td:nth-child(2)::before {
+                content: "Value";
+              }
+
+              .inventory-approval-pagination {
+                display: grid;
+                grid-template-columns: 1fr;
+                gap: 8px;
+                padding: 8px 10px;
+              }
+
+              .inventory-approval-pagination-actions {
+                display: grid;
+                grid-template-columns: 1fr auto 1fr;
+                align-items: center;
+                gap: 6px;
+              }
+
+              .inventory-approval-pagination-button {
+                min-width: 0;
+                padding-left: 8px;
+                padding-right: 8px;
+              }
+            }
+          `}</style>
+          <div className="inventory-approval-body">
+            <div className="inventory-approval-summary-panel inventory-approval-summary-row">
+              <div>
+                <p className="text-sm font-semibold text-slate-950">Pending review</p>
+                <p className={isApprovalMobileView ? "text-[11px] leading-tight text-slate-600" : "text-xs text-slate-600"}>
+                  New requests update automatically while this page is open.
+                </p>
+              </div>
+              <span className="shrink-0 text-sm text-slate-950">
+                <span className="font-bold text-orange-600">{pendingInventoryChangeRequests.length}</span> Pending
+              </span>
+            </div>
+            <div className="inventory-approval-controls">
+              <div className="inventory-approval-search-wrap relative min-w-[280px] flex-1">
+                <Search
+                  className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400"
+                />
+                <Input
+                  value={approvalRequestSearch}
+                  onChange={event => {
+                    setApprovalRequestSearch(event.target.value);
+                    setApprovalRequestPage(1);
+                  }}
+                  placeholder="Search requests, requester, item, or changed values"
+                  aria-label="Search inventory approval requests"
+                  className="inventory-approval-search-input h-12 rounded-xl border-slate-300 bg-white pl-10 text-sm text-slate-950"
+                  style={{
+                    paddingRight: "12px",
+                    lineHeight: "20px"
+                  }}
+                />
+              </div>
+              <Select
+                value={approvalRequestSort}
+                onValueChange={value => {
+                  setApprovalRequestSort(value);
+                  setApprovalRequestPage(1);
+                }}
+              >
+                <SelectTrigger
+                  aria-label="Sort inventory approval requests"
+                  className="inventory-approval-sort-trigger h-12 w-[160px] shrink-0 rounded-xl border-slate-200 bg-white text-sm text-slate-950"
+                >
+                  <SelectValue placeholder="Sort requests" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="newest">Newest First</SelectItem>
+                  <SelectItem value="oldest">Oldest First</SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="inventory-approval-filter-group flex shrink-0 flex-nowrap items-center gap-2" role="group" aria-label="Filter inventory approval requests">
+              {visibleFilterOptions.map(option => {
+                const count = option.count;
+                const isActive = option.value === activeFilterOption.value;
+                return (
+                  <Button
+                    key={option.value}
+                    type="button"
+                    size="sm"
+                    variant={isActive ? undefined : "outline"}
+                    className={isActive
+                      ? "h-10 rounded-lg border border-blue-300 bg-blue-50 px-4 text-xs font-bold text-blue-900 shadow-sm transition-colors duration-150 hover:bg-blue-100"
+                      : "h-10 rounded-lg border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-950"}
+                    aria-pressed={isActive}
+                    onClick={() => setApprovalFilter(option.value)}
+                  >
+                    {option.label}
+                    <span className={isActive ? "ml-2 text-blue-700" : "ml-2 text-slate-500"}>{count}</span>
+                  </Button>
+                );
+              })}
+              </div>
+            </div>
+          </div>
+
+          <div
+            className="inventory-approval-dialog-list"
+            style={{
+              minHeight: 0,
+              overflowY: "auto",
+              padding: isApprovalMobileView ? "0 14px 12px" : "0 28px 22px"
+            }}
+          >
+            {filteredApprovalRequests.length === 0 ? (
+              <div
+                className="text-center"
+                style={{
+                  border: "1px dashed #CBD5E1",
+                  background: "#F8FAFC",
+                  borderRadius: "12px",
+                  padding: "28px 18px"
+                }}
+              >
+                <CheckCircle className="mx-auto h-8 w-8 text-green-600" />
+                <p className="mt-3 font-semibold text-slate-950">
+                  {pendingInventoryChangeRequests.length === 0 ? "No pending requests" : "No requests match the current view"}
+                </p>
+                <p className="mt-1 text-sm text-slate-600">
+                  {pendingInventoryChangeRequests.length === 0
+                    ? "Inventory Staff requests will appear here when they need admin review."
+                    : "Adjust the search, filter, or sort controls to review the remaining pending approval requests."}
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-3">
+                {paginatedApprovalRequests.map(({ request, changeRows, newItemRows, requestMeta }) => {
+                  const payload = request.requestedPayload || {};
+                  const currentItemName = String(request.currentSnapshot?.name || "").trim();
+                  const requestedItemName = String(payload.name || request.itemName || currentItemName || "Inventory item").trim();
+                  const displayItemName = request.requestType === "edit_item"
+                    ? currentItemName || request.itemName || requestedItemName
+                    : requestedItemName;
+                  const hasRequestedNameChange = request.requestType === "edit_item"
+                    && currentItemName
+                    && requestedItemName
+                    && currentItemName.toLowerCase() !== requestedItemName.toLowerCase();
+                  const itemReferenceText = request.requestType === "edit_item"
+                    ? `Existing inventory item${request.inventoryId ? ` - Inventory ID: ${request.inventoryId}` : ""}`
+                    : "Proposed new inventory item - item code will be assigned after approval";
+                  return (
+                    <div
+                      key={request.id}
+                      className="inventory-approval-request-card rounded-xl border border-slate-200 bg-white p-4"
+                    >
+                      <div className="inventory-approval-request-top mb-4 border-b border-slate-100 pb-4">
+                        <div className="inventory-approval-item-summary">
+                          <p className="inventory-approval-request-title">{displayItemName}</p>
+                          <p className="inventory-approval-item-meta">{itemReferenceText}</p>
+                          {hasRequestedNameChange && (
+                            <p className="inventory-approval-rename-note">
+                              Requested name: {requestedItemName}
+                            </p>
+                          )}
+                        </div>
+                        <div className="inventory-approval-requester-summary">
+                          <p className="text-sm leading-relaxed text-slate-700">
+                            Requested by{" "}
+                            <strong className="text-blue-700">{request.requestedByName || "Inventory Staff"}</strong>
+                          </p>
+                          <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                            {formatDateTime(request.requestedAt)}
+                          </p>
+                        </div>
+                        <div className="inventory-approval-request-actions mt-3 flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="h-10 min-w-[128px] bg-green-600 text-white hover:bg-green-700"
+                            onClick={() => approveInventoryChangeRequest(request)}
+                          >
+                            <CheckCircle className="mr-2 h-4 w-4" />
+                            Approve
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-10 min-w-[128px] border-red-200 text-red-700 hover:bg-red-50"
+                            onClick={() => rejectInventoryChangeRequest(request)}
+                          >
+                            Reject
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="inventory-approval-change-panel min-w-0 rounded-xl border border-slate-200 bg-slate-50">
+                        {request.requestType === "add_item" ? (
+                          <div>
+                            <div className="inventory-approval-change-panel-header">
+                              <div className="inventory-approval-change-panel-title">
+                                <Eye className="inventory-approval-change-icon h-5 w-5" aria-hidden="true" />
+                                <div>
+                                  <p className="text-sm font-semibold text-slate-950">New item details</p>
+                                  <p className="text-xs text-slate-600">No previous inventory record exists.</p>
+                                </div>
+                              </div>
+                              <Badge variant="outline" className={requestMeta.className}>
+                                {requestMeta.label}
+                              </Badge>
+                            </div>
+                            <Table className="inventory-approval-value-table">
+                              <TableHeader>
+                                <TableRow className="hover:bg-transparent">
+                                  <TableHead className="h-9 text-xs font-bold uppercase tracking-wide text-slate-600">Field</TableHead>
+                                  <TableHead className="h-9 text-xs font-bold uppercase tracking-wide text-slate-600">Value</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {newItemRows.map(row => (
+                                  <TableRow key={row.label}>
+                                    <TableCell className="py-2 text-xs font-semibold text-slate-700">{row.label}</TableCell>
+                                    <TableCell className="py-2 text-sm font-semibold text-slate-950">{row.value}</TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        ) : (
+                          <div>
+                            <div className="inventory-approval-change-panel-header">
+                              <div className="inventory-approval-change-panel-title">
+                                <Eye className="inventory-approval-change-icon h-5 w-5" aria-hidden="true" />
+                                <div>
+                                  <p className="text-sm font-semibold text-slate-950">Changed fields only</p>
+                                  <p className="text-xs text-slate-600">Unchanged values are hidden to reduce review time.</p>
+                                </div>
+                              </div>
+                              <Badge variant="outline" className={requestMeta.className}>
+                                {requestMeta.label}
+                              </Badge>
+                            </div>
+                            {changeRows.length > 0 ? (
+                              <Table className="inventory-approval-change-table">
+                                <TableHeader>
+                                  <TableRow className="hover:bg-transparent">
+                                    <TableHead className="h-9 text-xs font-bold uppercase tracking-wide text-slate-600">Field</TableHead>
+                                    <TableHead className="h-9 text-xs font-bold uppercase tracking-wide text-slate-600">Previous Value</TableHead>
+                                    <TableHead className="h-9 text-xs font-bold uppercase tracking-wide text-slate-600">New Value</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {changeRows.map(row => (
+                                    <TableRow key={row.label}>
+                                      <TableCell className="py-2 text-xs font-semibold text-slate-700">{row.label}</TableCell>
+                                      <TableCell className="py-2 text-sm text-slate-700">{row.before}</TableCell>
+                                      <TableCell className="py-2 text-sm font-semibold text-blue-950">{row.after}</TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            ) : (
+                              <p className="px-3 py-4 text-sm text-slate-600">No field differences were detected in this request.</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {approvalTotalPages > 1 && (
+                  <div
+                    className="inventory-approval-pagination flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+                    aria-label="Inventory approval request pagination"
+                  >
+                    <p className="text-xs font-medium text-slate-600">
+                      Showing {approvalPageStart}-{approvalPageEnd} of {filteredApprovalRequests.length} {activeFilterOption.label.toLowerCase()}
+                    </p>
+                    <div className="inventory-approval-pagination-actions flex items-center gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="inventory-approval-pagination-button h-8 rounded-lg text-xs font-semibold"
+                        disabled={safeApprovalPage <= 1}
+                        onClick={() => setApprovalRequestPage(Math.max(1, safeApprovalPage - 1))}
+                      >
+                        Previous
+                      </Button>
+                      <span className="min-w-[82px] text-center text-xs font-semibold text-slate-700">
+                        Page {safeApprovalPage} of {approvalTotalPages}
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="inventory-approval-pagination-button h-8 rounded-lg text-xs font-semibold"
+                        disabled={safeApprovalPage >= approvalTotalPages}
+                        onClick={() => setApprovalRequestPage(Math.min(approvalTotalPages, safeApprovalPage + 1))}
+                      >
+                        {isApprovalMobileView ? "Next" : "Next Page"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  };
 
   const renderAddSectionHeader = title => (
     <div className="inventory-add-section-title">
@@ -1748,24 +3320,41 @@ export function InventoryModule({
     }
     setArchivedDuplicatePrompt(null);
     setSimilarDuplicatePrompt(null);
+    const itemPayload = {
+      name: cleanName,
+      category: normalizeCategory(newItem.category),
+      categoryNote: normalizeCategory(newItem.category) === "Other" ? newItem.categoryNote.trim() : "",
+      supplierName: newItem.supplierName.trim().replace(/\s+/g, " "),
+      defaultSellingPrice,
+      costPrice,
+      quantity,
+      reorderLevel,
+      leadTimeDays: newItem.leadTimeDays === "" ? "" : Number(newItem.leadTimeDays),
+      safetyStock: newItem.safetyStock === "" ? "" : Number(newItem.safetyStock),
+      averageDailySalesMode: "auto",
+      manualAverageDailySales: "",
+      averageDailySalesOverrideReason: "",
+      allowSimilarDuplicate
+    };
     try {
-      const addedItem = await addInventoryItem({
-        name: cleanName,
-        category: normalizeCategory(newItem.category),
-        categoryNote: normalizeCategory(newItem.category) === "Other" ? newItem.categoryNote.trim() : "",
-        supplierName: newItem.supplierName.trim().replace(/\s+/g, " "),
-        defaultSellingPrice,
-        costPrice,
-        quantity,
-        reorderLevel,
-        leadTimeDays: newItem.leadTimeDays === "" ? "" : Number(newItem.leadTimeDays),
-        safetyStock: newItem.safetyStock === "" ? "" : Number(newItem.safetyStock),
-        averageDailySalesMode: "auto",
-        manualAverageDailySales: "",
-        averageDailySalesOverrideReason: "",
-        allowSimilarDuplicate
-      });
+      if (!canManageInventory(user?.role)) {
+        await submitInventoryChangeRequest({
+          requestType: "add_item",
+          itemName: cleanName,
+          requestedPayload: itemPayload
+        });
+        clearFormDraft(getInventoryDraftScope("inventory-add-item"));
+        setIsAddDialogOpen(false);
+        resetAddItemForm();
+        toast.success("Item request submitted for Admin approval.", {
+          description: "No official inventory record or stock movement was created yet."
+        });
+        return;
+      }
+
+      const addedItem = await addInventoryItem(itemPayload);
       highlightInventoryRow(addedItem?.id);
+      clearFormDraft(getInventoryDraftScope("inventory-add-item"));
       setIsAddDialogOpen(false);
       resetAddItemForm();
       if (quantity === 0) {
@@ -1791,6 +3380,43 @@ export function InventoryModule({
     handleAddItem({ allowSimilarDuplicate: true });
   };
 
+  const approveInventoryChangeRequest = async request => {
+    try {
+      const result = await reviewInventoryChangeRequest({ requestId: request.id, status: "approved" });
+      const reviewedItem = result?.product;
+      highlightInventoryRow(reviewedItem?.inventory_id?.toString?.() || reviewedItem?.id || request.inventoryId);
+      toast.success(
+        request.requestType === "add_item" ? "Inventory item request approved." : "Inventory edit request approved.",
+        {
+          description: request.requestType === "add_item"
+            ? `${request.itemName} is now active in inventory.`
+            : `${request.itemName} was updated.`
+        }
+      );
+    } catch (err) {
+      toast.error("Failed to approve request", {
+        description: err?.response?.data?.error || err.message
+      });
+    }
+  };
+
+  const rejectInventoryChangeRequest = async request => {
+    try {
+      await reviewInventoryChangeRequest({
+        requestId: request.id,
+        status: "rejected",
+        reviewNote: "Rejected by Admin during inventory review."
+      });
+      toast.info("Inventory request rejected.", {
+        description: `${request.itemName} was not changed.`
+      });
+    } catch (err) {
+      toast.error("Failed to reject request", {
+        description: err?.response?.data?.error || err.message
+      });
+    }
+  };
+
   // 📦 Stock In
   const handleStockIn = async () => {
     if (!selectedItem || !stockAmount) {
@@ -1813,17 +3439,15 @@ export function InventoryModule({
     if (!validateActualTransactionDate(stockActualTransactionAt)) return;
     try {
       const reasonLabel = getStockInReasonLabel(stockInReason);
-      const updatedItem = await updateInventoryItem(selectedItem.id, {
-        ...selectedItem,
-        quantity: selectedItem.quantity + amount,
-        movementAction: 'stock_in',
-        movementQuantity: amount,
+      const [updatedItem] = await batchStockAdjustment({
+        items: [{ inventoryId: selectedItem.id, quantity: amount }],
         movementReason: stockInReason,
         movementNote: `Stock In recorded from inventory module. Reason: ${reasonLabel}.`,
         actualTransactionAt: stockActualTransactionAt || "",
         backdateReason: isPastTransactionDate(stockActualTransactionAt) ? stockBackdateReason.trim() : ""
       });
       highlightInventoryRow(updatedItem?.id || selectedItem.id);
+      clearFormDraft(getInventoryDraftScope(getInventoryStockInDraftModule(selectedItem.id)));
       setIsStockInDialogOpen(false);
       resetStockForm();
       toast.success(`Added ${formatUnitQuantity(amount)} to ${selectedItem.name}`, {
@@ -1862,17 +3486,15 @@ export function InventoryModule({
     try {
       const newQuantity = selectedItem.quantity - amount;
       const reasonLabel = getStockOutReasonLabel(stockOutReason);
-      const updatedItem = await updateInventoryItem(selectedItem.id, {
-        ...selectedItem,
-        quantity: newQuantity,
-        movementAction: 'stock_out',
-        movementQuantity: amount,
+      const [updatedItem] = await batchStockOut({
+        items: [{ inventoryId: selectedItem.id, quantity: amount }],
         movementReason: stockOutReason,
         movementNote: `Stock Out recorded from inventory module. Reason: ${reasonLabel}.`,
         actualTransactionAt: stockActualTransactionAt || "",
         backdateReason: isPastTransactionDate(stockActualTransactionAt) ? stockBackdateReason.trim() : ""
       });
       highlightInventoryRow(updatedItem?.id || selectedItem.id);
+      clearFormDraft(getInventoryDraftScope(getInventoryStockOutDraftModule(selectedItem.id)));
       setIsStockOutDialogOpen(false);
       resetStockForm();
       if (newQuantity === 0) {
@@ -1904,17 +3526,29 @@ export function InventoryModule({
       }
     }
 
-    setBatchStockAdjustmentRows(rows => rows.map((row, rowIndex) =>
-      rowIndex === index ? { ...row, [field]: value } : row
-    ));
+    setBatchStockAdjustmentRows(rows => {
+      const nextRows = rows.map((row, rowIndex) =>
+        rowIndex === index ? { ...row, [field]: value } : row
+      );
+      persistBatchStockAdjustmentDraft({ rows: nextRows });
+      return nextRows;
+    });
   };
 
   const addBatchStockAdjustmentRow = () => {
-    setBatchStockAdjustmentRows(rows => [...rows, { inventoryId: "", quantity: "" }]);
+    setBatchStockAdjustmentRows(rows => {
+      const nextRows = [...rows, { inventoryId: "", quantity: "" }];
+      persistBatchStockAdjustmentDraft({ rows: nextRows });
+      return nextRows;
+    });
   };
 
   const removeBatchStockAdjustmentRow = index => {
-    setBatchStockAdjustmentRows(rows => rows.length === 1 ? [{ inventoryId: "", quantity: "" }] : rows.filter((_, rowIndex) => rowIndex !== index));
+    setBatchStockAdjustmentRows(rows => {
+      const nextRows = rows.length === 1 ? [{ inventoryId: "", quantity: "" }] : rows.filter((_, rowIndex) => rowIndex !== index);
+      persistBatchStockAdjustmentDraft({ rows: nextRows });
+      return nextRows;
+    });
   };
 
   const getBatchAdjustmentRowItem = inventoryId => inventory.find(item => String(item.id) === String(inventoryId));
@@ -1995,17 +3629,29 @@ export function InventoryModule({
       }
     }
 
-    setBatchStockOutRows(rows => rows.map((row, rowIndex) =>
-      rowIndex === index ? { ...row, [field]: value } : row
-    ));
+    setBatchStockOutRows(rows => {
+      const nextRows = rows.map((row, rowIndex) =>
+        rowIndex === index ? { ...row, [field]: value } : row
+      );
+      persistBatchStockOutDraft({ rows: nextRows });
+      return nextRows;
+    });
   };
 
   const addBatchStockOutRow = () => {
-    setBatchStockOutRows(rows => [...rows, { inventoryId: "", quantity: "" }]);
+    setBatchStockOutRows(rows => {
+      const nextRows = [...rows, { inventoryId: "", quantity: "" }];
+      persistBatchStockOutDraft({ rows: nextRows });
+      return nextRows;
+    });
   };
 
   const removeBatchStockOutRow = index => {
-    setBatchStockOutRows(rows => rows.length === 1 ? [{ inventoryId: "", quantity: "" }] : rows.filter((_, rowIndex) => rowIndex !== index));
+    setBatchStockOutRows(rows => {
+      const nextRows = rows.length === 1 ? [{ inventoryId: "", quantity: "" }] : rows.filter((_, rowIndex) => rowIndex !== index);
+      persistBatchStockOutDraft({ rows: nextRows });
+      return nextRows;
+    });
   };
 
   const getBatchRowItem = inventoryId => inventory.find(item => String(item.id) === String(inventoryId));
@@ -2226,8 +3872,7 @@ export function InventoryModule({
       }
     }
 
-    try {
-      const updatedItem = await updateInventoryItem(selectedItem.id, {
+    const editPayload = {
         name: cleanName,
         category: canonicalCategory,
         categoryNote: canonicalCategory === "Other" ? editItem.categoryNote.trim() : "",
@@ -2241,8 +3886,27 @@ export function InventoryModule({
         averageDailySalesMode: "auto",
         manualAverageDailySales: "",
         averageDailySalesOverrideReason: "",
+        expectedLastUpdated: selectedItem.lastUpdated,
         allowSimilarDuplicate
-      });
+      };
+
+    try {
+      if (!canManageInventory(user?.role)) {
+        await submitInventoryChangeRequest({
+          requestType: "edit_item",
+          inventoryId: selectedItem.id,
+          itemName: cleanName,
+          requestedPayload: editPayload
+        });
+        clearFormDraft(getInventoryDraftScope(getInventoryEditDraftModule(selectedItem.id)));
+        closeEditDialog({ clearDraft: false });
+        toast.success("Item edit request submitted for Admin approval.", {
+          description: "The active inventory record was not changed yet."
+        });
+        return;
+      }
+
+      const updatedItem = await updateInventoryItem(selectedItem.id, editPayload);
       highlightInventoryRow(updatedItem?.id || selectedItem.id);
       toast.success(`${cleanName} updated successfully`, {
         description: "Item details were saved without changing stock quantity."
@@ -2361,6 +4025,8 @@ export function InventoryModule({
           </p>
         </div>
 
+        {renderInlineInventoryDraftRecovery("editItem")}
+
         <div className="inventory-add-form-grid">
           {renderAddSectionHeader("Basic Item Information")}
 
@@ -2375,10 +4041,10 @@ export function InventoryModule({
             <Input
               id="edit-item-name"
               value={editItem.name}
-              onChange={e => setEditItem({
-                ...editItem,
+              onChange={e => updateEditItemDraft(previous => ({
+                ...previous,
                 name: sanitizeInventoryTextInput(e.target.value, "Item Name", "edit-item-name-valid-characters")
-              })}
+              }))}
               placeholder="e.g., Steel Hammer"
               className="border-slate-300 bg-white text-slate-950"
               style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
@@ -2395,11 +4061,11 @@ export function InventoryModule({
             </Label>
             <Select
               value={editItem.category}
-              onValueChange={value => setEditItem({
-                ...editItem,
+              onValueChange={value => updateEditItemDraft(previous => ({
+                ...previous,
                 category: value,
-                categoryNote: value === "Other" ? editItem.categoryNote : ""
-              })}
+                categoryNote: value === "Other" ? previous.categoryNote : ""
+              }))}
             >
               <SelectTrigger
                 id="edit-category"
@@ -2423,7 +4089,7 @@ export function InventoryModule({
                   id="edit-category-note"
                   value={editItem.categoryNote}
                   maxLength={240}
-                  onChange={e => setEditItem(prev => ({ ...prev, categoryNote: e.target.value.slice(0, 240) }))}
+                  onChange={e => updateEditItemDraft(prev => ({ ...prev, categoryNote: e.target.value.slice(0, 240) }))}
                   placeholder="E.g., Specialty hardware item not covered by the listed categories."
                   className="min-h-[68px] resize-y border-slate-300 bg-white text-sm text-slate-950"
                 />
@@ -2435,8 +4101,11 @@ export function InventoryModule({
             id: "edit-supplier",
             value: editItem.supplierName,
             mode: editItemSupplierMode,
-            setMode: setEditItemSupplierMode,
-            onSupplierChange: supplierName => setEditItem(prev => ({ ...prev, supplierName })),
+            setMode: mode => {
+              setEditItemSupplierMode(mode);
+              persistEditItemDraft(editItem, mode);
+            },
+            onSupplierChange: supplierName => updateEditItemDraft(prev => ({ ...prev, supplierName })),
             toastId: "edit-supplier-valid-characters",
             helperText: "Optional. Select a supplier if known, or choose Other supplier / not listed to type a new one."
           })}
@@ -2456,10 +4125,10 @@ export function InventoryModule({
               step="0.01"
               inputMode="decimal"
               value={editItem.defaultSellingPrice}
-              onChange={e => setEditItem({
-                ...editItem,
+              onChange={e => updateEditItemDraft(previous => ({
+                ...previous,
                 defaultSellingPrice: sanitizeDecimalInput(e.target.value, "Default Selling Price", "edit-default-price-numbers-only")
-              })}
+              }))}
               placeholder="e.g., 250.00"
               className="border-slate-300 bg-white text-slate-950"
               style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
@@ -2484,10 +4153,10 @@ export function InventoryModule({
               step="0.01"
               inputMode="decimal"
               value={editItem.costPrice}
-              onChange={e => setEditItem({
-                ...editItem,
+              onChange={e => updateEditItemDraft(previous => ({
+                ...previous,
                 costPrice: sanitizeDecimalInput(e.target.value, "Cost Price", "edit-cost-price-numbers-only")
-              })}
+              }))}
               placeholder="e.g., 205.00"
               className="border-slate-300 bg-white text-slate-950"
               style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
@@ -2514,10 +4183,10 @@ export function InventoryModule({
               step="1"
               inputMode="numeric"
               value={editItem.reorderLevel}
-              onChange={e => setEditItem({
-                ...editItem,
+              onChange={e => updateEditItemDraft(previous => ({
+                ...previous,
                 reorderLevel: sanitizeWholeNumberInput(e.target.value, "Manual Low-Stock Threshold", "edit-reorder-threshold-numbers-only")
-              })}
+              }))}
               placeholder="10"
               className="border-slate-300 bg-white text-slate-950"
               style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
@@ -2542,10 +4211,10 @@ export function InventoryModule({
               type="text"
               inputMode="numeric"
               value={editItem.leadTimeDays}
-              onChange={e => setEditItem({
-                ...editItem,
+              onChange={e => updateEditItemDraft(previous => ({
+                ...previous,
                 leadTimeDays: sanitizeWholeNumberInput(e.target.value, "Supplier Lead Time", "edit-lead-time-days-numbers-only")
-              })}
+              }))}
               placeholder="e.g., 7 days"
               className="border-slate-300 bg-white text-slate-950"
               style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
@@ -2568,10 +4237,10 @@ export function InventoryModule({
               type="text"
               inputMode="numeric"
               value={editItem.safetyStock}
-              onChange={e => setEditItem({
-                ...editItem,
+              onChange={e => updateEditItemDraft(previous => ({
+                ...previous,
                 safetyStock: sanitizeWholeNumberInput(e.target.value, "Safety Stock", "edit-safety-stock-numbers-only")
-              })}
+              }))}
               placeholder="e.g., 10"
               className="border-slate-300 bg-white text-slate-950"
               style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
@@ -2621,7 +4290,7 @@ export function InventoryModule({
               boxShadow: hasEditItemChanges() ? "0 14px 24px rgba(37, 99, 235, 0.18)" : "none"
             }}
           >
-            Save Changes
+            {canManageInventory(user?.role) ? "Save Changes" : "Submit Request"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -2690,6 +4359,19 @@ export function InventoryModule({
       min-width: 104px;
     }
 
+    .inventory-pagination-button {
+      background: #ffffff;
+      border-color: #cbd5e1;
+      color: #0f172a;
+      transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+    }
+
+    .inventory-pagination-button:not(:disabled):hover {
+      background: #f1f5f9;
+      border-color: #94a3b8;
+      color: #0f172a;
+    }
+
     .inventory-action-stock-in,
     .inventory-action-stock-out,
     .inventory-action-edit,
@@ -2750,36 +4432,99 @@ export function InventoryModule({
     }
 
     .inventory-list-header {
-      gap: 12px;
-      flex-wrap: wrap;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "title review"
+        "description review"
+        "status actions";
+      align-items: center;
+      column-gap: 18px;
+      row-gap: 6px;
+    }
+
+    .inventory-list-header:not(.inventory-list-header-has-review) {
+      grid-template-areas:
+        "title ."
+        "description ."
+        "status actions";
+    }
+
+    .inventory-list-header:not(.inventory-list-header-has-review) .inventory-toolbar-review-row {
+      display: none;
     }
 
     .inventory-list-title {
-      flex: 1 1 320px;
+      display: contents;
+    }
+
+    .inventory-list-title > [data-slot="card-title"] {
+      grid-area: title;
       min-width: 0;
+      color: #0f172a;
+      font-size: 18px;
+      line-height: 1.25;
+    }
+
+    .inventory-list-title > [data-slot="card-description"] {
+      grid-area: description;
+      min-width: 0;
+      margin-top: 0;
+      color: #334155;
+      font-size: 14px;
+      line-height: 1.45;
     }
 
     .inventory-status-overview {
+      grid-area: status;
       display: inline-flex;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
       align-items: center;
-      gap: 8px;
+      gap: 7px;
+      min-width: 0;
       margin-top: 10px;
+    }
+
+    .inventory-toolbar-actions {
+      display: contents;
+    }
+
+    .inventory-toolbar-review-row {
+      grid-area: review;
+      align-self: end;
+      justify-self: end;
+      margin-bottom: 4px;
+    }
+
+    .inventory-toolbar-primary-row {
+      grid-area: actions;
+      justify-self: end;
+      margin-top: 10px;
+    }
+
+    .inventory-toolbar-review-row,
+    .inventory-toolbar-primary-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: nowrap;
     }
 
     .inventory-overview-pill {
       display: inline-flex;
       align-items: center;
-      gap: 7px;
+      gap: 6px;
       min-height: 30px;
       border: 1px solid #e2e8f0;
       border-radius: 999px;
       background: #ffffff;
-      padding: 5px 10px 5px 6px;
+      padding: 5px 9px 5px 6px;
       color: #334155;
       font-size: 12px;
       font-weight: 700;
       line-height: 1;
+      flex: 0 0 auto;
       transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
     }
 
@@ -2929,17 +4674,44 @@ export function InventoryModule({
 
     .inventory-batch-stock-adjustment-button,
     .inventory-batch-stock-out-button,
+    .inventory-review-requests-button,
     .inventory-add-button {
-      min-height: 46px;
+      min-height: 42px;
       border-radius: 12px;
-      padding-left: 18px;
-      padding-right: 18px;
+      padding-left: 16px;
+      padding-right: 16px;
       white-space: nowrap;
     }
 
     .inventory-batch-stock-adjustment-button,
-    .inventory-batch-stock-out-button {
+    .inventory-batch-stock-out-button,
+    .inventory-review-requests-button {
       flex: 0 0 auto;
+    }
+
+    .inventory-sort-header-button,
+    .inventory-sort-header-button:hover,
+    .inventory-sort-header-button:active,
+    .inventory-sort-header-button:focus-visible {
+      background: transparent;
+      box-shadow: none;
+      transform: none;
+      color: #0f172a;
+    }
+
+    .inventory-table-header-row,
+    .inventory-table-header-row:hover,
+    .inventory-table-header-row > th,
+    .inventory-table-header-row > th:hover,
+    .inventory-table-header-row .inventory-sort-header-button,
+    .inventory-table-header-row .inventory-sort-header-button:hover,
+    .inventory-table-header-row .inventory-sort-header-button:active,
+    .inventory-table-header-row .inventory-sort-header-button:focus,
+    .inventory-table-header-row .inventory-sort-header-button:focus-visible {
+      background: transparent;
+      box-shadow: none;
+      outline: none;
+      transform: none;
     }
 
     .inventory-dialog-content {
@@ -3192,18 +4964,25 @@ export function InventoryModule({
       }
 
       .inventory-list-header {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+          "title"
+          "description"
+          "status"
+          "review"
+          "actions";
         align-items: stretch;
         gap: 14px;
         row-gap: 14px;
       }
 
       .inventory-list-title {
-        flex-basis: 100%;
         min-width: 0;
       }
 
       .inventory-status-overview {
         display: grid;
+        flex: 0 0 100%;
         grid-template-columns: repeat(3, minmax(0, 1fr));
         width: 100%;
         gap: 8px;
@@ -3217,24 +4996,25 @@ export function InventoryModule({
       }
 
       .inventory-overview-label {
-        overflow: hidden;
-        text-overflow: ellipsis;
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
       }
 
-      .inventory-list-title [data-card-title] {
+      .inventory-list-title > [data-slot="card-title"] {
         font-size: 18px;
         line-height: 1.25;
       }
 
-      .inventory-list-title [data-card-description] {
+      .inventory-list-title > [data-slot="card-description"] {
         display: block;
-        margin-top: 4px;
+        margin-top: -4px;
         color: #374151;
         font-size: 13px;
         line-height: 1.45;
       }
 
-      .inventory-list-title [data-card-description] span {
+      .inventory-list-title > [data-slot="card-description"] span {
         display: block;
         margin-left: 0;
         color: #374151;
@@ -3248,10 +5028,32 @@ export function InventoryModule({
 
       .inventory-batch-stock-adjustment-button,
       .inventory-batch-stock-out-button,
+      .inventory-review-requests-button,
       .inventory-add-button {
         flex: 1 1 180px;
         justify-content: center;
         min-width: 0;
+      }
+
+      .inventory-toolbar-actions {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        align-items: stretch;
+        margin-left: 0;
+      }
+
+      .inventory-toolbar-review-row,
+      .inventory-toolbar-primary-row {
+        justify-self: stretch;
+        margin-top: 0;
+        margin-bottom: 0;
+      }
+
+      .inventory-toolbar-review-row,
+      .inventory-toolbar-primary-row {
+        justify-content: stretch;
+        flex-wrap: wrap;
       }
 
       .inventory-table-wrap {
@@ -3708,9 +5510,16 @@ export function InventoryModule({
 
       .inventory-batch-stock-adjustment-button,
       .inventory-batch-stock-out-button,
+      .inventory-review-requests-button,
       .inventory-add-button {
         flex-basis: auto;
         width: 100%;
+      }
+
+      .inventory-toolbar-review-row,
+      .inventory-toolbar-primary-row {
+        flex-direction: column;
+        align-items: stretch;
       }
 
       .inventory-mobile-actions button {
@@ -3727,7 +5536,7 @@ export function InventoryModule({
     icon: /*#__PURE__*/React.createElement(Box, {
       className: "h-8 w-8"
     })
-  }), /*#__PURE__*/React.createElement(Card, {
+  }), renderInventoryApprovalRequestsDialog(), /*#__PURE__*/React.createElement(Card, {
     className: "inventory-search-card mb-6"
   }, /*#__PURE__*/React.createElement(CardContent, {
     className: "pt-6",
@@ -3790,24 +5599,39 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement(CardHeader, {
     "data-inventory-header": true
   }, /*#__PURE__*/React.createElement("div", {
-    className: "inventory-list-header flex items-center justify-between"
+    className: `inventory-list-header flex items-center justify-between ${canManageInventory(user?.role) && pendingInventoryChangeRequests.length > 0 ? "inventory-list-header-has-review" : ""}`
   }, /*#__PURE__*/React.createElement("div", {
     className: "inventory-list-title"
   }, /*#__PURE__*/React.createElement(CardTitle, null, "Inventory Items"), /*#__PURE__*/React.createElement(CardDescription, null, sortedInventory.length, " items found", sortBy && /*#__PURE__*/React.createElement("span", {
     className: "text-slate-700 ml-2"
-  }, "\u2022 Sorted by ", sortLabel, " (", realtimeDisplayOrderLabel, ")")), renderInventoryStatusOverview()), canPerformInventoryMovement(user.role) && /*#__PURE__*/React.createElement(Button, {
+  }, "\u2022 Sorted by ", sortLabel, " (", realtimeDisplayOrderLabel, ")")), renderInventoryStatusOverview()), /*#__PURE__*/React.createElement("div", {
+    className: "inventory-toolbar-actions"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "inventory-toolbar-review-row"
+  }, canManageInventory(user?.role) && pendingInventoryChangeRequests.length > 0 && /*#__PURE__*/React.createElement(Button, {
+    type: "button",
+    variant: "outline",
+    className: "inventory-review-requests-button border-amber-200 bg-white text-amber-900 hover:bg-amber-50 font-semibold shadow-sm transition-colors duration-200",
+    onClick: () => setIsApprovalDialogOpen(true)
+  }, /*#__PURE__*/React.createElement(AlertTriangle, {
+    className: "w-4 h-4 mr-2"
+  }), "Review Requests", pendingInventoryChangeRequests.length > 0 && /*#__PURE__*/React.createElement(Badge, {
+    className: "ml-2 bg-amber-100 text-amber-900 hover:bg-amber-100"
+  }, pendingInventoryChangeRequests.length))), /*#__PURE__*/React.createElement("div", {
+    className: "inventory-toolbar-primary-row"
+  }, canPerformInventoryMovement(user.role) && /*#__PURE__*/React.createElement(Button, {
     type: "button",
     className: "inventory-batch-stock-adjustment-button bg-green-600 text-white hover:bg-green-700 font-semibold shadow-md transition-all duration-300",
     onClick: () => setIsBatchStockAdjustmentDialogOpen(true)
   }, /*#__PURE__*/React.createElement(PackagePlus, {
     className: "w-4 h-4 mr-2"
-  }), "Batch Stock Adjustment"), canPerformInventoryMovement(user.role) && /*#__PURE__*/React.createElement(Button, {
+  }), "Batch Stock In"), canPerformInventoryMovement(user.role) && /*#__PURE__*/React.createElement(Button, {
     type: "button",
     className: "inventory-batch-stock-out-button bg-red-600 text-white hover:bg-red-700 font-semibold shadow-md transition-all duration-300",
     onClick: () => setIsBatchStockOutDialogOpen(true)
   }, /*#__PURE__*/React.createElement(PackageMinus, {
     className: "w-4 h-4 mr-2"
-  }), "Batch Non-Sales Out"), canManageInventory(user.role) && /*#__PURE__*/React.createElement(Dialog, {
+  }), "Batch Stock Out"), canOpenInventoryMasterDataForm && /*#__PURE__*/React.createElement(Dialog, {
     open: isAddDialogOpen,
     onOpenChange: open => {
       if (open) {
@@ -3899,7 +5723,7 @@ export function InventoryModule({
     style: {
       fontSize: "13px"
     }
-  }, "Provide the item details below to add it to your inventory.")), /*#__PURE__*/React.createElement("div", {
+  }, "Provide the item details below to add it to your inventory.")), renderInlineInventoryDraftRecovery("addItem"), /*#__PURE__*/React.createElement("div", {
     className: "inventory-add-form-grid"
   }, renderAddSectionHeader("Basic Item Information"), /*#__PURE__*/React.createElement("div", {
     className: "inventory-add-field inventory-add-field-full space-y-1.5"
@@ -3918,10 +5742,10 @@ export function InventoryModule({
     onChange: e => {
       setArchivedDuplicatePrompt(null);
       setSimilarDuplicatePrompt(null);
-      setNewItem({
-        ...newItem,
+      updateNewItemDraft(previous => ({
+        ...previous,
         name: sanitizeInventoryTextInput(e.target.value, "Item Name", "add-item-name-valid-characters")
-      });
+      }));
     },
     placeholder: "e.g., Claw Hammer 16 oz",
     className: "border-slate-300 bg-white text-slate-950",
@@ -3952,11 +5776,11 @@ export function InventoryModule({
     onValueChange: value => {
       setArchivedDuplicatePrompt(null);
       setSimilarDuplicatePrompt(null);
-      setNewItem({
-        ...newItem,
+      updateNewItemDraft(previous => ({
+        ...previous,
         category: value,
-        categoryNote: value === "Other" ? newItem.categoryNote : ""
-      });
+        categoryNote: value === "Other" ? previous.categoryNote : ""
+      }));
     }
   }, /*#__PURE__*/React.createElement(SelectTrigger, {
     id: "category",
@@ -3986,7 +5810,7 @@ export function InventoryModule({
     id: "category-note",
     value: newItem.categoryNote,
     maxLength: 240,
-    onChange: e => setNewItem(prev => ({
+    onChange: e => updateNewItemDraft(prev => ({
       ...prev,
       categoryNote: e.target.value.slice(0, 240)
     })),
@@ -3996,8 +5820,11 @@ export function InventoryModule({
     id: "supplier-name",
     value: newItem.supplierName,
     mode: newItemSupplierMode,
-    setMode: setNewItemSupplierMode,
-    onSupplierChange: supplierName => setNewItem(prev => ({
+    setMode: mode => {
+      setNewItemSupplierMode(mode);
+      persistAddItemDraft(newItem, mode);
+    },
+    onSupplierChange: supplierName => updateNewItemDraft(prev => ({
       ...prev,
       supplierName
     })),
@@ -4021,10 +5848,10 @@ export function InventoryModule({
     step: "0.01",
     inputMode: "decimal",
     value: newItem.defaultSellingPrice,
-    onChange: e => setNewItem({
-      ...newItem,
+    onChange: e => updateNewItemDraft(previous => ({
+      ...previous,
       defaultSellingPrice: sanitizeDecimalInput(e.target.value, "Default Selling Price", "add-default-price-numbers-only")
-    }),
+    })),
     placeholder: "e.g., 250.00",
     className: "border-slate-300 bg-white text-slate-950",
     style: {
@@ -4056,10 +5883,10 @@ export function InventoryModule({
     step: "0.01",
     inputMode: "decimal",
     value: newItem.costPrice,
-    onChange: e => setNewItem({
-      ...newItem,
+    onChange: e => updateNewItemDraft(previous => ({
+      ...previous,
       costPrice: sanitizeDecimalInput(e.target.value, "Cost Price", "add-cost-price-numbers-only")
-    }),
+    })),
     placeholder: "e.g., 205.00",
     className: "border-slate-300 bg-white text-slate-950",
     style: {
@@ -4091,10 +5918,10 @@ export function InventoryModule({
     step: "1",
     inputMode: "numeric",
     value: newItem.quantity,
-    onChange: e => setNewItem({
-      ...newItem,
+    onChange: e => updateNewItemDraft(previous => ({
+      ...previous,
       quantity: sanitizeWholeNumberInput(e.target.value, "Initial Stock Quantity", "add-initial-quantity-numbers-only")
-    }),
+    })),
     placeholder: "0",
     className: "border-slate-300 bg-white text-slate-950",
     style: {
@@ -4121,10 +5948,10 @@ export function InventoryModule({
     step: "1",
     inputMode: "numeric",
     value: newItem.reorderLevel,
-    onChange: e => setNewItem({
-      ...newItem,
+    onChange: e => updateNewItemDraft(previous => ({
+      ...previous,
       reorderLevel: sanitizeWholeNumberInput(e.target.value, "Manual Low-Stock Threshold", "add-reorder-threshold-numbers-only")
-    }),
+    })),
     placeholder: "10",
     className: "border-slate-300 bg-white text-slate-950",
     style: {
@@ -4154,10 +5981,10 @@ export function InventoryModule({
     type: "text",
     inputMode: "numeric",
     value: newItem.leadTimeDays,
-    onChange: e => setNewItem({
-      ...newItem,
+    onChange: e => updateNewItemDraft(previous => ({
+      ...previous,
       leadTimeDays: sanitizeWholeNumberInput(e.target.value, "Supplier Lead Time", "add-lead-time-days-numbers-only")
-    }),
+    })),
     placeholder: "e.g., 7 days",
     className: "border-slate-300 bg-white text-slate-950",
     style: {
@@ -4187,10 +6014,10 @@ export function InventoryModule({
     type: "text",
     inputMode: "numeric",
     value: newItem.safetyStock,
-    onChange: e => setNewItem({
-      ...newItem,
+    onChange: e => updateNewItemDraft(previous => ({
+      ...previous,
       safetyStock: sanitizeWholeNumberInput(e.target.value, "Safety Stock", "add-safety-stock-numbers-only")
-    }),
+    })),
     placeholder: "e.g., 10",
     className: "border-slate-300 bg-white text-slate-950",
     style: {
@@ -4357,13 +6184,15 @@ export function InventoryModule({
       color: "#FFFFFF",
       boxShadow: archivedDuplicatePrompt ? "none" : "0 14px 24px rgba(15, 23, 42, 0.18)"
     }
-  }, "Add Item")))))), /*#__PURE__*/React.createElement(CardContent, {
+  }, canManageInventory(user?.role) ? "Add Item" : "Submit Request")))))))), /*#__PURE__*/React.createElement(CardContent, {
     className: "p-0"
   }, /*#__PURE__*/React.createElement("div", {
     className: "inventory-table-wrap px-6 pb-6"
   }, /*#__PURE__*/React.createElement(Table, {
     className: "table-fixed"
-  }, /*#__PURE__*/React.createElement(TableHeader, null, /*#__PURE__*/React.createElement(TableRow, null, /*#__PURE__*/React.createElement(TableHead, {
+  }, /*#__PURE__*/React.createElement(TableHeader, null, /*#__PURE__*/React.createElement(TableRow, {
+    className: "inventory-table-header-row"
+  }, /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[90px]"
   }, renderSortButton('id', 'Item Code')), /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[240px]"
@@ -4433,7 +6262,7 @@ export function InventoryModule({
     }
   }, /*#__PURE__*/React.createElement(Minus, {
     className: "w-4 h-4"
-  })), canManageInventory(user.role) && /*#__PURE__*/React.createElement(Button, {
+  })), canOpenInventoryMasterDataForm && /*#__PURE__*/React.createElement(Button, {
     size: "sm",
     variant: "outline",
     className: "inventory-action-edit border-blue-500 text-blue-700 hover:bg-blue-100",
@@ -4465,10 +6294,7 @@ export function InventoryModule({
     "aria-label": `Sort by ${label}${sortBy === column ? `, currently ${sortOrder === "asc" ? "ascending" : "descending"}` : ""}`,
     className: `inventory-mobile-sort-button ${sortBy === column ? "inventory-mobile-sort-button-active" : ""}`,
     onClick: () => handleSort(column)
-  }, label, /*#__PURE__*/React.createElement(ArrowUpDown, {
-    className: `inventory-mobile-sort-icon ${sortBy === column ? `inventory-mobile-sort-icon-${sortOrder}` : ""}`,
-    "aria-hidden": "true"
-  })))), sortedInventory.length === 0 ? /*#__PURE__*/React.createElement("div", {
+  }, label, renderSortIndicator(column)))), sortedInventory.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "inventory-mobile-empty"
   }, /*#__PURE__*/React.createElement(Box, {
     className: "mx-auto mb-3 h-12 w-12 text-slate-300"
@@ -4543,7 +6369,7 @@ export function InventoryModule({
     }
   }, /*#__PURE__*/React.createElement(Minus, {
     className: "mr-1 h-4 w-4"
-  }), "Stock Out"), canManageInventory(user.role) && /*#__PURE__*/React.createElement(Button, {
+  }), "Stock Out"), canOpenInventoryMasterDataForm && /*#__PURE__*/React.createElement(Button, {
     variant: "outline",
     className: "inventory-action-edit border-blue-500 text-blue-700 hover:bg-blue-100",
     title: "Edit item details",
@@ -4618,7 +6444,7 @@ export function InventoryModule({
     style: {
       fontSize: "14px"
     }
-  }, "Add stock for multiple items when correcting inventory counts. Use Purchase Entry instead when the stock came from a supplier DR/SI."))), /*#__PURE__*/React.createElement("div", {
+  }, "Add stock for multiple items after a verified count. Use Purchase Entry for supplier deliveries so supplier and document details are recorded."))), /*#__PURE__*/React.createElement("div", {
     className: "flex items-center text-green-950",
     style: {
       gap: "12px",
@@ -4637,7 +6463,7 @@ export function InventoryModule({
     style: {
       fontSize: "13px"
     }
-  }, "This creates stock movement and audit records only. It does not create purchase records or supplier reports.")), /*#__PURE__*/React.createElement("div", {
+  }, "This creates stock movement and audit records only. It does not create purchase records or supplier reports.")), renderInlineInventoryDraftRecovery("batchStockAdjustment"), /*#__PURE__*/React.createElement("div", {
     className: "space-y-2"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "batch-stock-adjustment-reason",
@@ -4650,7 +6476,10 @@ export function InventoryModule({
     }
   }, "Adjustment Reason"), /*#__PURE__*/React.createElement(Select, {
     value: batchStockAdjustmentReason,
-    onValueChange: setBatchStockAdjustmentReason
+    onValueChange: value => {
+      setBatchStockAdjustmentReason(value);
+      persistBatchStockAdjustmentDraft({ reason: value });
+    }
   }, /*#__PURE__*/React.createElement(SelectTrigger, {
     id: "batch-stock-adjustment-reason",
     className: "border-slate-300 bg-white text-slate-950",
@@ -4732,9 +6561,15 @@ export function InventoryModule({
   }), "Add Another Item")), renderActualTransactionDateFields({
     idPrefix: "batch-stock-adjustment",
     value: batchStockAdjustmentActualTransactionAt,
-    onChange: value => handleActualTransactionDateChange(value, setBatchStockAdjustmentActualTransactionAt, "batch stock adjustment"),
+    onChange: value => {
+      handleActualTransactionDateChange(value, setBatchStockAdjustmentActualTransactionAt, "batch stock adjustment");
+      persistBatchStockAdjustmentDraft({ actualTransactionAt: value });
+    },
     reasonValue: batchStockAdjustmentBackdateReason,
-    onReasonChange: setBatchStockAdjustmentBackdateReason,
+    onReasonChange: value => {
+      setBatchStockAdjustmentBackdateReason(value);
+      persistBatchStockAdjustmentDraft({ backdateReason: value });
+    },
     recordLabel: "batch stock adjustment"
   }), /*#__PURE__*/React.createElement(DialogFooter, {
     className: "inventory-dialog-footer pt-2",
@@ -4845,7 +6680,7 @@ export function InventoryModule({
     style: {
       fontSize: "13px"
     }
-  }, "Use this only for non-sales reductions such as verified damage, expiry, loss, transfer, or manual adjustment. Customer purchases should be recorded in the Sales module.")), /*#__PURE__*/React.createElement("div", {
+  }, "Use this only for non-sales reductions such as verified damage, expiry, loss, transfer, or manual adjustment. Customer purchases should be recorded in the Sales module.")), renderInlineInventoryDraftRecovery("batchStockOut"), /*#__PURE__*/React.createElement("div", {
     className: "space-y-2"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "batch-stock-out-reason",
@@ -4858,7 +6693,10 @@ export function InventoryModule({
     }
   }, "Stock-Out Reason"), /*#__PURE__*/React.createElement(Select, {
     value: batchStockOutReason,
-    onValueChange: setBatchStockOutReason
+    onValueChange: value => {
+      setBatchStockOutReason(value);
+      persistBatchStockOutDraft({ reason: value });
+    }
   }, /*#__PURE__*/React.createElement(SelectTrigger, {
     id: "batch-stock-out-reason",
     className: "border-slate-300 bg-white text-slate-950",
@@ -4945,9 +6783,15 @@ export function InventoryModule({
   }), "Add Another Item")), renderActualTransactionDateFields({
     idPrefix: "batch-stock-out",
     value: batchStockOutActualTransactionAt,
-    onChange: value => handleActualTransactionDateChange(value, setBatchStockOutActualTransactionAt, "batch stock-out record"),
+    onChange: value => {
+      handleActualTransactionDateChange(value, setBatchStockOutActualTransactionAt, "batch stock-out record");
+      persistBatchStockOutDraft({ actualTransactionAt: value });
+    },
     reasonValue: batchStockOutBackdateReason,
-    onReasonChange: setBatchStockOutBackdateReason,
+    onReasonChange: value => {
+      setBatchStockOutBackdateReason(value);
+      persistBatchStockOutDraft({ backdateReason: value });
+    },
     recordLabel: "batch stock-out record"
   }), /*#__PURE__*/React.createElement(DialogFooter, {
     className: "inventory-dialog-footer pt-2",
@@ -5125,7 +6969,7 @@ export function InventoryModule({
     style: {
       fontSize: "13px"
     }
-  }, "Add quantity to increase the available stock for this item.")), /*#__PURE__*/React.createElement("div", {
+  }, "Add quantity to increase the available stock for this item.")), renderInlineInventoryDraftRecovery("stockIn"), /*#__PURE__*/React.createElement("div", {
     className: "space-y-2"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "stock-in-amount",
@@ -5142,7 +6986,11 @@ export function InventoryModule({
     inputMode: "numeric",
     "data-validation-label": "Stock In Quantity",
     value: stockAmount,
-    onChange: e => setStockAmount(sanitizeWholeNumberInput(e.target.value, "Stock In Quantity", "stock-in-quantity-numbers-only")),
+    onChange: e => {
+      const nextAmount = sanitizeWholeNumberInput(e.target.value, "Stock In Quantity", "stock-in-quantity-numbers-only");
+      setStockAmount(nextAmount);
+      persistStockInDraft({ stockAmount: nextAmount });
+    },
     placeholder: "0",
     className: "border-slate-300 bg-white text-slate-950",
     style: {
@@ -5164,7 +7012,10 @@ export function InventoryModule({
     }
   }, "Reason for Stock In"), /*#__PURE__*/React.createElement(Select, {
     value: stockInReason,
-    onValueChange: setStockInReason
+    onValueChange: value => {
+      setStockInReason(value);
+      persistStockInDraft({ stockInReason: value });
+    }
   }, /*#__PURE__*/React.createElement(SelectTrigger, {
     id: "stock-in-reason",
     className: "border-slate-300 bg-white text-slate-950",
@@ -5185,7 +7036,7 @@ export function InventoryModule({
       fontSize: "12px",
       lineHeight: "1.45"
     }
-  }, "For supplier deliveries, use Purchase Entry, so supplier and document details are recorded."), stockInReason && /*#__PURE__*/React.createElement("p", {
+  }, "Use Purchase Entry for supplier deliveries so supplier and document details are recorded."), stockInReason && /*#__PURE__*/React.createElement("p", {
     className: "text-slate-700",
     style: {
       fontSize: "12px",
@@ -5194,9 +7045,15 @@ export function InventoryModule({
   }, STOCK_IN_REASON_OPTIONS.find(option => option.value === stockInReason)?.description)), renderActualTransactionDateFields({
     idPrefix: "stock-in",
     value: stockActualTransactionAt,
-    onChange: value => handleActualTransactionDateChange(value, setStockActualTransactionAt, "stock-in record"),
+    onChange: value => {
+      handleActualTransactionDateChange(value, setStockActualTransactionAt, "stock-in record");
+      persistStockInDraft({ stockActualTransactionAt: value });
+    },
     reasonValue: stockBackdateReason,
-    onReasonChange: setStockBackdateReason,
+    onReasonChange: value => {
+      setStockBackdateReason(value);
+      persistStockInDraft({ stockBackdateReason: value });
+    },
     recordLabel: "stock-in record"
   }), renderStockPreview("in"), /*#__PURE__*/React.createElement(DialogFooter, {
     className: "inventory-dialog-footer pt-2",
@@ -5316,7 +7173,7 @@ export function InventoryModule({
     style: {
       fontSize: "13px"
     }
-  }, "Remove quantity to decrease the available stock for this item.")), /*#__PURE__*/React.createElement("div", {
+  }, "Remove quantity to decrease the available stock for this item.")), renderInlineInventoryDraftRecovery("stockOut"), /*#__PURE__*/React.createElement("div", {
     className: "space-y-2"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "stock-out-amount",
@@ -5333,7 +7190,11 @@ export function InventoryModule({
     inputMode: "numeric",
     "data-validation-label": "Stock Out Quantity",
     value: stockAmount,
-    onChange: e => setStockAmount(sanitizeWholeNumberInput(e.target.value, "Stock Out Quantity", "stock-out-quantity-numbers-only")),
+    onChange: e => {
+      const nextAmount = sanitizeWholeNumberInput(e.target.value, "Stock Out Quantity", "stock-out-quantity-numbers-only");
+      setStockAmount(nextAmount);
+      persistStockOutDraft({ stockAmount: nextAmount });
+    },
     placeholder: "0",
     className: "border-slate-300 bg-white text-slate-950",
     style: {
@@ -5355,7 +7216,10 @@ export function InventoryModule({
     }
   }, "Reason for Stock Out"), /*#__PURE__*/React.createElement(Select, {
     value: stockOutReason,
-    onValueChange: setStockOutReason
+    onValueChange: value => {
+      setStockOutReason(value);
+      persistStockOutDraft({ stockOutReason: value });
+    }
   }, /*#__PURE__*/React.createElement(SelectTrigger, {
     id: "stock-out-reason",
     className: "border-slate-300 bg-white text-slate-950",
@@ -5380,9 +7244,15 @@ export function InventoryModule({
   ), renderActualTransactionDateFields({
     idPrefix: "stock-out",
     value: stockActualTransactionAt,
-    onChange: value => handleActualTransactionDateChange(value, setStockActualTransactionAt, "stock-out record"),
+    onChange: value => {
+      handleActualTransactionDateChange(value, setStockActualTransactionAt, "stock-out record");
+      persistStockOutDraft({ stockActualTransactionAt: value });
+    },
     reasonValue: stockBackdateReason,
-    onReasonChange: setStockBackdateReason,
+    onReasonChange: value => {
+      setStockBackdateReason(value);
+      persistStockOutDraft({ stockBackdateReason: value });
+    },
     recordLabel: "stock-out record"
   }), renderStockPreview("out"), /*#__PURE__*/React.createElement(DialogFooter, {
     className: "inventory-dialog-footer pt-2",
@@ -5868,60 +7738,5 @@ export function InventoryModule({
       event.preventDefault();
       confirmAddSimilarItem(similarDuplicatePrompt);
     }
-  }, similarDuplicatePrompt?.action === "edit" ? "Update Anyway" : "Add Anyway"))))), /*#__PURE__*/React.createElement(AlertDialog, {
-    open: Boolean(discardPrompt),
-    onOpenChange: open => {
-      if (!open) {
-        setDiscardPrompt(null);
-      }
-    }
-  }, /*#__PURE__*/React.createElement(AlertDialogContent, {
-    className: "inventory-alert-dialog-content border bg-white shadow-2xl",
-    style: {
-      width: "min(420px, calc(100vw - 32px))",
-      maxWidth: "420px",
-      padding: "24px",
-      borderRadius: "14px",
-      gap: "18px",
-      borderColor: "#64748B",
-      borderWidth: "2px",
-      boxShadow: "0 22px 50px rgba(15, 23, 42, 0.26), 0 0 0 4px rgba(15, 23, 42, 0.08), inset 0 0 0 1px rgba(255, 255, 255, 0.9)"
-    }
-  }, /*#__PURE__*/React.createElement(AlertDialogHeader, {
-    showBrand: false,
-    className: "px-0 pt-0"
-  }, /*#__PURE__*/React.createElement(AlertDialogTitle, {
-    className: "text-xl font-semibold text-slate-950"
-  }, discardDialogCopy[discardPrompt]?.title || "Discard changes?"), /*#__PURE__*/React.createElement(AlertDialogDescription, {
-    className: "text-sm leading-relaxed text-slate-700"
-  }, discardDialogCopy[discardPrompt]?.description || "Closing this form will remove your unsaved changes.")), /*#__PURE__*/React.createElement(AlertDialogFooter, {
-    className: "inventory-alert-dialog-footer px-0 pb-0",
-    style: {
-      display: "flex",
-      flexDirection: "row",
-      justifyContent: "flex-end",
-      gap: "10px"
-    }
-  }, /*#__PURE__*/React.createElement(AlertDialogCancel, {
-    className: "modal-button-cancel border-slate-200 bg-white text-slate-950 hover:bg-slate-50",
-    style: {
-      height: "38px",
-      borderRadius: "10px",
-      padding: "0 18px",
-      fontSize: "13px"
-    },
-    onClick: () => setDiscardPrompt(null)
-  }, "Keep Editing"), /*#__PURE__*/React.createElement(AlertDialogAction, {
-    className: "bg-red-600 text-white hover:bg-red-700",
-    style: {
-      height: "38px",
-      borderRadius: "10px",
-      padding: "0 18px",
-      fontSize: "13px"
-    },
-    onClick: event => {
-      event.preventDefault();
-      confirmDiscardChanges(discardPrompt);
-    }
-  }, "Discard")))))))));
+  }, similarDuplicatePrompt?.action === "edit" ? "Update Anyway" : "Add Anyway"))))), renderInventoryDraftRecoveryDialog())))));
 }
