@@ -3,7 +3,7 @@
 import React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import { ArrowRight, CalendarDays, Clock, Database, Eye, RefreshCw, Search, ShieldCheck } from 'lucide-react';
+import { ArrowRight, CalendarDays, Clock, Database, Eye, RefreshCw, Search, ShieldCheck, X } from 'lucide-react';
 import { apiUrl } from '../utils/api';
 import { formatDateTime } from '../utils/format';
 import { getStockMovementReasonLabel } from '../utils/stockMovementReasons';
@@ -745,8 +745,18 @@ export function AuditTrailModule({ user }) {
                   value={searchQuery}
                   onChange={event => setSearchQuery(event.target.value)}
                   placeholder="Search by user, record, action, item, or ID"
-                  className="audit-filter-control border-slate-200 bg-slate-50 pl-10"
+                  className="audit-filter-control border-slate-200 bg-slate-50 pl-10 pr-11"
                 />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    className="search-clear-button search-clear-button--absolute"
+                    onClick={() => setSearchQuery('')}
+                    aria-label="Clear audit search"
+                  >
+                    <X />
+                  </button>
+                )}
               </div>
             </div>
             <div className="space-y-2">

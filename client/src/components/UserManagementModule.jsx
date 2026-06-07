@@ -1,7 +1,7 @@
 // User Management module: lets administrators create, approve, update, and
 // deactivate system users while preserving role and branch controls.
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowUp, ArrowDown, Copy, Edit, Info, KeyRound, Mail, MapPin, Plus, Search, User, UserCheck, UserX, Users } from "lucide-react";
+import { ArrowUp, ArrowDown, Copy, Edit, Info, KeyRound, Mail, MapPin, Plus, Search, User, UserCheck, UserX, Users, X } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -494,8 +494,10 @@ export function UserManagementModule() {
   const renderRoleFilter = (value, onChange) => (
     <Select value={value} onValueChange={onChange}>
       <SelectTrigger className="user-role-filter-trigger" aria-label="Filter users by role">
-        <Users className="h-4 w-4 shrink-0 text-slate-500" />
-        <SelectValue placeholder="All Roles" />
+        <span className="user-role-filter-label">
+          <Users className="h-4 w-4 shrink-0 text-slate-500" />
+          <SelectValue placeholder="All Roles" />
+        </span>
       </SelectTrigger>
       <SelectContent>
         <SelectItem value={ROLE_FILTER_ALL}>All Roles</SelectItem>
@@ -1454,14 +1456,30 @@ export function UserManagementModule() {
 
         .user-search-control input {
           padding-left: 2.5rem;
+          padding-right: 2.75rem;
         }
 
         .user-role-filter-trigger {
           width: 100%;
-          justify-content: flex-start;
-          gap: 0.6rem;
+          justify-content: space-between;
+          gap: 0.75rem;
           color: #0f172a;
           font-weight: 600;
+        }
+
+        .user-role-filter-label {
+          display: inline-flex;
+          min-width: 0;
+          align-items: center;
+          gap: 0.6rem;
+          overflow: hidden;
+        }
+
+        .user-role-filter-label [data-slot="select-value"] {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .user-role-filter-trigger:hover,
@@ -2177,6 +2195,16 @@ export function UserManagementModule() {
                       onChange={e => setSearchQuery(e.target.value)}
                       className="border-slate-200"
                     />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        className="search-clear-button search-clear-button--absolute"
+                        onClick={() => setSearchQuery("")}
+                        aria-label="Clear user search"
+                      >
+                        <X />
+                      </button>
+                    )}
                   </div>
                   {renderRoleFilter(activeRoleFilter, setActiveRoleFilter)}
                 </div>
@@ -2257,6 +2285,16 @@ export function UserManagementModule() {
                       onChange={e => setInactiveSearchQuery(e.target.value)}
                       className="border-slate-200"
                     />
+                    {inactiveSearchQuery && (
+                      <button
+                        type="button"
+                        className="search-clear-button search-clear-button--absolute"
+                        onClick={() => setInactiveSearchQuery("")}
+                        aria-label="Clear inactive user search"
+                      >
+                        <X />
+                      </button>
+                    )}
                   </div>
                   {renderRoleFilter(inactiveRoleFilter, setInactiveRoleFilter)}
                 </div>

@@ -3462,6 +3462,16 @@ export function PurchasesModule({ user, onNavigate }) {
                 <div className="purchase-search">
                   <Search className="h-4 w-4 text-slate-500" />
                   <Input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="Search by item name, item code, category, or supplier" className="h-9 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0" />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      className="search-clear-button"
+                      onClick={() => setSearchQuery('')}
+                      aria-label="Clear purchase item search"
+                    >
+                      <X />
+                    </button>
+                  )}
                 </div>
                 {supplierName.trim() && (
                   <div className="purchase-supplier-filter-status">
@@ -4120,6 +4130,16 @@ function PurchaseHistoryDialog({
                 placeholder="Search by purchase number, supplier, document, or item"
                 className="border-0 bg-transparent px-0 text-base shadow-none focus-visible:border-0 focus-visible:ring-0"
               />
+              {searchValue && (
+                <button
+                  type="button"
+                  className="search-clear-button"
+                  onClick={() => onSearchChange('')}
+                  aria-label="Clear purchase history search"
+                >
+                  <X />
+                </button>
+              )}
             </div>
             <div className="purchase-history-toolbar">
               <div className="purchase-history-filter">

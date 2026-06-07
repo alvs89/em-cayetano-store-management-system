@@ -1,7 +1,7 @@
 // Search module: provides indexed cross-module lookup for inventory, sales,
 // purchases, and archived records.
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Archive, ArrowRight, Box, BriefcaseBusiness, CalendarDays, ExternalLink, Filter, Package, ReceiptText, Search, ShoppingCart, UserRound } from "lucide-react";
+import { Archive, ArrowRight, Box, BriefcaseBusiness, CalendarDays, ExternalLink, Filter, Package, ReceiptText, Search, ShoppingCart, UserRound, X } from "lucide-react";
 import { formatDateTime, formatPurchasePaymentTerms } from "../utils/format";
 import { getStockStatusBadgeClass } from "../utils/statusStyles";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -1284,11 +1284,21 @@ export function SearchModule({ onNavigate }) {
               <div className="search-input-wrap relative">
                 <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
                 <Input
-                  className="h-12 pl-10"
+                  className="h-12 pl-10 pr-11"
                   placeholder="Search by item code, product name, supplier, invoice number, customer, or remarks"
                   value={searchQuery}
                   onChange={event => setSearchQuery(event.target.value)}
                 />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    className="search-clear-button search-clear-button--absolute"
+                    onClick={() => setSearchQuery("")}
+                    aria-label="Clear system search"
+                  >
+                    <X />
+                  </button>
+                )}
               </div>
 
               <div className="search-select-wrap">

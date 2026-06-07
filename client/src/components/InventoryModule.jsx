@@ -2652,10 +2652,23 @@ export function InventoryModule({
                   aria-label="Search inventory approval requests"
                   className="inventory-approval-search-input h-12 rounded-xl border-slate-300 bg-white pl-10 text-sm text-slate-950"
                   style={{
-                    paddingRight: "12px",
+                    paddingRight: "44px",
                     lineHeight: "20px"
                   }}
                 />
+                {approvalRequestSearch && (
+                  <button
+                    type="button"
+                    className="search-clear-button search-clear-button--absolute"
+                    onClick={() => {
+                      setApprovalRequestSearch("");
+                      setApprovalRequestPage(1);
+                    }}
+                    aria-label="Clear inventory approval search"
+                  >
+                    <X />
+                  </button>
+                )}
               </div>
               <Select
                 value={approvalRequestSort}
@@ -5548,11 +5561,16 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement(Search, {
     className: "absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400"
   }), /*#__PURE__*/React.createElement(Input, {
-    className: "pl-10",
+    className: "pl-10 pr-11",
     placeholder: "Search active inventory by item name or item code",
     value: searchQuery,
     onChange: e => updateInventorySearchQuery(e.target.value)
-  })), /*#__PURE__*/React.createElement("div", {
+  }), searchQuery && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "search-clear-button search-clear-button--absolute",
+    onClick: () => updateInventorySearchQuery(""),
+    "aria-label": "Clear inventory search"
+  }, /*#__PURE__*/React.createElement(X, null))), /*#__PURE__*/React.createElement("div", {
     className: "inventory-filter-actions"
   }, /*#__PURE__*/React.createElement("div", {
     className: "inventory-filter-control"

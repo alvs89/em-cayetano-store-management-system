@@ -1974,7 +1974,7 @@ export function MaintenanceModule({ user }) {
                 <InfoRow label="Environment" value={appEnvironment} />
                 <InfoRow label="Current Branch" value={currentBranch} />
                 <InfoRow label="Backup/Restore Scope" value="Full system, all branches" full />
-                <InfoRow label="Integrity Check Scope" value={`Signed-in branch (${currentBranch}) plus shared user/log links`} full />
+                <InfoRow label="Integrity Check Scope" value="All branches plus shared user/log links" full />
                 <InfoRow label="System Time" value={displayedTime} />
                 <InfoRow label="Last Backup" value={lastBackup} />
                 <InfoRow label="Last Restore" value={lastRestore} />

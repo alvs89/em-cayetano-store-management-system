@@ -17,7 +17,8 @@ import {
   TrendingUp,
   Truck,
   Wallet,
-  Users
+  Users,
+  X
 } from 'lucide-react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -1955,6 +1956,7 @@ export function Dashboard({
           color: #111827;
           font-size: 14px;
           font-weight: 600;
+          padding-right: 2.75rem;
           transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
         }
 
@@ -2451,6 +2453,17 @@ export function Dashboard({
                     onChange={event => handleStockCountSearchChange(event.target.value)}
                     onKeyDown={handleStockCountSearchKeyDown}
                   />
+                  {stockCountSearch && (
+                    <button
+                      type="button"
+                      className="search-clear-button search-clear-button--absolute"
+                      onMouseDown={event => event.preventDefault()}
+                      onClick={() => handleStockCountSearchChange('')}
+                      aria-label="Clear stock count item search"
+                    >
+                      <X />
+                    </button>
+                  )}
                   {isStockCountSelectorOpen && (
                     <div id="stock-count-item-results" className="dashboard-stock-search-results" role="listbox" aria-label="Matching inventory items">
                       {filteredStockCountItems.length > 0 ? (

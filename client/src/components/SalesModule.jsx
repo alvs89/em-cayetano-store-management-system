@@ -7214,6 +7214,16 @@ export function SalesModule({ user }) {
                     placeholder="Search name, code, category, supplier, size, color"
                     className="h-11 border-0 bg-transparent px-0 text-base shadow-none focus-visible:border-0 focus-visible:ring-0"
                   />
+                  {productSearch && (
+                    <button
+                      type="button"
+                      className="search-clear-button"
+                      onClick={() => setProductSearch('')}
+                      aria-label="Clear product search"
+                    >
+                      <X />
+                    </button>
+                  )}
                 </div>
                 <Select value={productCategory} onValueChange={setProductCategory}>
                   <SelectTrigger className="sales-product-filter-trigger border-slate-200">
@@ -9238,6 +9248,16 @@ function SalesHistoryDialog({
                 placeholder="Search by invoice, system ref, item, employee, or remarks"
                 className="sales-history-search-input border-0 bg-transparent px-0 text-base shadow-none focus-visible:border-0 focus-visible:ring-0"
               />
+              {searchValue && (
+                <button
+                  type="button"
+                  className="search-clear-button"
+                  onClick={() => onSearchChange('')}
+                  aria-label="Clear sales history search"
+                >
+                  <X />
+                </button>
+              )}
             </div>
             <div className="sales-history-filter-controls text-sm">
               <Select value={periodValue} onValueChange={onPeriodChange}>

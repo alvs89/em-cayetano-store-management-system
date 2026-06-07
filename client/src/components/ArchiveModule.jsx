@@ -2,7 +2,7 @@
 // removed from active inventory views.
 import React from 'react';
 import { useState } from "react";
-import { ArchiveRestore, Search, Filter, Archive, CheckCircle, Info, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { ArchiveRestore, Search, Filter, Archive, CheckCircle, Info, ArrowUpDown, ArrowUp, ArrowDown, X } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -889,11 +889,16 @@ export function ArchiveModule({
     className: "absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400"
   }), /*#__PURE__*/React.createElement(Input, {
     // Text search across archive code, item code, name, or supplier.
-    className: "pl-10",
+    className: "pl-10 pr-11",
     placeholder: "Search archived items by archive ID, item code, name, or supplier",
     value: searchQuery,
     onChange: e => setSearchQuery(e.target.value)
-  })), /*#__PURE__*/React.createElement("div", {
+  }), searchQuery && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "search-clear-button search-clear-button--absolute",
+    onClick: () => setSearchQuery(""),
+    "aria-label": "Clear archive search"
+  }, /*#__PURE__*/React.createElement(X, null))), /*#__PURE__*/React.createElement("div", {
     className: "archive-filter-actions"
   }, /*#__PURE__*/React.createElement("div", {
     className: "archive-filter-control"
