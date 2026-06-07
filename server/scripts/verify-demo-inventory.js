@@ -28,7 +28,77 @@ async function verifyDemoInventory() {
         (SELECT COUNT(*) FROM purchase_transactions) AS purchases,
         (SELECT COUNT(*) FROM purchase_items) AS purchase_items,
         (SELECT COUNT(*) FROM stock_movements) AS movements,
-        (SELECT COUNT(*) FROM archived_inventory) AS archived
+        (SELECT COUNT(*) FROM archived_inventory) AS archived,
+        (SELECT COUNT(*) FROM inventory_change_requests) AS change_requests,
+        (SELECT COUNT(*) FROM audit_logs) AS audit_logs,
+        (SELECT COUNT(*) FROM system_logs) AS system_logs,
+        (SELECT COUNT(*) FROM backup_logs) AS backup_logs,
+        (SELECT COUNT(*) FROM branch_settings) AS branch_settings,
+        (SELECT COUNT(*) FROM branch_inventory WHERE status = 'Low Stock') AS low_stock,
+        (SELECT COUNT(*) FROM branch_inventory WHERE status = 'Out of Stock') AS out_of_stock,
+        (SELECT COUNT(DISTINCT DATE(created_at)) FROM sales_transactions) AS sales_days
+    `);
+
+    const adminOnlyUsers = await getScalar(`
+      SELECT COUNT(*)::int AS count
+      FROM users
+      WHERE username <> 'admin'
+         OR role <> 'Admin'
+         OR status <> 'Active'
+    `);
+
+    const missingSystemAdmin = await getScalar(`
+      SELECT CASE WHEN EXISTS (
+        SELECT 1
+        FROM users
+        WHERE username = 'admin'
+          AND full_name = 'System Admin'
+          AND role = 'Admin'
+          AND status = 'Active'
+      ) THEN 0 ELSE 1 END::int AS count
+    `);
+
+    const insufficientPresentationVolume = await getScalar(`
+      SELECT CASE
+        WHEN (SELECT COUNT(*) FROM sales_transactions) < 120 THEN 1
+        WHEN (SELECT COUNT(*) FROM purchase_transactions) < 40 THEN 1
+        WHEN (SELECT COUNT(*) FROM stock_movements) < 700 THEN 1
+        WHEN (SELECT COUNT(*) FROM archived_inventory) < 5 THEN 1
+        WHEN (SELECT COUNT(*) FROM audit_logs) < 5 THEN 1
+        WHEN (SELECT COUNT(*) FROM system_logs) < 5 THEN 1
+        WHEN (SELECT COUNT(*) FROM inventory_change_requests) < 4 THEN 1
+        WHEN (SELECT COUNT(*) FROM backup_logs) < 1 THEN 1
+        WHEN (SELECT COUNT(*) FROM branch_settings) < 2 THEN 1
+        ELSE 0
+      END::int AS count
+    `);
+
+    const insufficientDateSpread = await getScalar(`
+      SELECT CASE
+        WHEN (SELECT COUNT(*) FROM sales_transactions WHERE DATE(created_at) = DATE(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila')) < 2 THEN 1
+        WHEN (SELECT COUNT(*) FROM sales_transactions WHERE DATE(created_at) = DATE(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila') - INTERVAL '1 day') < 2 THEN 1
+        WHEN (SELECT COUNT(*) FROM sales_transactions WHERE created_at >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila') - INTERVAL '7 days') < 12 THEN 1
+        WHEN (SELECT COUNT(*) FROM sales_transactions WHERE created_at >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila') - INTERVAL '30 days') < 35 THEN 1
+        WHEN (SELECT COUNT(*) FROM sales_transactions WHERE created_at < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Manila') - INTERVAL '90 days') < 20 THEN 1
+        WHEN (SELECT COUNT(DISTINCT DATE(created_at)) FROM sales_transactions) < 70 THEN 1
+        WHEN (SELECT MAX(daily_count) FROM (
+          SELECT DATE(created_at), COUNT(*) AS daily_count
+          FROM sales_transactions
+          GROUP BY DATE(created_at)
+        ) sales_by_day) > 8 THEN 1
+        ELSE 0
+      END::int AS count
+    `);
+
+    const emptyBusinessSignals = await getScalar(`
+      SELECT CASE
+        WHEN (SELECT COUNT(*) FROM branch_inventory WHERE status = 'Low Stock') < 2 THEN 1
+        WHEN (SELECT COUNT(*) FROM branch_inventory WHERE status = 'Out of Stock') < 2 THEN 1
+        WHEN (SELECT COALESCE(SUM(total_amount), 0) FROM sales_transactions WHERE status = 'completed') <= 0 THEN 1
+        WHEN (SELECT COALESCE(SUM(gross_profit), 0) FROM sales_items) <= 0 THEN 1
+        WHEN (SELECT COALESCE(SUM(subtotal_amount), 0) FROM purchase_transactions WHERE status = 'completed') <= 0 THEN 1
+        ELSE 0
+      END::int AS count
     `);
 
     const badSalesTotals = await getScalar(`
@@ -242,6 +312,11 @@ async function verifyDemoInventory() {
 
     const result = {
       counts: counts.rows[0],
+      adminOnlyUsers,
+      missingSystemAdmin,
+      insufficientPresentationVolume,
+      insufficientDateSpread,
+      emptyBusinessSignals,
       badSalesTotals,
       invalidOfficialInvoiceNumbers,
       duplicateOfficialInvoiceNumbers,
@@ -263,6 +338,11 @@ async function verifyDemoInventory() {
 
     console.log(JSON.stringify(result, null, 2));
     if (
+      adminOnlyUsers !== 0 ||
+      missingSystemAdmin !== 0 ||
+      insufficientPresentationVolume !== 0 ||
+      insufficientDateSpread !== 0 ||
+      emptyBusinessSignals !== 0 ||
       badSalesTotals !== 0 ||
       invalidOfficialInvoiceNumbers !== 0 ||
       duplicateOfficialInvoiceNumbers !== 0 ||

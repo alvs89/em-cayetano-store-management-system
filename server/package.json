@@ -7,7 +7,9 @@
     "server": "node index.js",
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "check": "node --check index.js"
+    "check": "node --check index.js",
+    "demo:refresh": "node scripts/refresh-demo-inventory.js",
+    "demo:verify": "node scripts/verify-demo-inventory.js"
   },
   "keywords": [],
   "author": "",
