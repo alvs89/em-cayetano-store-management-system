@@ -1717,14 +1717,31 @@ export function HelpModule({ user }) {
         .help-section-icon-red { background: #fef2f2; color: #dc2626; }
 
         .help-show-all {
+          appearance: none;
+          border: 0;
+          background: transparent;
+          box-shadow: none;
           color: #2563eb;
           font-size: 12px;
           font-weight: 800;
           padding-top: 2px;
         }
 
-        .help-show-all:hover {
+        .help-show-all:hover,
+        .help-show-all:focus,
+        .help-show-all:active {
+          background: transparent;
+          box-shadow: none;
+          color: #1d4ed8;
           text-decoration: underline;
+        }
+
+        #root .help-page button.help-show-all,
+        #root .help-page button.help-show-all:not(:disabled):hover,
+        #root .help-page button.help-show-all:not(:disabled):focus,
+        #root .help-page button.help-show-all:not(:disabled):active {
+          background: transparent;
+          box-shadow: none;
         }
 
         .help-list {
@@ -1737,8 +1754,78 @@ export function HelpModule({ user }) {
         .help-trouble-row {
           display: grid;
           width: 100%;
+          appearance: none;
           border-top: 1px solid #edf2f7;
+          border-right: 0;
+          border-bottom: 0;
+          border-left: 0;
+          background: transparent;
           text-align: left;
+        }
+
+        .help-row:hover,
+        .help-guide-row:hover,
+        .help-trouble-row:hover,
+        .help-row:focus,
+        .help-guide-row:focus,
+        .help-trouble-row:focus {
+          background: transparent;
+          box-shadow: none;
+          outline: none;
+        }
+
+        #root .help-page button.help-row,
+        #root .help-page button.help-guide-row,
+        #root .help-page button.help-trouble-row,
+        #root .help-page button.help-row:not(:disabled):hover,
+        #root .help-page button.help-guide-row:not(:disabled):hover,
+        #root .help-page button.help-trouble-row:not(:disabled):hover,
+        #root .help-page button.help-row:not(:disabled):focus,
+        #root .help-page button.help-guide-row:not(:disabled):focus,
+        #root .help-page button.help-trouble-row:not(:disabled):focus,
+        #root .help-page button.help-row:not(:disabled):active,
+        #root .help-page button.help-guide-row:not(:disabled):active,
+        #root .help-page button.help-trouble-row:not(:disabled):active {
+          background: transparent;
+          box-shadow: none;
+          outline: none;
+        }
+
+        #root .help-page .help-list > div > button.help-row,
+        #root .help-page .help-list > div > button.help-guide-row,
+        #root .help-page .help-list > div > button.help-trouble-row {
+          appearance: none;
+          -webkit-appearance: none;
+          background: transparent;
+          background-color: transparent;
+          box-shadow: none;
+          color: inherit;
+          cursor: pointer;
+          filter: none;
+          transform: none;
+        }
+
+        #root .help-page .help-list > div > button.help-row:is(:hover, :focus, :focus-visible, :active),
+        #root .help-page .help-list > div > button.help-guide-row:is(:hover, :focus, :focus-visible, :active),
+        #root .help-page .help-list > div > button.help-trouble-row:is(:hover, :focus, :focus-visible, :active) {
+          background: transparent;
+          background-color: transparent;
+          box-shadow: none;
+          filter: none;
+          outline: none;
+          transform: none;
+        }
+
+        #root .help-page .help-list > div > button.help-row:is(:hover, :focus-visible) .help-row-title,
+        #root .help-page .help-list > div > button.help-guide-row:is(:hover, :focus-visible) .help-row-title,
+        #root .help-page .help-list > div > button.help-trouble-row:is(:hover, :focus-visible) .help-row-title {
+          color: #1d4ed8;
+        }
+
+        #root .help-page .help-list > div > button.help-row:is(:hover, :focus-visible) .help-chevron,
+        #root .help-page .help-list > div > button.help-guide-row:is(:hover, :focus-visible) .help-chevron,
+        #root .help-page .help-list > div > button.help-trouble-row:is(:hover, :focus-visible) .help-chevron {
+          color: #2563eb;
         }
 
         .help-row:first-child,
