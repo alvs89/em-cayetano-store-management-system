@@ -26,10 +26,10 @@ import { PageHeader } from './PageHeader';
 import { getRoleLabel, isAdminRole, normalizeRole, ROLE_VALUES } from '../utils/roles';
 
 const HELP_ROLES = {
-  ALL: [ROLE_VALUES.ADMIN, ROLE_VALUES.SALES_ENCODER, ROLE_VALUES.INVENTORY_STAFF],
+  ALL: [ROLE_VALUES.ADMIN, ROLE_VALUES.SALES_ENCODER, ROLE_VALUES.INVENTORY_STAFF, ROLE_VALUES.SALES_INVENTORY_STAFF],
   ADMIN: [ROLE_VALUES.ADMIN],
-  SALES: [ROLE_VALUES.ADMIN, ROLE_VALUES.SALES_ENCODER],
-  INVENTORY: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF],
+  SALES: [ROLE_VALUES.ADMIN, ROLE_VALUES.SALES_ENCODER, ROLE_VALUES.SALES_INVENTORY_STAFF],
+  INVENTORY: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF, ROLE_VALUES.SALES_INVENTORY_STAFF],
 };
 
 const topicOptions = [
@@ -129,6 +129,18 @@ const roleHelpAccess = {
       'Generate inventory, purchase, low-stock, supplier reorder, and stock movement reports.',
     ],
   },
+  [ROLE_VALUES.SALES_INVENTORY_STAFF]: {
+    title: 'Sales Encoder + Inventory Staff Guide',
+    description: 'Combined guide for staff who record sales and also help with inventory, supplier receiving, and inventory reports when coverage is needed.',
+    modules: ['Dashboard', 'Search Products', 'Inventory', 'Archive', 'Reports', 'Sales', 'Purchases', 'Alerts', 'Help'],
+    tasks: [
+      'Search products and check available stock.',
+      'Record customer sales using the official Sales Invoice number.',
+      'Record stock in, stock out, and supplier purchase entries when assigned.',
+      'Review stock alerts, supplier payment reminders, inventory reports, and sales-based stock movement.',
+      'Prepare add item and edit item requests for Admin review.',
+    ],
+  },
 };
 
 const faqs = [
@@ -152,7 +164,7 @@ const faqs = [
   },
   {
     id: 'dashboard-purpose-inventory',
-    roles: [ROLE_VALUES.INVENTORY_STAFF],
+    roles: [ROLE_VALUES.INVENTORY_STAFF, ROLE_VALUES.SALES_INVENTORY_STAFF],
     question: 'What is the Dashboard for?',
     answer: 'The Dashboard shows inventory-related reminders, stock alerts, pending item reviews, available shortcuts, and activity information needed for daily inventory work.',
   },
@@ -262,7 +274,19 @@ const faqs = [
     id: 'receive-delivery',
     roles: HELP_ROLES.INVENTORY,
     question: 'How do I receive supplier deliveries?',
-    answer: 'Open Purchases, record the supplier delivery, review the items and quantities, then save so stock levels update properly.',
+    answer: 'Open Purchases, record the supplier delivery, choose the correct payment term, review the items and quantities, then save so stock levels update properly.',
+  },
+  {
+    id: 'credit-purchase-terms',
+    roles: HELP_ROLES.INVENTORY,
+    question: 'What should I enter for a credit purchase?',
+    answer: 'Select Credit, then choose the supplier payment term such as 15, 30, 60, 90, or 120 days. The system uses this to show the payment due date and remind staff before the supplier payment is due.',
+  },
+  {
+    id: 'supplier-payment-alerts',
+    roles: HELP_ROLES.INVENTORY,
+    question: 'Why do supplier payment reminders appear in Alerts?',
+    answer: 'They remind staff about unpaid credit purchases before the due date. After the supplier is paid, open the purchase record and mark the payment as paid so the reminder can close.',
   },
   {
     id: 'purchase-document',
@@ -292,7 +316,13 @@ const faqs = [
     id: 'actual-earnings',
     roles: HELP_ROLES.ADMIN,
     question: 'Who can see Actual Earnings?',
-    answer: 'Actual Earnings is Admin-only because it includes sales, cost of goods sold, actual profit, and margin values used for business decisions.',
+    answer: 'Actual Earnings is Admin-only because it includes sales, delivery charges, cost of goods sold, actual profit, and margin values used for business decisions.',
+  },
+  {
+    id: 'delivery-charge-total',
+    roles: HELP_ROLES.ADMIN,
+    question: 'Are delivery charges included in sales totals?',
+    answer: 'Yes. Overall sales and Actual Earnings include delivery charges because they are part of the total amount collected from the customer. Product rows still show item-only sales so product performance stays clear.',
   },
   {
     id: 'archive-review',
@@ -340,7 +370,7 @@ const faqs = [
     id: 'manage-users',
     roles: HELP_ROLES.ADMIN,
     question: 'Who can manage user accounts?',
-    answer: 'Only an Admin can create accounts, assign roles, transfer branches, deactivate users, and update access.',
+    answer: 'Only an Admin can create accounts, assign roles, transfer branches, deactivate users, and update access. When coverage is needed, an Admin can assign the combined Sales Encoder + Inventory Staff role.',
   },
 ];
 
@@ -454,7 +484,7 @@ const guides = [
   },
   {
     id: 'staff-item-request',
-    roles: [ROLE_VALUES.INVENTORY_STAFF],
+    roles: [ROLE_VALUES.INVENTORY_STAFF, ROLE_VALUES.SALES_INVENTORY_STAFF],
     title: 'Submitting an Item Request',
     summary: 'Prepare inventory item details for Admin review.',
     steps: [
@@ -483,14 +513,29 @@ const guides = [
     id: 'receive-delivery',
     roles: HELP_ROLES.INVENTORY,
     title: 'Receiving Supplier Delivery',
-    summary: 'Record delivered items from suppliers.',
+    summary: 'Record delivered items, costs, and payment terms from suppliers.',
     steps: [
       'Open Purchases.',
       'Select Receive Delivery.',
       'Choose or enter the supplier.',
+      'Enter the supplier document and payment terms.',
+      'For credit purchases, choose the correct number of days before payment is due.',
       'Add delivered items and quantities.',
       'Review costs, totals, and stock changes.',
       'Save the delivery record.',
+    ],
+  },
+  {
+    id: 'supplier-payment-followup',
+    roles: HELP_ROLES.INVENTORY,
+    title: 'Checking Supplier Payment Reminders',
+    summary: 'Review unpaid credit purchases before their due date.',
+    steps: [
+      'Open Alerts and review Supplier Payment reminders.',
+      'Open the related purchase record.',
+      'Confirm the supplier, document, amount, and payment due date.',
+      'After the supplier is paid, mark the purchase payment as paid.',
+      'Leave it unpaid when the payment still needs follow-up.',
     ],
   },
   {
@@ -595,6 +640,7 @@ const guidelines = [
   { id: 'refund-reason', roles: HELP_ROLES.SALES, text: 'Use a clear refund reason so the record is easy to review later.' },
   { id: 'stock-reason', roles: HELP_ROLES.INVENTORY, text: 'Record stock movement with the correct quantity and reason.' },
   { id: 'delivery-check', roles: HELP_ROLES.INVENTORY, text: 'Compare supplier delivery records with the actual delivered items before saving.' },
+  { id: 'supplier-payment-terms', roles: HELP_ROLES.INVENTORY, text: 'For credit purchases, select the correct payment term so supplier due-date reminders are accurate.' },
   { id: 'low-stock-alerts', roles: HELP_ROLES.INVENTORY, text: 'Review low-stock and out-of-stock alerts regularly.' },
   { id: 'draft-review', roles: HELP_ROLES.ALL, text: 'Resume or discard detected drafts before starting the same task again.' },
   { id: 'record-conflict', roles: HELP_ROLES.INVENTORY, text: 'If an item was changed by another user, reload the latest details before saving.' },
@@ -687,7 +733,7 @@ const troubleshooting = [
   },
   {
     id: 'restore-not-available',
-    roles: [ROLE_VALUES.INVENTORY_STAFF],
+    roles: [ROLE_VALUES.INVENTORY_STAFF, ROLE_VALUES.SALES_INVENTORY_STAFF],
     title: 'Restore button is not available in Archive',
     cause: 'Inventory Staff can review archived items, but restoring items is Admin-only.',
     solution: 'Ask an Admin to review and restore the item if it should return to active inventory.',
@@ -821,14 +867,15 @@ const manualWorkflows = [
     steps: [
       'Open Purchases or Inventory.',
       'Select the supplier or item.',
-      'Enter delivered items, quantities, and costs.',
+      'Enter delivered items, quantities, costs, and supplier payment terms.',
+      'For credit purchases, choose the correct number of days so the due-date reminder is accurate.',
       'Review the stock increase.',
       'Save the purchase or stock-in record.',
     ],
   },
   {
     id: 'item-request-workflow',
-    roles: [ROLE_VALUES.INVENTORY_STAFF],
+    roles: [ROLE_VALUES.INVENTORY_STAFF, ROLE_VALUES.SALES_INVENTORY_STAFF],
     title: 'Inventory Item Request Workflow',
     steps: [
       'Open Inventory and choose Add Item or Edit when available.',
@@ -870,6 +917,18 @@ const manualWorkflows = [
       'Select the period and filters.',
       'Review the report results.',
       'Export the report if a PDF copy is needed.',
+    ],
+  },
+  {
+    id: 'supplier-payment-workflow',
+    roles: HELP_ROLES.INVENTORY,
+    title: 'Supplier Payment Reminder Workflow',
+    steps: [
+      'Open Alerts.',
+      'Review Supplier Payment reminders for credit purchases that are nearly due or overdue.',
+      'Open the related purchase record.',
+      'Check the supplier, amount, document, and due date.',
+      'Mark the purchase payment as paid only after the supplier payment has been settled.',
     ],
   },
   {
@@ -922,7 +981,7 @@ const dataEntryRules = [
   { id: 'drafts-not-official', roles: HELP_ROLES.ALL, text: 'Treat drafts as unfinished work only; they become official records only after final submission.' },
   { id: 'stock-movement-rule', roles: HELP_ROLES.INVENTORY, text: 'Stock-out quantity must not exceed available stock unless the system explicitly allows a valid adjustment.' },
   { id: 'supplier-documents', roles: HELP_ROLES.INVENTORY, text: 'Enter supplier document numbers carefully when recording purchases or deliveries.' },
-  { id: 'staff-item-requests', roles: [ROLE_VALUES.INVENTORY_STAFF], text: 'Submit add item or edit item requests only after checking active and archived records.' },
+  { id: 'staff-item-requests', roles: [ROLE_VALUES.INVENTORY_STAFF, ROLE_VALUES.SALES_INVENTORY_STAFF], text: 'Submit add item or edit item requests only after checking active and archived records.' },
   { id: 'approval-values', roles: HELP_ROLES.ADMIN, text: 'Review previous and new values before approving inventory item requests.' },
   { id: 'product-names', roles: HELP_ROLES.ADMIN, text: 'Use specific product names and avoid duplicate item records.' },
   { id: 'admin-sensitive', roles: HELP_ROLES.ADMIN, text: 'Review confirmation messages before saving user, maintenance, cancellation, restore, or backup-related actions.' },
@@ -968,22 +1027,24 @@ const glossaryTerms = [
   { term: 'Out of Stock', roles: HELP_ROLES.ALL, definition: 'An item has zero available quantity.' },
   { term: 'Optimize Database', roles: HELP_ROLES.ADMIN, definition: 'A maintenance action that refreshes application table information so the system can read records efficiently. It does not change saved business records.' },
   { term: 'Payment Method', roles: HELP_ROLES.SALES, definition: 'The way a customer pays, such as cash, GCash, bank transfer, or another accepted option.' },
+  { term: 'Payment Due Date', roles: HELP_ROLES.INVENTORY, definition: 'The date when a credit purchase should be paid based on the supplier payment term.' },
   { term: 'Profit Margin', roles: HELP_ROLES.ADMIN, definition: 'The percentage that compares Actual Profit against Sales for the selected records.' },
-  { term: 'Purchase Entry', roles: HELP_ROLES.INVENTORY, definition: 'A record of supplier delivery or purchase details that can increase inventory quantity.' },
+  { term: 'Purchase Entry', roles: HELP_ROLES.INVENTORY, definition: 'A record of supplier delivery or purchase details that can increase inventory quantity and track credit payment reminders when needed.' },
   { term: 'Refund', roles: HELP_ROLES.SALES, definition: 'A return or correction for selected items from a completed sale.' },
   { term: 'Report Period', roles: HELP_ROLES.INVENTORY, definition: 'The selected date range used when generating reports.' },
   { term: 'Restore', roles: HELP_ROLES.ADMIN, definition: 'Returning an archived item back to the active inventory list.' },
   { term: 'Restore Database', roles: HELP_ROLES.ADMIN, definition: 'A maintenance action that replaces current application records with records from a selected system backup file.' },
-  { term: 'Sales-Based Stock Movement', roles: HELP_ROLES.ADMIN, definition: 'A report that connects completed sales to the stock deductions created by those sales.' },
+  { term: 'Sales-Based Stock Movement', roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.SALES_INVENTORY_STAFF], definition: 'A report that connects completed sales to the stock deductions created by those sales.' },
   { term: 'Sales Invoice Number', roles: HELP_ROLES.SALES, definition: 'The official number printed on the store Sales Invoice booklet.' },
   { term: 'Sales Invoice Sequence Warning', roles: HELP_ROLES.SALES, definition: 'A warning shown when the entered SI number skips expected booklet numbers.' },
-  { term: 'Stock In', roles: HELP_ROLES.INVENTORY, definition: 'Adding quantity to inventory, usually from delivery or correction.' },
+  { term: 'Stock In', roles: HELP_ROLES.INVENTORY, definition: 'Adding quantity to inventory, usually from delivery, sister company transfer, or correction.' },
   { term: 'Stock Movement', roles: HELP_ROLES.INVENTORY, definition: 'A saved record showing how and why item quantity changed.' },
   { term: 'Stock Out', roles: HELP_ROLES.INVENTORY, definition: 'Reducing quantity from inventory for non-sales reasons such as damage, release, or adjustment.' },
+  { term: 'Supplier Payment Reminder', roles: HELP_ROLES.INVENTORY, definition: 'An alert for unpaid credit purchases that are close to their due date or already overdue.' },
   { term: 'Supplier Reorder Report', roles: HELP_ROLES.INVENTORY, definition: 'A report that helps identify items that may need restocking from suppliers.' },
   { term: 'TIN', roles: HELP_ROLES.SALES, definition: 'The Tax Identification Number entered for customers who need invoice details.' },
   { term: 'Untracked Sales Item', roles: HELP_ROLES.INVENTORY, definition: 'A sold manual item that may need review before becoming a regular inventory record.' },
-  { term: 'User Role', roles: HELP_ROLES.ALL, definition: 'The access level assigned to a user, such as Admin, Sales Encoder, or Inventory Staff.' },
+  { term: 'User Role', roles: HELP_ROLES.ALL, definition: 'The access level assigned to a user, such as Admin, Sales Encoder, Inventory Staff, or combined Sales Encoder + Inventory Staff access.' },
 ];
 
 const roleFallback = roleHelpAccess[ROLE_VALUES.INVENTORY_STAFF];
@@ -2331,7 +2392,7 @@ export function HelpModule({ user }) {
               onKeyDown={event => {
                 if (event.key === 'Enter') event.preventDefault();
               }}
-              placeholder="Search help topics..."
+              placeholder="Search by help topic, guide, FAQ, keyword, or support detail"
               aria-label="Search help topics"
             />
             {query && (

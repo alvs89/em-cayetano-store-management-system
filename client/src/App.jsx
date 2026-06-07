@@ -625,7 +625,7 @@ function AppContent() {
                 <button
                   type="button"
                   onClick={() => setPasswordVisibility(prev => ({ ...prev, current: !prev.current }))}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#FFFF00]"
+                  className="password-visibility-button absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 transition-colors hover:text-slate-800 focus:outline-none"
                   aria-label={passwordVisibility.current ? "Hide temporary password" : "Show temporary password"}
                   disabled={isChangingPassword}
                 >
@@ -650,7 +650,7 @@ function AppContent() {
                 <button
                   type="button"
                   onClick={() => setPasswordVisibility(prev => ({ ...prev, next: !prev.next }))}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#FFFF00]"
+                  className="password-visibility-button absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 transition-colors hover:text-slate-800 focus:outline-none"
                   aria-label={passwordVisibility.next ? "Hide new password" : "Show new password"}
                   disabled={isChangingPassword}
                 >
@@ -675,7 +675,7 @@ function AppContent() {
                 <button
                   type="button"
                   onClick={() => setPasswordVisibility(prev => ({ ...prev, confirm: !prev.confirm }))}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#FFFF00]"
+                  className="password-visibility-button absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 transition-colors hover:text-slate-800 focus:outline-none"
                   aria-label={passwordVisibility.confirm ? "Hide confirm password" : "Show confirm password"}
                   disabled={isChangingPassword}
                 >

@@ -24,7 +24,7 @@ const titleCaseWords = value =>
     .toLowerCase()
     .replace(/\b\w/g, letter => letter.toUpperCase());
 
-export const formatPurchasePaymentTerms = value => {
+export const formatPurchasePaymentTerms = (value, creditTermsDays = null) => {
   const normalized = String(value || "cash").trim().toLowerCase();
   const labels = {
     cash: "Cash",
@@ -32,6 +32,9 @@ export const formatPurchasePaymentTerms = value => {
     credit: "Credit",
     branch_transfer: "Branch Transfer"
   };
+  if (normalized === "credit" && creditTermsDays) {
+    return `Credit - ${creditTermsDays} days`;
+  }
   return labels[normalized] || titleCaseWords(normalized);
 };
 

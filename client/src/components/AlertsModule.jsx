@@ -61,6 +61,7 @@ const ALERT_FILTER_OPTIONS = [
   { value: 'stock', label: 'Stock Alerts' },
   { value: 'out-of-stock', label: 'Out of Stock' },
   { value: 'low-stock', label: 'Low Stock' },
+  { value: 'supplier-payments', label: 'Supplier Payments' },
   { value: 'user-management', label: 'User Accounts' },
   { value: 'maintenance', label: 'Maintenance' }
 ];
@@ -68,6 +69,7 @@ const ALERT_FILTER_OPTIONS = [
 const getAlertFilterKey = alert => {
   if (alert.title === 'Out of Stock') return 'out-of-stock';
   if (alert.title === 'Low Stock Alert') return 'low-stock';
+  if (alert.relatedModule === 'purchases') return 'supplier-payments';
   if (alert.relatedModule === 'user-management') return 'user-management';
   if (alert.relatedModule === 'maintenance') return 'maintenance';
   return 'system';
@@ -85,6 +87,21 @@ const alertResponsiveStyles = `
     height: 13px;
     width: 13px;
     flex-shrink: 0;
+  }
+
+  .alert-card-footer {
+    align-items: center;
+  }
+
+  .alert-card-actions {
+    flex: 0 0 auto;
+  }
+
+  .alert-read-button,
+  .alert-view-button {
+    min-height: 34px;
+    border-radius: 10px;
+    white-space: nowrap;
   }
 
   .alerts-tabs-list {
@@ -185,6 +202,19 @@ const alertResponsiveStyles = `
     margin-left: 6px;
     opacity: 0.72;
   }
+
+  @media (max-width: 720px) {
+    .alert-card-footer {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .alert-card-actions {
+      width: 100%;
+      justify-content: flex-start;
+      flex-wrap: wrap;
+    }
+  }
 `;
 
 export function AlertsModule({ user, onNavigate }) {
@@ -247,6 +277,16 @@ export function AlertsModule({ user, onNavigate }) {
           category: alert.reportCategory || 'all'
         }
       }));
+    }
+    if (alert.relatedModule === 'purchases' && (alert.purchaseId || alert.purchaseNumber)) {
+      const target = {
+        purchaseId: alert.purchaseId || '',
+        purchaseNumber: alert.purchaseNumber || ''
+      };
+      if (target.purchaseId) localStorage.setItem('purchases_target_purchase_id', String(target.purchaseId));
+      if (target.purchaseNumber) localStorage.setItem('purchases_target_purchase_number', String(target.purchaseNumber));
+      localStorage.setItem('purchases_open_history', 'true');
+      window.dispatchEvent(new CustomEvent('purchases-target-view', { detail: target }));
     }
     onNavigate(alert.relatedModule);
   };
@@ -949,7 +989,7 @@ function AlertCard({ alert, onMarkAsRead, onUnmarkAsRead, onDismiss, onGoToRelat
               <Clock className="alert-card-time-icon" />
               {displayTime}
             </span>
-            <div className="alert-card-actions flex gap-2">
+            <div className="alert-card-actions flex items-center justify-end gap-2">
               {!alert.read ? (
                 <Button size="sm" variant="ghost" className="alert-read-button h-7 text-xs" onClick={() => onMarkAsRead(alert.id)}>
                   Mark as Read

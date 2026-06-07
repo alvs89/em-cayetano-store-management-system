@@ -1,12 +1,13 @@
 // Search module: provides indexed cross-module lookup for inventory, sales,
 // purchases, and archived records.
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, ArrowRight, Box, BriefcaseBusiness, CalendarDays, ExternalLink, Filter, Package, ReceiptText, Search, ShoppingCart, UserRound } from "lucide-react";
-import { formatDateTime } from "../utils/format";
+import { formatDateTime, formatPurchasePaymentTerms } from "../utils/format";
 import { getStockStatusBadgeClass } from "../utils/statusStyles";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { useData } from "./DataContext";
 import { PageHeader } from "./PageHeader";
@@ -19,6 +20,7 @@ const getCategoryDisplay = product => {
 
 const SEARCH_DEBOUNCE_MS = 140;
 const MAX_SEARCH_RESULTS = 60;
+const SEARCH_RESULT_ROWS_PER_PAGE = 4;
 
 const normalizeSearchText = value => String(value ?? "")
   .normalize("NFD")
@@ -39,6 +41,19 @@ const uniqueCompactJoin = values => Array.from(new Set(values
   .flat()
   .filter(value => value !== null && value !== undefined && String(value).trim() !== "")
   .map(value => String(value).trim()))).join(", ");
+
+const uniqueCompactValues = values => Array.from(new Set(values
+  .flat()
+  .filter(value => value !== null && value !== undefined && String(value).trim() !== "")
+  .map(value => String(value).trim())));
+
+const formatItemSummary = (items, singularLabel = "item") => {
+  const names = uniqueCompactValues(items.map(item => item.itemName || item.name));
+  if (names.length === 0) return "";
+  if (names.length === 1) return names[0];
+  const remaining = names.length - 1;
+  return `${names[0]} + ${remaining} more ${singularLabel}${remaining === 1 ? "" : "s"}`;
+};
 
 const formatCurrency = value => new Intl.NumberFormat("en-PH", {
   style: "currency",
@@ -67,13 +82,13 @@ const getRecordIcon = type => {
 const getRecordTypeLabel = type => {
   switch (type) {
     case "inventory":
-      return "Inventory";
+      return "Active Inventory";
     case "archive":
-      return "Archive";
+      return "Archived Items";
     case "sale":
-      return "Sales";
+      return "Sales Records";
     case "purchase":
-      return "Purchases";
+      return "Purchase Records";
     default:
       return "Record";
   }
@@ -88,6 +103,10 @@ export function SearchModule({ onNavigate }) {
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortBy, setSortBy] = useState("relevance");
   const [sortOrder, setSortOrder] = useState("asc");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [resultGridColumns, setResultGridColumns] = useState(3);
+  const resultsGridRef = useRef(null);
+  const searchResultsPerPage = Math.max(1, resultGridColumns * SEARCH_RESULT_ROWS_PER_PAGE);
 
   const categories = useMemo(
     () => Array.from(new Set([...(inventory || []), ...(archivedInventory || [])].map(product => product.category).filter(Boolean))).sort(),
@@ -173,6 +192,7 @@ export function SearchModule({ onNavigate }) {
     (salesTransactions || []).forEach(sale => {
       const items = getSaleItems(sale);
       const itemNames = uniqueCompactJoin(items.map(item => item.itemName));
+      const itemSummary = formatItemSummary(items, "sold item");
       const categoriesText = uniqueCompactJoin(items.map(item => item.categoryNote ? `${item.category}: ${item.categoryNote}` : item.category));
       records.push({
         key: `sale-${sale.id}`,
@@ -180,7 +200,7 @@ export function SearchModule({ onNavigate }) {
         module: "sales",
         record: sale,
         title: sale.salesNumber || sale.officialInvoiceNumber || `Sale ${sale.id}`,
-        subtitle: itemNames || `${sale.totalQuantity || 0} sold item${Number(sale.totalQuantity) === 1 ? "" : "s"}`,
+        subtitle: itemSummary || `${sale.totalQuantity || 0} sold item${Number(sale.totalQuantity) === 1 ? "" : "s"}`,
         code: sale.officialInvoiceNumber || sale.salesNumber || sale.id,
         category: "",
         status: sale.status || "completed",
@@ -188,7 +208,7 @@ export function SearchModule({ onNavigate }) {
         details: [
           { label: "Customer", value: sale.customerName || "Walk-in", icon: UserRound },
           { label: "Amount", value: formatCurrency(sale.totalAmount), icon: ReceiptText },
-          { label: "Items", value: itemNames || `${sale.totalQuantity || 0} unit${Number(sale.totalQuantity) === 1 ? "" : "s"}`, icon: Package },
+          { label: "Items", value: itemSummary || `${sale.totalQuantity || 0} unit${Number(sale.totalQuantity) === 1 ? "" : "s"}`, fullValue: itemNames, icon: Package },
           { label: "Transaction Date", value: formatDateTime(sale.createdAt), icon: CalendarDays },
         ],
         searchableText: compactJoin([
@@ -219,6 +239,7 @@ export function SearchModule({ onNavigate }) {
     (purchaseTransactions || []).forEach(purchase => {
       const items = getPurchaseItems(purchase);
       const itemNames = uniqueCompactJoin(items.map(item => item.itemName));
+      const itemSummary = formatItemSummary(items, "item");
       const categoriesText = uniqueCompactJoin(items.map(item => item.categoryNote ? `${item.category}: ${item.categoryNote}` : item.category));
       records.push({
         key: `purchase-${purchase.id}`,
@@ -226,7 +247,7 @@ export function SearchModule({ onNavigate }) {
         module: "purchases",
         record: purchase,
         title: purchase.purchaseNumber || `Purchase ${purchase.id}`,
-        subtitle: purchase.supplierName || itemNames || "Purchase record",
+        subtitle: purchase.supplierName || itemSummary || "Purchase record",
         code: purchase.documentNumber || purchase.purchaseNumber || purchase.id,
         category: "",
         status: purchase.status || "completed",
@@ -234,7 +255,7 @@ export function SearchModule({ onNavigate }) {
         details: [
           { label: "Supplier", value: purchase.supplierName || "No supplier", icon: UserRound },
           { label: "Amount", value: formatCurrency(purchase.subtotalAmount), icon: ShoppingCart },
-          { label: "Items", value: itemNames || `${purchase.totalQuantity || 0} unit${Number(purchase.totalQuantity) === 1 ? "" : "s"}`, icon: Package },
+          { label: "Items", value: itemSummary || `${purchase.totalQuantity || 0} unit${Number(purchase.totalQuantity) === 1 ? "" : "s"}`, fullValue: itemNames, icon: Package },
           { label: "Transaction Date", value: formatDateTime(purchase.createdAt), icon: CalendarDays },
         ],
         searchableText: compactJoin([
@@ -245,7 +266,9 @@ export function SearchModule({ onNavigate }) {
           purchase.documentType,
           purchase.documentTypeNote,
           purchase.documentNumber,
-          purchase.paymentTerms,
+          formatPurchasePaymentTerms(purchase.paymentTerms, purchase.creditTermsDays),
+          purchase.paymentDueDate,
+          purchase.paymentStatus,
           purchase.remarks,
           purchase.status,
           purchase.encodedByName,
@@ -295,6 +318,8 @@ export function SearchModule({ onNavigate }) {
     () => Array.from(new Set(searchIndex.records.map(record => record.status).filter(Boolean))).sort(),
     [searchIndex]
   );
+
+  const hasActiveFilters = searchQuery.trim() !== "" || typeFilter !== "all" || categoryFilter !== "all" || statusFilter !== "all";
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -397,7 +422,123 @@ export function SearchModule({ onNavigate }) {
     return sortedResults.slice(0, MAX_SEARCH_RESULTS);
   }, [categoryFilter, debouncedSearchQuery, searchIndex, sortBy, sortOrder, statusFilter, typeFilter]);
 
-  const hasActiveFilters = searchQuery.trim() !== "" || typeFilter !== "all" || categoryFilter !== "all" || statusFilter !== "all";
+  useEffect(() => {
+    const grid = resultsGridRef.current;
+    if (!grid) return undefined;
+
+    const updateColumnCount = () => {
+      const templateColumns = window.getComputedStyle(grid).gridTemplateColumns;
+      const columnCount = templateColumns
+        .split(" ")
+        .filter(column => column && column !== "0px")
+        .length;
+      setResultGridColumns(Math.max(1, columnCount || 1));
+    };
+
+    updateColumnCount();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateColumnCount);
+      return () => window.removeEventListener("resize", updateColumnCount);
+    }
+
+    const resizeObserver = new ResizeObserver(updateColumnCount);
+    resizeObserver.observe(grid);
+    return () => resizeObserver.disconnect();
+  }, [hasActiveFilters, searchResults.length]);
+
+  const totalSearchPages = Math.max(1, Math.ceil(searchResults.length / searchResultsPerPage));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalSearchPages);
+  const pageStartIndex = (safeCurrentPage - 1) * searchResultsPerPage;
+  const paginatedSearchResults = searchResults.slice(pageStartIndex, pageStartIndex + searchResultsPerPage);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [categoryFilter, searchQuery, sortBy, sortOrder, statusFilter, typeFilter]);
+
+  useEffect(() => {
+    if (currentPage > totalSearchPages) {
+      setCurrentPage(totalSearchPages);
+    }
+  }, [currentPage, totalSearchPages]);
+
+  const setSearchPage = updater => {
+    setCurrentPage(previousPage => {
+      const nextPage = typeof updater === "function" ? updater(previousPage) : updater;
+      const numericPage = Number(nextPage);
+      const safePage = Number.isFinite(numericPage) && numericPage > 0 ? numericPage : 1;
+      return Math.min(totalSearchPages, Math.max(1, safePage));
+    });
+  };
+
+  const renderSearchPagination = () => {
+    if (searchResults.length <= searchResultsPerPage) return null;
+
+    const pages = [];
+    if (totalSearchPages <= 7) {
+      for (let page = 1; page <= totalSearchPages; page += 1) pages.push(page);
+    } else {
+      pages.push(1);
+      const start = Math.max(2, safeCurrentPage - 2);
+      const end = Math.min(totalSearchPages - 1, safeCurrentPage + 2);
+      if (start > 2) pages.push("left-ellipsis");
+      for (let page = start; page <= end; page += 1) pages.push(page);
+      if (end < totalSearchPages - 1) pages.push("right-ellipsis");
+      pages.push(totalSearchPages);
+    }
+
+    const rangeStart = searchResults.length === 0 ? 0 : pageStartIndex + 1;
+    const rangeEnd = Math.min(searchResults.length, pageStartIndex + searchResultsPerPage);
+
+    return (
+      <div className="search-pagination" aria-label="Search results pagination">
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => setSearchPage(page => page - 1)}
+          disabled={safeCurrentPage <= 1}
+        >
+          Previous
+        </Button>
+        {pages.map((page, index) => {
+          if (page === "left-ellipsis" || page === "right-ellipsis") {
+            return (
+              <Button key={`${page}-${index}`} type="button" size="sm" variant="ghost" disabled>
+                ...
+              </Button>
+            );
+          }
+
+          return (
+            <Button
+              key={page}
+              type="button"
+              size="sm"
+              variant={page === safeCurrentPage ? undefined : "outline"}
+              onClick={() => setSearchPage(page)}
+              aria-current={page === safeCurrentPage ? "page" : undefined}
+            >
+              {page}
+            </Button>
+          );
+        })}
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => setSearchPage(page => page + 1)}
+          disabled={safeCurrentPage >= totalSearchPages}
+        >
+          Next
+        </Button>
+        <div className="search-pagination-range">
+          {rangeStart}-{rangeEnd} of {searchResults.length} results
+        </div>
+      </div>
+    );
+  };
+
   const openSearchRecord = result => {
     if (!result) return;
 
@@ -420,18 +561,40 @@ export function SearchModule({ onNavigate }) {
     }
 
     if (result.type === "sale") {
+      const saleId = String(result.record?.id || "").trim();
+      const salesNumber = String(result.record?.salesNumber || "").trim();
+      const officialInvoiceNumber = String(result.record?.officialInvoiceNumber || "").trim();
       localStorage.setItem("sales_history_target_period", "all");
+      if (saleId) localStorage.setItem("sales_history_target_sale_id", saleId);
+      if (salesNumber) localStorage.setItem("sales_history_target_sales_number", salesNumber);
+      if (officialInvoiceNumber) localStorage.setItem("sales_history_target_official_invoice_number", officialInvoiceNumber);
       onNavigate?.("sales");
       window.setTimeout(() => {
         window.dispatchEvent(new CustomEvent("sales-history-target-view", {
-          detail: { period: "all" }
+          detail: {
+            period: "all",
+            saleId,
+            salesNumber,
+            officialInvoiceNumber,
+            search: officialInvoiceNumber || salesNumber
+          }
         }));
       }, 80);
       return;
     }
 
     if (result.type === "purchase") {
+      const purchaseId = String(result.record?.purchaseTransactionId || result.record?.id || "").trim();
+      const purchaseNumber = String(result.record?.purchaseNumber || "").trim();
+      localStorage.setItem("purchases_open_history", "true");
+      if (purchaseId) localStorage.setItem("purchases_target_purchase_id", purchaseId);
+      if (purchaseNumber) localStorage.setItem("purchases_target_purchase_number", purchaseNumber);
       onNavigate?.("purchases");
+      window.setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("purchases-target-view", {
+          detail: { purchaseId, purchaseNumber }
+        }));
+      }, 80);
       return;
     }
 
@@ -522,6 +685,30 @@ export function SearchModule({ onNavigate }) {
           gap: 1rem;
           align-items: stretch;
           justify-items: stretch;
+        }
+
+        .search-pagination {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+          margin-top: 1rem;
+          padding-top: 0.85rem;
+          border-top: 1px solid #e2e8f0;
+        }
+
+        .search-pagination button {
+          min-width: 2.5rem;
+          border-radius: 0.7rem;
+          white-space: nowrap;
+        }
+
+        .search-pagination-range {
+          margin-left: 0.35rem;
+          color: #475569;
+          font-size: 0.875rem;
+          white-space: nowrap;
         }
 
         .search-result-card {
@@ -727,14 +914,18 @@ export function SearchModule({ onNavigate }) {
         }
 
         .search-result-detail-value {
-          display: block;
+          display: -webkit-box;
           margin-top: 0.12rem;
           color: #0f172a;
           font-size: 0.88rem;
           font-weight: 700;
           line-height: 1.25;
+          max-height: 3.3rem;
+          overflow: hidden;
           overflow-wrap: break-word;
           word-break: normal;
+          -webkit-box-orient: vertical;
+          -webkit-line-clamp: 3;
         }
 
         .search-result-detail span:last-child {
@@ -752,6 +943,10 @@ export function SearchModule({ onNavigate }) {
 
           .search-results-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .search-pagination {
+            justify-content: flex-start;
           }
         }
 
@@ -806,6 +1001,16 @@ export function SearchModule({ onNavigate }) {
 
           .search-results-card [data-slot="card-content"] {
             padding: 1rem;
+          }
+
+          .search-pagination {
+            justify-content: center;
+          }
+
+          .search-pagination-range {
+            width: 100%;
+            margin-left: 0;
+            text-align: center;
           }
 
           .search-controls-grid {
@@ -1080,7 +1285,7 @@ export function SearchModule({ onNavigate }) {
                 <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
                 <Input
                   className="h-12 pl-10"
-                  placeholder="Search item code, product, supplier, invoice, customer, remarks..."
+                  placeholder="Search by item code, product name, supplier, invoice number, customer, or remarks"
                   value={searchQuery}
                   onChange={event => setSearchQuery(event.target.value)}
                 />
@@ -1089,14 +1294,14 @@ export function SearchModule({ onNavigate }) {
               <div className="search-select-wrap">
                 <Select value={typeFilter} onValueChange={setTypeFilter}>
                   <SelectTrigger className="h-12">
-                    <SelectValue placeholder="Record Type" />
+                    <SelectValue placeholder="Search Area" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Records</SelectItem>
-                    <SelectItem value="inventory">Inventory</SelectItem>
-                    <SelectItem value="archive">Archive</SelectItem>
-                    <SelectItem value="sale">Sales</SelectItem>
-                    <SelectItem value="purchase">Purchases</SelectItem>
+                    <SelectItem value="all">All Search Areas</SelectItem>
+                    <SelectItem value="inventory">Active Inventory</SelectItem>
+                    <SelectItem value="archive">Archived Items</SelectItem>
+                    <SelectItem value="sale">Sales Records</SelectItem>
+                    <SelectItem value="purchase">Purchase Records</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1180,71 +1385,74 @@ export function SearchModule({ onNavigate }) {
                   <p className="text-slate-700">Try a product name, item code, supplier, invoice number, customer, or transaction reference.</p>
                 </div>
               ) : (
-                <div className="search-results-grid">
-                  {searchResults.map(result => {
-                    const RecordIcon = getRecordIcon(result.type);
-                    return (
-                      <Card
-                        key={result.key}
-                        className="search-result-card hover:shadow-lg"
-                        role="button"
-                        tabIndex={0}
-                        aria-label={`View ${result.title} in ${getRecordTypeLabel(result.type)}`}
-                        onClick={() => openSearchRecord(result)}
-                        onKeyDown={event => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            openSearchRecord(result);
-                          }
-                        }}
-                      >
-                        <CardHeader>
-                          <div className="search-result-header">
-                            <span className="search-result-code-badge">
-                              <span className="search-result-code-bars" aria-hidden="true">||||</span>
-                              {result.code || result.record?.id || result.key}
-                            </span>
-                            <span className="search-result-type">
-                              <RecordIcon aria-hidden="true" />
-                              {getRecordTypeLabel(result.type)}
-                            </span>
-                          </div>
-                          <CardTitle className="search-result-name">{result.title}</CardTitle>
-                          {result.status && (
-                            <Badge
-                              variant={result.status === "In Stock" ? "default" : result.status === "Low Stock" ? "secondary" : "outline"}
-                              className={`${["In Stock", "Low Stock", "Out of Stock"].includes(result.status) ? getStockStatusBadgeClass(result.status) : ""} search-result-status-badge`}
-                            >
-                              {result.status}
-                            </Badge>
-                          )}
-                        </CardHeader>
-                        <CardContent>
-                          <div className="search-result-detail-grid">
-                            {result.details.slice(0, 4).map(detail => {
-                              const DetailIcon = detail.icon;
-                              return (
-                                <div key={`${result.key}-${detail.label}`} className="search-result-detail">
-                                  <span className="search-result-detail-icon" aria-hidden="true"><DetailIcon /></span>
-                                  <span>
-                                    <span className="search-result-detail-label">{detail.label}</span>
-                                    <span className="search-result-detail-value">
-                                      {detail.value === null || detail.value === undefined || detail.value === "" ? "-" : detail.value}
+                <>
+                  <div className="search-results-grid" ref={resultsGridRef}>
+                    {paginatedSearchResults.map(result => {
+                      const RecordIcon = getRecordIcon(result.type);
+                      return (
+                        <Card
+                          key={result.key}
+                          className="search-result-card hover:shadow-lg"
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`View ${result.title} in ${getRecordTypeLabel(result.type)}`}
+                          onClick={() => openSearchRecord(result)}
+                          onKeyDown={event => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              openSearchRecord(result);
+                            }
+                          }}
+                        >
+                          <CardHeader>
+                            <div className="search-result-header">
+                              <span className="search-result-code-badge">
+                                <span className="search-result-code-bars" aria-hidden="true">||||</span>
+                                {result.code || result.record?.id || result.key}
+                              </span>
+                              <span className="search-result-type">
+                                <RecordIcon aria-hidden="true" />
+                                {getRecordTypeLabel(result.type)}
+                              </span>
+                            </div>
+                            <CardTitle className="search-result-name">{result.title}</CardTitle>
+                            {result.status && (
+                              <Badge
+                                variant={result.status === "In Stock" ? "default" : result.status === "Low Stock" ? "secondary" : "outline"}
+                                className={`${["In Stock", "Low Stock", "Out of Stock"].includes(result.status) ? getStockStatusBadgeClass(result.status) : ""} search-result-status-badge`}
+                              >
+                                {result.status}
+                              </Badge>
+                            )}
+                          </CardHeader>
+                          <CardContent>
+                            <div className="search-result-detail-grid">
+                              {result.details.slice(0, 4).map(detail => {
+                                const DetailIcon = detail.icon;
+                                return (
+                                  <div key={`${result.key}-${detail.label}`} className="search-result-detail">
+                                    <span className="search-result-detail-icon" aria-hidden="true"><DetailIcon /></span>
+                                    <span>
+                                      <span className="search-result-detail-label">{detail.label}</span>
+                                      <span className="search-result-detail-value">
+                                        {detail.value === null || detail.value === undefined || detail.value === "" ? "-" : detail.value}
+                                      </span>
                                     </span>
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                          <span className="search-result-action">
-                            <span className="inline-flex items-center gap-2"><ExternalLink aria-hidden="true" /> View in {getRecordTypeLabel(result.type)}</span>
-                            <ArrowRight aria-hidden="true" />
-                          </span>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <span className="search-result-action">
+                              <span className="inline-flex items-center gap-2"><ExternalLink aria-hidden="true" /> View in {getRecordTypeLabel(result.type)}</span>
+                              <ArrowRight aria-hidden="true" />
+                            </span>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                  {renderSearchPagination()}
+                </>
               )}
             </CardContent>
           </Card>
@@ -1253,8 +1461,8 @@ export function SearchModule({ onNavigate }) {
             <CardContent className="py-16">
               <div className="search-empty-state text-center text-slate-700">
                 <Search className="mx-auto mb-4 h-16 w-16 opacity-50" />
-                <p className="mb-2 text-lg">Start searching across the system</p>
-                <p className="text-sm">Type a product, item code, supplier, invoice, customer, or record reference.</p>
+                <p className="mb-2 text-lg">Enter a search term to view matching records</p>
+                <p className="text-sm">Search by product, item code, supplier, invoice, customer, or record reference. Use the filters above to narrow the results.</p>
               </div>
             </CardContent>
           </Card>

@@ -95,7 +95,7 @@ const normalizeDetails = details => {
 const formatCustomerType = value => {
   const customerTypes = {
     walk_in: 'Walk-in Customer',
-    sister_company: 'Sister Company',
+    sister_company: 'From Sister Company',
     hardware_reseller: 'Other Hardware / Reseller',
     regular: 'Regular Customer',
     contractor: 'Contractor'

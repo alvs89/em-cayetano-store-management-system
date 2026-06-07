@@ -22,6 +22,9 @@ The Sales Encoder records customer sales, checks item availability, processes it
 ### Inventory Staff
 Inventory Staff can monitor inventory, record Stock In and Stock Out, receive supplier deliveries, review archived items, generate inventory-related reports, and prepare add/edit item requests for Admin review.
 
+### Sales Encoder + Inventory Staff
+This combined role is for staff who may need to help with both sales encoding and inventory work. It is useful for temporary coverage when another staff member is absent or when one employee is assigned both responsibilities.
+
 ---
 
 ## 3. Login and Account Security
@@ -76,7 +79,7 @@ Stock In increases item quantity. Stock Out reduces item quantity for non-sales 
 
 ### Stock In
 
-Use Stock In for corrections or operational stock additions. For supplier deliveries, use Purchase Entry when supplier document details must be recorded.
+Use Stock In for corrections or operational stock additions, including stock received from a sister company or related store. For supplier deliveries, use Purchase Entry when supplier document details must be recorded.
 
 ### Stock Out
 
@@ -100,6 +103,8 @@ The Sales Module records customer transactions using official sales invoice deta
 
 Completed sales deduct tracked inventory and create stock movement records.
 
+Delivery charges are included in overall sales totals because they are part of the amount collected from the customer. Product-level report rows remain item-focused so users can still review product performance clearly.
+
 ### Refunds
 
 Refunds are recorded from completed sales. Select the refundable item, enter the refund quantity, choose or type a clear refund reason, and confirm the refund.
@@ -114,15 +119,20 @@ Cancelling an entire sale is an Admin action. Use refund when only selected item
 
 ## 8. Purchases Module
 
-The Purchases Module records supplier deliveries and purchase entries.
+The Purchases Module records supplier deliveries and purchase entries. It also helps staff monitor supplier payment due dates for credit purchases.
 
 1. Select or enter the supplier.
-2. Add received items.
-3. Enter quantity and unit cost.
-4. Review stock impact and subtotal.
-5. Save the purchase when all details are correct.
+2. Enter the supplier document details, such as DR, SI, OR, or other reference.
+3. Choose the payment term.
+4. If the purchase is on credit, choose the correct credit term such as 15, 30, 60, 90, or 120 days.
+5. Add received items.
+6. Enter quantity and unit cost.
+7. Review stock impact, subtotal, and payment due date.
+8. Save the purchase when all details are correct.
 
 Saved purchase entries increase stock for tracked items and keep supplier receiving records available for reports.
+
+For credit purchases, the system calculates the payment due date from the transaction date and selected credit term. Alerts can remind staff when payment is approaching or overdue. After the supplier has been paid, open the purchase record and mark the payment as paid.
 
 ---
 
@@ -145,13 +155,15 @@ Common report areas include:
 
 Report values are calculated from saved official records. Drafts, unfinished forms, and unapproved requests are not included in official report totals.
 
+Overall sales and Actual Earnings include delivery charges. Item-level sales and profitability rows remain based on sold items so product performance is not mixed with delivery fees.
+
 CSV exports are intended for spreadsheet review and filtering. PDF exports are intended for printable summaries and formal review copies.
 
 ---
 
 ## 10. Alerts and Notifications
 
-Alerts notify users about important operational items such as low stock, out of stock, pending review items, maintenance events, and other system reminders.
+Alerts notify users about important operational items such as low stock, out of stock, supplier payment reminders, pending review items, maintenance events, and other system reminders.
 
 Use filters to focus on the alert type or workflow area that needs attention. Mark alerts as read after reviewing them.
 
@@ -224,12 +236,21 @@ Use the search field to find a topic quickly. The downloaded manual includes the
 
 ---
 
-## 16. Best Practices
+## 16. User Management
+
+User Management is available to Admin users. Admins can create accounts, assign branches, deactivate users, and update user roles.
+
+When staffing coverage is needed, an Admin can assign the combined Sales Encoder + Inventory Staff role. This allows one user to help with both customer sales and inventory receiving tasks without giving full Admin access.
+
+---
+
+## 17. Best Practices
 
 - Check your branch before saving records.
 - Search before creating a new item.
 - Use clear item names and supplier names.
 - Review totals and stock impact before confirming.
+- For credit purchases, choose the correct supplier payment term before saving.
 - Use standard reasons where available.
 - Keep backup files secure.
 - Report incorrect access or suspicious activity to an Admin.
@@ -238,7 +259,7 @@ Use the search field to find a topic quickly. The downloaded manual includes the
 
 ---
 
-## 17. Troubleshooting
+## 18. Troubleshooting
 
 ### A menu or button is not visible
 The action may not be included in your role. Ask an Admin to review your access if your job assignment changed.
@@ -255,9 +276,12 @@ Use only SQL backups generated by this system. Confirm that the file is complete
 ### Search shows no results
 Clear filters, check spelling, or use a shorter keyword.
 
+### A supplier payment alert still appears
+Open the related purchase record and confirm whether the supplier payment has already been settled. Mark the payment as paid only after confirming that the supplier has been paid.
+
 ---
 
-## 18. Support
+## 19. Support
 
 For help, use the Help Module or contact support using the official contact details shown inside the system.
 

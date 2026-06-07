@@ -69,16 +69,16 @@ const CORS_ALLOWED_ORIGINS = (process.env.CORS_ORIGIN || process.env.CLIENT_URL 
   .split(',')
   .map(origin => origin.trim())
   .filter(Boolean);
-const ALLOWED_ROLES = ['Admin', 'Sales Encoder', 'Inventory Staff'];
+const ALLOWED_ROLES = ['Admin', 'Sales Encoder', 'Inventory Staff', 'Sales Encoder + Inventory Staff'];
 const ALLOWED_BRANCHES = ['Manggahan', 'San Rafael'];
 const OFFICIAL_INVENTORY_CATEGORIES = [
-  'Roofing',
-  'PVC Pipe / Fittings',
-  'Steel',
-  'Kiln Dry',
-  'Plywood',
   'Electricals',
+  'Kiln Dry',
   'Paints',
+  'Plywood',
+  'PVC Pipe / Fittings',
+  'Roofing',
+  'Steel',
   'Other'
 ];
 const CATEGORY_ALIASES = {
@@ -347,7 +347,7 @@ async function ensureSchema() {
       username VARCHAR(50) UNIQUE NOT NULL,
       email VARCHAR(100) UNIQUE NOT NULL,
       password_hash VARCHAR(255) NOT NULL,
-      role VARCHAR(30) CHECK (role IN ('Admin', 'Sales Encoder', 'Inventory Staff')) NOT NULL,
+        role VARCHAR(40) CHECK (role IN ('Admin', 'Sales Encoder', 'Inventory Staff', 'Sales Encoder + Inventory Staff')) NOT NULL,
       branch VARCHAR(50),
       status VARCHAR(20) DEFAULT 'Active',
       must_change_password BOOLEAN DEFAULT false,
@@ -501,6 +501,12 @@ async function ensureSchema() {
       document_type_note TEXT,
       document_number VARCHAR(80),
       payment_terms VARCHAR(30) DEFAULT 'cash' CHECK (payment_terms IN ('cash', 'cod', 'credit', 'branch_transfer')),
+      credit_terms_days INTEGER CHECK (credit_terms_days IS NULL OR credit_terms_days IN (15, 30, 60, 90, 120)),
+      payment_due_date DATE,
+      payment_status VARCHAR(20) DEFAULT 'not_applicable' CHECK (payment_status IN ('not_applicable', 'unpaid', 'paid')),
+      payment_paid_at TIMESTAMP,
+      payment_paid_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+      payment_paid_by_name TEXT,
       subtotal_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
       total_quantity INTEGER NOT NULL DEFAULT 0,
       remarks TEXT,
@@ -641,7 +647,7 @@ async function ensureSchema() {
 
   await pool.query(`
     ALTER TABLE users
-    ALTER COLUMN role TYPE VARCHAR(30);
+    ALTER COLUMN role TYPE VARCHAR(40);
   `);
 
   await pool.query(`
@@ -658,7 +664,7 @@ async function ensureSchema() {
   await pool.query(`
     ALTER TABLE users
     ADD CONSTRAINT users_role_check
-    CHECK (role IN ('Admin', 'Sales Encoder', 'Inventory Staff'));
+    CHECK (role IN ('Admin', 'Sales Encoder', 'Inventory Staff', 'Sales Encoder + Inventory Staff'));
   `);
 
   await pool.query(`
@@ -1213,7 +1219,111 @@ async function ensureSchema() {
   `);
   await pool.query(`
     ALTER TABLE purchase_transactions
+    ADD COLUMN IF NOT EXISTS credit_terms_days INTEGER;
+  `);
+  await pool.query(`
+    ALTER TABLE purchase_transactions
+    ADD COLUMN IF NOT EXISTS payment_due_date DATE;
+  `);
+  await pool.query(`
+    ALTER TABLE purchase_transactions
+    ADD COLUMN IF NOT EXISTS payment_status VARCHAR(20) DEFAULT 'not_applicable';
+  `);
+  await pool.query(`
+    ALTER TABLE purchase_transactions
+    ADD COLUMN IF NOT EXISTS payment_paid_at TIMESTAMP;
+  `);
+  await pool.query(`
+    ALTER TABLE purchase_transactions
+    ADD COLUMN IF NOT EXISTS payment_paid_by INT REFERENCES users(user_id) ON DELETE SET NULL;
+  `);
+  await pool.query(`
+    ALTER TABLE purchase_transactions
+    ADD COLUMN IF NOT EXISTS payment_paid_by_name TEXT;
+  `);
+  await pool.query(`
+    ALTER TABLE purchase_transactions
     ADD COLUMN IF NOT EXISTS backdate_reason TEXT;
+  `);
+  await pool.query(`
+    UPDATE purchase_transactions
+    SET credit_terms_days = NULL
+    WHERE credit_terms_days IS NOT NULL
+      AND credit_terms_days NOT IN (15, 30, 60, 90, 120);
+  `);
+  await pool.query(`
+    UPDATE purchase_transactions
+    SET payment_status = CASE
+          WHEN payment_terms = 'credit' THEN 'unpaid'
+          ELSE 'not_applicable'
+        END
+    WHERE payment_status IS NULL
+       OR payment_status NOT IN ('not_applicable', 'unpaid', 'paid');
+  `);
+  await pool.query(`
+    ALTER TABLE purchase_transactions
+    DROP CONSTRAINT IF EXISTS purchase_transactions_credit_terms_days_check;
+  `);
+  await pool.query(`
+    ALTER TABLE purchase_transactions
+    ADD CONSTRAINT purchase_transactions_credit_terms_days_check
+    CHECK (credit_terms_days IS NULL OR credit_terms_days IN (15, 30, 60, 90, 120));
+  `);
+  await pool.query(`
+    ALTER TABLE purchase_transactions
+    DROP CONSTRAINT IF EXISTS purchase_transactions_payment_status_check;
+  `);
+  await pool.query(`
+    ALTER TABLE purchase_transactions
+    ADD CONSTRAINT purchase_transactions_payment_status_check
+    CHECK (payment_status IN ('not_applicable', 'unpaid', 'paid'));
+  `);
+  await pool.query(`
+    WITH purchase_term_suggestions AS (
+      SELECT
+        pt.purchase_transaction_id,
+        COALESCE(
+          MAX(
+            CASE
+              WHEN pi.category = 'Electricals' THEN 90
+              WHEN pi.category = 'Roofing' THEN 120
+              WHEN pi.category = 'PVC Pipe / Fittings' THEN 60
+              WHEN pi.category = 'Kiln Dry' THEN 120
+              WHEN pi.category = 'Plywood' THEN 15
+              WHEN pi.category = 'Steel' THEN 15
+              ELSE NULL
+            END
+          ),
+          30
+        ) AS suggested_credit_days
+      FROM purchase_transactions pt
+      LEFT JOIN purchase_items pi
+        ON pi.purchase_transaction_id = pt.purchase_transaction_id
+      WHERE pt.payment_terms = 'credit'
+      GROUP BY pt.purchase_transaction_id
+    )
+    UPDATE purchase_transactions pt
+    SET credit_terms_days = COALESCE(pt.credit_terms_days, purchase_term_suggestions.suggested_credit_days),
+        payment_due_date = COALESCE(
+          pt.payment_due_date,
+          (COALESCE(pt.created_at, ${PHILIPPINE_NOW_SQL}) + (COALESCE(pt.credit_terms_days, purchase_term_suggestions.suggested_credit_days) * INTERVAL '1 day'))::date
+        )
+    FROM purchase_term_suggestions
+    WHERE pt.purchase_transaction_id = purchase_term_suggestions.purchase_transaction_id
+      AND pt.payment_terms = 'credit'
+      AND (pt.credit_terms_days IS NULL OR pt.payment_due_date IS NULL);
+  `);
+  await pool.query(`
+    UPDATE purchase_transactions
+    SET payment_status = CASE
+          WHEN payment_terms = 'credit' THEN COALESCE(NULLIF(payment_status, 'not_applicable'), 'unpaid')
+          ELSE 'not_applicable'
+        END,
+        credit_terms_days = CASE WHEN payment_terms = 'credit' THEN credit_terms_days ELSE NULL END,
+        payment_due_date = CASE WHEN payment_terms = 'credit' THEN payment_due_date ELSE NULL END
+    WHERE payment_status IS NULL
+       OR payment_terms <> 'credit'
+       OR (payment_terms = 'credit' AND payment_status = 'not_applicable');
   `);
   await pool.query(`
     UPDATE purchase_transactions
@@ -2429,6 +2539,12 @@ function mapPurchaseTransactionRow(row) {
     document_type_note: row.document_type_note,
     document_number: row.document_number,
     payment_terms: row.payment_terms,
+    credit_terms_days: row.credit_terms_days,
+    payment_due_date: row.payment_due_date,
+    payment_status: row.payment_status,
+    payment_paid_at: row.payment_paid_at,
+    payment_paid_by: row.payment_paid_by,
+    payment_paid_by_name: row.payment_paid_by_name,
     subtotal_amount: row.subtotal_amount,
     total_quantity: row.total_quantity,
     remarks: row.remarks,
@@ -2509,6 +2625,7 @@ const STOCK_OUT_REASONS = new Map([
 const STOCK_IN_REASONS = new Map([
   ['delivery_received', 'Delivery Received'],
   ['purchase_received', 'Purchase Received'],
+  ['sister_company', 'From Sister Company'],
   ['returned_item', 'Returned Item'],
   ['customer_refund', 'Customer Refund'],
   ['supplier_replacement', 'Supplier Replacement'],
@@ -2518,6 +2635,22 @@ const STOCK_IN_REASONS = new Map([
   ['correction', 'Correction'],
   ['found_stock', 'Found Stock']
 ]);
+
+const PURCHASE_CREDIT_TERM_DAYS = new Set([15, 30, 60, 90, 120]);
+
+function parsePurchaseCreditTermsDays(value) {
+  const days = Number(value);
+  if (!Number.isInteger(days) || !PURCHASE_CREDIT_TERM_DAYS.has(days)) return null;
+  return days;
+}
+
+function getPurchasePaymentDueDate(actualTransactionAt, creditTermsDays) {
+  if (!creditTermsDays) return null;
+  const baseDate = actualTransactionAt ? new Date(actualTransactionAt) : new Date();
+  const safeBaseDate = Number.isNaN(baseDate.getTime()) ? new Date() : baseDate;
+  safeBaseDate.setDate(safeBaseDate.getDate() + creditTermsDays);
+  return safeBaseDate.toISOString().slice(0, 10);
+}
 
 const ARCHIVE_REASONS = new Map([
   ['discontinued', 'Discontinued'],
@@ -3618,12 +3751,12 @@ function normalizeRole(role) {
 
 function canRecordSales(user) {
   const role = normalizeRole(user?.role);
-  return role === 'Admin' || role === 'Sales Encoder';
+  return role === 'Admin' || role === 'Sales Encoder' || role === 'Sales Encoder + Inventory Staff';
 }
 
 function canPerformInventoryMovement(user) {
   const role = normalizeRole(user?.role);
-  return role === 'Admin' || role === 'Inventory Staff';
+  return role === 'Admin' || role === 'Inventory Staff' || role === 'Sales Encoder + Inventory Staff';
 }
 
 function getRoleLabel(role) {
@@ -3631,6 +3764,7 @@ function getRoleLabel(role) {
   if (normalized === 'Admin') return 'Admin / Owner';
   if (normalized === 'Sales Encoder') return 'Sales Encoder';
   if (normalized === 'Inventory Staff') return 'Inventory Staff';
+  if (normalized === 'Sales Encoder + Inventory Staff') return 'Sales Encoder + Inventory Staff';
   return role || 'User';
 }
 
@@ -4786,6 +4920,97 @@ app.post('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
   }
 });
 
+app.patch('/api/admin/users/:id/details', authenticate, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const fullName = cleanPersonName(req.body.fullName || req.body.full_name);
+  const email = String(req.body.email || '').trim().toLowerCase();
+
+  if (!fullName || !email) {
+    return res.status(400).json({ error: 'Full name and email are required.' });
+  }
+
+  const nameError = validatePersonName(fullName);
+  if (nameError) {
+    return res.status(400).json({ error: nameError });
+  }
+
+  const emailError = validateEmailAddress(email);
+  if (emailError) {
+    return res.status(400).json({ error: emailError });
+  }
+
+  try {
+    const currentResult = await pool.query(
+      `SELECT user_id, full_name, username, email, branch, role, status
+       FROM users
+       WHERE user_id = $1 AND branch = $2`,
+      [id, req.user.branch]
+    );
+
+    if (currentResult.rowCount === 0) {
+      return res.status(404).json({ error: 'User not found in this branch' });
+    }
+
+    const currentUser = currentResult.rows[0];
+    if (
+      currentUser.full_name === fullName &&
+      currentUser.email === email
+    ) {
+      return res.status(400).json({ error: 'No account detail changes were made.' });
+    }
+
+    const duplicateResult = await pool.query(
+      `SELECT email
+       FROM users
+       WHERE user_id <> $1
+         AND LOWER(email) = LOWER($2)
+       LIMIT 1`,
+      [id, email]
+    );
+
+    if (duplicateResult.rowCount > 0) {
+      return res.status(400).json({ error: 'Email address already exists.' });
+    }
+
+    const updated = await pool.query(
+      `UPDATE users
+       SET full_name = $1,
+           email = $2
+       WHERE user_id = $3 AND branch = $4
+       RETURNING user_id, full_name, username, email, branch, role, status, must_change_password, created_at`,
+      [fullName, email, id, req.user.branch]
+    );
+
+    const updatedUser = updated.rows[0];
+    await recordAuditLogSafely(pool, {
+      actorId: req.user.id,
+      targetId: updatedUser.user_id,
+      targetName: updatedUser.full_name,
+      targetType: 'user_account',
+      action: 'UPDATE_USER_ACCOUNT_DETAILS',
+      reason: 'User account identity details updated by admin.',
+      details: {
+        branch: updatedUser.branch,
+        changes: {
+          fullName: currentUser.full_name === fullName ? undefined : {
+            from: currentUser.full_name,
+            to: fullName
+          },
+          email: currentUser.email === email ? undefined : {
+            from: currentUser.email,
+            to: email
+          }
+        }
+      }
+    });
+
+    return res.json({ message: 'User account details updated', user: updatedUser });
+  } catch (err) {
+    console.error('Update user account details error:', err);
+    return res.status(500).json({ error: 'Failed to update user account details' });
+  }
+});
+
 app.post('/api/audit-logs', authenticate, async (req, res) => {
   const action = String(req.body.action || '').trim().toUpperCase();
   const targetName = typeof req.body.target_name === 'string' ? req.body.target_name.trim() : null;
@@ -4876,7 +5101,7 @@ app.post('/api/admin/users/:id/reject', authenticate, requireAdmin, async (req, 
 
   try {
     const current = await pool.query(
-      `SELECT user_id, full_name, email, branch, status
+      `SELECT user_id, full_name, email, branch, role, status
        FROM users
        WHERE user_id = $1 AND branch = $2`,
       [id, req.user.branch]
@@ -4887,6 +5112,18 @@ app.post('/api/admin/users/:id/reject', authenticate, requireAdmin, async (req, 
     }
 
     const previous = current.rows[0];
+    if (previous.role === 'Admin' && previous.status === 'Active') {
+      const adminCount = await pool.query(
+        `SELECT COUNT(*)::int AS count FROM users WHERE role = 'Admin' AND status = 'Active'`
+      );
+
+      if ((adminCount.rows[0]?.count || 0) <= 1) {
+        return res.status(400).json({
+          error: 'Cannot deactivate this account: At least one active Admin / Owner must remain in the system.'
+        });
+      }
+    }
+
     const update = await pool.query(
       `UPDATE users
        SET status = 'Inactive', token_version = COALESCE(token_version, 0) + 1
@@ -5221,9 +5458,9 @@ app.get('/api/inventory', authenticate, async (req, res) => {
 });
 
 app.get('/api/inventory/change-requests', authenticate, async (req, res) => {
-  if (!isAdmin(req.user) && normalizeRole(req.user?.role) !== 'Inventory Staff') {
+  if (!canPerformInventoryMovement(req.user)) {
     return res.status(403).json({
-      error: 'Inventory approval requests are available only to Admin / Owner and Inventory Staff accounts.'
+      error: 'Inventory approval requests are available only to Admin / Owner and inventory-authorized accounts.'
     });
   }
 
@@ -5254,7 +5491,7 @@ app.get('/api/inventory/change-requests', authenticate, async (req, res) => {
 app.post('/api/inventory/change-requests', authenticate, async (req, res) => {
   if (!canPerformInventoryMovement(req.user)) {
     return res.status(403).json({
-      error: 'Inventory change requests are available only to Admin / Owner and Inventory Staff accounts.'
+      error: 'Inventory change requests are available only to Admin / Owner and inventory-authorized accounts.'
     });
   }
 
@@ -6945,6 +7182,12 @@ app.get('/api/purchases', authenticate, async (req, res) => {
          pt.document_type_note,
          pt.document_number,
          pt.payment_terms,
+         pt.credit_terms_days,
+         pt.payment_due_date,
+         pt.payment_status,
+         pt.payment_paid_at,
+         pt.payment_paid_by,
+         pt.payment_paid_by_name,
          pt.subtotal_amount,
          pt.total_quantity,
          pt.remarks,
@@ -6997,7 +7240,7 @@ app.get('/api/purchases', authenticate, async (req, res) => {
 app.post('/api/purchases', authenticate, async (req, res) => {
   if (!canPerformInventoryMovement(req.user)) {
     return res.status(403).json({
-      error: 'Purchase entry is available only to Admin / Owner and Inventory Staff accounts.'
+      error: 'Purchase entry is available only to Admin / Owner and inventory-authorized accounts.'
     });
   }
 
@@ -7007,6 +7250,7 @@ app.post('/api/purchases', authenticate, async (req, res) => {
     document_type_note = '',
     document_number = '',
     payment_terms = 'cash',
+    credit_terms_days = null,
     remarks = '',
     items = []
   } = req.body;
@@ -7039,6 +7283,14 @@ app.post('/api/purchases', authenticate, async (req, res) => {
 
   if (!allowedPaymentTerms.has(normalizedPaymentTerms)) {
     return res.status(400).json({ error: 'Please select valid payment terms.' });
+  }
+
+  const normalizedCreditTermsDays = normalizedPaymentTerms === 'credit'
+    ? parsePurchaseCreditTermsDays(credit_terms_days)
+    : null;
+
+  if (normalizedPaymentTerms === 'credit' && !normalizedCreditTermsDays) {
+    return res.status(400).json({ error: 'Please select valid credit terms: 15, 30, 60, 90, or 120 days.' });
   }
 
   if (!Array.isArray(items) || items.length === 0) {
@@ -7169,6 +7421,10 @@ app.post('/api/purchases', authenticate, async (req, res) => {
     }
 
     const roundedSubtotalAmount = Number(subtotalAmount.toFixed(2));
+    const paymentDueDate = normalizedPaymentTerms === 'credit'
+      ? getPurchasePaymentDueDate(transactionTiming.actualTransactionAt, normalizedCreditTermsDays)
+      : null;
+    const paymentStatus = normalizedPaymentTerms === 'credit' ? 'unpaid' : 'not_applicable';
     const transactionResult = await client.query(
       `INSERT INTO purchase_transactions (
          purchase_number,
@@ -7178,6 +7434,9 @@ app.post('/api/purchases', authenticate, async (req, res) => {
          document_type_note,
          document_number,
          payment_terms,
+         credit_terms_days,
+         payment_due_date,
+         payment_status,
          subtotal_amount,
          total_quantity,
          remarks,
@@ -7188,7 +7447,7 @@ app.post('/api/purchases', authenticate, async (req, res) => {
          encoded_at,
          backdate_reason
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'completed', $11, $12, COALESCE($13::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $14)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, $11, $12, $13, 'completed', $14, $15, COALESCE($16::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $17)
        RETURNING *`,
       [
         purchaseNumber,
@@ -7198,6 +7457,9 @@ app.post('/api/purchases', authenticate, async (req, res) => {
         cleanDocumentTypeNote || null,
         cleanDocumentNumber,
         normalizedPaymentTerms,
+        normalizedCreditTermsDays,
+        paymentDueDate,
+        paymentStatus,
         roundedSubtotalAmount,
         totalQuantity,
         cleanRemarks,
@@ -7280,6 +7542,9 @@ app.post('/api/purchases', authenticate, async (req, res) => {
         documentTypeNote: cleanDocumentTypeNote || null,
         documentNumber: cleanDocumentNumber,
         paymentTerms: normalizedPaymentTerms,
+        creditTermsDays: normalizedCreditTermsDays,
+        paymentDueDate,
+        paymentStatus,
         totalQuantity,
         subtotalAmount: roundedSubtotalAmount,
         itemCount: insertedItems.length,
@@ -7303,6 +7568,109 @@ app.post('/api/purchases', authenticate, async (req, res) => {
     await client.query('ROLLBACK');
     console.error('Record purchase error:', err);
     return res.status(500).json({ error: 'Failed to save purchase. No inventory was added.' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/purchases/:id/payment-status', authenticate, async (req, res) => {
+  if (!canPerformInventoryMovement(req.user)) {
+    return res.status(403).json({
+      error: 'Supplier payment updates are available only to Admin / Owner and inventory-authorized accounts.'
+    });
+  }
+
+  const purchaseTransactionId = Number(req.params.id);
+  const nextPaymentStatus = String(req.body?.payment_status || '').trim().toLowerCase();
+
+  if (!Number.isInteger(purchaseTransactionId) || purchaseTransactionId <= 0) {
+    return res.status(400).json({ error: 'Invalid purchase record.' });
+  }
+
+  if (!['paid', 'unpaid'].includes(nextPaymentStatus)) {
+    return res.status(400).json({ error: 'Payment status must be paid or unpaid.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const currentResult = await client.query(
+      `SELECT *
+       FROM purchase_transactions
+       WHERE purchase_transaction_id = $1
+         AND branch = $2
+       FOR UPDATE`,
+      [purchaseTransactionId, req.user.branch]
+    );
+
+    if (currentResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Purchase record was not found in your branch.' });
+    }
+
+    const currentPurchase = currentResult.rows[0];
+    if (currentPurchase.payment_terms !== 'credit') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only credit purchases can be marked as paid or unpaid.' });
+    }
+
+    const encodedByName = req.user.fullName || req.user.username || 'System User';
+    const isPaidStatus = nextPaymentStatus === 'paid';
+    const updateResult = await client.query(
+      `UPDATE purchase_transactions
+       SET payment_status = $1::varchar,
+           payment_paid_at = CASE WHEN $2::boolean THEN ${PHILIPPINE_NOW_SQL} ELSE NULL END,
+           payment_paid_by = CASE WHEN $2::boolean THEN $3::int ELSE NULL END,
+           payment_paid_by_name = CASE WHEN $2::boolean THEN $4::text ELSE NULL END
+       WHERE purchase_transaction_id = $5
+         AND branch = $6
+       RETURNING *`,
+      [nextPaymentStatus, isPaidStatus, req.user.id, encodedByName, purchaseTransactionId, req.user.branch]
+    );
+
+    const itemsResult = await client.query(
+      `SELECT *
+       FROM purchase_items
+       WHERE purchase_transaction_id = $1
+       ORDER BY purchase_item_id ASC`,
+      [purchaseTransactionId]
+    );
+
+    await recordAuditLog(client, {
+      actorId: req.user.id,
+      targetId: purchaseTransactionId,
+      targetName: currentPurchase.purchase_number,
+      targetType: 'purchase',
+      action: nextPaymentStatus === 'paid' ? 'MARK_SUPPLIER_PAYMENT_PAID' : 'REOPEN_SUPPLIER_PAYMENT',
+      reason: nextPaymentStatus === 'paid'
+        ? 'Supplier payment was marked as paid.'
+        : 'Supplier payment was marked as unpaid for follow-up.',
+      details: {
+        branch: req.user.branch,
+        supplierName: currentPurchase.supplier_name,
+        purchaseNumber: currentPurchase.purchase_number,
+        paymentDueDate: currentPurchase.payment_due_date
+          ? new Date(currentPurchase.payment_due_date).toISOString().slice(0, 10)
+          : null,
+        creditTermsDays: currentPurchase.credit_terms_days,
+        previousPaymentStatus: currentPurchase.payment_status,
+        nextPaymentStatus
+      }
+    });
+
+    await client.query('COMMIT');
+
+    return res.json({
+      purchase: mapPurchaseTransactionRow({
+        ...updateResult.rows[0],
+        items: itemsResult.rows.map(mapPurchaseItemRow)
+      })
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Update supplier payment status error:', err);
+    return res.status(500).json({ error: 'Failed to update supplier payment status.' });
   } finally {
     client.release();
   }
@@ -7640,7 +8008,7 @@ app.post('/api/inventory/batch-stock-out', authenticate, async (req, res) => {
 
   if (!canPerformInventoryMovement(req.user)) {
     return res.status(403).json({
-      error: 'Batch Stock Out is available only to Admin / Owner and Inventory Staff accounts.'
+      error: 'Batch Stock Out is available only to Admin / Owner and inventory-authorized accounts.'
     });
   }
 
@@ -7798,7 +8166,7 @@ app.post('/api/inventory/batch-stock-adjustment', authenticate, async (req, res)
 
   if (!canPerformInventoryMovement(req.user)) {
     return res.status(403).json({
-      error: 'Batch Stock Adjustment is available only to Admin / Owner and Inventory Staff accounts.'
+      error: 'Batch Stock Adjustment is available only to Admin / Owner and inventory-authorized accounts.'
     });
   }
 
@@ -8149,7 +8517,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     if (!canPerformInventoryMovement(req.user)) {
       await client.query('ROLLBACK');
       return res.status(403).json({
-        error: 'Stock In and Stock Out are available only to Admin / Owner and Inventory Staff accounts.'
+        error: 'Stock In and Stock Out are available only to Admin / Owner and inventory-authorized accounts.'
       });
     }
 
@@ -9044,6 +9412,7 @@ const SELECTIVE_EXPORT_DEFINITIONS = {
         ['Total Quantity', 'st.total_quantity::text'],
         ['Subtotal', 'st.subtotal_amount::text'],
         ['Discount', 'st.discount_amount::text'],
+        ['Delivery Charge', 'st.delivery_charge::text'],
         ['VAT Amount', 'st.vat_amount::text'],
         ['Total Amount', 'st.total_amount::text'],
         ['Payment Method', 'st.payment_method'],
@@ -9080,6 +9449,11 @@ const SELECTIVE_EXPORT_DEFINITIONS = {
         ['Document Note', "COALESCE(pt.document_type_note, '')"],
         ['Document Number', "COALESCE(pt.document_number, '')"],
         ['Payment Terms', 'pt.payment_terms'],
+        ['Credit Terms Days', "COALESCE(pt.credit_terms_days::text, '')"],
+        ['Payment Due Date', "COALESCE(TO_CHAR(pt.payment_due_date, 'YYYY-MM-DD'), '')"],
+        ['Payment Status', 'pt.payment_status'],
+        ['Payment Paid At', "COALESCE(TO_CHAR(pt.payment_paid_at, 'YYYY-MM-DD HH12:MI:SS AM') || ' PHT', '')"],
+        ['Payment Paid By', "COALESCE(pt.payment_paid_by_name, '')"],
         ['Status', 'pt.status'],
         ['Total Quantity', 'pt.total_quantity::text'],
         ['Subtotal Amount', 'pt.subtotal_amount::text'],
@@ -9464,12 +9838,12 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
          FROM users
          WHERE (
              branch = ANY($1::text[])
-             OR (role IN ('Sales Encoder', 'Inventory Staff') AND (branch IS NULL OR TRIM(branch) = ''))
+             OR (role IN ('Sales Encoder', 'Inventory Staff', 'Sales Encoder + Inventory Staff') AND (branch IS NULL OR TRIM(branch) = ''))
            )
            AND (
-             role NOT IN ('Admin', 'Sales Encoder', 'Inventory Staff')
+             role NOT IN ('Admin', 'Sales Encoder', 'Inventory Staff', 'Sales Encoder + Inventory Staff')
              OR status NOT IN ('Active', 'Pending', 'Inactive', 'Rejected')
-             OR (role IN ('Sales Encoder', 'Inventory Staff') AND (branch IS NULL OR TRIM(branch) = ''))
+             OR (role IN ('Sales Encoder', 'Inventory Staff', 'Sales Encoder + Inventory Staff') AND (branch IS NULL OR TRIM(branch) = ''))
            )`,
         [scopeBranches]
       ),
@@ -9531,11 +9905,11 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
         [scopeBranches]
       ),
       pool.query(
-        `SELECT LOWER(TRIM(p.name)) AS normalized_name, LOWER(TRIM(p.category)) AS normalized_category, COUNT(*)::int AS count
+        `SELECT bi.branch, LOWER(TRIM(p.name)) AS normalized_name, LOWER(TRIM(p.category)) AS normalized_category, COUNT(*)::int AS count
          FROM products p
          INNER JOIN branch_inventory bi ON bi.product_id = p.product_id
          WHERE bi.branch = ANY($1::text[])
-         GROUP BY LOWER(TRIM(p.name)), LOWER(TRIM(p.category))
+         GROUP BY bi.branch, LOWER(TRIM(p.name)), LOWER(TRIM(p.category))
          HAVING COUNT(*) > 1`,
         [scopeBranches]
       ),
@@ -9583,10 +9957,13 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
          LEFT JOIN branch_inventory bi
            ON bi.inventory_id = si.inventory_id
           AND bi.branch = st.branch
+         LEFT JOIN archived_inventory ai
+           ON ai.original_inventory_id = si.inventory_id
+          AND ai.branch = st.branch
          LEFT JOIN products p ON p.product_id = si.product_id
          WHERE st.branch = ANY($1::text[])
            AND (
-             (si.item_type = 'inventory' AND (si.inventory_id IS NULL OR bi.inventory_id IS NULL OR si.product_id IS NULL OR p.product_id IS NULL))
+             (si.item_type = 'inventory' AND (si.inventory_id IS NULL OR (bi.inventory_id IS NULL AND ai.archived_inventory_id IS NULL) OR si.product_id IS NULL OR p.product_id IS NULL))
              OR (si.item_type = 'non_inventory' AND (si.is_inventory_item = true OR si.inventory_id IS NOT NULL OR si.product_id IS NOT NULL))
            )`,
         [scopeBranches]
@@ -9605,7 +9982,7 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
         [scopeBranches]
       ),
       pool.query(
-        `SELECT purchase_transaction_id, purchase_number, branch, supplier_name, document_type, payment_terms, subtotal_amount, total_quantity, status
+        `SELECT purchase_transaction_id, purchase_number, branch, supplier_name, document_type, payment_terms, credit_terms_days, payment_due_date, payment_status, subtotal_amount, total_quantity, status
          FROM purchase_transactions
          WHERE branch = ANY($1::text[])
            AND (
@@ -9615,6 +9992,9 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
              OR TRIM(supplier_name) = ''
              OR document_type NOT IN ('DR', 'SI', 'OR', 'OTHER')
              OR payment_terms NOT IN ('cash', 'cod', 'credit', 'branch_transfer')
+             OR payment_status NOT IN ('not_applicable', 'unpaid', 'paid')
+             OR (payment_terms = 'credit' AND (credit_terms_days NOT IN (15, 30, 60, 90, 120) OR payment_due_date IS NULL OR payment_status = 'not_applicable'))
+             OR (payment_terms <> 'credit' AND (credit_terms_days IS NOT NULL OR payment_due_date IS NOT NULL OR payment_status <> 'not_applicable'))
              OR subtotal_amount < 0
              OR total_quantity < 0
              OR status NOT IN ('completed', 'cancelled')

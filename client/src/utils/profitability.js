@@ -36,6 +36,7 @@ export const getProfitabilitySummary = (sales = []) =>
   (sales || []).reduce((summary, sale) => {
     if (!sale || sale.status === 'cancelled') return summary;
 
+    const deliveryCharge = roundMoney(sale?.deliveryCharge ?? sale?.delivery_charge);
     (sale.items || []).forEach(item => {
       const line = getSaleLineProfit(sale, item);
       summary.totalSales = roundMoney(summary.totalSales + line.netSales);
@@ -43,6 +44,10 @@ export const getProfitabilitySummary = (sales = []) =>
       summary.actualProfit = roundMoney(summary.actualProfit + line.actualProfit);
       summary.unitsSold += toNumber(item.quantitySold ?? item.quantity_sold);
     });
+
+    summary.deliveryCharges = roundMoney(summary.deliveryCharges + deliveryCharge);
+    summary.totalSales = roundMoney(summary.totalSales + deliveryCharge);
+    summary.actualProfit = roundMoney(summary.actualProfit + deliveryCharge);
 
     return {
       ...summary,
@@ -55,7 +60,8 @@ export const getProfitabilitySummary = (sales = []) =>
     puhunanUsed: 0,
     actualProfit: 0,
     profitMargin: 0,
-    unitsSold: 0
+    unitsSold: 0,
+    deliveryCharges: 0
   });
 
 export const getProductProfitability = (sales = []) => {

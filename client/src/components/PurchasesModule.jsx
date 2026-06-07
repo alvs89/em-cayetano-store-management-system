@@ -1,7 +1,7 @@
 // Purchases module: records delivered supplier items as receiving entries that
 // increase tracked branch inventory.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, Clock, FileText, PackagePlus, Plus, Minus, ReceiptText, RefreshCw, Search, Trash2, Truck, Wallet, X, History } from 'lucide-react';
+import { CalendarDays, CheckCircle, Clock, FileText, PackagePlus, Plus, Minus, ReceiptText, RefreshCw, Search, Trash2, Truck, Wallet, X, History } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from './PageHeader';
 import { useData } from './DataContext';
@@ -44,6 +44,16 @@ const PAYMENT_TERMS = [
   { value: 'credit', label: 'Credit' },
   { value: 'branch_transfer', label: 'Branch Transfer' }
 ];
+const CREDIT_TERM_OPTIONS = [15, 30, 60, 90, 120];
+const CATEGORY_PAYMENT_TERM_SUGGESTIONS = {
+  Steel: { paymentTerms: 'cod', creditDays: 15 },
+  Electricals: { paymentTerms: 'credit', creditDays: 90 },
+  Roofing: { paymentTerms: 'credit', creditDays: 120 },
+  'PVC Pipe / Fittings': { paymentTerms: 'credit', creditDays: 60 },
+  'Kiln Dry': { paymentTerms: 'credit', creditDays: 120 },
+  Plywood: { paymentTerms: 'credit', creditDays: 15 },
+  Paints: { paymentTerms: 'cod', creditDays: null }
+};
 const INVENTORY_PAGE_SIZE = 50;
 const INVENTORY_SORT_OPTIONS = [
   { value: 'name_az', label: 'Name A-Z' },
@@ -67,6 +77,23 @@ const formatDateTime = value => {
   if (!value) return 'No date';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? 'Invalid date' : date.toLocaleString();
+};
+
+const formatDateOnly = value => {
+  if (!value) return 'No due date';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? 'No due date'
+    : date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+};
+
+const getPurchaseDueDatePreview = (actualTransactionAt, creditTermsDays) => {
+  const days = Number(creditTermsDays || 0);
+  if (!days) return '';
+  const baseDate = actualTransactionAt ? new Date(actualTransactionAt) : new Date();
+  if (Number.isNaN(baseDate.getTime())) return '';
+  baseDate.setDate(baseDate.getDate() + days);
+  return baseDate.toISOString();
 };
 
 const toTransactionDateInputValue = value => {
@@ -241,13 +268,14 @@ const getPurchaseReorderInfo = item => {
 };
 
 export function PurchasesModule({ user, onNavigate }) {
-  const { inventory, purchaseTransactions, recordPurchase } = useData();
+  const { inventory, purchaseTransactions, recordPurchase, updatePurchasePaymentStatus } = useData();
   const [supplierName, setSupplierName] = useState('');
   const [supplierMode, setSupplierMode] = useState('listed');
   const [documentType, setDocumentType] = useState('DR');
   const [documentTypeNote, setDocumentTypeNote] = useState('');
   const [documentNumber, setDocumentNumber] = useState('');
   const [paymentTerms, setPaymentTerms] = useState('cash');
+  const [creditTermsDays, setCreditTermsDays] = useState('');
   const [remarks, setRemarks] = useState('');
   const [actualTransactionAt, setActualTransactionAt] = useState('');
   const [backdateReason, setBackdateReason] = useState('');
@@ -262,7 +290,9 @@ export function PurchasesModule({ user, onNavigate }) {
   const [isClearDialogOpen, setIsClearDialogOpen] = useState(false);
   const [isConfirmPurchaseOpen, setIsConfirmPurchaseOpen] = useState(false);
   const [purchaseHistorySearch, setPurchaseHistorySearch] = useState('');
+  const [purchasePaymentStatusFilter, setPurchasePaymentStatusFilter] = useState('all');
   const [selectedPurchaseId, setSelectedPurchaseId] = useState('');
+  const [pendingPurchaseHistoryTarget, setPendingPurchaseHistoryTarget] = useState(null);
   const [highlightedLineIndexes, setHighlightedLineIndexes] = useState([]);
   const [dismissedSupplierSuggestionKey, setDismissedSupplierSuggestionKey] = useState('');
   const [useSupplierFilter, setUseSupplierFilter] = useState(true);
@@ -452,6 +482,16 @@ export function PurchasesModule({ user, onNavigate }) {
   });
 
   const selectedLines = lineDetails.filter(line => line.inventoryId && line.item);
+  const categoryPaymentSuggestions = selectedLines
+    .map(line => CATEGORY_PAYMENT_TERM_SUGGESTIONS[line.item?.category])
+    .filter(Boolean);
+  const suggestedCreditTermsDays = categoryPaymentSuggestions
+    .map(suggestion => Number(suggestion.creditDays || 0))
+    .filter(days => CREDIT_TERM_OPTIONS.includes(days))
+    .sort((a, b) => b - a)[0] || '';
+  const paymentDueDatePreview = paymentTerms === 'credit'
+    ? getPurchaseDueDatePreview(actualTransactionAt, creditTermsDays)
+    : '';
   const totalQuantity = lineDetails.reduce((sum, line) => sum + (Number.isFinite(line.quantity) ? line.quantity : 0), 0);
   const subtotalAmount = lineDetails.reduce((sum, line) => sum + (Number.isFinite(line.subtotal) ? line.subtotal : 0), 0);
   const hasPurchaseFormInput = useMemo(() => (
@@ -460,6 +500,7 @@ export function PurchasesModule({ user, onNavigate }) {
     documentTypeNote.trim() !== '' ||
     documentNumber.trim() !== '' ||
     paymentTerms !== 'cash' ||
+    String(creditTermsDays || '').trim() !== '' ||
     remarks.trim() !== '' ||
     actualTransactionAt.trim() !== '' ||
     backdateReason.trim() !== '' ||
@@ -468,7 +509,7 @@ export function PurchasesModule({ user, onNavigate }) {
       String(line.quantity || '').trim() !== '' ||
       String(line.unitCost || '').trim() !== ''
     ))
-  ), [actualTransactionAt, backdateReason, documentNumber, documentType, documentTypeNote, paymentTerms, purchaseLines, remarks, supplierName]);
+  ), [actualTransactionAt, backdateReason, creditTermsDays, documentNumber, documentType, documentTypeNote, paymentTerms, purchaseLines, remarks, supplierName]);
   const purchaseDraftData = useMemo(() => ({
     supplierName,
     supplierMode,
@@ -476,6 +517,7 @@ export function PurchasesModule({ user, onNavigate }) {
     documentTypeNote,
     documentNumber,
     paymentTerms,
+    creditTermsDays,
     remarks,
     actualTransactionAt,
     backdateReason,
@@ -483,6 +525,7 @@ export function PurchasesModule({ user, onNavigate }) {
   }), [
     actualTransactionAt,
     backdateReason,
+    creditTermsDays,
     documentNumber,
     documentType,
     documentTypeNote,
@@ -556,6 +599,17 @@ export function PurchasesModule({ user, onNavigate }) {
     return null;
   })();
 
+  useEffect(() => {
+    if (paymentTerms !== 'credit') {
+      if (creditTermsDays) setCreditTermsDays('');
+      return;
+    }
+
+    if (!creditTermsDays && suggestedCreditTermsDays) {
+      setCreditTermsDays(String(suggestedCreditTermsDays));
+    }
+  }, [creditTermsDays, paymentTerms, suggestedCreditTermsDays]);
+
   const applyRecoveredPurchaseDraft = draft => {
     const data = draft?.data || {};
     const draftLines = Array.isArray(data.purchaseLines) ? data.purchaseLines : [];
@@ -588,6 +642,7 @@ export function PurchasesModule({ user, onNavigate }) {
     setDocumentTypeNote(String(data.documentTypeNote || '').slice(0, 80));
     setDocumentNumber(String(data.documentNumber || '').slice(0, 80));
     setPaymentTerms(PAYMENT_TERMS.some(term => term.value === data.paymentTerms) ? data.paymentTerms : 'cash');
+    setCreditTermsDays(CREDIT_TERM_OPTIONS.includes(Number(data.creditTermsDays)) ? String(data.creditTermsDays) : '');
     setRemarks(String(data.remarks || '').slice(0, 240));
     setActualTransactionAt(data.actualTransactionAt || '');
     setBackdateReason(String(data.backdateReason || '').slice(0, 240));
@@ -726,6 +781,7 @@ export function PurchasesModule({ user, onNavigate }) {
     const applyEntryTarget = () => {
       setIsPurchaseHistoryOpen(false);
       setPurchaseHistorySearch('');
+      setPurchasePaymentStatusFilter('all');
       setSelectedPurchaseId('');
     };
 
@@ -881,6 +937,7 @@ export function PurchasesModule({ user, onNavigate }) {
     setDocumentTypeNote('');
     setDocumentNumber('');
     setPaymentTerms('cash');
+    setCreditTermsDays('');
     setRemarks('');
     setActualTransactionAt('');
     setBackdateReason('');
@@ -917,6 +974,11 @@ export function PurchasesModule({ user, onNavigate }) {
 
     if (selectedLines.length === 0) {
       toast.error('Add at least one item to the purchase.');
+      return false;
+    }
+
+    if (paymentTerms === 'credit' && !CREDIT_TERM_OPTIONS.includes(Number(creditTermsDays))) {
+      toast.error('Select the supplier credit term for this purchase.');
       return false;
     }
 
@@ -973,6 +1035,7 @@ export function PurchasesModule({ user, onNavigate }) {
         documentTypeNote: documentType === 'OTHER' ? documentTypeNote.trim() : '',
         documentNumber: documentNumber.trim(),
         paymentTerms,
+        creditTermsDays: paymentTerms === 'credit' ? Number(creditTermsDays) : null,
         remarks: remarks.trim(),
         actualTransactionAt: actualTransactionAt || '',
         backdateReason: isPastTransactionDate(actualTransactionAt) ? backdateReason.trim() : '',
@@ -1004,6 +1067,50 @@ export function PurchasesModule({ user, onNavigate }) {
     [purchaseTransactions]
   );
 
+  useEffect(() => {
+    const openTargetPurchase = detail => {
+      const targetPurchaseId = String(detail?.purchaseId || localStorage.getItem('purchases_target_purchase_id') || '').trim();
+      const targetPurchaseNumber = String(detail?.purchaseNumber || localStorage.getItem('purchases_target_purchase_number') || '').trim();
+
+      setIsPurchaseHistoryOpen(true);
+      setPurchasePaymentStatusFilter('all');
+      setPurchaseHistorySearch(targetPurchaseNumber);
+      setPendingPurchaseHistoryTarget({ purchaseId: targetPurchaseId, purchaseNumber: targetPurchaseNumber });
+
+      localStorage.removeItem('purchases_open_history');
+      localStorage.removeItem('purchases_target_purchase_id');
+      localStorage.removeItem('purchases_target_purchase_number');
+    };
+
+    if (localStorage.getItem('purchases_open_history') === 'true') {
+      openTargetPurchase();
+    }
+
+    const handlePurchaseTarget = event => openTargetPurchase(event.detail || {});
+    window.addEventListener('purchases-target-view', handlePurchaseTarget);
+    return () => window.removeEventListener('purchases-target-view', handlePurchaseTarget);
+  }, [sortedPurchases]);
+
+  useEffect(() => {
+    if (!pendingPurchaseHistoryTarget || sortedPurchases.length === 0) return;
+
+    const targetPurchaseId = String(pendingPurchaseHistoryTarget.purchaseId || '').trim();
+    const targetPurchaseNumber = String(pendingPurchaseHistoryTarget.purchaseNumber || '').trim();
+    const matchedPurchase = sortedPurchases.find(purchase => (
+      (targetPurchaseId && (
+        String(purchase.id) === targetPurchaseId ||
+        String(purchase.purchaseTransactionId || '') === targetPurchaseId
+      )) ||
+      (targetPurchaseNumber && purchase.purchaseNumber === targetPurchaseNumber)
+    ));
+
+    if (matchedPurchase?.id) {
+      setSelectedPurchaseId(String(matchedPurchase.id));
+      setPurchaseHistorySearch(matchedPurchase.purchaseNumber || targetPurchaseNumber);
+      setPendingPurchaseHistoryTarget(null);
+    }
+  }, [pendingPurchaseHistoryTarget, sortedPurchases]);
+
   const supplierSelectValue = getSupplierSelectValue(supplierName, supplierMode);
   const showCustomSupplierInput = supplierSelectValue === SUPPLIER_CUSTOM_VALUE;
   const updateCustomSupplierName = value => {
@@ -1021,14 +1128,22 @@ export function PurchasesModule({ user, onNavigate }) {
 
   const filteredPurchaseHistory = useMemo(() => {
     const query = purchaseHistorySearch.trim().toLowerCase();
-    if (!query) return sortedPurchases;
-    return sortedPurchases.filter(purchase => [
+    const statusFiltered = sortedPurchases.filter(purchase => {
+      if (purchasePaymentStatusFilter === 'all') return true;
+      if (purchasePaymentStatusFilter === 'paid') return purchase.paymentTerms === 'credit' && purchase.paymentStatus === 'paid';
+      if (purchasePaymentStatusFilter === 'unpaid') return purchase.paymentTerms === 'credit' && purchase.paymentStatus !== 'paid';
+      return true;
+    });
+    if (!query) return statusFiltered;
+    return statusFiltered.filter(purchase => [
       purchase.purchaseNumber,
       purchase.supplierName,
       purchase.documentType,
       purchase.documentNumber,
       purchase.documentTypeNote,
       purchase.paymentTerms,
+      formatPurchasePaymentTerms(purchase.paymentTerms, purchase.creditTermsDays),
+      purchase.paymentStatus,
       purchase.remarks,
       formatDateTime(purchase.createdAt),
       formatDateTime(purchase.encodedAt),
@@ -1039,11 +1154,34 @@ export function PurchasesModule({ user, onNavigate }) {
         item.categoryNote || item.category_note
       ])
     ].filter(Boolean).join(' ').toLowerCase().includes(query));
-  }, [purchaseHistorySearch, sortedPurchases]);
+  }, [purchaseHistorySearch, purchasePaymentStatusFilter, sortedPurchases]);
 
   const selectedPurchase = filteredPurchaseHistory.find(purchase => String(purchase.id) === String(selectedPurchaseId))
     || filteredPurchaseHistory[0]
     || null;
+
+  const handleUpdatePurchasePaymentStatus = async (purchase, nextStatus) => {
+    const purchaseId = purchase?.purchaseTransactionId || purchase?.id;
+    if (!purchaseId) {
+      toast.error('Failed to update supplier payment status', {
+        description: 'Purchase record is missing its system reference.'
+      });
+      return;
+    }
+    try {
+      const updatedPurchase = await updatePurchasePaymentStatus(purchaseId, nextStatus);
+      if (updatedPurchase?.id) {
+        setSelectedPurchaseId(String(updatedPurchase.id));
+      }
+      toast.success(nextStatus === 'paid' ? 'Supplier payment marked as paid.' : 'Supplier payment marked as unpaid.', {
+        description: purchase.purchaseNumber || 'Purchase record updated.'
+      });
+    } catch (err) {
+      toast.error('Failed to update supplier payment status', {
+        description: err?.response?.data?.error || err.message || 'Please try again.'
+      });
+    }
+  };
 
   return (
     <div className="purchase-screen bg-slate-50 p-4 md:p-6">
@@ -2295,6 +2433,7 @@ export function PurchasesModule({ user, onNavigate }) {
         .purchase-history-search {
           display: flex;
           min-width: 0;
+          width: 100%;
           flex: 1;
           align-items: center;
           gap: 0.85rem;
@@ -2302,12 +2441,82 @@ export function PurchasesModule({ user, onNavigate }) {
           border-radius: 0.75rem;
           background: #ffffff;
           padding: 0 1rem;
+          min-height: 3rem;
+          height: 3rem;
           transition: border-color 160ms ease, box-shadow 160ms ease;
+        }
+
+        .purchase-history-search input {
+          min-width: 0;
+          height: 100%;
         }
 
         .purchase-history-search:focus-within {
           border-color: #f4f400;
           box-shadow: 0 0 0 3px rgba(244, 244, 0, 0.32);
+        }
+
+        .purchase-history-filter-panel {
+          display: grid;
+          grid-template-columns: minmax(320px, 1fr) minmax(24rem, auto);
+          align-items: center;
+          gap: 1rem;
+        }
+
+        .purchase-history-toolbar {
+          display: grid;
+          grid-template-columns: minmax(12.5rem, 14rem) minmax(10rem, auto);
+          align-items: center;
+          justify-content: flex-end;
+          gap: 0.75rem;
+          min-width: 0;
+        }
+
+        .purchase-history-filter {
+          min-width: 0;
+        }
+
+        .purchase-history-filter label {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          padding: 0;
+          margin: -1px;
+          overflow: hidden;
+          clip: rect(0, 0, 0, 0);
+          white-space: nowrap;
+          border: 0;
+        }
+
+        .purchase-history-filter-trigger {
+          height: 3rem;
+          min-height: 3rem;
+          border-color: #dbe3ef;
+          border-radius: 0.75rem;
+          background: #ffffff;
+          font-weight: 700;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+        }
+
+        .purchase-history-filter-trigger:hover,
+        .purchase-history-filter-trigger:focus-visible {
+          border-color: #94a3b8;
+          box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.16);
+        }
+
+        .purchase-history-count {
+          display: inline-flex;
+          height: 3rem;
+          align-items: center;
+          justify-content: center;
+          white-space: nowrap;
+          border-radius: 0.75rem;
+          border: 1px solid #e2e8f0;
+          background: #f8fafc;
+          padding: 0 0.9rem;
+          font-size: 0.875rem;
+          font-weight: 700;
+          color: #475569;
         }
 
         .purchase-history-layout {
@@ -2323,6 +2532,61 @@ export function PurchasesModule({ user, onNavigate }) {
         .purchase-history-detail {
           min-height: 0;
           overflow-y: auto;
+        }
+
+        .purchase-payment-followup {
+          margin: 1rem 0 1.25rem;
+          border: 1px solid #fed7aa;
+          border-radius: 1rem;
+          background: #fff7ed;
+          padding: 1.1rem 1.25rem;
+        }
+
+        .purchase-payment-followup-inner {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) max-content;
+          align-items: center;
+          gap: 1.25rem;
+        }
+
+        .purchase-payment-followup-action {
+          height: 2.5rem;
+          min-width: 8.75rem;
+          justify-content: center;
+          white-space: nowrap;
+          border-radius: 0.75rem;
+          font-weight: 700;
+          transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+        }
+
+        .purchase-payment-followup-action:hover,
+        .purchase-payment-followup-action:focus-visible {
+          transform: translateY(-1px);
+        }
+
+        .purchase-payment-followup-action-paid {
+          border-color: #fdba74;
+          background: #ffffff;
+          color: #9a3412;
+        }
+
+        .purchase-payment-followup-action-paid:hover,
+        .purchase-payment-followup-action-paid:focus-visible {
+          border-color: #fb923c;
+          background: #ffedd5;
+          color: #7c2d12;
+          box-shadow: 0 8px 18px rgba(251, 146, 60, 0.18);
+        }
+
+        .purchase-payment-followup-action-unpaid {
+          background: #16a34a;
+          color: #ffffff;
+        }
+
+        .purchase-payment-followup-action-unpaid:hover,
+        .purchase-payment-followup-action-unpaid:focus-visible {
+          background: #15803d;
+          box-shadow: 0 8px 18px rgba(22, 163, 74, 0.2);
         }
 
         .purchase-history-record-button {
@@ -2457,6 +2721,32 @@ export function PurchasesModule({ user, onNavigate }) {
 
           .purchase-summary-card .purchase-metric:last-child {
             grid-column: auto;
+          }
+
+          .purchase-history-filter-panel {
+            grid-template-columns: 1fr;
+          }
+
+          .purchase-history-toolbar {
+            width: 100%;
+            grid-template-columns: 1fr;
+            justify-content: stretch;
+          }
+
+          .purchase-history-filter {
+            width: 100%;
+          }
+
+          .purchase-history-count {
+            width: 100%;
+          }
+
+          .purchase-payment-followup-inner {
+            grid-template-columns: 1fr;
+          }
+
+          .purchase-payment-followup-action {
+            width: 100%;
           }
 
           .purchase-history-layout {
@@ -3046,12 +3336,44 @@ export function PurchasesModule({ user, onNavigate }) {
                     )}
                   </Field>
                   <Field label="Terms">
-                    <Select value={paymentTerms} onValueChange={setPaymentTerms} disabled={isSaving}>
+                    <Select
+                      value={paymentTerms}
+                      onValueChange={value => {
+                        setPaymentTerms(value);
+                        if (value === 'credit' && suggestedCreditTermsDays && !creditTermsDays) {
+                          setCreditTermsDays(String(suggestedCreditTermsDays));
+                        }
+                        if (value !== 'credit') {
+                          setCreditTermsDays('');
+                        }
+                      }}
+                      disabled={isSaving}
+                    >
                       <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {PAYMENT_TERMS.map(term => <SelectItem key={term.value} value={term.value}>{term.label}</SelectItem>)}
                       </SelectContent>
                     </Select>
+                    {paymentTerms === 'credit' && (
+                      <div className="mt-3 space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                        <Label htmlFor="purchase-credit-terms" className="text-sm font-semibold text-amber-950">
+                          Credit Term
+                        </Label>
+                        <Select value={String(creditTermsDays || '')} onValueChange={setCreditTermsDays} disabled={isSaving}>
+                          <SelectTrigger id="purchase-credit-terms" className="h-10 bg-white">
+                            <SelectValue placeholder="Select days" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {CREDIT_TERM_OPTIONS.map(days => (
+                              <SelectItem key={days} value={String(days)}>{days} days</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs leading-5 text-amber-900">
+                          Due date: <strong>{paymentDueDatePreview ? formatDateOnly(paymentDueDatePreview) : 'Select credit term'}</strong>
+                        </p>
+                      </div>
+                    )}
                   </Field>
                 </div>
                 <div className="purchase-doc-wide">
@@ -3139,7 +3461,7 @@ export function PurchasesModule({ user, onNavigate }) {
             <CardContent className="purchase-card-content purchase-find-content">
                 <div className="purchase-search">
                   <Search className="h-4 w-4 text-slate-500" />
-                  <Input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="Search inventory item..." className="h-9 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0" />
+                  <Input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="Search by item name, item code, category, or supplier" className="h-9 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0" />
                 </div>
                 {supplierName.trim() && (
                   <div className="purchase-supplier-filter-status">
@@ -3578,9 +3900,18 @@ export function PurchasesModule({ user, onNavigate }) {
         purchases={filteredPurchaseHistory}
         totalPurchaseCount={sortedPurchases.length}
         searchValue={purchaseHistorySearch}
-        onSearchChange={setPurchaseHistorySearch}
+        onSearchChange={value => {
+          setPendingPurchaseHistoryTarget(null);
+          setPurchaseHistorySearch(value);
+        }}
+        paymentStatusFilter={purchasePaymentStatusFilter}
+        onPaymentStatusFilterChange={value => {
+          setPendingPurchaseHistoryTarget(null);
+          setPurchasePaymentStatusFilter(value);
+        }}
         selectedPurchase={selectedPurchase}
         onSelectPurchase={purchaseId => setSelectedPurchaseId(String(purchaseId))}
+        onUpdatePaymentStatus={handleUpdatePurchasePaymentStatus}
       />
 
       <Dialog open={isConfirmPurchaseOpen} onOpenChange={open => {
@@ -3610,7 +3941,10 @@ export function PurchasesModule({ user, onNavigate }) {
               </div>
               <div className="purchase-confirm-summary-item">
                 <span>Terms</span>
-                <strong>{formatPurchasePaymentTerms(paymentTerms)}</strong>
+                <strong>{formatPurchasePaymentTerms(paymentTerms, creditTermsDays)}</strong>
+                {paymentTerms === 'credit' && (
+                  <em>Due {paymentDueDatePreview ? formatDateOnly(paymentDueDatePreview) : 'after selected term'}</em>
+                )}
               </div>
               <div className="purchase-confirm-summary-item">
                 <span>Items</span>
@@ -3741,8 +4075,11 @@ function PurchaseHistoryDialog({
   totalPurchaseCount,
   searchValue,
   onSearchChange,
+  paymentStatusFilter,
+  onPaymentStatusFilterChange,
   selectedPurchase,
-  onSelectPurchase
+  onSelectPurchase,
+  onUpdatePaymentStatus
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -3774,19 +4111,35 @@ function PurchaseHistoryDialog({
         </DialogHeader>
 
         <div className="purchase-history-body px-5 py-5 sm:px-7">
-          <div className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="purchase-history-filter-panel rounded-xl border border-slate-200 bg-white p-4">
             <div className="purchase-history-search">
               <Search className="h-5 w-5 shrink-0 text-slate-500" />
               <Input
                 value={searchValue}
                 onChange={event => onSearchChange(event.target.value)}
                 placeholder="Search by purchase number, supplier, document, or item"
-                className="h-11 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+                className="border-0 bg-transparent px-0 text-base shadow-none focus-visible:border-0 focus-visible:ring-0"
               />
             </div>
-            <p className="shrink-0 text-sm font-medium text-slate-600">
-              Showing {purchases.length} of {totalPurchaseCount} purchases
-            </p>
+            <div className="purchase-history-toolbar">
+              <div className="purchase-history-filter">
+                <Label htmlFor="purchase-payment-status-filter">Payment Status</Label>
+                <Select value={paymentStatusFilter} onValueChange={onPaymentStatusFilterChange}>
+                  <SelectTrigger id="purchase-payment-status-filter" className="purchase-history-filter-trigger">
+                    <Wallet className="h-4 w-4 shrink-0 text-slate-500" />
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="paid">Paid</SelectItem>
+                    <SelectItem value="unpaid">Unpaid</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <p className="purchase-history-count">
+                Showing {purchases.length} of {totalPurchaseCount} purchases
+              </p>
+            </div>
           </div>
 
           {purchases.length === 0 ? (
@@ -3798,6 +4151,8 @@ function PurchaseHistoryDialog({
               <div className="purchase-history-list space-y-3 pr-1">
                 {purchases.map(purchase => {
                   const isSelected = selectedPurchase?.id === purchase.id;
+                  const isCreditPurchase = purchase.paymentTerms === 'credit';
+                  const isSupplierPaymentPaid = purchase.paymentStatus === 'paid';
                   return (
                     <button
                       key={purchase.id}
@@ -3822,9 +4177,14 @@ function PurchaseHistoryDialog({
                             {purchase.supplierName || 'No supplier'} - {formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber, purchase.documentTypeNote)}
                           </p>
                         </div>
-                        <div className="shrink-0 text-right">
+                        <div className="flex shrink-0 flex-col items-end gap-2 text-right">
                           <p className="text-base font-extrabold text-slate-900">{formatCurrency(purchase.subtotalAmount)}</p>
-                          <Badge className="mt-2 bg-green-100 text-green-700 hover:bg-green-100">Completed</Badge>
+                          <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Purchase Recorded</Badge>
+                          {isCreditPurchase && (
+                            <Badge className={isSupplierPaymentPaid ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100' : 'bg-amber-100 text-amber-700 hover:bg-amber-100'}>
+                              {isSupplierPaymentPaid ? 'Payment Paid' : 'Payment Unpaid'}
+                            </Badge>
+                          )}
                         </div>
                       </div>
                     </button>
@@ -3834,7 +4194,7 @@ function PurchaseHistoryDialog({
 
               <div className="purchase-history-detail rounded-xl border border-slate-200 bg-white p-5">
                 {selectedPurchase ? (
-                  <PurchaseHistoryDetail purchase={selectedPurchase} />
+                  <PurchaseHistoryDetail purchase={selectedPurchase} onUpdatePaymentStatus={onUpdatePaymentStatus} />
                 ) : (
                   <div className="flex h-full items-center justify-center text-center text-sm text-slate-700">
                     Select a purchase record to view details.
@@ -3849,9 +4209,11 @@ function PurchaseHistoryDialog({
   );
 }
 
-function PurchaseHistoryDetail({ purchase }) {
+function PurchaseHistoryDetail({ purchase, onUpdatePaymentStatus }) {
   const items = getPurchaseItems(purchase);
   const remarksText = getPurchaseRemarksText(purchase) || 'No remarks recorded.';
+  const isCreditPurchase = purchase.paymentTerms === 'credit';
+  const isSupplierPaymentPaid = purchase.paymentStatus === 'paid';
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -3868,7 +4230,14 @@ function PurchaseHistoryDetail({ purchase }) {
             </p>
           )}
         </div>
-        <Badge className="bg-green-100 px-3 py-1 text-green-700 hover:bg-green-100">Completed</Badge>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Badge className="bg-green-100 px-3 py-1 text-green-700 hover:bg-green-100">Purchase Recorded</Badge>
+          {isCreditPurchase && (
+            <Badge className={`px-3 py-1 ${isSupplierPaymentPaid ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100' : 'bg-amber-100 text-amber-700 hover:bg-amber-100'}`}>
+              {isSupplierPaymentPaid ? 'Payment Paid' : 'Payment Unpaid'}
+            </Badge>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -3877,12 +4246,45 @@ function PurchaseHistoryDetail({ purchase }) {
         <HistoryDetail icon={<PackagePlus className="h-5 w-5" />} label="Line Items" value={`${getPurchaseLineCount(purchase)} line${getPurchaseLineCount(purchase) === 1 ? '' : 's'}`} />
         <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="Quantity Added" value={`${getPurchaseQuantity(purchase)} unit${getPurchaseQuantity(purchase) === 1 ? '' : 's'}`} />
         <HistoryDetail icon={<Wallet className="h-5 w-5" />} label="Total Purchase" value={formatCurrency(purchase.subtotalAmount)} />
-        <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Terms" value={formatPurchasePaymentTerms(purchase.paymentTerms)} />
+        <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Terms" value={formatPurchasePaymentTerms(purchase.paymentTerms, purchase.creditTermsDays)} />
+        {isCreditPurchase && (
+          <HistoryDetail icon={<CalendarDays className="h-5 w-5" />} label="Payment Due" value={formatDateOnly(purchase.paymentDueDate)} />
+        )}
+        {isCreditPurchase && (
+          <HistoryDetail icon={<CheckCircle className="h-5 w-5" />} label="Payment Status" value={isSupplierPaymentPaid ? `Paid${purchase.paymentPaidAt ? ` on ${formatDateOnly(purchase.paymentPaidAt)}` : ''}` : 'Unpaid'} />
+        )}
         {purchase.backdateReason && (
           <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Backdate Reason" value={purchase.backdateReason} />
         )}
         <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Remarks" value={remarksText} />
       </div>
+
+      {isCreditPurchase && (
+        <div className="purchase-payment-followup">
+          <div className="purchase-payment-followup-inner">
+            <div>
+              <p className="text-sm font-bold text-slate-900">
+                Supplier payment follow-up
+              </p>
+              <p className="mt-1 text-sm text-slate-700">
+                {isSupplierPaymentPaid
+                  ? 'This credit purchase is already marked as paid.'
+                  : `Payment is due ${formatDateOnly(purchase.paymentDueDate)}. Mark it as paid after the supplier payment is settled.`}
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant={isSupplierPaymentPaid ? 'outline' : undefined}
+              className={`purchase-payment-followup-action ${isSupplierPaymentPaid ? 'purchase-payment-followup-action-paid' : 'purchase-payment-followup-action-unpaid'}`}
+              onClick={() => onUpdatePaymentStatus?.(purchase, isSupplierPaymentPaid ? 'unpaid' : 'paid')}
+            >
+              <CheckCircle className="mr-2 h-4 w-4" />
+              {isSupplierPaymentPaid ? 'Mark Unpaid' : 'Mark Paid'}
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div>
         <div className="mb-2 flex items-center justify-between gap-3 py-1">

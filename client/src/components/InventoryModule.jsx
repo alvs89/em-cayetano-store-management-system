@@ -37,22 +37,22 @@ import {
 } from "../utils/suppliers";
 
 const OFFICIAL_INVENTORY_CATEGORIES = [
-  "Roofing",
-  "PVC Pipe / Fittings",
-  "Steel",
-  "Kiln Dry",
-  "Plywood",
   "Electricals",
+  "Kiln Dry",
   "Paints",
+  "Plywood",
+  "PVC Pipe / Fittings",
+  "Roofing",
+  "Steel",
   "Other"
 ];
 
 const ARCHIVE_REASON_OPTIONS = [
   { value: "discontinued", label: "Discontinued" },
   { value: "duplicate_record", label: "Duplicate Record" },
-  { value: "wrong_entry", label: "Wrong Entry" },
   { value: "expired", label: "Expired" },
   { value: "no_longer_sold", label: "No Longer Sold" },
+  { value: "wrong_entry", label: "Wrong Entry" },
   { value: "other", label: "Other" }
 ];
 
@@ -1080,7 +1080,7 @@ export function InventoryModule({
     if (!action) return;
     if (action === "add-item") {
       if (!canOpenInventoryMasterDataForm) {
-        toast.error("Add Item is available only to Admin / Owner and Inventory Staff accounts.");
+        toast.error("Add Item is available only to Admin / Owner and inventory-authorized accounts.");
         return;
       }
       setDashboardPickerAction(null);
@@ -1090,7 +1090,7 @@ export function InventoryModule({
 
     if (action === "daily-sales-deduction") {
       if (!canPerformInventoryMovement(user?.role)) {
-        toast.error("Batch Stock Out is available only to Admin / Owner and Inventory Staff accounts.");
+        toast.error("Batch Stock Out is available only to Admin / Owner and inventory-authorized accounts.");
         return;
       }
       setDashboardPickerAction(null);
@@ -1100,7 +1100,7 @@ export function InventoryModule({
 
     if (action === "stock-in") {
       if (!canPerformInventoryMovement(user?.role)) {
-        toast.error("Stock In is available only to Admin / Owner and Inventory Staff accounts.");
+        toast.error("Stock In is available only to Admin / Owner and inventory-authorized accounts.");
         return;
       }
       setDashboardPickerItemId(itemId ? String(itemId) : "");
@@ -1110,7 +1110,7 @@ export function InventoryModule({
 
     if (action === "stock-out") {
       if (!canPerformInventoryMovement(user?.role)) {
-        toast.error("Stock Out is available only to Admin / Owner and Inventory Staff accounts.");
+        toast.error("Stock Out is available only to Admin / Owner and inventory-authorized accounts.");
         return;
       }
       setDashboardPickerItemId(itemId ? String(itemId) : "");
@@ -6444,7 +6444,7 @@ export function InventoryModule({
     style: {
       fontSize: "14px"
     }
-  }, "Add stock for multiple items after a verified count. Use Purchase Entry for supplier deliveries so supplier and document details are recorded."))), /*#__PURE__*/React.createElement("div", {
+  }, "Add stock for multiple items after a verified count."))), /*#__PURE__*/React.createElement("div", {
     className: "flex items-center text-green-950",
     style: {
       gap: "12px",
@@ -6463,7 +6463,26 @@ export function InventoryModule({
     style: {
       fontSize: "13px"
     }
-  }, "This creates stock movement and audit records only. It does not create purchase records or supplier reports.")), renderInlineInventoryDraftRecovery("batchStockAdjustment"), /*#__PURE__*/React.createElement("div", {
+  }, "This creates stock movement and audit records only. It does not create purchase records or supplier reports.")), /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center text-blue-950",
+    style: {
+      gap: "12px",
+      border: "1px solid #BFDBFE",
+      background: "#EFF6FF",
+      borderRadius: "10px",
+      padding: "10px 12px"
+    }
+  }, /*#__PURE__*/React.createElement(Info, {
+    className: "shrink-0 text-blue-700",
+    style: {
+      width: "18px",
+      height: "18px"
+    }
+  }), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: "13px"
+    }
+  }, "Use Purchase Entry page for supplier deliveries so supplier and document details are recorded.")), renderInlineInventoryDraftRecovery("batchStockAdjustment"), /*#__PURE__*/React.createElement("div", {
     className: "space-y-2"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "batch-stock-adjustment-reason",
@@ -6970,6 +6989,18 @@ export function InventoryModule({
       fontSize: "13px"
     }
   }, "Add quantity to increase the available stock for this item.")), renderInlineInventoryDraftRecovery("stockIn"), /*#__PURE__*/React.createElement("div", {
+    className: "rounded-xl border border-blue-100 bg-blue-50 text-blue-900",
+    style: {
+      padding: "12px 14px",
+      fontSize: "13px",
+      lineHeight: "1.45"
+    }
+  }, /*#__PURE__*/React.createElement("strong", {
+    style: {
+      display: "block",
+      marginBottom: "3px"
+    }
+  }, "Supplier deliveries"), /*#__PURE__*/React.createElement("span", null, "Use Purchase Entry page for supplier deliveries so supplier and document details are recorded.")), /*#__PURE__*/React.createElement("div", {
     className: "space-y-2"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "stock-in-amount",
@@ -7030,13 +7061,7 @@ export function InventoryModule({
   })), /*#__PURE__*/React.createElement(SelectContent, null, MANUAL_STOCK_IN_REASON_OPTIONS.map(option => /*#__PURE__*/React.createElement(SelectItem, {
     key: option.value,
     value: option.value
-  }, option.label)))), /*#__PURE__*/React.createElement("p", {
-    className: "text-slate-700",
-    style: {
-      fontSize: "12px",
-      lineHeight: "1.45"
-    }
-  }, "Use Purchase Entry for supplier deliveries so supplier and document details are recorded."), stockInReason && /*#__PURE__*/React.createElement("p", {
+  }, option.label)))), stockInReason && /*#__PURE__*/React.createElement("p", {
     className: "text-slate-700",
     style: {
       fontSize: "12px",

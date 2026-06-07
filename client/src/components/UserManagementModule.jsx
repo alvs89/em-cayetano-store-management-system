@@ -17,6 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { useData } from "./DataContext";
 import { PageHeader } from "./PageHeader";
 import { mergeSort } from "../utils/algorithms";
+import { getEmailTypoSuggestion } from "../utils/emailValidation";
 import { ROLE_OPTIONS, getRoleLabel, isAdminRole, normalizeRole } from "../utils/roles";
 
 const sanitizePersonNameInput = value => String(value ?? "").replace(/[^A-Za-zÀ-ÖØ-öø-ÿÑñ .'-]/g, "");
@@ -26,6 +27,7 @@ const isValidUsername = value => /^[A-Za-z0-9._-]{3,30}$/.test(String(value ?? "
 const isValidEmailAddress = value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value ?? "").trim());
 
 const SETUP_ACCOUNT_CREDENTIALS_KEY = "setup_account_credentials";
+const ROLE_FILTER_ALL = "all";
 
 const credentialOwnerKey = credentials =>
   String(credentials?.userId || credentials?.email || credentials?.username || "").trim().toLowerCase();
@@ -37,6 +39,19 @@ const loadSetupAccountCredentials = () => {
     return Array.isArray(parsed) ? parsed.filter(item => item?.temporaryPassword) : [];
   } catch {
     return [];
+  }
+};
+
+const readApiErrorMessage = async (res, fallback = "Request failed") => {
+  try {
+    const data = await res.json();
+    return data?.error || data?.message || fallback;
+  } catch {
+    try {
+      return (await res.text()) || fallback;
+    } catch {
+      return fallback;
+    }
   }
 };
 
@@ -53,6 +68,7 @@ export function UserManagementModule() {
   })();
 
   const [selectedUser, setSelectedUser] = useState(null);
+  const [isEditAccountDialogOpen, setIsEditAccountDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isEditBranchDialogOpen, setIsEditBranchDialogOpen] = useState(false);
   const [showRejectDialog, setShowRejectDialog] = useState(false);
@@ -66,6 +82,11 @@ export function UserManagementModule() {
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [newRole, setNewRole] = useState("");
   const [newBranch, setNewBranch] = useState("");
+  const [accountDetails, setAccountDetails] = useState({
+    fullName: "",
+    username: "",
+    email: ""
+  });
   const [newAccount, setNewAccount] = useState({
     fullName: "",
     username: "",
@@ -77,6 +98,9 @@ export function UserManagementModule() {
   const [setupAccountCredentials, setSetupAccountCredentials] = useState(loadSetupAccountCredentials);
   const [searchQuery, setSearchQuery] = useState("");
   const [inactiveSearchQuery, setInactiveSearchQuery] = useState("");
+  const [activeRoleFilter, setActiveRoleFilter] = useState(ROLE_FILTER_ALL);
+  const [inactiveRoleFilter, setInactiveRoleFilter] = useState(ROLE_FILTER_ALL);
+  const [confirmedEmailTypo, setConfirmedEmailTypo] = useState("");
   const [activeTab, setActiveTab] = useState(() => {
     const targetTab = localStorage.getItem("user_management_target_tab");
     if (targetTab === "inactive" || targetTab === "active") {
@@ -91,6 +115,14 @@ export function UserManagementModule() {
   });
   const [activeSort, setActiveSort] = useState({ key: "fullName", direction: "asc" });
   const [inactiveSort, setInactiveSort] = useState({ key: "fullName", direction: "asc" });
+  const accountEmailTypoSuggestion = useMemo(
+    () => getEmailTypoSuggestion(accountDetails.email),
+    [accountDetails.email]
+  );
+  const newAccountEmailTypoSuggestion = useMemo(
+    () => getEmailTypoSuggestion(newAccount.email),
+    [newAccount.email]
+  );
 
   useEffect(() => {
     const validTabs = new Set(["active", "inactive"]);
@@ -170,6 +202,7 @@ export function UserManagementModule() {
       setShowReactivateDialog(false);
       setShowRoleChangeDialog(false);
       setShowBranchTransferDialog(false);
+      setIsEditAccountDialogOpen(false);
       setIsEditDialogOpen(false);
       setIsEditBranchDialogOpen(false);
     };
@@ -329,7 +362,18 @@ export function UserManagementModule() {
 
     if (scope === "inactive") {
       return (
-        <div className={isMobile ? "user-mobile-actions" : ""}>
+        <div className={isMobile ? "user-mobile-actions" : "flex gap-2"}>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={isActionLoading}
+            className={actionClass}
+            onClick={() => handleOpenEditAccount(user)}
+            title="Edit Account Details"
+          >
+            <User className="w-4 h-4" />
+            {isMobile && <span>Account</span>}
+          </Button>
           <Button
             size="sm"
             disabled={isActionLoading}
@@ -344,6 +388,17 @@ export function UserManagementModule() {
 
     return (
       <div className={isMobile ? "user-mobile-actions" : "flex gap-2"}>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={isActionLoading}
+          className={actionClass}
+          onClick={() => handleOpenEditAccount(user)}
+          title="Edit Account Details"
+        >
+          <User className="w-4 h-4" />
+          {isMobile && <span>Account</span>}
+        </Button>
         <Button
           size="sm"
           variant="outline"
@@ -401,9 +456,12 @@ export function UserManagementModule() {
                 <h3 title={user.fullName}>{user.fullName || "Unnamed User"}</h3>
                 <p>ID: {user.id || "N/A"}</p>
               </div>
-              <Badge variant="outline" className="user-role-badge">
+              <span
+                className="user-role-text user-mobile-role-text"
+                title={user.roleLabel || getRoleLabel(user.role) || "Unassigned"}
+              >
                 {user.roleLabel || getRoleLabel(user.role) || "Unassigned"}
-              </Badge>
+              </span>
             </div>
 
             <div className="user-mobile-fields">
@@ -433,27 +491,52 @@ export function UserManagementModule() {
     </div>
   );
 
+  const renderRoleFilter = (value, onChange) => (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="user-role-filter-trigger" aria-label="Filter users by role">
+        <Users className="h-4 w-4 shrink-0 text-slate-500" />
+        <SelectValue placeholder="All Roles" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={ROLE_FILTER_ALL}>All Roles</SelectItem>
+        {ROLE_OPTIONS.map(option => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+
   const filteredActiveUsers = useMemo(() => {
     const lowerQuery = searchQuery.toLowerCase();
-    const filtered = activeUsers.filter(user =>
-      (user.fullName || "").toLowerCase().includes(lowerQuery) ||
-      (user.username || "").toLowerCase().includes(lowerQuery) ||
-      (user.email || "").toLowerCase().includes(lowerQuery) ||
-      (user.branch || "").toLowerCase().includes(lowerQuery)
-    );
+    const filtered = activeUsers.filter(user => {
+      const matchesSearch = (
+        (user.fullName || "").toLowerCase().includes(lowerQuery) ||
+        (user.username || "").toLowerCase().includes(lowerQuery) ||
+        (user.email || "").toLowerCase().includes(lowerQuery) ||
+        (user.branch || "").toLowerCase().includes(lowerQuery)
+      );
+      const matchesRole = activeRoleFilter === ROLE_FILTER_ALL || normalizeRole(user.role) === activeRoleFilter;
+      return matchesSearch && matchesRole;
+    });
     return mergeSort(filtered, activeComparator);
-  }, [activeUsers, activeComparator, searchQuery]);
+  }, [activeRoleFilter, activeUsers, activeComparator, searchQuery]);
 
   const filteredInactiveUsers = useMemo(() => {
     const lowerQuery = inactiveSearchQuery.toLowerCase();
-    const filtered = inactiveUsers.filter(user =>
-      (user.fullName || "").toLowerCase().includes(lowerQuery) ||
-      (user.username || "").toLowerCase().includes(lowerQuery) ||
-      (user.email || "").toLowerCase().includes(lowerQuery) ||
-      (user.branch || "").toLowerCase().includes(lowerQuery)
-    );
+    const filtered = inactiveUsers.filter(user => {
+      const matchesSearch = (
+        (user.fullName || "").toLowerCase().includes(lowerQuery) ||
+        (user.username || "").toLowerCase().includes(lowerQuery) ||
+        (user.email || "").toLowerCase().includes(lowerQuery) ||
+        (user.branch || "").toLowerCase().includes(lowerQuery)
+      );
+      const matchesRole = inactiveRoleFilter === ROLE_FILTER_ALL || normalizeRole(user.role) === inactiveRoleFilter;
+      return matchesSearch && matchesRole;
+    });
     return mergeSort(filtered, inactiveComparator);
-  }, [inactiveUsers, inactiveComparator, inactiveSearchQuery]);
+  }, [inactiveRoleFilter, inactiveUsers, inactiveComparator, inactiveSearchQuery]);
 
   const renderChangePreview = (label, currentValue, nextValue, nextTone = "yellow") => {
     const hasChange = nextValue && currentValue !== nextValue;
@@ -462,24 +545,29 @@ export function UserManagementModule() {
       : "border-yellow-300 bg-yellow-100 text-slate-900";
 
     return (
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current {label}</p>
-          <div className="mt-2 flex items-center justify-between gap-3">
-            <span className="text-sm font-medium text-slate-700">{currentValue || "Not set"}</span>
-            <Badge variant="outline" className="border-slate-300 text-slate-600">Current</Badge>
+      <div className="user-change-preview-grid">
+        <div className="user-change-preview-card border-slate-200 bg-slate-50">
+          <div className="user-change-preview-header">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current {label}</p>
+            <Badge variant="outline" className="shrink-0 border-slate-300 text-slate-600">Current</Badge>
           </div>
+          <p className="user-change-preview-value text-sm font-semibold text-slate-800" title={currentValue || "Not set"}>
+            {currentValue || "Not set"}
+          </p>
         </div>
-        <div className={`rounded-lg border p-4 shadow-sm transition-all ${hasChange ? nextToneClasses : "border-slate-200 bg-white text-slate-700"}`}>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">New {label}</p>
-          <div className="mt-2 flex items-center justify-between gap-3">
-            <span className={`text-sm font-semibold ${hasChange ? "text-slate-900" : "text-slate-700"}`}>
-              {nextValue || "No selection yet"}
-            </span>
-            <Badge className={hasChange ? "bg-[#FF0000] text-white hover:bg-[#FF0000]" : "bg-slate-200 text-slate-700 hover:bg-slate-200"}>
+        <div className={`user-change-preview-card transition-all ${hasChange ? nextToneClasses : "border-slate-200 bg-white text-slate-700"}`}>
+          <div className="user-change-preview-header">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">New {label}</p>
+            <Badge className={`shrink-0 ${hasChange ? "bg-[#FF0000] text-white hover:bg-[#FF0000]" : "bg-slate-200 text-slate-700 hover:bg-slate-200"}`}>
               {hasChange ? "New Selection" : "Unchanged"}
             </Badge>
           </div>
+          <p
+            className={`user-change-preview-value text-sm font-semibold ${hasChange ? "text-slate-900" : "text-slate-700"}`}
+            title={nextValue || "No selection yet"}
+          >
+            {nextValue || "No selection yet"}
+          </p>
           {hasChange && (
             <p className="mt-3 text-xs font-medium text-slate-700">
               This new {label.toLowerCase()} will be applied after confirmation.
@@ -498,7 +586,142 @@ export function UserManagementModule() {
       role: "Inventory Staff",
       branch: sessionUser?.branch || "Manggahan"
     });
+    setConfirmedEmailTypo("");
     if (clearCredentials) setCreatedAccountCredentials(null);
+  };
+
+  const shouldPauseForEmailTypoWarning = email => {
+    const suggestion = getEmailTypoSuggestion(email);
+    if (!suggestion || confirmedEmailTypo === suggestion.entered) return false;
+
+    setConfirmedEmailTypo(suggestion.entered);
+    return true;
+  };
+
+  const renderEmailTypoWarning = suggestion => {
+    if (!suggestion) return null;
+
+    const isConfirmed = confirmedEmailTypo === suggestion.entered;
+
+    return (
+      <p className={`user-email-typo-warning ${isConfirmed ? "user-email-typo-warning-confirmed" : ""}`}>
+        {isConfirmed
+          ? `Submit again to keep ${suggestion.entered}.`
+          : `Did you mean ${suggestion.suggested}? Please double-check before saving.`}
+      </p>
+    );
+  };
+
+  const handleOpenEditAccount = user => {
+    setSelectedUser(user);
+    setAccountDetails({
+      fullName: user.fullName || "",
+      username: user.username || "",
+      email: user.email || ""
+    });
+    setConfirmedEmailTypo("");
+    setIsEditAccountDialogOpen(true);
+  };
+
+  const updateAccountDetail = (field, value) => {
+    if (field === "email") setConfirmedEmailTypo("");
+    setAccountDetails(prev => ({
+      ...prev,
+      [field]: field === "fullName"
+        ? sanitizePersonNameInput(value)
+        : value
+    }));
+  };
+
+  const resetAccountDetailsDialog = () => {
+    setIsEditAccountDialogOpen(false);
+    setSelectedUser(null);
+    setAccountDetails({ fullName: "", username: "", email: "" });
+    setConfirmedEmailTypo("");
+  };
+
+  const handleUpdateAccountDetails = async event => {
+    event.preventDefault();
+    if (!selectedUser) return;
+
+    const payload = {
+      fullName: accountDetails.fullName.trim(),
+      email: accountDetails.email.trim().toLowerCase()
+    };
+
+    if (!payload.fullName || !payload.email) {
+      toast.error("Please complete the full name and email address.");
+      return;
+    }
+    if (!isValidPersonName(payload.fullName)) {
+      toast.error("Full name should contain letters only.", {
+        description: "Spaces, hyphens, apostrophes, and periods are allowed."
+      });
+      return;
+    }
+    if (!isValidEmailAddress(payload.email)) {
+      toast.error("Please enter a valid email address.");
+      return;
+    }
+    if (shouldPauseForEmailTypoWarning(payload.email)) {
+      return;
+    }
+
+    const noChanges =
+      payload.fullName === (selectedUser.fullName || "") &&
+      payload.email === String(selectedUser.email || "").toLowerCase();
+
+    if (noChanges) {
+      toast.info("No changes made", {
+        description: "The account details are already up to date."
+      });
+      resetAccountDetailsDialog();
+      return;
+    }
+
+    setIsActionLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/users/${selectedUser.id}/details`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error("Account update failed", { description: data.error || res.statusText });
+        return;
+      }
+
+      const updated = normalizeUser(data.user);
+      upsertUser(updated);
+
+      const actingUserId = (sessionUser?.id ?? sessionUser?.user_id ?? "").toString();
+      if (actingUserId && actingUserId === updated.id) {
+        const refreshedSessionUser = {
+          ...sessionUser,
+          id: sessionUser?.id ?? sessionUser?.user_id,
+          fullName: updated.fullName,
+          email: updated.email,
+          role: updated.role,
+          branch: updated.branch
+        };
+        localStorage.setItem("user", JSON.stringify(refreshedSessionUser));
+      }
+
+      toast.success("Account details updated", {
+        description: `${updated.fullName}'s profile information was saved.`
+      });
+      resetAccountDetailsDialog();
+    } catch (err) {
+      console.error(err);
+      toast.error("Network error while updating account details");
+    } finally {
+      setIsActionLoading(false);
+    }
   };
 
   const handleCreateUserAccount = async event => {
@@ -521,6 +744,10 @@ export function UserManagementModule() {
     }
     if (!isValidEmailAddress(newAccount.email)) {
       toast.error("Please enter a valid email address.");
+      return;
+    }
+    const cleanEmail = newAccount.email.trim().toLowerCase();
+    if (shouldPauseForEmailTypoWarning(cleanEmail)) {
       return;
     }
 
@@ -707,7 +934,7 @@ export function UserManagementModule() {
         }
       });
       if (!res.ok) {
-        const message = await res.text();
+        const message = await readApiErrorMessage(res, res.statusText);
         toast.error("Failed to deactivate user", { description: message || res.statusText });
         return;
       }
@@ -1139,8 +1366,8 @@ export function UserManagementModule() {
 
         .user-edit-dialog,
         .user-confirm-dialog {
-          width: min(100% - 2rem, 28rem);
-          max-width: min(100% - 2rem, 28rem) !important;
+          width: min(100% - 2rem, 34rem);
+          max-width: min(100% - 2rem, 34rem) !important;
           gap: 0.85rem;
           border-radius: 1rem;
         }
@@ -1194,11 +1421,6 @@ export function UserManagementModule() {
           padding: 0 1.25rem 1.25rem;
         }
 
-        .user-confirm-dialog .grid.grid-cols-1.gap-3,
-        .user-edit-dialog .grid.grid-cols-1.gap-3 {
-          gap: 0.55rem;
-        }
-
         .user-confirm-dialog .rounded-lg.p-4,
         .user-edit-dialog .rounded-lg.p-4 {
           padding: 0.8rem;
@@ -1208,23 +1430,198 @@ export function UserManagementModule() {
           max-width: 100%;
         }
 
+        .user-filter-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(14rem, 17rem);
+          align-items: center;
+          gap: 0.75rem;
+        }
+
+        .user-search-control {
+          position: relative;
+          min-width: 0;
+        }
+
+        .user-search-control input,
+        .user-role-filter-trigger {
+          height: 2.875rem;
+          min-height: 2.875rem;
+          border-color: #dbe3ef;
+          border-radius: 0.75rem;
+          background: #ffffff;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+        }
+
+        .user-search-control input {
+          padding-left: 2.5rem;
+        }
+
+        .user-role-filter-trigger {
+          width: 100%;
+          justify-content: flex-start;
+          gap: 0.6rem;
+          color: #0f172a;
+          font-weight: 600;
+        }
+
+        .user-role-filter-trigger:hover,
+        .user-role-filter-trigger:focus-visible,
+        .user-search-control input:focus-visible {
+          border-color: #94a3b8;
+          box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.16);
+        }
+
         .user-table-shell {
-          overflow: hidden;
+          overflow-x: auto;
+          overflow-y: hidden;
         }
 
         .user-table-shell table {
-          table-layout: fixed;
+          table-layout: auto;
+          min-width: 1160px;
           width: 100%;
+        }
+
+        .user-role-cell {
+          min-width: 280px;
+          width: 280px;
+          white-space: nowrap;
         }
 
         .user-mobile-list {
           display: none;
         }
 
-        .user-role-badge {
+        .user-role-text {
+          display: block;
+          width: 100%;
           max-width: 100%;
+          color: #0f172a;
+          font-size: 0.875rem;
+          font-weight: 500;
+          line-height: 1.35;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: clip;
+          text-align: left;
+        }
+
+        .user-mobile-role-text {
+          width: auto;
+          max-width: none;
+          flex-shrink: 1;
+          color: #334155;
+          font-size: 0.8125rem;
           white-space: normal;
-          text-align: center;
+        }
+
+        .user-change-preview-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.75rem;
+        }
+
+        .user-change-preview-card {
+          min-width: 0;
+          border-width: 1px;
+          border-style: solid;
+          border-radius: 0.85rem;
+          padding: 0.9rem;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+        }
+
+        .user-change-preview-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.75rem;
+        }
+
+        .user-change-preview-value {
+          display: block;
+          max-width: 100%;
+          min-height: 1.5rem;
+          margin-top: 0.85rem;
+          line-height: 1.35;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .user-role-select-trigger {
+          min-height: 44px;
+          height: auto;
+          align-items: center;
+          white-space: normal;
+          line-height: 1.3;
+        }
+
+        .user-role-select-trigger [data-slot="select-value"] {
+          white-space: normal;
+          overflow-wrap: anywhere;
+          line-clamp: unset;
+          -webkit-line-clamp: unset;
+        }
+
+        .user-account-details-form {
+          display: grid;
+          gap: 1rem;
+          padding-top: 0.5rem;
+        }
+
+        .user-account-details-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 1rem;
+        }
+
+        .user-immutable-input:disabled {
+          cursor: not-allowed;
+          border-color: #dbe3ef;
+          background: #f8fafc;
+          color: #475569;
+          opacity: 1;
+        }
+
+        .user-email-typo-warning {
+          margin-top: 0.45rem;
+          color: #92400e;
+          font-size: 0.78rem;
+          font-weight: 600;
+          line-height: 1.45;
+        }
+
+        .user-email-typo-warning-confirmed {
+          color: #0f766e;
+        }
+
+        .user-account-details-note {
+          display: flex;
+          align-items: flex-start;
+          gap: 0.6rem;
+          border: 1px solid #bfdbfe;
+          border-radius: 0.85rem;
+          background: #eff6ff;
+          padding: 0.85rem;
+          color: #1e3a8a;
+          font-size: 0.875rem;
+          line-height: 1.45;
+        }
+
+        .user-account-details-note svg {
+          margin-top: 0.1rem;
+          flex-shrink: 0;
+          color: #2563eb;
+        }
+
+        @media (max-width: 640px) {
+          .user-change-preview-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .user-account-details-grid {
+            grid-template-columns: 1fr;
+          }
         }
 
         .user-mobile-empty {
@@ -1446,10 +1843,17 @@ export function UserManagementModule() {
             margin-bottom: 0.875rem;
           }
 
-          .user-search-wrap input {
+          .user-filter-row {
+            grid-template-columns: 1fr;
+            gap: 0.65rem;
+          }
+
+          .user-search-control input,
+          .user-role-filter-trigger {
             min-height: 2.75rem;
+            height: 2.75rem;
             font-size: 0.95rem;
-            text-overflow: ellipsis;
+            text-overflow: clip;
           }
 
           .user-table-shell {
@@ -1764,36 +2168,37 @@ export function UserManagementModule() {
               </TabsList>
 
               <TabsContent value="active">
-                <div className="user-search-wrap mb-4">
-                  <div className="relative">
+                <div className="user-filter-row user-search-wrap mb-4">
+                  <div className="user-search-control">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                     <Input
-                      placeholder="Search by name, username, email, or role..."
+                      placeholder="Search by full name, username, email address, or branch"
                       value={searchQuery}
                       onChange={e => setSearchQuery(e.target.value)}
-                      className="pl-10 border-[#7a4b00] ring-1 ring-[#7a4b00] focus:border-[#593500] focus:ring-[#593500]"
+                      className="border-slate-200"
                     />
                   </div>
+                  {renderRoleFilter(activeRoleFilter, setActiveRoleFilter)}
                 </div>
                 <div className="user-table-shell border border-slate-200 rounded-lg">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="w-[18%]">
+                        <TableHead className="w-[17%]">
                           {renderSortableHeader("active", "fullName", "Full Name")}
                         </TableHead>
-                        <TableHead className="w-[14%]">
+                        <TableHead className="w-[12%]">
                           {renderSortableHeader("active", "username", "Username")}
                         </TableHead>
-                        <TableHead className="w-[24%]">
+                        <TableHead className="w-[18%]">
                           {renderSortableHeader("active", "email", "Email")}
                         </TableHead>
-                        <TableHead className="w-[12%]">
-                          {renderSortableHeader("active", "role", "Role")}
+                        <TableHead className="w-[20%]">
+                          <span className="font-medium text-slate-700">Role</span>
                         </TableHead>
-                        <TableHead className="w-[12%]">Branch</TableHead>
-                        <TableHead className="w-[10%]">Status</TableHead>
-                        <TableHead className="w-[10%]">Actions</TableHead>
+                        <TableHead className="w-[10%]">Branch</TableHead>
+                        <TableHead className="w-[8%]">Status</TableHead>
+                        <TableHead className="w-[15%]">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1815,8 +2220,13 @@ export function UserManagementModule() {
                             <TableCell className="text-sm truncate" title={user.email}>
                               {user.email}
                             </TableCell>
-                            <TableCell>
-                              <Badge variant="outline">{user.roleLabel || getRoleLabel(user.role)}</Badge>
+                            <TableCell className="user-role-cell">
+                              <span
+                                className="user-role-text"
+                                title={user.roleLabel || getRoleLabel(user.role)}
+                              >
+                                {user.roleLabel || getRoleLabel(user.role)}
+                              </span>
                             </TableCell>
                             <TableCell className="text-sm">{user.branch}</TableCell>
                             <TableCell>
@@ -1838,37 +2248,38 @@ export function UserManagementModule() {
               </TabsContent>
 
               <TabsContent value="inactive">
-                <div className="user-search-wrap mb-4">
-                  <div className="relative">
+                <div className="user-filter-row user-search-wrap mb-4">
+                  <div className="user-search-control">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                     <Input
-                      placeholder="Search by name, username, email, or role..."
+                      placeholder="Search by full name, username, email address, or branch"
                       value={inactiveSearchQuery}
                       onChange={e => setInactiveSearchQuery(e.target.value)}
-                      className="pl-10 border-[#7a4b00] ring-1 ring-[#7a4b00] focus:border-[#593500] focus:ring-[#593500]"
+                      className="border-slate-200"
                     />
                   </div>
+                  {renderRoleFilter(inactiveRoleFilter, setInactiveRoleFilter)}
                 </div>
 
                 <div className="user-table-shell border border-slate-200 rounded-lg">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="w-[22%]">
+                        <TableHead className="w-[17%]">
                           {renderSortableHeader("inactive", "fullName", "Full Name")}
                         </TableHead>
-                        <TableHead className="w-[14%]">
+                        <TableHead className="w-[12%]">
                           {renderSortableHeader("inactive", "username", "Username")}
                         </TableHead>
-                        <TableHead className="w-[22%]">
+                        <TableHead className="w-[18%]">
                           {renderSortableHeader("inactive", "email", "Email")}
                         </TableHead>
-                        <TableHead className="w-[12%]">
-                          {renderSortableHeader("inactive", "role", "Role")}
+                        <TableHead className="w-[20%]">
+                          <span className="font-medium text-slate-700">Role</span>
                         </TableHead>
-                        <TableHead className="w-[12%]">Branch</TableHead>
-                        <TableHead className="w-[10%]">Status</TableHead>
-                        <TableHead className="w-[8%]">Actions</TableHead>
+                        <TableHead className="w-[10%]">Branch</TableHead>
+                        <TableHead className="w-[8%]">Status</TableHead>
+                        <TableHead className="w-[15%]">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1890,8 +2301,13 @@ export function UserManagementModule() {
                             <TableCell className="text-sm truncate" title={user.email}>
                               {user.email}
                             </TableCell>
-                            <TableCell>
-                              <Badge variant="outline">{user.roleLabel || getRoleLabel(user.role)}</Badge>
+                            <TableCell className="user-role-cell">
+                              <span
+                                className="user-role-text"
+                                title={user.roleLabel || getRoleLabel(user.role)}
+                              >
+                                {user.roleLabel || getRoleLabel(user.role)}
+                              </span>
                             </TableCell>
                             <TableCell className="text-sm">{user.branch}</TableCell>
                             <TableCell>
@@ -1974,10 +2390,14 @@ export function UserManagementModule() {
                     id="create-email"
                     type="email"
                     value={newAccount.email}
-                    onChange={event => setNewAccount(prev => ({ ...prev, email: event.target.value }))}
+                    onChange={event => {
+                      setConfirmedEmailTypo("");
+                      setNewAccount(prev => ({ ...prev, email: event.target.value }));
+                    }}
                     placeholder="user@email.com"
                     disabled={isActionLoading || Boolean(createdAccountCredentials)}
                   />
+                  {renderEmailTypoWarning(newAccountEmailTypoSuggestion)}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="create-role">System Role</Label>
@@ -2193,6 +2613,83 @@ export function UserManagementModule() {
           </DialogContent>
         </Dialog>
 
+        <Dialog
+          open={isEditAccountDialogOpen}
+          onOpenChange={open => {
+            if (open) {
+              setIsEditAccountDialogOpen(true);
+            } else {
+              resetAccountDetailsDialog();
+            }
+          }}
+        >
+          <DialogContent className="user-edit-dialog user-account-details-dialog">
+            <DialogHeader>
+              <DialogTitle>Edit Account Details</DialogTitle>
+              <DialogDescription className="mt-2 text-sm leading-6 text-slate-700">
+                Update the employee's name and contact email. Role and branch access are managed separately.
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleUpdateAccountDetails} className="user-account-details-form">
+              <div className="space-y-2">
+                <Label htmlFor="edit-full-name">Full Name</Label>
+                <Input
+                  id="edit-full-name"
+                  value={accountDetails.fullName}
+                  onChange={event => updateAccountDetail("fullName", event.target.value)}
+                  placeholder="Enter full name"
+                  autoComplete="name"
+                />
+              </div>
+              <div className="user-account-details-grid">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-username">Username</Label>
+                  <Input
+                    id="edit-username"
+                    value={accountDetails.username}
+                    readOnly
+                    disabled
+                    className="user-immutable-input"
+                    placeholder="Username"
+                    autoComplete="username"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-email">Email Address</Label>
+                  <Input
+                    id="edit-email"
+                    type="email"
+                    value={accountDetails.email}
+                    onChange={event => updateAccountDetail("email", event.target.value)}
+                    placeholder="Enter email address"
+                    autoComplete="email"
+                  />
+                  {renderEmailTypoWarning(accountEmailTypoSuggestion)}
+                </div>
+              </div>
+              <div className="user-account-details-note">
+                <Info className="h-4 w-4" />
+                <span>
+                  Use this only to correct employee identity and contact details. Permission changes should still be handled through Role or Branch.
+                </span>
+              </div>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={resetAccountDetailsDialog}
+                  disabled={isActionLoading}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isActionLoading}>
+                  {isActionLoading ? "Saving..." : "Save Details"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
         <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
           <DialogContent className="user-edit-dialog">
             <DialogHeader>
@@ -2203,7 +2700,7 @@ export function UserManagementModule() {
               <div className="space-y-2">
                 <Label htmlFor="role">Role</Label>
                 <Select value={newRole} onValueChange={setNewRole}>
-                  <SelectTrigger id="role">
+                  <SelectTrigger id="role" className="user-role-select-trigger">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

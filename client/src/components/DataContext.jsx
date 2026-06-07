@@ -9,6 +9,7 @@ import { canPerformInventoryMovement, isAdminRole } from "../utils/roles";
 const DataContext = createContext(undefined);
 
 const formatUnitQuantity = quantity => `${quantity} ${Number(quantity) === 1 ? "unit" : "units"}`;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const computeStockStatusFromLevels = (quantity, reorderLevel) => {
   const stockLevel = Number(quantity || 0);
@@ -233,6 +234,58 @@ const generateSystemAlerts = (summary, role) => {
 
   return alerts;
 };
+
+const generateSupplierPaymentAlerts = (purchases, role) => {
+  if (!canPerformInventoryMovement(role)) return [];
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  return (purchases || [])
+    .filter(purchase => (
+      purchase.status !== 'cancelled' &&
+      purchase.paymentTerms === 'credit' &&
+      purchase.paymentStatus !== 'paid' &&
+      purchase.paymentDueDate
+    ))
+    .map(purchase => {
+      const dueDate = new Date(purchase.paymentDueDate);
+      if (Number.isNaN(dueDate.getTime())) return null;
+      dueDate.setHours(0, 0, 0, 0);
+      const daysUntilDue = Math.ceil((dueDate.getTime() - todayStart.getTime()) / DAY_MS);
+      if (daysUntilDue > 30) return null;
+
+      const isOverdue = daysUntilDue < 0;
+      const isDueToday = daysUntilDue === 0;
+      const dueLabel = isOverdue
+        ? `${Math.abs(daysUntilDue)} day${Math.abs(daysUntilDue) === 1 ? '' : 's'} overdue`
+        : isDueToday
+          ? 'due today'
+          : `due in ${daysUntilDue} day${daysUntilDue === 1 ? '' : 's'}`;
+
+      return {
+        id: `supplier-payment-${purchase.id}-${purchase.paymentDueDate}`,
+        type: isOverdue || daysUntilDue <= 7 ? 'warning' : 'info',
+        title: isOverdue ? 'Overdue Supplier Payment' : 'Supplier Payment Reminder',
+        message: `${purchase.supplierName || 'Supplier'} payment for ${purchase.purchaseNumber || 'purchase'} is ${dueLabel}. Amount: ${formatCurrencyForAlert(purchase.subtotalAmount)}.`,
+        timestampRaw: purchase.paymentDueDate,
+        read: false,
+        actionable: true,
+        relatedModule: 'purchases',
+        actionLabel: 'Review Purchase',
+        purchaseId: purchase.id,
+        purchaseNumber: purchase.purchaseNumber
+      };
+    })
+    .filter(Boolean);
+};
+
+const formatCurrencyForAlert = value =>
+  new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: 'PHP',
+    minimumFractionDigits: 2
+  }).format(Number(value || 0));
 
 export function DataProvider({ children }) {
   const [inventory, setInventory] = useState([]);
@@ -589,42 +642,58 @@ export function DataProvider({ children }) {
     return String(res.data?.invoice_number || "").trim();
   }, []);
 
-  const mapPurchaseTransaction = (purchase) => ({
-    id: purchase.purchase_transaction_id?.toString() ?? '',
-    purchaseNumber: purchase.purchase_number || '',
-    branch: purchase.branch || '',
-    supplierName: purchase.supplier_name || '',
-    documentType: purchase.document_type || 'DR',
-    documentTypeNote: purchase.document_type_note || '',
-    documentNumber: purchase.document_number || '',
-    paymentTerms: purchase.payment_terms || 'cash',
-    subtotalAmount: Number(purchase.subtotal_amount || 0),
-    totalQuantity: Number(purchase.total_quantity || 0),
-    remarks: purchase.remarks || '',
-    status: purchase.status || 'completed',
-    encodedBy: purchase.encoded_by?.toString() ?? '',
-    encodedByName: purchase.encoded_by_name || '',
-    createdAt: purchase.created_at ? new Date(purchase.created_at).toISOString() : '',
-    encodedAt: purchase.encoded_at ? new Date(purchase.encoded_at).toISOString() : '',
-    backdateReason: purchase.backdate_reason || '',
-    cancelledAt: purchase.cancelled_at ? new Date(purchase.cancelled_at).toISOString() : '',
-    cancelReason: purchase.cancel_reason || '',
-    items: (purchase.items || []).map((item) => ({
-      id: item.purchase_item_id?.toString() ?? '',
-      inventoryId: item.inventory_id?.toString() ?? '',
-      productId: item.product_id?.toString() ?? '',
-      itemName: item.item_name || '',
-      category: item.category || '',
-      categoryNote: item.category_note || '',
-      branch: item.branch || '',
-      quantityReceived: Number(item.quantity_received || 0),
-      unitCost: Number(item.unit_cost || 0),
-      subtotal: Number(item.subtotal || 0),
-      previousQuantity: Number(item.previous_quantity || 0),
-      newQuantity: Number(item.new_quantity || 0),
-      createdAt: item.created_at ? new Date(item.created_at).toISOString() : '',
-    })),
-  });
+  const mapPurchaseTransaction = (purchase) => {
+    const purchaseTransactionId = purchase.purchase_transaction_id ?? purchase.purchaseTransactionId ?? purchase.id ?? '';
+    return {
+      id: purchaseTransactionId?.toString() ?? '',
+      purchaseTransactionId: purchaseTransactionId?.toString() ?? '',
+      purchaseNumber: purchase.purchase_number || purchase.purchaseNumber || '',
+      branch: purchase.branch || '',
+      supplierName: purchase.supplier_name || purchase.supplierName || '',
+      documentType: purchase.document_type || purchase.documentType || 'DR',
+      documentTypeNote: purchase.document_type_note || purchase.documentTypeNote || '',
+      documentNumber: purchase.document_number || purchase.documentNumber || '',
+      paymentTerms: purchase.payment_terms || purchase.paymentTerms || 'cash',
+      creditTermsDays: purchase.credit_terms_days === null || purchase.credit_terms_days === undefined
+        ? (purchase.creditTermsDays === null || purchase.creditTermsDays === undefined ? '' : Number(purchase.creditTermsDays))
+        : Number(purchase.credit_terms_days),
+      paymentDueDate: purchase.payment_due_date
+        ? new Date(purchase.payment_due_date).toISOString()
+        : purchase.paymentDueDate || '',
+      paymentStatus: purchase.payment_status || purchase.paymentStatus || 'not_applicable',
+      paymentPaidAt: purchase.payment_paid_at
+        ? new Date(purchase.payment_paid_at).toISOString()
+        : purchase.paymentPaidAt || '',
+      paymentPaidBy: purchase.payment_paid_by?.toString() ?? purchase.paymentPaidBy?.toString() ?? '',
+      paymentPaidByName: purchase.payment_paid_by_name || purchase.paymentPaidByName || '',
+      subtotalAmount: Number(purchase.subtotal_amount ?? purchase.subtotalAmount ?? 0),
+      totalQuantity: Number(purchase.total_quantity ?? purchase.totalQuantity ?? 0),
+      remarks: purchase.remarks || '',
+      status: purchase.status || 'completed',
+      encodedBy: purchase.encoded_by?.toString() ?? purchase.encodedBy?.toString() ?? '',
+      encodedByName: purchase.encoded_by_name || purchase.encodedByName || '',
+      createdAt: purchase.created_at ? new Date(purchase.created_at).toISOString() : purchase.createdAt || '',
+      encodedAt: purchase.encoded_at ? new Date(purchase.encoded_at).toISOString() : purchase.encodedAt || '',
+      backdateReason: purchase.backdate_reason || purchase.backdateReason || '',
+      cancelledAt: purchase.cancelled_at ? new Date(purchase.cancelled_at).toISOString() : purchase.cancelledAt || '',
+      cancelReason: purchase.cancel_reason || purchase.cancelReason || '',
+      items: (purchase.items || []).map((item) => ({
+        id: item.purchase_item_id?.toString() ?? item.id?.toString() ?? '',
+        inventoryId: item.inventory_id?.toString() ?? item.inventoryId?.toString() ?? '',
+        productId: item.product_id?.toString() ?? item.productId?.toString() ?? '',
+        itemName: item.item_name || item.itemName || '',
+        category: item.category || '',
+        categoryNote: item.category_note || item.categoryNote || '',
+        branch: item.branch || '',
+        quantityReceived: Number(item.quantity_received ?? item.quantityReceived ?? 0),
+        unitCost: Number(item.unit_cost ?? item.unitCost ?? 0),
+        subtotal: Number(item.subtotal || 0),
+        previousQuantity: Number(item.previous_quantity ?? item.previousQuantity ?? 0),
+        newQuantity: Number(item.new_quantity ?? item.newQuantity ?? 0),
+        createdAt: item.created_at ? new Date(item.created_at).toISOString() : item.createdAt || '',
+      })),
+    };
+  };
 
   const fetchPurchaseTransactions = useCallback(async () => {
     try {
@@ -827,7 +896,8 @@ export function DataProvider({ children }) {
   const alerts = useMemo(() => {
     const inventoryAlerts = generateInventoryAlerts(inventory);
     const systemAlerts = generateSystemAlerts(systemSummary, activeUserRole);
-    return [...inventoryAlerts, ...systemAlerts]
+    const supplierPaymentAlerts = generateSupplierPaymentAlerts(purchaseTransactions, activeUserRole);
+    return [...inventoryAlerts, ...systemAlerts, ...supplierPaymentAlerts]
       .filter(alert => !dismissedAlertIds.includes(alert.id))
       .map(alert => ({
         ...alert,
@@ -839,7 +909,7 @@ export function DataProvider({ children }) {
         const bTime = new Date(b.timestampRaw || b.timestamp || 0).getTime();
         return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
       });
-  }, [activeUserRole, dismissedAlertIds, inventory, readAlertIds, systemSummary]);
+  }, [activeUserRole, dismissedAlertIds, inventory, purchaseTransactions, readAlertIds, systemSummary]);
 
   const unreadAlertCount = alerts.filter(alert => !alert.read).length;
   const warningAlertCount = alerts.filter(alert => alert.type === "warning").length;
@@ -1156,7 +1226,7 @@ export function DataProvider({ children }) {
     }
   };
 
-  const recordPurchase = async ({ supplierName, documentType, documentTypeNote, documentNumber, paymentTerms, remarks, items, actualTransactionAt, backdateReason }) => {
+  const recordPurchase = async ({ supplierName, documentType, documentTypeNote, documentNumber, paymentTerms, creditTermsDays, remarks, items, actualTransactionAt, backdateReason }) => {
     const token = localStorage.getItem("token");
     try {
       const res = await axios.post(
@@ -1167,6 +1237,7 @@ export function DataProvider({ children }) {
           document_type_note: documentTypeNote,
           document_number: documentNumber,
           payment_terms: paymentTerms,
+          credit_terms_days: creditTermsDays,
           remarks,
           actual_transaction_at: actualTransactionAt,
           backdate_reason: backdateReason,
@@ -1187,6 +1258,29 @@ export function DataProvider({ children }) {
       await fetchInventory();
       await fetchArchivedInventory();
       await fetchStockMovements();
+      await fetchPurchaseTransactions();
+      throw err;
+    }
+  };
+
+  const updatePurchasePaymentStatus = async (purchaseId, paymentStatus) => {
+    const token = localStorage.getItem("token");
+    try {
+      const normalizedPurchaseId = String(purchaseId || '').trim();
+      if (!normalizedPurchaseId) {
+        throw new Error('Purchase record is missing its system reference.');
+      }
+      const res = await axios.post(
+        apiUrl(`/api/purchases/${encodeURIComponent(normalizedPurchaseId)}/payment-status`),
+        { payment_status: paymentStatus },
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      const supplierPaymentAlertPrefix = `supplier-payment-${purchaseId}-`;
+      setDismissedAlertIds(prev => prev.filter(id => !String(id).startsWith(supplierPaymentAlertPrefix)));
+      setReadAlertIds(prev => prev.filter(id => !String(id).startsWith(supplierPaymentAlertPrefix)));
+      await fetchPurchaseTransactions();
+      return mapPurchaseTransaction(res.data.purchase || {});
+    } catch (err) {
       await fetchPurchaseTransactions();
       throw err;
     }
@@ -1289,6 +1383,7 @@ export function DataProvider({ children }) {
         recordSale,
         refundSale,
         recordPurchase,
+        updatePurchasePaymentStatus,
         cancelSale,
         archiveInventoryItem,
         restoreArchivedInventoryItem,

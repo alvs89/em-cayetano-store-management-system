@@ -38,13 +38,13 @@ const DEFAULT_NON_INVENTORY_DRAFT = {
   unitPrice: ''
 };
 const OFFICIAL_SALES_CATEGORIES = [
-  'Roofing',
-  'PVC Pipe / Fittings',
-  'Steel',
-  'Kiln Dry',
-  'Plywood',
   'Electricals',
+  'Kiln Dry',
   'Paints',
+  'Plywood',
+  'PVC Pipe / Fittings',
+  'Roofing',
+  'Steel',
   'Other'
 ];
 const VAGUE_NON_INVENTORY_NAMES = new Set(['other', 'others', 'misc', 'miscellaneous']);
@@ -1174,23 +1174,39 @@ export function SalesModule({ user }) {
   };
 
   useEffect(() => {
-    const applyHistoryTarget = ({ period } = {}) => {
+    const applyHistoryTarget = ({ period, saleId, salesNumber, officialInvoiceNumber, search } = {}) => {
       const safePeriod = ['all', 'today', 'week', 'month'].includes(period) ? period : 'all';
+      const targetSaleId = String(saleId || '').trim();
+      const targetSearch = String(search || officialInvoiceNumber || salesNumber || '').trim();
       setHistoryPeriod(safePeriod);
-      setHistorySearch('');
-      setSelectedHistorySaleId('');
+      setHistorySearch(targetSearch);
+      setSelectedHistorySaleId(targetSaleId);
       setIsHistoryOpen(true);
     };
 
     const storedPeriod = localStorage.getItem('sales_history_target_period');
-    if (storedPeriod) {
-      applyHistoryTarget({ period: storedPeriod });
+    const storedSaleId = localStorage.getItem('sales_history_target_sale_id');
+    const storedSalesNumber = localStorage.getItem('sales_history_target_sales_number');
+    const storedOfficialInvoiceNumber = localStorage.getItem('sales_history_target_official_invoice_number');
+    if (storedPeriod || storedSaleId || storedSalesNumber || storedOfficialInvoiceNumber) {
+      applyHistoryTarget({
+        period: storedPeriod,
+        saleId: storedSaleId,
+        salesNumber: storedSalesNumber,
+        officialInvoiceNumber: storedOfficialInvoiceNumber
+      });
       localStorage.removeItem('sales_history_target_period');
+      localStorage.removeItem('sales_history_target_sale_id');
+      localStorage.removeItem('sales_history_target_sales_number');
+      localStorage.removeItem('sales_history_target_official_invoice_number');
     }
 
     const handleHistoryTarget = event => {
       applyHistoryTarget(event.detail || {});
       localStorage.removeItem('sales_history_target_period');
+      localStorage.removeItem('sales_history_target_sale_id');
+      localStorage.removeItem('sales_history_target_sales_number');
+      localStorage.removeItem('sales_history_target_official_invoice_number');
     };
 
     window.addEventListener('sales-history-target-view', handleHistoryTarget);
@@ -1248,13 +1264,8 @@ export function SalesModule({ user }) {
       .filter(Boolean);
     const categorySet = new Set([...OFFICIAL_SALES_CATEGORIES, ...inventoryCategories]);
     return ['all', ...Array.from(categorySet).sort((a, b) => {
-      const aIndex = OFFICIAL_SALES_CATEGORIES.indexOf(a);
-      const bIndex = OFFICIAL_SALES_CATEGORIES.indexOf(b);
-      if (aIndex !== -1 || bIndex !== -1) {
-        if (aIndex === -1) return 1;
-        if (bIndex === -1) return -1;
-        return aIndex - bIndex;
-      }
+      if (a === 'Other') return 1;
+      if (b === 'Other') return -1;
       return a.localeCompare(b);
     })];
   }, [activeInventory]);

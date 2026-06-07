@@ -29,7 +29,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { toast } from 'sonner';
 import { useData } from './DataContext';
 import { PageHeader } from './PageHeader';
-import { canAccessScreen, canPerformInventoryMovement, canRecordSales, isAdminRole, normalizeRole, ROLE_VALUES } from '../utils/roles';
+import { ROLE_VALUES, canAccessScreen, canPerformInventoryMovement, canRecordSales, isAdminRole, normalizeRole } from '../utils/roles';
 import { getProfitabilitySummary } from '../utils/profitability';
 
 const formatCurrency = value =>
@@ -210,10 +210,12 @@ export function Dashboard({
 
   const role = normalizeRole(user?.role);
   const isAdmin = isAdminRole(role);
-  const isSalesEncoder = role === ROLE_VALUES.SALES_ENCODER;
-  const isInventoryStaff = role === ROLE_VALUES.INVENTORY_STAFF;
   const canUseSales = canRecordSales(role);
   const canUseInventoryMovement = canPerformInventoryMovement(role);
+  const isCombinedSalesInventory = role === ROLE_VALUES.SALES_INVENTORY_STAFF;
+  const isSalesEncoder = canUseSales && !isAdmin && !isCombinedSalesInventory;
+  const isInventoryStaff = canUseInventoryMovement && !canUseSales && !isAdmin;
+  const isInventoryAuthorizedView = canUseInventoryMovement && !isAdmin;
   const canUseReports = canAccessScreen(role, 'reports');
   const canUsePurchases = canAccessScreen(role, 'purchases');
 
@@ -837,7 +839,7 @@ export function Dashboard({
       progress: hasDailySalesTarget ? quotaProgress : undefined,
       action: isAdmin ? openQuotaDialog : undefined
     },
-    isSalesEncoder && {
+    canUseSales && {
       label: 'Best Seller',
       value: topSellingDashboardPeriod ? `${topSellingDashboardPeriod.quantity} sold` : 'None',
       detail: topSellingDashboardPeriod
@@ -847,7 +849,7 @@ export function Dashboard({
       tone: 'green',
       action: canUseReports || canUseSales ? openDashboardSalesReport : undefined
     },
-    (isAdmin || isInventoryStaff) && {
+    (isAdmin || isInventoryAuthorizedView) && {
       label: 'Stock Movements Today',
       value: stockMovementsToday.length,
       detail: 'Stock in/out records today',
@@ -855,7 +857,7 @@ export function Dashboard({
       tone: 'blue',
       action: canUseReports ? () => openTargetReport('movements', { period: 'daily' }) : undefined
     },
-    (isAdmin || isInventoryStaff) && {
+    (!isAdmin && (isInventoryAuthorizedView || canUseSales)) && {
       label: 'Units Sold',
       value: dashboardSalesQuantity,
       detail: `${formatUnitLabel(dashboardSalesQuantity).replace(/^./, char => char.toUpperCase())} sold for selected dates`,
@@ -911,14 +913,14 @@ export function Dashboard({
       tone: 'purple',
       action: () => openInventoryAction('add-item')
     },
-    canUseReports && isInventoryStaff && {
+    canUseReports && isInventoryAuthorizedView && {
       label: 'Supplier Reorder',
       detail: 'Prepare restock list',
       icon: FileText,
       tone: 'emerald',
       action: () => openTargetReport('supplier-reorder')
     },
-    canUseReports && !isInventoryStaff && {
+    canUseReports && canUseSales && {
       label: "Today's Summary",
       detail: 'Open sales report',
       icon: FileText,
@@ -949,7 +951,7 @@ export function Dashboard({
   ].filter(Boolean);
 
   const attentionItems = [
-    isInventoryStaff && missingItemDetailKeys.size > 0 && {
+    isInventoryAuthorizedView && missingItemDetailKeys.size > 0 && {
       label: 'Complete item details',
       detail: missingItemDetailParts.join(', '),
       value: missingItemDetailKeys.size,
@@ -973,7 +975,7 @@ export function Dashboard({
       tone: 'red',
       action: () => openUserManagementTab('pending')
     },
-    (isAdmin || isInventoryStaff) && manualReviewCount > 0 && {
+    (isAdmin || isInventoryAuthorizedView) && manualReviewCount > 0 && {
       label: 'Manual items for review',
       detail: 'Non-inventory sales',
       value: manualReviewCount,
@@ -989,7 +991,7 @@ export function Dashboard({
   ].filter(Boolean);
 
   const quickActionsSection = (
-    <section className={`dashboard-panel ${isInventoryStaff ? 'dashboard-inventory-actions-panel' : ''} ${isSalesEncoder ? 'dashboard-sales-encoder-actions-panel' : ''}`} aria-label="Quick actions">
+    <section className={`dashboard-panel ${isInventoryStaff || isCombinedSalesInventory ? 'dashboard-inventory-actions-panel' : ''} ${isSalesEncoder ? 'dashboard-sales-encoder-actions-panel' : ''}`} aria-label="Quick actions">
       <div className="dashboard-panel-header">
         <div className="min-w-0">
           <h2 className="dashboard-panel-title">Quick Actions</h2>
@@ -1005,7 +1007,7 @@ export function Dashboard({
   );
 
   const attentionSection = (
-    <section className={`dashboard-panel ${isSalesEncoder ? 'dashboard-sales-encoder-attention-panel' : ''}`} aria-label="Needs attention">
+    <section className={`dashboard-panel ${isSalesEncoder || isCombinedSalesInventory ? 'dashboard-sales-encoder-attention-panel' : ''}`} aria-label="Needs attention">
       <div className="dashboard-panel-header">
         <div className="min-w-0">
           <h2 className="dashboard-panel-title">Needs Attention</h2>
@@ -1701,6 +1703,41 @@ export function Dashboard({
           height: 100%;
         }
 
+        .dashboard-combined-work-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.95fr);
+          grid-template-areas:
+            "actions operations"
+            "attention operations";
+          gap: 14px;
+          align-items: stretch;
+        }
+
+        .dashboard-combined-work-grid .dashboard-inventory-actions-panel {
+          grid-area: actions;
+        }
+
+        .dashboard-combined-work-grid .dashboard-sales-encoder-attention-panel {
+          grid-area: attention;
+        }
+
+        .dashboard-combined-work-grid .dashboard-operations-panel {
+          grid-area: operations;
+        }
+
+        .dashboard-combined-work-grid .dashboard-action-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          grid-auto-rows: minmax(92px, auto);
+        }
+
+        .dashboard-combined-work-grid .dashboard-operations-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .dashboard-combined-work-grid .dashboard-panel {
+          height: 100%;
+        }
+
         .dashboard-action-grid {
           display: grid;
           grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2071,22 +2108,28 @@ export function Dashboard({
             grid-template-columns: 1fr;
           }
 
-          .dashboard-sales-encoder-work-grid {
+          .dashboard-sales-encoder-work-grid,
+          .dashboard-combined-work-grid {
             grid-template-columns: 1fr;
             grid-template-areas: none;
           }
 
           .dashboard-sales-encoder-actions-panel,
           .dashboard-sales-encoder-attention-panel,
-          .dashboard-sales-encoder-work-grid .dashboard-operations-panel {
+          .dashboard-sales-encoder-work-grid .dashboard-operations-panel,
+          .dashboard-combined-work-grid .dashboard-inventory-actions-panel,
+          .dashboard-combined-work-grid .dashboard-sales-encoder-attention-panel,
+          .dashboard-combined-work-grid .dashboard-operations-panel {
             grid-area: auto;
           }
 
-          .dashboard-sales-encoder-work-grid .dashboard-operations-panel {
+          .dashboard-sales-encoder-work-grid .dashboard-operations-panel,
+          .dashboard-combined-work-grid .dashboard-operations-panel {
             grid-column: auto;
           }
 
-          .dashboard-sales-encoder-work-grid .dashboard-operations-grid {
+          .dashboard-sales-encoder-work-grid .dashboard-operations-grid,
+          .dashboard-combined-work-grid .dashboard-operations-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
@@ -2216,7 +2259,7 @@ export function Dashboard({
         showUserContext
       />
 
-      <div className={`dashboard-content ${isSalesEncoder ? 'dashboard-content-sales-encoder' : ''}`}>
+      <div className={`dashboard-content ${isSalesEncoder ? 'dashboard-content-sales-encoder' : ''} ${isCombinedSalesInventory ? 'dashboard-content-combined' : ''}`}>
         {!isInventoryStaff && (
           <section className="dashboard-panel dashboard-sales-filter-panel" aria-label="Sales date filter">
             <div className={`dashboard-sales-filter-row ${salesPeriod === 'day' ? 'is-date-mode' : ''}`}>
@@ -2292,8 +2335,8 @@ export function Dashboard({
           </div>
         </section>
 
-        {isSalesEncoder ? (
-          <div className="dashboard-sales-encoder-work-grid">
+        {isSalesEncoder || isCombinedSalesInventory ? (
+          <div className={isCombinedSalesInventory ? 'dashboard-combined-work-grid' : 'dashboard-sales-encoder-work-grid'}>
             {quickActionsSection}
             {attentionSection}
             {operationsSection}

@@ -51,6 +51,29 @@ function addDays(date, days) {
   return next;
 }
 
+function getCategoryCreditTermsDays(category) {
+  const termsByCategory = {
+    Steel: 15,
+    Electricals: 90,
+    Roofing: 120,
+    'PVC Pipe / Fittings': 60,
+    'Kiln Dry': 120,
+    Plywood: 15
+  };
+  return termsByCategory[category] || 30;
+}
+
+function getPurchaseCreditTermsDays(rows) {
+  const candidates = rows
+    .map(row => getCategoryCreditTermsDays(row.category))
+    .filter(days => Number.isInteger(days));
+  return candidates.length ? Math.max(...candidates) : 30;
+}
+
+function formatDateOnly(date) {
+  return formatDateKey(date);
+}
+
 function timestampFromDaysAgo(daysAgo, hour = 8, minute = 0) {
   const date = addDays(PRESENTATION_NOW, -daysAgo);
   date.setHours(hour, minute, 0, 0);
@@ -436,13 +459,17 @@ async function insertPurchase(client, event, rows, actor, purchaseSequence) {
     const purchaseNumber = `PUR-${event.createdAt.getFullYear()}-${String(sequence).padStart(5, '0')}`;
     const documentType = sequence % 7 === 0 ? 'SI' : 'DR';
     const paymentTerms = sequence % 6 === 0 ? 'credit' : sequence % 4 === 0 ? 'cod' : 'cash';
+    const creditTermsDays = paymentTerms === 'credit' ? getPurchaseCreditTermsDays(groupRows) : null;
+    const paymentDueDate = paymentTerms === 'credit' ? formatDateOnly(addDays(event.createdAt, creditTermsDays)) : null;
+    const paymentStatus = paymentTerms === 'credit' ? 'unpaid' : 'not_applicable';
     const transactionResult = await client.query(
       `INSERT INTO purchase_transactions (
          purchase_number, branch, supplier_name, document_type, document_number,
-         payment_terms, subtotal_amount, total_quantity, remarks, status,
+         payment_terms, credit_terms_days, payment_due_date, payment_status,
+         subtotal_amount, total_quantity, remarks, status,
          encoded_by, encoded_by_name, created_at, encoded_at, backdate_reason
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'completed', $10, $11, $12, $13, $14)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9, $10, $11, $12, 'completed', $13, $14, $15, $16, $17)
        RETURNING purchase_transaction_id`,
       [
         purchaseNumber,
@@ -451,6 +478,9 @@ async function insertPurchase(client, event, rows, actor, purchaseSequence) {
         documentType,
         `${documentType}-${event.createdAt.getFullYear()}-${String(sequence).padStart(4, '0')}`,
         paymentTerms,
+        creditTermsDays,
+        paymentDueDate,
+        paymentStatus,
         subtotalAmount,
         totalQuantity,
         sequence % 5 === 0
@@ -517,10 +547,11 @@ async function insertEmergencyPurchase(client, row, saleTime, actor, purchaseSeq
   const transactionResult = await client.query(
     `INSERT INTO purchase_transactions (
        purchase_number, branch, supplier_name, document_type, document_number,
-       payment_terms, subtotal_amount, total_quantity, remarks, status,
+       payment_terms, credit_terms_days, payment_due_date, payment_status,
+       subtotal_amount, total_quantity, remarks, status,
        encoded_by, encoded_by_name, created_at, encoded_at, backdate_reason
      )
-     VALUES ($1, $2, $3, 'DR', $4, 'cod', $5, $6, $7, 'completed', $8, $9, $10, $11, $12)
+     VALUES ($1, $2, $3, 'DR', $4, 'cod', NULL, NULL, 'not_applicable', $5, $6, $7, 'completed', $8, $9, $10, $11, $12)
      RETURNING purchase_transaction_id`,
     [
       purchaseNumber,

@@ -555,7 +555,8 @@ export function ReportsModule({
   const outOfStockItems = computedReportInventory.filter(item => item.status === 'Out of Stock').length;
   const attentionItems = lowStockItems + outOfStockItems;
   // Get unique categories from the current inventory snapshot.
-  const categories = Array.from(new Set(computedReportInventory.map(item => item.category)));
+  const categories = Array.from(new Set(computedReportInventory.map(item => item.category).filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b));
 
   const getFilteredInventory = () => {
     if (selectedCategory === 'all') return sortByNameAsc(computedReportInventory);
@@ -854,11 +855,13 @@ export function ReportsModule({
       const discountShare = saleSubtotal <= 0
         ? 0
         : Number(((includedSubtotal / saleSubtotal) * discountAmount).toFixed(2));
-      const amountDue = Math.max(includedSubtotal - discountShare, 0);
+      const deliveryCharge = selectedCategory === 'all' ? Number(sale.deliveryCharge || 0) : 0;
+      const amountDue = Math.max(includedSubtotal - discountShare, 0) + deliveryCharge;
 
       summary.transactionCount += 1;
       summary.subtotal += includedSubtotal;
       summary.discount += discountShare;
+      summary.deliveryCharge += deliveryCharge;
       summary.amountDue += amountDue;
       if (sale.paymentMethod === 'cash') {
         summary.cashTransactions += 1;
@@ -870,6 +873,7 @@ export function ReportsModule({
       transactionCount: 0,
       subtotal: 0,
       discount: 0,
+      deliveryCharge: 0,
       amountDue: 0,
       cashTransactions: 0,
       nonCashTransactions: 0
@@ -1926,7 +1930,7 @@ export function ReportsModule({
             formatEncodedDate(purchase),
             purchase.supplierName,
             formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber, purchase.documentTypeNote),
-            formatPurchasePaymentTerms(purchase.paymentTerms),
+            formatPurchasePaymentTerms(purchase.paymentTerms, purchase.creditTermsDays),
             String(purchase.totalQuantity),
             formatCurrency(purchase.subtotalAmount),
             getPurchaseRemarksText(purchase) || '-'
@@ -2021,6 +2025,7 @@ export function ReportsModule({
         drawLabelValueSegments([
           { label: 'Subtotal', value: formatCurrency(salesSummary.subtotal) },
           { label: 'Discount', value: formatCurrency(salesSummary.discount) },
+          { label: 'Delivery', value: formatCurrency(salesSummary.deliveryCharge) },
           { label: 'Amount Due', value: formatCurrency(salesSummary.amountDue) }
         ], 20, startY + 32);
       } else if (!isSalesMovementReport) {
@@ -5196,7 +5201,7 @@ export function ReportsModule({
                               <TableCell>{formatEncodedDate(purchase)}</TableCell>
                               <TableCell>{purchase.supplierName}</TableCell>
                               <TableCell>{formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber, purchase.documentTypeNote)}</TableCell>
-                              <TableCell>{formatPurchasePaymentTerms(purchase.paymentTerms)}</TableCell>
+                              <TableCell>{formatPurchasePaymentTerms(purchase.paymentTerms, purchase.creditTermsDays)}</TableCell>
                               <TableCell>{purchase.totalQuantity}</TableCell>
                               <TableCell className="reports-purchase-total-cell">{formatCurrency(purchase.subtotalAmount)}</TableCell>
                               <TableCell className="reports-purchase-remarks-cell">{getPurchaseRemarksText(purchase) || '-'}</TableCell>
@@ -5227,7 +5232,7 @@ export function ReportsModule({
                             </div>
                             <div className="reports-record-stat">
                               <span>Terms</span>
-                              <strong>{formatPurchasePaymentTerms(purchase.paymentTerms)}</strong>
+                              <strong>{formatPurchasePaymentTerms(purchase.paymentTerms, purchase.creditTermsDays)}</strong>
                             </div>
                             <div className="reports-record-stat">
                               <span>Quantity</span>
@@ -5359,14 +5364,18 @@ export function ReportsModule({
                         <h3>Sales Payment Summary</h3>
                         <p>
                           {selectedCategory === 'all'
-                            ? 'Tracked inventory sales for the selected period. Subtotal is before discounts; Amount Due is shown above after discounts.'
-                            : 'Tracked sales in this category only. Discounts are shared proportionally; Amount Due is shown above after discounts.'}
+                            ? 'Tracked inventory sales for the selected period. Subtotal is before discounts; Amount Due includes discounts and delivery charges.'
+                            : 'Tracked sales in this category only. Discounts are shared proportionally; delivery charges remain in the all-category total.'}
                         </p>
                       </div>
                       <div className="reports-pos-summary-grid">
                         <div className="reports-pos-summary-item">
                           <span>Subtotal</span>
                           <strong>{formatCurrency(getSalesFinancialSummary().subtotal)}</strong>
+                        </div>
+                        <div className="reports-pos-summary-item">
+                          <span>Delivery Charge</span>
+                          <strong>{formatCurrency(getSalesFinancialSummary().deliveryCharge)}</strong>
                         </div>
                         <div className="reports-pos-summary-item">
                           <span>Payment Mix (Transactions)</span>

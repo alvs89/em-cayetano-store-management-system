@@ -4,6 +4,7 @@ export const ROLE_VALUES = {
   ADMIN: "Admin",
   SALES_ENCODER: "Sales Encoder",
   INVENTORY_STAFF: "Inventory Staff",
+  SALES_INVENTORY_STAFF: "Sales Encoder + Inventory Staff",
   LEGACY_EMPLOYEE: "Employee",
 };
 
@@ -23,19 +24,24 @@ export const ROLE_OPTIONS = [
     label: "Inventory Staff",
     description: "Handles stock checking, supplier purchase entries, stock in, stock out, alerts, and inventory reports.",
   },
+  {
+    value: ROLE_VALUES.SALES_INVENTORY_STAFF,
+    label: "Sales Encoder + Inventory Staff",
+    description: "Combined access for staff who need to record sales and handle inventory or supplier receiving when coverage is needed.",
+  },
 ];
 
 export const REPORT_TYPE_OPTIONS = [
-  { value: "summary", label: "Summary", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
-  { value: "detailed", label: "Detailed Inventory", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
-  { value: "low-stock", label: "Low Stock Alert", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
-  { value: "supplier-reorder", label: "Supplier Reorder Report", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
-  { value: "untracked-sales", label: "Untracked Sales Items", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
-  { value: "category", label: "Category Analysis", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
-  { value: "purchases", label: "Purchases", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
-  { value: "movements", label: "Stock Movement History", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF] },
+  { value: "summary", label: "Summary", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF, ROLE_VALUES.SALES_INVENTORY_STAFF] },
+  { value: "detailed", label: "Detailed Inventory", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF, ROLE_VALUES.SALES_INVENTORY_STAFF] },
+  { value: "low-stock", label: "Low Stock Alert", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF, ROLE_VALUES.SALES_INVENTORY_STAFF] },
+  { value: "supplier-reorder", label: "Supplier Reorder Report", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF, ROLE_VALUES.SALES_INVENTORY_STAFF] },
+  { value: "untracked-sales", label: "Untracked Sales Items", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF, ROLE_VALUES.SALES_INVENTORY_STAFF] },
+  { value: "category", label: "Category Analysis", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF, ROLE_VALUES.SALES_INVENTORY_STAFF] },
+  { value: "purchases", label: "Purchases", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF, ROLE_VALUES.SALES_INVENTORY_STAFF] },
+  { value: "movements", label: "Stock Movement History", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF, ROLE_VALUES.SALES_INVENTORY_STAFF] },
   { value: "actual-earnings", label: "Actual Earnings", roles: [ROLE_VALUES.ADMIN] },
-  { value: "sales-movements", label: "Sales-Based Stock Movement", roles: [ROLE_VALUES.ADMIN] },
+  { value: "sales-movements", label: "Sales-Based Stock Movement", roles: [ROLE_VALUES.ADMIN, ROLE_VALUES.SALES_INVENTORY_STAFF] },
 ];
 
 export function normalizeRole(role) {
@@ -48,6 +54,7 @@ export function getRoleLabel(role) {
   if (normalized === ROLE_VALUES.ADMIN) return "Admin / Owner";
   if (normalized === ROLE_VALUES.SALES_ENCODER) return "Sales Encoder";
   if (normalized === ROLE_VALUES.INVENTORY_STAFF) return "Inventory Staff";
+  if (normalized === ROLE_VALUES.SALES_INVENTORY_STAFF) return "Sales Encoder + Inventory Staff";
   return role || "User";
 }
 
@@ -70,6 +77,10 @@ export function canAccessScreen(role, screen) {
     return ["inventory", "archive", "reports", "purchases"].includes(screen);
   }
 
+  if (normalized === ROLE_VALUES.SALES_INVENTORY_STAFF) {
+    return ["inventory", "archive", "reports", "sales", "purchases"].includes(screen);
+  }
+
   return false;
 }
 
@@ -79,12 +90,12 @@ export function canManageInventory(role) {
 
 export function canRecordSales(role) {
   const normalized = normalizeRole(role);
-  return normalized === ROLE_VALUES.ADMIN || normalized === ROLE_VALUES.SALES_ENCODER;
+  return normalized === ROLE_VALUES.ADMIN || normalized === ROLE_VALUES.SALES_ENCODER || normalized === ROLE_VALUES.SALES_INVENTORY_STAFF;
 }
 
 export function canPerformInventoryMovement(role) {
   const normalized = normalizeRole(role);
-  return normalized === ROLE_VALUES.ADMIN || normalized === ROLE_VALUES.INVENTORY_STAFF;
+  return normalized === ROLE_VALUES.ADMIN || normalized === ROLE_VALUES.INVENTORY_STAFF || normalized === ROLE_VALUES.SALES_INVENTORY_STAFF;
 }
 
 export function getReportTypeOptionsForRole(role) {
