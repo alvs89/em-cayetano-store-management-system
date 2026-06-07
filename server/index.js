@@ -9323,15 +9323,18 @@ app.post('/api/maintenance/clear-logs', authenticate, requireAdmin, async (req, 
 app.post('/api/maintenance/optimize', authenticate, requireAdmin, async (req, res) => {
   const tables = [
     'schema_migrations',
+    'invoice_number_sequences',
     'users',
     'products',
     'branch_inventory',
+    'inventory_change_requests',
     'stock_movements',
     'sales_transactions',
     'sales_items',
     'purchase_transactions',
     'purchase_items',
     'archived_inventory',
+    'branch_settings',
     'audit_logs',
     'backup_logs',
     'system_logs'
@@ -9367,7 +9370,8 @@ app.post('/api/maintenance/optimize', authenticate, requireAdmin, async (req, re
 
 app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (req, res) => {
   try {
-    const scopeBranch = req.user.branch;
+    const scopeBranches = ALLOWED_BRANCHES;
+    const scopeBranchLabel = scopeBranches.join(', ');
     const [
       duplicateInventory,
       invalidInventory,
@@ -9396,16 +9400,16 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
       pool.query(
         `SELECT branch, product_id, COUNT(*)::int AS count
          FROM branch_inventory
-         WHERE branch = $1
+         WHERE branch = ANY($1::text[])
          GROUP BY branch, product_id
          HAVING COUNT(*) > 1`,
-        [scopeBranch]
+        [scopeBranches]
       ),
       pool.query(
         `SELECT bi.inventory_id, p.name, bi.branch, bi.stock_level, bi.min_stock_level, bi.status
          FROM branch_inventory bi
          INNER JOIN products p ON p.product_id = bi.product_id
-         WHERE bi.branch = $1
+         WHERE bi.branch = ANY($1::text[])
            AND (
              bi.stock_level < 0
              OR bi.min_stock_level < 0
@@ -9415,20 +9419,20 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
              OR bi.status IS NULL
              OR TRIM(bi.status) = ''
            )`,
-        [scopeBranch]
+        [scopeBranches]
       ),
       pool.query(
         `SELECT DISTINCT p.product_id
          FROM products p
          INNER JOIN branch_inventory bi ON bi.product_id = p.product_id
-         WHERE bi.branch = $1
+         WHERE bi.branch = ANY($1::text[])
            AND (
              p.name IS NULL
              OR TRIM(p.name) = ''
              OR p.category IS NULL
              OR TRIM(p.category) = ''
            )`,
-        [scopeBranch]
+        [scopeBranches]
       ),
       pool.query(
         `SELECT sm.movement_id
@@ -9438,10 +9442,10 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
            ON ai.original_inventory_id = sm.inventory_id
           AND ai.branch = sm.branch
          WHERE sm.inventory_id IS NOT NULL
-           AND sm.branch = $1
+           AND sm.branch = ANY($1::text[])
            AND bi.inventory_id IS NULL
            AND ai.archived_inventory_id IS NULL`,
-        [scopeBranch]
+        [scopeBranches]
       ),
       pool.query(
         `SELECT ai.archived_inventory_id, ai.name, ai.category, ai.branch
@@ -9452,14 +9456,14 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
          INNER JOIN branch_inventory bi
            ON bi.product_id = p.product_id
           AND bi.branch = ai.branch
-         WHERE ai.branch = $1`,
-        [scopeBranch]
+         WHERE ai.branch = ANY($1::text[])`,
+        [scopeBranches]
       ),
       pool.query(
         `SELECT user_id, username, role, branch, status
          FROM users
          WHERE (
-             branch = $1
+             branch = ANY($1::text[])
              OR (role IN ('Sales Encoder', 'Inventory Staff') AND (branch IS NULL OR TRIM(branch) = ''))
            )
            AND (
@@ -9467,12 +9471,12 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
              OR status NOT IN ('Active', 'Pending', 'Inactive', 'Rejected')
              OR (role IN ('Sales Encoder', 'Inventory Staff') AND (branch IS NULL OR TRIM(branch) = ''))
            )`,
-        [scopeBranch]
+        [scopeBranches]
       ),
       pool.query(
         `SELECT sales_transaction_id, sales_number, official_invoice_number, official_invoice_expected_number, branch, status, transaction_type, total_quantity, subtotal_amount, discount_amount, total_amount, payment_method, change_amount
          FROM sales_transactions
-         WHERE branch = $1
+         WHERE branch = ANY($1::text[])
            AND (
              (transaction_type <> 'refund' AND total_quantity < 0)
              OR (transaction_type <> 'refund' AND subtotal_amount < 0)
@@ -9500,14 +9504,14 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
                   OR official_invoice_exception_reason IS NOT NULL
                 ))
            )`,
-        [scopeBranch, SALES_INVOICE_NUMBER_PATTERN]
+        [scopeBranches, SALES_INVOICE_NUMBER_PATTERN]
       ),
       pool.query(
         `SELECT si.sales_item_id, st.sales_number, si.item_name, si.quantity_sold, si.unit_price, si.unit_cost_at_sale, si.subtotal, si.cost_subtotal, si.gross_profit
          FROM sales_items si
          INNER JOIN sales_transactions st
            ON st.sales_transaction_id = si.sales_transaction_id
-         WHERE st.branch = $1
+         WHERE st.branch = ANY($1::text[])
            AND (
              (st.transaction_type <> 'refund' AND si.quantity_sold <= 0)
              OR (st.transaction_type = 'refund' AND si.quantity_sold >= 0)
@@ -9524,22 +9528,22 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
              OR si.item_name IS NULL
              OR TRIM(si.item_name) = ''
            )`,
-        [scopeBranch]
+        [scopeBranches]
       ),
       pool.query(
         `SELECT LOWER(TRIM(p.name)) AS normalized_name, LOWER(TRIM(p.category)) AS normalized_category, COUNT(*)::int AS count
          FROM products p
          INNER JOIN branch_inventory bi ON bi.product_id = p.product_id
-         WHERE bi.branch = $1
+         WHERE bi.branch = ANY($1::text[])
          GROUP BY LOWER(TRIM(p.name)), LOWER(TRIM(p.category))
          HAVING COUNT(*) > 1`,
-        [scopeBranch]
+        [scopeBranches]
       ),
       pool.query(
         `SELECT DISTINCT p.product_id, p.name, p.category, p.category_note, p.supplier_name, p.default_selling_price, p.cost_price
          FROM products p
          INNER JOIN branch_inventory bi ON bi.product_id = p.product_id
-         WHERE bi.branch = $1
+         WHERE bi.branch = ANY($1::text[])
            AND (
              p.supplier_name IS NULL
              OR TRIM(p.supplier_name) = ''
@@ -9548,12 +9552,12 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
              OR p.default_selling_price > 100000000
              OR p.cost_price < 0
            )`,
-        [scopeBranch]
+        [scopeBranches]
       ),
       pool.query(
         `SELECT archived_inventory_id, name, category, branch, stock_level, min_stock_level, default_selling_price, cost_price
          FROM archived_inventory
-         WHERE branch = $1
+         WHERE branch = ANY($1::text[])
            AND (
              stock_level < 0
              OR min_stock_level < 0
@@ -9564,7 +9568,7 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
              OR default_selling_price < 0
              OR cost_price < 0
            )`,
-        [scopeBranch]
+        [scopeBranches]
       ),
       pool.query(
         `SELECT si.sales_item_id
@@ -9580,12 +9584,12 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
            ON bi.inventory_id = si.inventory_id
           AND bi.branch = st.branch
          LEFT JOIN products p ON p.product_id = si.product_id
-         WHERE st.branch = $1
+         WHERE st.branch = ANY($1::text[])
            AND (
              (si.item_type = 'inventory' AND (si.inventory_id IS NULL OR bi.inventory_id IS NULL OR si.product_id IS NULL OR p.product_id IS NULL))
              OR (si.item_type = 'non_inventory' AND (si.is_inventory_item = true OR si.inventory_id IS NOT NULL OR si.product_id IS NOT NULL))
            )`,
-        [scopeBranch]
+        [scopeBranches]
       ),
       pool.query(
         `SELECT st.sales_transaction_id, st.sales_number, st.total_quantity, st.subtotal_amount, st.discount_amount, st.delivery_charge, st.total_amount,
@@ -9593,17 +9597,17 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
                 COALESCE(ROUND(SUM(si.subtotal)::numeric, 2), 0)::numeric AS item_subtotal
          FROM sales_transactions st
          LEFT JOIN sales_items si ON si.sales_transaction_id = st.sales_transaction_id
-         WHERE st.branch = $1
+         WHERE st.branch = ANY($1::text[])
          GROUP BY st.sales_transaction_id
          HAVING st.total_quantity <> COALESCE(SUM(si.quantity_sold), 0)::int
             OR ABS(st.subtotal_amount - COALESCE(ROUND(SUM(si.subtotal)::numeric, 2), 0)) > 0.01
             OR ABS(st.total_amount - ROUND((st.subtotal_amount - st.discount_amount + st.delivery_charge)::numeric, 2)) > 0.01`,
-        [scopeBranch]
+        [scopeBranches]
       ),
       pool.query(
         `SELECT purchase_transaction_id, purchase_number, branch, supplier_name, document_type, payment_terms, subtotal_amount, total_quantity, status
          FROM purchase_transactions
-         WHERE branch = $1
+         WHERE branch = ANY($1::text[])
            AND (
              purchase_number IS NULL
              OR TRIM(purchase_number) = ''
@@ -9615,13 +9619,13 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
              OR total_quantity < 0
              OR status NOT IN ('completed', 'cancelled')
            )`,
-        [scopeBranch]
+        [scopeBranches]
       ),
       pool.query(
         `SELECT pi.purchase_item_id, pt.purchase_number, pi.item_name, pi.quantity_received, pi.unit_cost, pi.subtotal, pi.previous_quantity, pi.new_quantity
          FROM purchase_items pi
          INNER JOIN purchase_transactions pt ON pt.purchase_transaction_id = pi.purchase_transaction_id
-         WHERE pt.branch = $1
+         WHERE pt.branch = ANY($1::text[])
            AND (
              pi.branch <> pt.branch
              OR pi.quantity_received <= 0
@@ -9636,7 +9640,7 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
              OR pi.category IS NULL
              OR TRIM(pi.category) = ''
            )`,
-        [scopeBranch]
+        [scopeBranches]
       ),
       pool.query(
         `SELECT pi.purchase_item_id
@@ -9652,14 +9656,14 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
            ON bi.inventory_id = pi.inventory_id
           AND bi.branch = pt.branch
          LEFT JOIN products p ON p.product_id = pi.product_id
-         WHERE pt.branch = $1
+         WHERE pt.branch = ANY($1::text[])
            AND (
              pi.inventory_id IS NULL
              OR bi.inventory_id IS NULL
              OR pi.product_id IS NULL
              OR p.product_id IS NULL
            )`,
-        [scopeBranch]
+        [scopeBranches]
       ),
       pool.query(
         `SELECT pt.purchase_transaction_id, pt.purchase_number, pt.total_quantity, pt.subtotal_amount,
@@ -9667,11 +9671,11 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
                 COALESCE(ROUND(SUM(pi.subtotal)::numeric, 2), 0)::numeric AS item_subtotal
          FROM purchase_transactions pt
          LEFT JOIN purchase_items pi ON pi.purchase_transaction_id = pt.purchase_transaction_id
-         WHERE pt.branch = $1
+         WHERE pt.branch = ANY($1::text[])
          GROUP BY pt.purchase_transaction_id
          HAVING pt.total_quantity <> COALESCE(SUM(pi.quantity_received), 0)::int
             OR ABS(pt.subtotal_amount - COALESCE(ROUND(SUM(pi.subtotal)::numeric, 2), 0)) > 0.01`,
-        [scopeBranch]
+        [scopeBranches]
       ),
       pool.query(
         `SELECT pi.purchase_item_id, pt.purchase_number, pi.inventory_id, pi.quantity_received, pi.previous_quantity, pi.new_quantity
@@ -9687,10 +9691,10 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
           AND sm.previous_quantity = pi.previous_quantity
           AND sm.new_quantity = pi.new_quantity
           AND sm.note ILIKE '%' || pt.purchase_number || '%'
-         WHERE pt.branch = $1
+         WHERE pt.branch = ANY($1::text[])
            AND pt.status = 'completed'
            AND sm.movement_id IS NULL`,
-        [scopeBranch]
+        [scopeBranches]
       ),
       pool.query(
         `SELECT al.id, al.actor_id
@@ -9728,8 +9732,8 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
          bi.status
        FROM branch_inventory bi
        INNER JOIN products p ON p.product_id = bi.product_id
-       WHERE bi.branch = $1`,
-      [scopeBranch]
+       WHERE bi.branch = ANY($1::text[])`,
+      [scopeBranches]
     );
 
     const statusMismatches = inventoryStatusResult.rows.filter(row => (
@@ -9872,17 +9876,18 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
       message: issueCount > 0
         ? `Data integrity check found ${issueCount} issue(s).`
         : 'Data integrity check completed with no issues.',
-      context: { issueCount, checks, scopeBranch },
+      context: { issueCount, checks, scopeBranches },
       actorId: req.user.id
     });
 
     return res.json({
       message: issueCount > 0
-        ? 'Current branch data integrity check completed with issues.'
-        : 'No current branch data integrity issues found.',
+        ? 'All-branch data integrity check completed with issues.'
+        : 'No all-branch data integrity issues found.',
       issueCount,
       checks,
-      scopeBranch,
+      scopeBranch: scopeBranchLabel,
+      scopeBranches,
       checkedAt: new Date().toISOString()
     });
   } catch (err) {

@@ -62,9 +62,6 @@ const getOfficialSupplierForProduct = (item, index = 0) => {
   const name = String(item?.name || '').toUpperCase();
   const category = item?.category || 'Other';
 
-  // Keep a small, deliberate group unassigned for client verification and UI testing.
-  if ((index + 1) % 13 === 0) return null;
-
   if (name.includes('ROYU')) return 'ROYU';
   if (name.includes('FIREFLY')) return 'FIREFLY';
   if (name.includes('NELTEX')) return 'OPTIMAL TRADING';

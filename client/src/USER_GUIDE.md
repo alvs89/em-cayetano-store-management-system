@@ -180,7 +180,21 @@ Common maintenance functions include:
 - Selective data export
 - System log review and cleanup
 
-Backups should be stored securely. Restores should be performed only with valid system-generated SQL backup files and after confirming that the selected file is correct.
+### Maintenance Actions in Simple Terms
+
+Database backup saves a copy of the system records that can be kept for safekeeping. Store backup files securely and do not share them through unsecured messages.
+
+Database restore replaces the current system records with records from a selected backup file. Use restore only when the selected system-generated SQL backup is correct and replacing the current records is intended.
+
+Selective data export downloads selected records for review. It is useful when an Admin needs a controlled copy of business data without downloading a full database backup.
+
+Clear System Logs removes only eligible old, non-critical system notes. It does not delete inventory, sales, purchases, users, reports, archived records, backups, security logs, or audit trail records.
+
+Optimize Database helps the system load and read saved records smoothly. It cares for records used by both branches. It does not change item quantities, sales totals, purchase records, users, reports, or archive records.
+
+Check Data Integrity reviews both Manggahan and San Rafael records for possible relationship issues, such as missing linked records or invalid saved details. This check is read-only. It reports issues when found, but it does not repair, delete, or overwrite records by itself.
+
+Before running any maintenance action, read the confirmation message, run only the action needed, wait for the result message, and review the audit trail when needed.
 
 ---
 

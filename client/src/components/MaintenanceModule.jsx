@@ -102,7 +102,7 @@ const maintenanceActionCopy = {
     toneClass: 'bg-blue-600 hover:bg-blue-700',
     endpoint: '/api/maintenance/integrity-check',
     description:
-      'This read-only check scans the signed-in branch for inventory, purchase, POS sales, manual item, stock movement, archive, user, audit log, backup log, and system log consistency issues. It will not repair, delete, or overwrite records.',
+      'This read-only check scans both branches for inventory, purchase, POS sales, manual item, stock movement, archive, user, audit log, backup log, and system log consistency issues. It will not repair, delete, or overwrite records.',
   },
 };
 
@@ -2056,7 +2056,7 @@ export function MaintenanceModule({ user }) {
                 <div className="min-w-0">
                   <p className="font-semibold text-slate-900">No maintenance action has been run yet.</p>
                   <p className="mt-1 text-sm leading-6 text-slate-600">
-                    Choose an action above to clean eligible logs, optimize application database tables, or check the signed-in branch for data integrity issues.
+                    Choose an action above to clean eligible logs, optimize application database tables, or check both branches for data integrity issues.
                   </p>
                 </div>
               </div>
@@ -2069,7 +2069,13 @@ export function MaintenanceModule({ user }) {
                   <p className="font-semibold text-slate-900">{maintenanceResult.message}</p>
                   {maintenanceResult.action === 'integrity' && Array.isArray(maintenanceResult.checks) && (
                     <div className="mt-2 grid gap-1 text-sm text-slate-600">
-                      <span>Scope: Signed-in branch ({maintenanceResult.scopeBranch || currentBranch}).</span>
+                      <span>
+                        Scope: All branches ({
+                          Array.isArray(maintenanceResult.scopeBranches) && maintenanceResult.scopeBranches.length > 0
+                            ? maintenanceResult.scopeBranches.join(', ')
+                            : maintenanceResult.scopeBranch || currentBranch
+                        }).
+                      </span>
                       {maintenanceResult.checks
                         .filter(check => Number(check.count || 0) > 0)
                         .map(check => (

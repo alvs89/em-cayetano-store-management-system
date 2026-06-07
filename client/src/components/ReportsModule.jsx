@@ -3471,6 +3471,175 @@ export function ReportsModule({
           white-space: nowrap;
         }
 
+        .reports-purchases-report-table table {
+          min-width: 1720px;
+          table-layout: auto;
+        }
+
+        .reports-purchases-report-table th,
+        .reports-purchases-report-table td,
+        .reports-purchases-report-table td :is(p, span, strong, div):not([data-slot='badge']) {
+          white-space: nowrap;
+          overflow-wrap: normal;
+          word-break: normal;
+          line-height: 1.35;
+        }
+
+        .reports-purchases-report-table th:nth-child(1),
+        .reports-purchases-report-table td:nth-child(1) {
+          min-width: 9.5rem;
+        }
+
+        .reports-purchases-report-table th:nth-child(2),
+        .reports-purchases-report-table td:nth-child(2),
+        .reports-purchases-report-table th:nth-child(3),
+        .reports-purchases-report-table td:nth-child(3) {
+          min-width: 12.5rem;
+        }
+
+        .reports-purchases-report-table th:nth-child(4),
+        .reports-purchases-report-table td:nth-child(4) {
+          min-width: 14rem;
+        }
+
+        .reports-purchases-report-table th:nth-child(5),
+        .reports-purchases-report-table td:nth-child(5) {
+          min-width: 11rem;
+        }
+
+        .reports-purchases-report-table th:nth-child(6),
+        .reports-purchases-report-table td:nth-child(6),
+        .reports-purchases-report-table th:nth-child(7),
+        .reports-purchases-report-table td:nth-child(7) {
+          min-width: 5.5rem;
+        }
+
+        .reports-purchases-report-table .reports-purchase-total-head,
+        .reports-purchases-report-table .reports-purchase-total-cell {
+          min-width: 8.5rem;
+        }
+
+        .reports-purchases-report-table .reports-purchase-remarks-cell {
+          min-width: 31rem;
+          max-width: none;
+          white-space: nowrap;
+          overflow-wrap: normal;
+          word-break: normal;
+        }
+
+        .reports-low-stock-table table {
+          min-width: 1120px;
+          table-layout: auto;
+        }
+
+        .reports-low-stock-table th,
+        .reports-low-stock-table td,
+        .reports-low-stock-table td :is(p, span, strong, div):not([data-slot='badge']) {
+          white-space: nowrap;
+          overflow-wrap: normal;
+          word-break: normal;
+          line-height: 1.35;
+        }
+
+        .reports-low-stock-table th:nth-child(1),
+        .reports-low-stock-table td:nth-child(1) {
+          min-width: 7.5rem;
+        }
+
+        .reports-low-stock-table th:nth-child(2),
+        .reports-low-stock-table td:nth-child(2) {
+          min-width: 30rem;
+        }
+
+        .reports-low-stock-table th:nth-child(3),
+        .reports-low-stock-table td:nth-child(3) {
+          min-width: 11rem;
+        }
+
+        .reports-low-stock-table th:nth-child(4),
+        .reports-low-stock-table td:nth-child(4) {
+          min-width: 16rem;
+        }
+
+        .reports-low-stock-table th:nth-child(5),
+        .reports-low-stock-table td:nth-child(5) {
+          min-width: 7rem;
+        }
+
+        .reports-low-stock-table th:nth-child(6),
+        .reports-low-stock-table td:nth-child(6) {
+          min-width: 10rem;
+        }
+
+        .reports-low-stock-table th:nth-child(7),
+        .reports-low-stock-table td:nth-child(7) {
+          min-width: 12.5rem;
+        }
+
+        .reports-movement-desktop-table table {
+          min-width: 1700px;
+          table-layout: auto;
+        }
+
+        .reports-movement-desktop-table th,
+        .reports-movement-desktop-table td,
+        .reports-movement-desktop-table td :is(p, span, strong, div):not([data-slot='badge']) {
+          white-space: nowrap;
+          overflow-wrap: normal;
+          word-break: normal;
+          line-height: 1.35;
+        }
+
+        .reports-movement-desktop-table td:nth-child(3) > div {
+          display: flex;
+          min-width: 0;
+          align-items: center;
+          gap: 0.5rem;
+          white-space: nowrap;
+        }
+
+        .reports-movement-desktop-table td:nth-child(3) > div > * + * {
+          margin-top: 0 !important;
+        }
+
+        .reports-movement-desktop-table th:nth-child(1),
+        .reports-movement-desktop-table td:nth-child(1),
+        .reports-movement-desktop-table th:nth-child(2),
+        .reports-movement-desktop-table td:nth-child(2) {
+          min-width: 12.5rem;
+        }
+
+        .reports-movement-desktop-table th:nth-child(3),
+        .reports-movement-desktop-table td:nth-child(3) {
+          min-width: 34rem;
+        }
+
+        .reports-movement-desktop-table th:nth-child(4),
+        .reports-movement-desktop-table td:nth-child(4),
+        .reports-movement-desktop-table th:nth-child(6),
+        .reports-movement-desktop-table td:nth-child(6) {
+          min-width: 12rem;
+        }
+
+        .reports-movement-desktop-table th:nth-child(5),
+        .reports-movement-desktop-table td:nth-child(5) {
+          min-width: 8.5rem;
+        }
+
+        .reports-movement-desktop-table th:nth-child(7),
+        .reports-movement-desktop-table td:nth-child(7),
+        .reports-movement-desktop-table th:nth-child(8),
+        .reports-movement-desktop-table td:nth-child(8),
+        .reports-movement-desktop-table th:nth-child(9),
+        .reports-movement-desktop-table td:nth-child(9) {
+          min-width: 5.5rem;
+        }
+
+        .reports-movement-desktop-table th:nth-child(10),
+        .reports-movement-desktop-table td:nth-child(10) {
+          min-width: 11rem;
+        }
+
         .reports-mobile-category-card,
         .reports-movement-card {
           min-width: 0;
@@ -4406,61 +4575,64 @@ export function ReportsModule({
               })
             ) : (
               <>
-                <div className="reports-top-products-table">
-                  {(() => {
-                    const rows = (reportType === 'sales-movements' ? getSalesMovementRows() : getFilteredMovements({ salesOnly: false }));
-                    const paged = paginateItems(rows);
-                    return (
-                      <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Rank</TableHead>
-                        <TableHead>Product</TableHead>
-                        <TableHead>Category</TableHead>
-                        <TableHead>Qty Sold</TableHead>
-                        <TableHead>Sales</TableHead>
-                        <TableHead>Cost of Goods Sold</TableHead>
-                        <TableHead>Actual Profit</TableHead>
-                        <TableHead>Margin</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {getEarningsProductRows().map(product => (
-                        <TableRow key={`${product.rank}-${product.itemName}-${product.category}`}>
-                          <TableCell><Badge variant="outline" className="reports-rank-badge">#{product.rank}</Badge></TableCell>
-                          <TableCell className="font-medium">{product.itemName}</TableCell>
-                          <TableCell>{product.category}</TableCell>
-                          <TableCell>{product.quantitySold.toLocaleString()}</TableCell>
-                          <TableCell>{formatCurrency(product.totalSales)}</TableCell>
-                          <TableCell>{formatCurrency(product.puhunanUsed)}</TableCell>
-                          <TableCell className={product.actualProfit >= 0 ? 'text-green-700 font-semibold' : 'text-red-700 font-semibold'}>{formatCurrency(product.actualProfit)}</TableCell>
-                          <TableCell>{formatPercentage(product.profitMargin)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                    </Table>
-                      );
-                    })()}
-                </div>
-                <div className="reports-top-products-mobile">
-                  {getEarningsProductRows().map(product => (
-                    <article key={`${product.rank}-${product.itemName}-${product.category}-earnings-mobile`} className="reports-top-product-card">
-                      <div className="reports-top-product-heading">
-                        <Badge variant="outline" className="reports-rank-badge">#{product.rank}</Badge>
-                        <div>
-                          <h4>{product.itemName}</h4>
-                          <p>{product.category}</p>
-                        </div>
+                {(() => {
+                  const rows = getEarningsProductRows();
+                  const paged = paginateItems(rows);
+                  return (
+                    <>
+                      <div className="reports-top-products-table">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Rank</TableHead>
+                              <TableHead>Product</TableHead>
+                              <TableHead>Category</TableHead>
+                              <TableHead>Qty Sold</TableHead>
+                              <TableHead>Sales</TableHead>
+                              <TableHead>Cost of Goods Sold</TableHead>
+                              <TableHead>Actual Profit</TableHead>
+                              <TableHead>Margin</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {paged.pageItems.map(product => (
+                              <TableRow key={`${product.rank}-${product.itemName}-${product.category}`}>
+                                <TableCell><Badge variant="outline" className="reports-rank-badge">#{product.rank}</Badge></TableCell>
+                                <TableCell className="font-medium">{product.itemName}</TableCell>
+                                <TableCell>{product.category}</TableCell>
+                                <TableCell>{product.quantitySold.toLocaleString()}</TableCell>
+                                <TableCell>{formatCurrency(product.totalSales)}</TableCell>
+                                <TableCell>{formatCurrency(product.puhunanUsed)}</TableCell>
+                                <TableCell className={product.actualProfit >= 0 ? 'text-green-700 font-semibold' : 'text-red-700 font-semibold'}>{formatCurrency(product.actualProfit)}</TableCell>
+                                <TableCell>{formatPercentage(product.profitMargin)}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
                       </div>
-                      <div className="reports-top-product-stats">
-                        <span>Sales <strong>{formatCurrency(product.totalSales)}</strong></span>
-                        <span>Cost <strong>{formatCurrency(product.puhunanUsed)}</strong></span>
-                        <span>Profit <strong>{formatCurrency(product.actualProfit)}</strong></span>
-                        <span>Margin <strong>{formatPercentage(product.profitMargin)}</strong></span>
+                      <div className="reports-top-products-mobile">
+                        {paged.pageItems.map(product => (
+                          <article key={`${product.rank}-${product.itemName}-${product.category}-earnings-mobile`} className="reports-top-product-card">
+                            <div className="reports-top-product-heading">
+                              <Badge variant="outline" className="reports-rank-badge">#{product.rank}</Badge>
+                              <div>
+                                <h4>{product.itemName}</h4>
+                                <p>{product.category}</p>
+                              </div>
+                            </div>
+                            <div className="reports-top-product-stats">
+                              <span>Sales <strong>{formatCurrency(product.totalSales)}</strong></span>
+                              <span>Cost <strong>{formatCurrency(product.puhunanUsed)}</strong></span>
+                              <span>Profit <strong>{formatCurrency(product.actualProfit)}</strong></span>
+                              <span>Margin <strong>{formatPercentage(product.profitMargin)}</strong></span>
+                            </div>
+                          </article>
+                        ))}
                       </div>
-                    </article>
-                  ))}
-                </div>
+                      {renderPaginationControls(paged.totalPages, paged.page, undefined, paged.totalItems)}
+                    </>
+                  );
+                })()}
               </>
             )}
           </CardContent>
@@ -4657,7 +4829,7 @@ export function ReportsModule({
                   const paged = paginateItems(rows);
                   return (
                     <>
-                      <div className="reports-desktop-table">
+                      <div className="reports-desktop-table reports-low-stock-table">
                         <Table>
                           <TableHeader>
                             <TableRow>
@@ -4996,79 +5168,86 @@ export function ReportsModule({
                 message: `No purchase entries match the selected ${reportPeriod} period.`
               })
             ) : (
-              <>
-                <div className="reports-desktop-table">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Purchase No.</TableHead>
-                        <TableHead>Transaction Date</TableHead>
-                        <TableHead>Encoded Date</TableHead>
-                        <TableHead>Supplier</TableHead>
-                        <TableHead>Document</TableHead>
-                        <TableHead>Terms</TableHead>
-                        <TableHead>Quantity</TableHead>
-                        <TableHead className="reports-purchase-total-head">Total</TableHead>
-                        <TableHead>Remarks</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {getFilteredPurchaseTransactions().map(purchase => (
-                        <TableRow key={purchase.id}>
-                          <TableCell className="font-semibold">{purchase.purchaseNumber}</TableCell>
-                          <TableCell>{formatDateTime(purchase.createdAt)}</TableCell>
-                          <TableCell>{formatEncodedDate(purchase)}</TableCell>
-                          <TableCell>{purchase.supplierName}</TableCell>
-                          <TableCell>{formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber, purchase.documentTypeNote)}</TableCell>
-                          <TableCell>{formatPurchasePaymentTerms(purchase.paymentTerms)}</TableCell>
-                          <TableCell>{purchase.totalQuantity}</TableCell>
-                          <TableCell className="reports-purchase-total-cell">{formatCurrency(purchase.subtotalAmount)}</TableCell>
-                          <TableCell className="reports-purchase-remarks-cell">{getPurchaseRemarksText(purchase) || '-'}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-                <div className="reports-mobile-record-list">
-                  {getFilteredPurchaseTransactions().map(purchase => (
-                    <article key={purchase.id} className="reports-record-card reports-purchase-record-card">
-                      <div className="reports-record-top">
-                        <div className="min-w-0">
-                          <p className="reports-record-code">Transaction: {formatDateTime(purchase.createdAt)}</p>
-                          {isBackdatedRecord(purchase) && (
-                            <p className="reports-record-meta">Encoded: {formatDateTime(purchase.encodedAt)}</p>
+              (() => {
+                const purchases = getFilteredPurchaseTransactions();
+                const paged = paginateItems(purchases);
+                return (
+                  <>
+                    <div className="reports-desktop-table reports-purchases-report-table">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Purchase No.</TableHead>
+                            <TableHead>Transaction Date</TableHead>
+                            <TableHead>Encoded Date</TableHead>
+                            <TableHead>Supplier</TableHead>
+                            <TableHead>Document</TableHead>
+                            <TableHead>Terms</TableHead>
+                            <TableHead>Quantity</TableHead>
+                            <TableHead className="reports-purchase-total-head">Total</TableHead>
+                            <TableHead>Remarks</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {paged.pageItems.map(purchase => (
+                            <TableRow key={purchase.id}>
+                              <TableCell className="font-semibold">{purchase.purchaseNumber}</TableCell>
+                              <TableCell>{formatDateTime(purchase.createdAt)}</TableCell>
+                              <TableCell>{formatEncodedDate(purchase)}</TableCell>
+                              <TableCell>{purchase.supplierName}</TableCell>
+                              <TableCell>{formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber, purchase.documentTypeNote)}</TableCell>
+                              <TableCell>{formatPurchasePaymentTerms(purchase.paymentTerms)}</TableCell>
+                              <TableCell>{purchase.totalQuantity}</TableCell>
+                              <TableCell className="reports-purchase-total-cell">{formatCurrency(purchase.subtotalAmount)}</TableCell>
+                              <TableCell className="reports-purchase-remarks-cell">{getPurchaseRemarksText(purchase) || '-'}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <div className="reports-mobile-record-list">
+                      {paged.pageItems.map(purchase => (
+                        <article key={purchase.id} className="reports-record-card reports-purchase-record-card">
+                          <div className="reports-record-top">
+                            <div className="min-w-0">
+                              <p className="reports-record-code">Transaction: {formatDateTime(purchase.createdAt)}</p>
+                              {isBackdatedRecord(purchase) && (
+                                <p className="reports-record-meta">Encoded: {formatDateTime(purchase.encodedAt)}</p>
+                              )}
+                              <h4 className="reports-record-name">{purchase.purchaseNumber}</h4>
+                              <p className="reports-record-meta">
+                                {purchase.supplierName || 'Unassigned supplier'}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="reports-record-grid reports-record-grid-four">
+                            <div className="reports-record-stat">
+                              <span>Document</span>
+                              <strong>{formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber, purchase.documentTypeNote)}</strong>
+                            </div>
+                            <div className="reports-record-stat">
+                              <span>Terms</span>
+                              <strong>{formatPurchasePaymentTerms(purchase.paymentTerms)}</strong>
+                            </div>
+                            <div className="reports-record-stat">
+                              <span>Quantity</span>
+                              <strong>{formatUnitCount(purchase.totalQuantity)}</strong>
+                            </div>
+                            <div className="reports-record-stat reports-purchase-total-stat">
+                              <span>Total</span>
+                              <strong>{formatCurrency(purchase.subtotalAmount)}</strong>
+                            </div>
+                          </div>
+                          {getPurchaseRemarksText(purchase) && (
+                            <p className="reports-purchase-note">{getPurchaseRemarksText(purchase)}</p>
                           )}
-                          <h4 className="reports-record-name">{purchase.purchaseNumber}</h4>
-                          <p className="reports-record-meta">
-                            {purchase.supplierName || 'Unassigned supplier'}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="reports-record-grid reports-record-grid-four">
-                        <div className="reports-record-stat">
-                          <span>Document</span>
-                          <strong>{formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber, purchase.documentTypeNote)}</strong>
-                        </div>
-                        <div className="reports-record-stat">
-                          <span>Terms</span>
-                          <strong>{formatPurchasePaymentTerms(purchase.paymentTerms)}</strong>
-                        </div>
-                        <div className="reports-record-stat">
-                          <span>Quantity</span>
-                          <strong>{formatUnitCount(purchase.totalQuantity)}</strong>
-                        </div>
-                        <div className="reports-record-stat reports-purchase-total-stat">
-                          <span>Total</span>
-                          <strong>{formatCurrency(purchase.subtotalAmount)}</strong>
-                        </div>
-                      </div>
-                      {getPurchaseRemarksText(purchase) && (
-                        <p className="reports-purchase-note">{getPurchaseRemarksText(purchase)}</p>
-                      )}
-                    </article>
-                  ))}
-                </div>
-              </>
+                        </article>
+                      ))}
+                    </div>
+                    {renderPaginationControls(paged.totalPages, paged.page, undefined, paged.totalItems)}
+                  </>
+                );
+              })()
             )}
           </CardContent>
         </Card>

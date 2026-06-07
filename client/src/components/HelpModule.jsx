@@ -163,6 +163,30 @@ const faqs = [
     answer: 'Use Search Products or Inventory, then type a product name, keyword, category, color, size, or brand detail. Use shorter words if the first search has no result.',
   },
   {
+    id: 'branch-check',
+    roles: HELP_ROLES.ALL,
+    question: 'Why should I check my branch before working?',
+    answer: 'Records are saved under the branch shown in the sidebar. Check the branch first so sales, purchases, stock updates, and reports are recorded in the correct store location.',
+  },
+  {
+    id: 'button-not-visible',
+    roles: HELP_ROLES.ALL,
+    question: 'Why can I not see a menu or button?',
+    answer: 'The menu or button may not be included in your role. Use the actions shown on your screen. If your job assignment changed, ask an Admin to review your access.',
+  },
+  {
+    id: 'item-not-found',
+    roles: HELP_ROLES.ALL,
+    question: 'What should I do if an item is not showing?',
+    answer: 'Clear filters, check the spelling, and search with a shorter keyword. If it still does not appear, the item may be archived, out of your branch records, or not yet added.',
+  },
+  {
+    id: 'before-saving-record',
+    roles: HELP_ROLES.ALL,
+    question: 'What should I check before saving a record?',
+    answer: 'Review the branch, item names, quantities, prices, dates, document numbers, and totals. Save only when the details match the actual transaction or store record.',
+  },
+  {
     id: 'sales-invoice-number',
     roles: HELP_ROLES.SALES,
     question: 'What Sales Invoice number should I enter?',
@@ -185,6 +209,18 @@ const faqs = [
     roles: HELP_ROLES.SALES,
     question: 'How do I process a refund?',
     answer: 'Open Sales History, choose the sale, select the refundable items, enter the refund quantity and reason, then confirm. Refunded stock and totals are updated by the system.',
+  },
+  {
+    id: 'stock-not-enough',
+    roles: HELP_ROLES.SALES,
+    question: 'What should I do if stock is not enough for a sale?',
+    answer: 'Reduce the sale quantity or ask inventory staff to verify the stock. Do not continue with a quantity higher than the available stock for tracked inventory items.',
+  },
+  {
+    id: 'selling-price-warning',
+    roles: HELP_ROLES.SALES,
+    question: 'Why does the system warn me about a low selling price?',
+    answer: 'The warning appears when the item price is lower than the saved cost. Review the amount before saving so the store does not sell the item at a loss by mistake.',
   },
   {
     id: 'cancel-sale',
@@ -229,10 +265,28 @@ const faqs = [
     answer: 'Open Purchases, record the supplier delivery, review the items and quantities, then save so stock levels update properly.',
   },
   {
+    id: 'purchase-document',
+    roles: HELP_ROLES.INVENTORY,
+    question: 'What supplier document details should I enter?',
+    answer: 'Enter the document type and number shown on the supplier paper, such as DR or SI. These details help match deliveries, purchases, and reports during checking.',
+  },
+  {
+    id: 'wrong-stock-count',
+    roles: HELP_ROLES.INVENTORY,
+    question: 'What should I do if the stock count looks wrong?',
+    answer: 'Check recent sales, purchases, stock in, stock out, and refunds first. If a correction is needed, record the proper stock movement reason instead of changing records without explanation.',
+  },
+  {
     id: 'reports',
     roles: HELP_ROLES.INVENTORY,
     question: 'Which reports can I generate?',
     answer: 'You can generate inventory-related reports such as Summary, Detailed Inventory, Low Stock Alert, Supplier Reorder, Category Analysis, Purchases, and Stock Movement History.',
+  },
+  {
+    id: 'report-no-results',
+    roles: HELP_ROLES.INVENTORY,
+    question: 'Why does a report show no results?',
+    answer: 'The selected date, category, supplier, or report type may not have matching saved records. Clear filters or choose a wider date range, then generate the report again.',
   },
   {
     id: 'actual-earnings',
@@ -253,6 +307,24 @@ const faqs = [
     answer: 'Open Archive, find the item, review its details, then select Restore. The item returns to the active inventory list.',
   },
   {
+    id: 'maintenance-purpose',
+    roles: HELP_ROLES.ADMIN,
+    question: 'What are the Maintenance tools for?',
+    answer: 'Maintenance tools help an Admin protect records, make safe copies, check for possible data issues, and keep the system running smoothly. They are for system care, not for daily selling or receiving work.',
+  },
+  {
+    id: 'system-optimization-scope',
+    roles: HELP_ROLES.ADMIN,
+    question: 'What is System Optimization for?',
+    answer: 'Its purpose is to keep saved records easier for the system to read and to help Admin users spot possible record issues. Optimize Database helps both branches load records smoothly, Clear Logs removes old non-critical system notes, and Check Data Integrity reviews Manggahan and San Rafael together.',
+  },
+  {
+    id: 'maintenance-record-safety',
+    roles: HELP_ROLES.ADMIN,
+    question: 'Will Clear Logs, Optimize Database, or Check Data Integrity delete business records?',
+    answer: 'No. Clear Logs removes only eligible old non-critical system notes. Optimize Database refreshes table information only. Check Data Integrity is read-only and reports issues without repairing, deleting, or overwriting records.',
+  },
+  {
     id: 'restore-other-browser',
     roles: HELP_ROLES.INVENTORY,
     question: 'Why does another browser still show old archive or inventory information?',
@@ -271,6 +343,9 @@ const faqs = [
     answer: 'Only an Admin can create accounts, assign roles, transfer branches, deactivate users, and update access.',
   },
 ];
+
+const FAQ_CARD_PREVIEW_LIMIT = 14;
+const GUIDE_CARD_PREVIEW_LIMIT = 9;
 
 const guides = [
   {
@@ -489,10 +564,11 @@ const guides = [
     summary: 'Run admin-only system checks and data safety tools.',
     steps: [
       'Open Maintenance.',
-      'Review the available admin tools.',
-      'Read the confirmation message before running any tool.',
-      'Run only the action needed.',
-      'Check the result and audit trail after completion.',
+      'Use Backup when a safe copy of system records is needed.',
+      'Use Clear Logs to remove only eligible old non-critical system notes.',
+      'Use Optimize Database to refresh application table information for both branches.',
+      'Use Check Data Integrity to scan Manggahan and San Rafael for possible record issues.',
+      'Read the confirmation message, run only the action needed, and check the result after completion.',
     ],
   },
   {
@@ -525,6 +601,8 @@ const guidelines = [
   { id: 'approval-review', roles: HELP_ROLES.ADMIN, text: 'Review inventory approval requests carefully before approving or rejecting them.' },
   { id: 'duplicate-items', roles: HELP_ROLES.ADMIN, text: 'Check active and archived records before creating a new inventory item.' },
   { id: 'backup-file', roles: HELP_ROLES.ADMIN, text: 'Use only complete system-generated SQL backup files when restoring the database.' },
+  { id: 'maintenance-scope', roles: HELP_ROLES.ADMIN, text: 'Use System Optimization to keep saved records easy to load, remove old non-critical system notes, and check both branches for possible record issues.' },
+  { id: 'maintenance-readonly', roles: HELP_ROLES.ADMIN, text: 'Use Data Integrity Check to review possible issues; it reports findings but does not automatically change records.' },
   { id: 'user-access', roles: HELP_ROLES.ADMIN, text: 'Give each staff member only the role and branch access needed for their work.' },
   { id: 'audit-review', roles: HELP_ROLES.ADMIN, text: 'Review audit trail records after sensitive actions such as user updates, cancellations, and maintenance tasks.' },
 ];
@@ -634,6 +712,13 @@ const troubleshooting = [
     title: 'Maintenance tool did not complete',
     cause: 'The action may need valid confirmation, active connection, or correct system state.',
     solution: 'Review the message shown by the system, run only the required tool, then check the audit trail.',
+  },
+  {
+    id: 'integrity-issues-found',
+    roles: HELP_ROLES.ADMIN,
+    title: 'Data Integrity Check found issues',
+    cause: 'The system found records that may need review, such as missing links, invalid saved details, or records that do not match expected rules.',
+    solution: 'Read the issue summary, review the affected records carefully, and correct only the records that are confirmed to be wrong. The check itself does not change records.',
   },
 ];
 
@@ -811,6 +896,18 @@ const manualWorkflows = [
       'Review the success message and audit trail after completion.',
     ],
   },
+  {
+    id: 'system-optimization-workflow',
+    roles: HELP_ROLES.ADMIN,
+    title: 'System Optimization Workflow',
+    steps: [
+      'Open Maintenance.',
+      'Choose Clear Logs, Optimize Database, or Check Data Integrity based on the result you need.',
+      'Read the confirmation message before continuing.',
+      'Wait for the success or issue summary message.',
+      'Review the audit trail when the action needs follow-up.',
+    ],
+  },
 ];
 
 const dataEntryRules = [
@@ -838,6 +935,7 @@ const securityReminders = [
   { id: 'report-issue', roles: HELP_ROLES.ALL, text: 'Report suspicious account activity or incorrect access to an Admin.' },
   { id: 'role-control', roles: HELP_ROLES.ADMIN, text: 'Assign the lowest role needed for each staff member to protect business records.' },
   { id: 'maintenance-care', roles: HELP_ROLES.ADMIN, text: 'Use maintenance and backup tools only when needed and after reading the confirmation message.' },
+  { id: 'restore-care', roles: HELP_ROLES.ADMIN, text: 'Run database restore only when the selected backup should replace the current system records.' },
 ];
 
 const glossaryTerms = [
@@ -849,6 +947,8 @@ const glossaryTerms = [
   { term: 'Audit Trail', roles: HELP_ROLES.ADMIN, definition: 'A record of important user actions, used for accountability and review.' },
   { term: 'Backdated Transaction', roles: HELP_ROLES.SALES, definition: 'A transaction encoded today but dated earlier based on the actual business document date.' },
   { term: 'Backup', roles: HELP_ROLES.ADMIN, definition: 'A secure SQL copy of system records that can be used for recovery when needed.' },
+  { term: 'Check Data Integrity', roles: HELP_ROLES.ADMIN, definition: 'A read-only maintenance check that scans both branches for possible record relationship issues.' },
+  { term: 'Clear System Logs', roles: HELP_ROLES.ADMIN, definition: 'A maintenance action that removes eligible old non-critical system notes while keeping business records, security logs, and audit trail records.' },
   { term: 'Low Stock', roles: HELP_ROLES.ALL, definition: 'An item quantity has reached or fallen below its set threshold.' },
   { term: 'Batch Stock Adjustment', roles: HELP_ROLES.INVENTORY, definition: 'A stock update applied to multiple inventory items in one controlled action.' },
   { term: 'Branch', roles: HELP_ROLES.ALL, definition: 'The store location where records and transactions are assigned.' },
@@ -866,6 +966,7 @@ const glossaryTerms = [
   { term: 'Manual Low-Stock Threshold', roles: HELP_ROLES.INVENTORY, definition: 'The item-specific quantity level that triggers a low-stock warning.' },
   { term: 'Non-Inventory Item', roles: HELP_ROLES.SALES, definition: 'An item sold during a transaction but not yet tracked as a regular inventory item.' },
   { term: 'Out of Stock', roles: HELP_ROLES.ALL, definition: 'An item has zero available quantity.' },
+  { term: 'Optimize Database', roles: HELP_ROLES.ADMIN, definition: 'A maintenance action that refreshes application table information so the system can read records efficiently. It does not change saved business records.' },
   { term: 'Payment Method', roles: HELP_ROLES.SALES, definition: 'The way a customer pays, such as cash, GCash, bank transfer, or another accepted option.' },
   { term: 'Profit Margin', roles: HELP_ROLES.ADMIN, definition: 'The percentage that compares Actual Profit against Sales for the selected records.' },
   { term: 'Purchase Entry', roles: HELP_ROLES.INVENTORY, definition: 'A record of supplier delivery or purchase details that can increase inventory quantity.' },
@@ -1454,6 +1555,7 @@ export function HelpModule({ user }) {
   const showGuidelines = (topic === 'all' || topic === 'guidelines') && visibleGuidelines.length > 0;
   const showTroubleshooting = (topic === 'all' || topic === 'troubleshooting') && visibleTroubleshooting.length > 0;
   const showContact = (topic === 'all' || topic === 'contact') && contactMatches;
+  const showTopHelpGrid = showFaqs || showGuides || showTroubleshooting || showContact;
   const hasAnyResults = showFaqs || showGuides || showGuidelines || showTroubleshooting || showContact;
 
   const fullViewContent = {
@@ -1649,18 +1751,22 @@ export function HelpModule({ user }) {
           display: grid;
           grid-template-columns: minmax(0, 1fr) minmax(320px, 0.52fr);
           gap: 18px;
-          align-items: start;
+          align-items: stretch;
         }
 
         .help-main-grid,
         .help-side-grid {
           display: grid;
           gap: 18px;
-          align-items: start;
+          align-items: stretch;
         }
 
         .help-main-grid {
           grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .help-guidelines-row {
+          margin-top: 18px;
         }
 
         .help-card {
@@ -2280,7 +2386,7 @@ export function HelpModule({ user }) {
         </div>
       )}
 
-      {hasAnyResults && (
+      {showTopHelpGrid && (
         <div className="help-grid">
           <div className="help-main-grid">
             {showFaqs && (
@@ -2293,7 +2399,7 @@ export function HelpModule({ user }) {
                     onShowAll={() => setFullView('faqs')}
                   />
                   <div className="help-list">
-                    {visibleFaqs.slice(0, 8).map(item => {
+                    {visibleFaqs.slice(0, FAQ_CARD_PREVIEW_LIMIT).map(item => {
                       const isOpen = openFaq === item.id;
                       return (
                         <div key={item.id}>
@@ -2320,7 +2426,7 @@ export function HelpModule({ user }) {
                     onShowAll={() => setFullView('guides')}
                   />
                   <div className="help-list">
-                    {visibleGuides.slice(0, 7).map(item => {
+                    {visibleGuides.slice(0, GUIDE_CARD_PREVIEW_LIMIT).map(item => {
                       const isOpen = openGuide === item.id;
                       return (
                         <div key={item.id}>
@@ -2350,28 +2456,6 @@ export function HelpModule({ user }) {
                         </div>
                       );
                     })}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {showGuidelines && (
-              <Card className="help-card help-card-wide">
-                <CardContent className="help-card-content">
-                  <SectionTitle
-                    icon={<ShieldCheck className="h-5 w-5" />}
-                    tone="green"
-                    title="System Guidelines"
-                    subtitle="Simple rules for clean and accurate records."
-                    onShowAll={() => setFullView('guidelines')}
-                  />
-                  <div className="help-guidelines">
-                    {visibleGuidelines.map(item => (
-                      <div className="help-guideline" key={item.id}>
-                        <CheckCircle2 className="mt-0.5 h-4 w-4 text-green-600" />
-                        <span>{item.text}</span>
-                      </div>
-                    ))}
                   </div>
                 </CardContent>
               </Card>
@@ -2428,6 +2512,30 @@ export function HelpModule({ user }) {
               </Card>
             )}
           </div>
+        </div>
+      )}
+
+      {showGuidelines && (
+        <div className="help-guidelines-row">
+          <Card className="help-card">
+            <CardContent className="help-card-content">
+              <SectionTitle
+                icon={<ShieldCheck className="h-5 w-5" />}
+                tone="green"
+                title="System Guidelines"
+                subtitle="Simple rules for clean and accurate records."
+                onShowAll={() => setFullView('guidelines')}
+              />
+              <div className="help-guidelines">
+                {visibleGuidelines.map(item => (
+                  <div className="help-guideline" key={item.id}>
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 text-green-600" />
+                    <span>{item.text}</span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
 

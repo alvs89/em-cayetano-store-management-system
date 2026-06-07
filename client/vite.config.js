@@ -23,6 +23,61 @@ export default defineConfig({
   build: {
     target: 'esnext',
     outDir: 'build',
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalizedId = id.replace(/\\/g, '/');
+          if (!normalizedId.includes('node_modules')) {
+            if (normalizedId.includes('/src/components/SalesModule')) return 'module-sales';
+            if (normalizedId.includes('/src/components/InventoryModule')) return 'module-inventory';
+            if (normalizedId.includes('/src/components/ReportsModule')) return 'module-reports';
+            if (normalizedId.includes('/src/components/PurchasesModule')) return 'module-purchases';
+            if (normalizedId.includes('/src/components/Dashboard')) return 'module-dashboard';
+            if (
+              normalizedId.includes('/src/components/MaintenanceModule') ||
+              normalizedId.includes('/src/components/UserManagementModule') ||
+              normalizedId.includes('/src/components/AuditTrailModule')
+            ) {
+              return 'module-admin';
+            }
+            if (
+              normalizedId.includes('/src/components/ArchiveModule') ||
+              normalizedId.includes('/src/components/SearchModule') ||
+              normalizedId.includes('/src/components/AlertsModule') ||
+              normalizedId.includes('/src/components/HelpModule')
+            ) {
+              return 'module-support';
+            }
+            return undefined;
+          }
+          if (id.includes('@radix-ui')) {
+            return 'vendor-radix';
+          }
+          if (id.includes('react-dom') || id.includes('react-router-dom') || /node_modules[\\/]react[\\/]/.test(id)) {
+            return 'vendor-react';
+          }
+          if (id.includes('lucide-react')) {
+            return 'vendor-icons';
+          }
+          if (id.includes('jspdf-autotable')) {
+            return 'vendor-pdf-table';
+          }
+          if (id.includes('jspdf')) {
+            return 'vendor-jspdf';
+          }
+          if (id.includes('html2canvas')) {
+            return 'vendor-html2canvas';
+          }
+          if (id.includes('dompurify')) {
+            return 'vendor-dompurify';
+          }
+          if (id.includes('axios') || id.includes('sonner')) {
+            return 'vendor-app';
+          }
+          return undefined;
+        },
+      },
+    },
   },
   server: {
     port: 3000,

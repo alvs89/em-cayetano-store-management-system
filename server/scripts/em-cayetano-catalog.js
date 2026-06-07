@@ -516,6 +516,10 @@ OTHER BRANDS -- LA-10 SPHERO - AUTOMOTIVE LACQUER WHITE 1L THEN SRP: 290
 
 const normalizeSpaces = value => String(value || '').replace(/\s+/g, ' ').trim();
 
+const MANUAL_PRICE_OVERRIDES = new Map([
+  ['PVC Pipe / Fittings|elbow 1/8 45deg -- orange 6"', 180]
+]);
+
 const parsePrice = rawPrice => {
   const text = String(rawPrice || '').trim();
   const number = Number(text.replace(/,/g, '').match(/\d+(?:\.\d+)?/)?.[0]);
@@ -545,8 +549,8 @@ const buildEmCayetanoCatalog = () => {
     const rawName = normalizeSpaces(match[1]);
     const priceText = normalizeSpaces(match[2]);
     const name = normalizeSpaces(priceText.toUpperCase().includes('/FT') ? `${rawName} (per ft)` : rawName).slice(0, 150);
-    const price = parsePrice(priceText);
     const key = `${currentCategory}|${name.toLowerCase()}`;
+    const price = parsePrice(priceText) ?? MANUAL_PRICE_OVERRIDES.get(key) ?? null;
     if (seen.has(key)) continue;
     seen.add(key);
 

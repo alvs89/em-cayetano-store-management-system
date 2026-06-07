@@ -24,22 +24,6 @@ import {
   Truck,
 } from "lucide-react";
 import axios from "axios";
-import { LoginScreen } from "./components/LoginScreen";
-import { TwoFactorAuthScreen } from "./components/TwoFactorAuthScreen";
-import ForgotPasswordScreen from './components/ForgotPasswordScreen';
-import SetPasswordScreen from './components/SetPasswordScreen';
-import { Dashboard } from "./components/Dashboard.jsx";
-import { InventoryModule } from "./components/InventoryModule";
-import { ArchiveModule } from "./components/ArchiveModule";
-import { ReportsModule } from "./components/ReportsModule";
-import { SalesModule } from "./components/SalesModule";
-import { PurchasesModule } from "./components/PurchasesModule";
-import { MaintenanceModule } from "./components/MaintenanceModule";
-import { UserManagementModule } from "./components/UserManagementModule";
-import { AuditTrailModule } from "./components/AuditTrailModule";
-import { SearchModule } from "./components/SearchModule";
-import { HelpModule } from "./components/HelpModule";
-import { AlertsModule } from "./components/AlertsModule";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
@@ -61,6 +45,22 @@ import { Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { apiUrl } from './utils/api';
 import { PASSWORD_HELP_TEXT, validatePasswordPolicy } from './utils/passwordPolicy';
 import { canAccessScreen, getRoleLabel, isAdminRole, normalizeRole } from './utils/roles';
+import { LoginScreen } from "./components/LoginScreen";
+import { TwoFactorAuthScreen } from "./components/TwoFactorAuthScreen";
+import ForgotPasswordScreen from './components/ForgotPasswordScreen';
+import SetPasswordScreen from './components/SetPasswordScreen';
+import { Dashboard } from "./components/Dashboard.jsx";
+import { InventoryModule } from "./components/InventoryModule";
+import { ArchiveModule } from "./components/ArchiveModule";
+import { ReportsModule } from "./components/ReportsModule";
+import { SalesModule } from "./components/SalesModule";
+import { PurchasesModule } from "./components/PurchasesModule";
+import { MaintenanceModule } from "./components/MaintenanceModule";
+import { UserManagementModule } from "./components/UserManagementModule";
+import { AuditTrailModule } from "./components/AuditTrailModule";
+import { SearchModule } from "./components/SearchModule";
+import { HelpModule } from "./components/HelpModule";
+import { AlertsModule } from "./components/AlertsModule";
 
 const emcLogoSrc = "/emc-logo.png"; // Place the logo file in public/emc-logo.png
 const emptyPasswordChangeForm = {
