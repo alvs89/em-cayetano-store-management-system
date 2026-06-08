@@ -87,6 +87,7 @@ const ALERT_FILTER_OPTIONS = [
   { value: 'stock', label: 'Stock Alerts' },
   { value: 'out-of-stock', label: 'Out of Stock' },
   { value: 'low-stock', label: 'Low Stock' },
+  { value: 'inventory-requests', label: 'Inventory Requests' },
   { value: 'supplier-payments', label: 'Supplier Payments' },
   { value: 'user-management', label: 'User Accounts' },
   { value: 'maintenance', label: 'Maintenance' }
@@ -99,6 +100,7 @@ const ALERT_FILTER_OPTIONS = [
  * @returns {string} Filter key such as low-stock, maintenance, or supplier-payments.
  */
 const getAlertFilterKey = alert => {
+  if (alert.alertCategory) return alert.alertCategory;
   if (alert.title === 'Out of Stock') return 'out-of-stock';
   if (alert.title === 'Low Stock Alert') return 'low-stock';
   if (alert.relatedModule === 'purchases') return 'supplier-payments';
@@ -357,6 +359,19 @@ export function AlertsModule({ user, onNavigate }) {
       localStorage.setItem('purchases_open_history', 'true');
       window.dispatchEvent(new CustomEvent('purchases-target-view', { detail: target }));
     }
+
+    if (alert.relatedModule === 'inventory' && alert.inventoryId) {
+      const inventoryId = String(alert.inventoryId);
+      localStorage.setItem('inventoryFocusItemId', inventoryId);
+      onNavigate('inventory', { preserveInventoryNavigationState: true });
+      window.setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('inventory-focus-item', {
+          detail: { id: inventoryId }
+        }));
+      }, 80);
+      return;
+    }
+
     onNavigate(alert.relatedModule);
   };
 
@@ -1038,6 +1053,16 @@ function AlertCard({ alert, onMarkAsRead, onUnmarkAsRead, onDismiss, onGoToRelat
         icon: 'text-yellow-800',
         badgeStyle: { backgroundColor: '#fef3c7', color: '#92400e', borderColor: '#fcd34d' },
         containerStyle: { backgroundColor: '#fffbeb', borderColor: '#fde68a' },
+      };
+    }
+
+    if (alert.title === 'Inventory Request Rejected') {
+      return {
+        label: 'Rejected',
+        ring: 'ring-slate-300',
+        icon: 'text-slate-700',
+        badgeStyle: { backgroundColor: '#334155', color: '#ffffff', borderColor: '#1e293b' },
+        containerStyle: { backgroundColor: '#f8fafc', borderColor: '#94a3b8' },
       };
     }
 

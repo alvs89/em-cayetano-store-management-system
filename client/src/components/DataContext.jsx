@@ -301,6 +301,69 @@ const formatCurrencyForAlert = value =>
     minimumFractionDigits: 2
   }).format(Number(value || 0));
 
+const normalizeAlertLookupText = value => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+const getApprovedRequestInventoryId = (request, inventory) => {
+  if (request.inventoryId) return String(request.inventoryId);
+
+  const requestedName = normalizeAlertLookupText(
+    request.requestedPayload?.name || request.itemName || request.currentSnapshot?.name
+  );
+  if (!requestedName) return '';
+
+  const requestedCategory = normalizeAlertLookupText(
+    request.requestedPayload?.category || request.currentSnapshot?.category
+  );
+  const matchingItem = (inventory || []).find(item => {
+    const sameName = normalizeAlertLookupText(item.name) === requestedName;
+    const sameBranch = !request.branch || !item.branch || item.branch === request.branch;
+    const sameCategory = !requestedCategory || normalizeAlertLookupText(item.category) === requestedCategory;
+    return sameName && sameBranch && sameCategory;
+  });
+
+  return matchingItem?.id ? String(matchingItem.id) : '';
+};
+
+// Staff review alerts are generated from approved/rejected inventory change
+// requests so requesters receive professional feedback without keeping reviewed
+// items inside the pending request tracker.
+const generateReviewedInventoryRequestAlerts = (requests, inventory, role) => {
+  if (isAdminRole(role) || !canPerformInventoryMovement(role)) return [];
+
+  return (requests || [])
+    .filter(request => ['approved', 'rejected'].includes(String(request.status || '').toLowerCase()))
+    .map(request => {
+      const status = String(request.status || '').toLowerCase();
+      const isApproved = status === 'approved';
+      const targetInventoryId = getApprovedRequestInventoryId(request, inventory);
+      const itemName = request.requestedPayload?.name
+        || request.itemName
+        || request.currentSnapshot?.name
+        || 'Inventory item';
+      const isNewItemRequest = request.requestType === 'add_item';
+      const reviewedAt = request.reviewedAt || new Date().toISOString();
+
+      return {
+        id: `inventory-request-${status}-${request.id}-${targetInventoryId || 'no-target'}-${reviewedAt}`,
+        type: isApproved ? 'success' : 'warning',
+        title: isApproved ? 'Inventory Request Approved' : 'Inventory Request Rejected',
+        message: isApproved
+          ? (isNewItemRequest
+            ? `${itemName} was approved and added to branch inventory.`
+            : `The requested inventory changes for ${itemName} were approved.`)
+          : `The inventory request for ${itemName} was rejected.${request.reviewNote ? ` Admin note: ${request.reviewNote}` : ''}`,
+        timestampRaw: reviewedAt,
+        read: false,
+        actionable: isApproved && Boolean(targetInventoryId),
+        relatedModule: isApproved && targetInventoryId ? 'inventory' : '',
+        actionLabel: isApproved && targetInventoryId ? 'View Item' : '',
+        alertCategory: 'inventory-requests',
+        inventoryId: isApproved ? targetInventoryId : '',
+        requestId: request.id
+      };
+    });
+};
+
 export function DataProvider({ children }) {
   const [inventory, setInventory] = useState([]);
   const [archivedInventory, setArchivedInventory] = useState([]);
@@ -915,7 +978,8 @@ export function DataProvider({ children }) {
     const inventoryAlerts = generateInventoryAlerts(inventory);
     const systemAlerts = generateSystemAlerts(systemSummary, activeUserRole);
     const supplierPaymentAlerts = generateSupplierPaymentAlerts(purchaseTransactions, activeUserRole);
-    return [...inventoryAlerts, ...systemAlerts, ...supplierPaymentAlerts]
+    const reviewedRequestAlerts = generateReviewedInventoryRequestAlerts(inventoryChangeRequests, inventory, activeUserRole);
+    return [...inventoryAlerts, ...systemAlerts, ...supplierPaymentAlerts, ...reviewedRequestAlerts]
       .filter(alert => !dismissedAlertIds.includes(alert.id))
       .map(alert => ({
         ...alert,
@@ -927,7 +991,7 @@ export function DataProvider({ children }) {
         const bTime = new Date(b.timestampRaw || b.timestamp || 0).getTime();
         return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
       });
-  }, [activeUserRole, dismissedAlertIds, inventory, purchaseTransactions, readAlertIds, systemSummary]);
+  }, [activeUserRole, dismissedAlertIds, inventory, inventoryChangeRequests, purchaseTransactions, readAlertIds, systemSummary]);
 
   const unreadAlertCount = alerts.filter(alert => !alert.read).length;
   const warningAlertCount = alerts.filter(alert => alert.type === "warning").length;

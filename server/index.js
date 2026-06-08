@@ -5675,16 +5675,18 @@ app.post('/api/inventory/change-requests/:id/status', authenticate, requireAdmin
         : await applyApprovedInventoryEditRequest(client, { request: lockedRequest, actorId: req.user.id });
     }
 
+    const reviewedInventoryId = approvedItem?.inventory_id || lockedRequest.inventory_id || null;
     const result = await client.query(
       `UPDATE inventory_change_requests
        SET status = $1,
            reviewed_by = $2,
            reviewed_by_name = $3,
            review_note = $4,
-           reviewed_at = ${PHILIPPINE_NOW_SQL}
+           reviewed_at = ${PHILIPPINE_NOW_SQL},
+           inventory_id = COALESCE($7::int, inventory_id)
        WHERE request_id = $5 AND branch = $6
        RETURNING *`,
-      [status, req.user.id, actorName, reviewNote || null, requestId, req.user.branch]
+      [status, req.user.id, actorName, reviewNote || null, requestId, req.user.branch, reviewedInventoryId]
     );
 
     await recordAuditLog(client, {

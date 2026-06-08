@@ -427,6 +427,8 @@ export function InventoryModule({
   const [isBatchStockAdjustmentDialogOpen, setIsBatchStockAdjustmentDialogOpen] = useState(false);
   const [isBatchStockOutDialogOpen, setIsBatchStockOutDialogOpen] = useState(false);
   const [isApprovalDialogOpen, setIsApprovalDialogOpen] = useState(false);
+  const [isMyRequestsDialogOpen, setIsMyRequestsDialogOpen] = useState(false);
+  const [myRequestPage, setMyRequestPage] = useState(1);
   const [approvalRequestFilter, setApprovalRequestFilter] = useState("all");
   const [approvalRequestPage, setApprovalRequestPage] = useState(1);
   const [approvalRequestSearch, setApprovalRequestSearch] = useState("");
@@ -540,6 +542,14 @@ export function InventoryModule({
     () => (inventoryChangeRequests || []).filter(request => request.status === "pending"),
     [inventoryChangeRequests]
   );
+  const myPendingInventoryChangeRequests = React.useMemo(() => (
+    canRequestInventoryMasterDataChange
+      ? [...(inventoryChangeRequests || [])]
+        .filter(request => String(request.status || "pending").toLowerCase() === "pending")
+        .sort((a, b) => new Date(b.requestedAt || 0).getTime() - new Date(a.requestedAt || 0).getTime())
+      : []
+  ), [canRequestInventoryMasterDataChange, inventoryChangeRequests]);
+  const myPendingInventoryChangeRequestCount = myPendingInventoryChangeRequests.length;
   React.useEffect(() => {
     const mediaQuery = window.matchMedia("(max-width: 760px)");
     const updateApprovalViewport = () => setIsApprovalMobileView(mediaQuery.matches);
@@ -550,6 +560,12 @@ export function InventoryModule({
   React.useEffect(() => {
     setApprovalRequestPage(1);
   }, [isApprovalMobileView]);
+  React.useEffect(() => {
+    if (myPendingInventoryChangeRequestCount === 0 && isMyRequestsDialogOpen) {
+      setIsMyRequestsDialogOpen(false);
+      setMyRequestPage(1);
+    }
+  }, [isMyRequestsDialogOpen, myPendingInventoryChangeRequestCount]);
   const currentBranch = normalizeDuplicateKeyPart(user?.branch);
   const buildDuplicateKey = item => [
     normalizeInventoryIdentityName(item.name),
@@ -2114,6 +2130,357 @@ export function InventoryModule({
         : "No field differences detected",
       className: "border-slate-200 bg-slate-50 text-slate-700"
     };
+  };
+
+  const getRequestStatusMeta = status => {
+    const normalizedStatus = String(status || "pending").toLowerCase();
+    if (normalizedStatus === "approved") {
+      return {
+        label: "Approved",
+        className: "border-green-200 bg-green-50 text-green-800"
+      };
+    }
+    if (normalizedStatus === "rejected") {
+      return {
+        label: "Rejected",
+        className: "border-red-200 bg-red-50 text-red-800"
+      };
+    }
+    return {
+      label: "Pending",
+      className: "border-amber-200 bg-amber-50 text-amber-800"
+    };
+  };
+
+  const renderMyInventoryRequestsDialog = () => {
+    if (!canRequestInventoryMasterDataChange || myPendingInventoryChangeRequestCount === 0) return null;
+
+    const pendingRequestCount = myPendingInventoryChangeRequestCount;
+    const myRequestsPerPage = 5;
+    const myRequestTotalPages = Math.max(1, Math.ceil(myPendingInventoryChangeRequests.length / myRequestsPerPage));
+    const safeMyRequestPage = Math.min(Math.max(1, myRequestPage), myRequestTotalPages);
+    const myRequestPageStart = myPendingInventoryChangeRequests.length === 0
+      ? 0
+      : (safeMyRequestPage - 1) * myRequestsPerPage + 1;
+    const myRequestPageEnd = Math.min(safeMyRequestPage * myRequestsPerPage, myPendingInventoryChangeRequests.length);
+    const paginatedMyInventoryChangeRequests = myPendingInventoryChangeRequests.slice(
+      (safeMyRequestPage - 1) * myRequestsPerPage,
+      safeMyRequestPage * myRequestsPerPage
+    );
+
+    return (
+      <Dialog open={isMyRequestsDialogOpen} onOpenChange={setIsMyRequestsDialogOpen}>
+        <DialogContent
+          className="inventory-my-requests-dialog border border-slate-200 bg-white shadow-2xl"
+          style={{
+            width: "min(980px, calc(100vw - 32px))",
+            maxWidth: "980px",
+            maxHeight: "calc(100dvh - 56px)",
+            padding: 0,
+            overflow: "hidden",
+            borderRadius: "16px"
+          }}
+        >
+          <DialogHeader
+            className="text-left"
+            style={{
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "flex-start",
+              gap: "14px",
+              padding: "24px 28px 18px",
+              borderBottom: "1px solid #E2E8F0"
+            }}
+          >
+            <span
+              aria-hidden="true"
+              className="shrink-0"
+              style={{
+                width: "42px",
+                height: "42px",
+                borderRadius: "12px",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "#EFF6FF",
+                color: "#1D4ED8"
+              }}
+            >
+              <Eye className="h-5 w-5" />
+            </span>
+            <div className="min-w-0">
+              <DialogTitle className="text-xl font-bold text-slate-950">My Inventory Requests</DialogTitle>
+              <DialogDescription className="mt-1 text-sm leading-relaxed text-slate-700">
+                Pending requests for {user?.branch || "your branch"}.
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+
+          <style>{`
+            /* Staff request tracking uses a read-only review surface so requesters can monitor status without approval controls. */
+            .inventory-my-requests-body {
+              display: grid;
+              gap: 14px;
+              padding: 18px 28px 24px;
+              max-height: calc(100dvh - 180px);
+              overflow-y: auto;
+            }
+
+            .inventory-my-requests-summary {
+              display: block;
+            }
+
+            .inventory-my-requests-summary-card {
+              border: 1px solid #e2e8f0;
+              border-radius: 10px;
+              background: #f8fafc;
+              padding: 12px 14px;
+            }
+
+            .inventory-my-requests-pending-summary {
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              gap: 12px;
+            }
+
+            .inventory-my-request-card {
+              border: 1px solid #e2e8f0;
+              border-radius: 13px;
+              background: #ffffff;
+              padding: 16px;
+            }
+
+            .inventory-my-request-header {
+              display: grid;
+              grid-template-columns: minmax(0, 1fr) auto;
+              gap: 12px;
+              align-items: start;
+              border-bottom: 1px solid #e2e8f0;
+              padding-bottom: 12px;
+              margin-bottom: 12px;
+            }
+
+            .inventory-my-request-title {
+              margin: 0;
+              color: #0f172a;
+              font-size: 16px;
+              font-weight: 800;
+              line-height: 1.25;
+              overflow-wrap: anywhere;
+            }
+
+            .inventory-my-request-meta {
+              margin-top: 4px;
+              color: #475569;
+              font-size: 12px;
+              font-weight: 600;
+              line-height: 1.35;
+            }
+
+            .inventory-my-request-note {
+              border-radius: 10px;
+              border: 1px solid #e2e8f0;
+              background: #f8fafc;
+              padding: 10px 12px;
+              color: #334155;
+              font-size: 13px;
+              line-height: 1.45;
+            }
+
+            .inventory-my-requests-pagination {
+              margin-top: 8px;
+            }
+
+            .inventory-my-requests-pagination-button {
+              background: #ffffff;
+              border-color: #cbd5e1;
+              color: #334155;
+              transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+            }
+
+            .inventory-my-requests-pagination-button:not(:disabled):hover {
+              background: #f1f5f9;
+              border-color: #94a3b8;
+              color: #0f172a;
+              box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+            }
+
+            @media (max-width: 700px) {
+              .inventory-my-requests-body {
+                padding: 14px;
+              }
+
+              .inventory-my-request-header {
+                grid-template-columns: minmax(0, 1fr);
+              }
+
+              .inventory-my-requests-pending-summary {
+                align-items: flex-start;
+              }
+
+              .inventory-my-requests-pagination {
+                display: grid;
+                grid-template-columns: 1fr;
+                gap: 8px;
+              }
+
+              .inventory-my-requests-pagination-actions {
+                display: grid;
+                grid-template-columns: 1fr auto 1fr;
+                align-items: center;
+                gap: 6px;
+              }
+
+              .inventory-my-requests-pagination-button {
+                min-width: 0;
+                padding-left: 8px;
+                padding-right: 8px;
+              }
+            }
+          `}</style>
+
+          <div className="inventory-my-requests-body">
+            <div className="inventory-my-requests-summary" aria-label="Pending inventory request summary">
+              <div className="inventory-my-requests-summary-card inventory-my-requests-pending-summary">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Pending Requests</p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {pendingRequestCount === 0
+                      ? "No inventory requests are waiting for admin review."
+                      : "Inventory requests waiting for admin review."}
+                  </p>
+                </div>
+                <p className="shrink-0 text-2xl font-bold text-slate-950">{pendingRequestCount}</p>
+              </div>
+            </div>
+
+            <div className="grid gap-3">
+                {paginatedMyInventoryChangeRequests.map(request => {
+                  const changeRows = getApprovalChangeRows(request);
+                  const newItemRows = getNewItemApprovalRows(request);
+                  const requestMeta = getApprovalRequestMeta(request, changeRows);
+                  const statusMeta = getRequestStatusMeta(request.status);
+                  const payload = request.requestedPayload || {};
+                  const currentItemName = String(request.currentSnapshot?.name || "").trim();
+                  const requestedItemName = String(payload.name || request.itemName || currentItemName || "Inventory item").trim();
+                  const displayItemName = request.requestType === "edit_item"
+                    ? currentItemName || request.itemName || requestedItemName
+                    : requestedItemName;
+                  const reviewedText = request.reviewedAt
+                    ? `Reviewed by ${request.reviewedByName || "Admin"} on ${formatDateTime(request.reviewedAt)}`
+                    : "Waiting for admin review";
+
+                  return (
+                    <article key={request.id} className="inventory-my-request-card">
+                      <div className="inventory-my-request-header">
+                        <div className="min-w-0">
+                          <p className="inventory-my-request-title">{displayItemName}</p>
+                          <p className="inventory-my-request-meta">
+                            {request.requestType === "edit_item" ? "Edit item request" : "New item request"} - Submitted {formatDateTime(request.requestedAt)}
+                          </p>
+                          <p className="inventory-my-request-meta">{reviewedText}</p>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
+                          <Badge variant="outline" className={requestMeta.className}>{requestMeta.label}</Badge>
+                          <Badge variant="outline" className={statusMeta.className}>{statusMeta.label}</Badge>
+                        </div>
+                      </div>
+
+                      {request.requestType === "add_item" ? (
+                        <Table className="inventory-approval-value-table">
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Field</TableHead>
+                              <TableHead>Requested Value</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {newItemRows.length > 0 ? newItemRows.map(row => (
+                              <TableRow key={`${request.id}-${row.label}`}>
+                                <TableCell className="font-semibold text-slate-700">{row.label}</TableCell>
+                                <TableCell className="text-slate-950">{row.value}</TableCell>
+                              </TableRow>
+                            )) : (
+                              <TableRow>
+                                <TableCell colSpan={2} className="text-sm text-slate-600">No requested values were available.</TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      ) : (
+                        <Table className="inventory-approval-change-table">
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Field</TableHead>
+                              <TableHead>Current</TableHead>
+                              <TableHead>Requested</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {changeRows.length > 0 ? changeRows.map(row => (
+                              <TableRow key={`${request.id}-${row.label}`}>
+                                <TableCell className="font-semibold text-slate-700">{row.label}</TableCell>
+                                <TableCell className="text-slate-700">{row.before}</TableCell>
+                                <TableCell className="font-semibold text-slate-950">{row.after}</TableCell>
+                              </TableRow>
+                            )) : (
+                              <TableRow>
+                                <TableCell colSpan={3} className="text-sm text-slate-600">No field differences were detected in this request.</TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      )}
+
+                      {request.reviewNote && (
+                        <p className="inventory-my-request-note mt-3">
+                          <strong>Admin note:</strong> {request.reviewNote}
+                        </p>
+                      )}
+                    </article>
+                  );
+                })}
+                {myRequestTotalPages > 1 && (
+                  <div
+                    className="inventory-my-requests-pagination flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+                    aria-label="My inventory request pagination"
+                  >
+                    <p className="text-xs font-medium text-slate-600">
+                      Showing {myRequestPageStart}-{myRequestPageEnd} of {myPendingInventoryChangeRequests.length} pending requests
+                    </p>
+                    <div className="inventory-my-requests-pagination-actions flex items-center gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="inventory-my-requests-pagination-button h-8 rounded-lg text-xs font-semibold"
+                        disabled={safeMyRequestPage <= 1}
+                        onClick={() => setMyRequestPage(Math.max(1, safeMyRequestPage - 1))}
+                      >
+                        Previous
+                      </Button>
+                      <span className="min-w-[82px] text-center text-xs font-semibold text-slate-700">
+                        Page {safeMyRequestPage} of {myRequestTotalPages}
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="inventory-my-requests-pagination-button h-8 rounded-lg text-xs font-semibold"
+                        disabled={safeMyRequestPage >= myRequestTotalPages}
+                        onClick={() => setMyRequestPage(Math.min(myRequestTotalPages, safeMyRequestPage + 1))}
+                      >
+                        {isApprovalMobileView ? "Next" : "Next Page"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
   };
 
   const renderInventoryApprovalRequestsDialog = () => {
@@ -4493,6 +4860,38 @@ export function InventoryModule({
       box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.22);
     }
 
+    .inventory-approval-requests-button {
+      transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+    }
+
+    .inventory-approval-requests-button:not(:disabled):hover {
+      background: #FFFBEB !important;
+      border-color: #F59E0B !important;
+      color: #92400E !important;
+      box-shadow: 0 4px 10px rgba(245, 158, 11, 0.12);
+    }
+
+    .inventory-approval-requests-button:not(:disabled):focus-visible {
+      border-color: #D97706 !important;
+      box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.22);
+    }
+
+    .inventory-my-requests-button {
+      transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+    }
+
+    .inventory-my-requests-button:not(:disabled):hover {
+      background: #EFF6FF !important;
+      border-color: #60A5FA !important;
+      color: #1D4ED8 !important;
+      box-shadow: 0 4px 10px rgba(37, 99, 235, 0.12);
+    }
+
+    .inventory-my-requests-button:not(:disabled):focus-visible {
+      border-color: #2563EB !important;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22);
+    }
+
     /* Header grid keeps status filters and primary inventory actions aligned across admin states. */
     .inventory-list-header {
       display: grid;
@@ -4750,6 +5149,23 @@ export function InventoryModule({
     .inventory-batch-stock-out-button,
     .inventory-review-requests-button {
       flex: 0 0 auto;
+    }
+
+    #root .inventory-page .inventory-review-requests-button.inventory-approval-requests-button:not(:disabled):hover {
+      background: #FFFBEB !important;
+      border-color: #F59E0B !important;
+      color: #92400E !important;
+      box-shadow: 0 4px 10px rgba(245, 158, 11, 0.12) !important;
+    }
+
+    #root .inventory-page .inventory-review-requests-button.inventory-approval-requests-button:not(:disabled):focus-visible {
+      border-color: #D97706 !important;
+      box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.22) !important;
+    }
+
+    #root .inventory-page .inventory-review-requests-button.inventory-approval-requests-button:not(:disabled):hover .inventory-request-count-badge {
+      background: #F59E0B !important;
+      color: #ffffff !important;
     }
 
     .inventory-sort-header-button,
@@ -5033,7 +5449,6 @@ export function InventoryModule({
           "title"
           "description"
           "status"
-          "review"
           "actions";
         align-items: stretch;
         gap: 14px;
@@ -5047,7 +5462,7 @@ export function InventoryModule({
       .inventory-status-overview {
         display: grid;
         flex: 0 0 100%;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         width: 100%;
         gap: 8px;
         margin-top: 12px;
@@ -5100,24 +5515,24 @@ export function InventoryModule({
       }
 
       .inventory-toolbar-actions {
-        display: flex;
-        flex-direction: column;
+        grid-area: actions;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
         width: 100%;
-        align-items: stretch;
-        margin-left: 0;
       }
 
       .inventory-toolbar-review-row,
       .inventory-toolbar-primary-row {
-        justify-self: stretch;
-        margin-top: 0;
-        margin-bottom: 0;
+        display: contents;
       }
 
-      .inventory-toolbar-review-row,
-      .inventory-toolbar-primary-row {
-        justify-content: stretch;
-        flex-wrap: wrap;
+      .inventory-toolbar-actions .inventory-review-requests-button,
+      .inventory-toolbar-actions .inventory-batch-stock-adjustment-button,
+      .inventory-toolbar-actions .inventory-batch-stock-out-button,
+      .inventory-toolbar-actions .inventory-add-button {
+        min-height: 52px;
+        width: 100%;
       }
 
       .inventory-table-wrap {
@@ -5553,11 +5968,11 @@ export function InventoryModule({
       }
 
       .inventory-status-overview {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
       .inventory-overview-pill {
-        justify-content: space-between;
+        justify-content: center;
       }
 
       .inventory-search-grid {
@@ -5600,7 +6015,7 @@ export function InventoryModule({
     icon: /*#__PURE__*/React.createElement(Box, {
       className: "h-8 w-8"
     })
-  }), renderInventoryApprovalRequestsDialog(), /*#__PURE__*/React.createElement(Card, {
+  }), renderInventoryApprovalRequestsDialog(), renderMyInventoryRequestsDialog(), /*#__PURE__*/React.createElement(Card, {
     className: "inventory-search-card mb-6"
   }, /*#__PURE__*/React.createElement(CardContent, {
     className: "pt-6",
@@ -5668,7 +6083,7 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement(CardHeader, {
     "data-inventory-header": true
   }, /*#__PURE__*/React.createElement("div", {
-    className: `inventory-list-header flex items-center justify-between ${canManageInventory(user?.role) && pendingInventoryChangeRequests.length > 0 ? "inventory-list-header-has-review" : ""}`
+    className: `inventory-list-header flex items-center justify-between ${(canManageInventory(user?.role) && pendingInventoryChangeRequests.length > 0) || (canRequestInventoryMasterDataChange && myPendingInventoryChangeRequestCount > 0) ? "inventory-list-header-has-review" : ""}`
   }, /*#__PURE__*/React.createElement("div", {
     className: "inventory-list-title"
   }, /*#__PURE__*/React.createElement(CardTitle, null, "Inventory Items"), /*#__PURE__*/React.createElement(CardDescription, null, sortedInventory.length, " items found", sortBy && /*#__PURE__*/React.createElement("span", {
@@ -5680,13 +6095,22 @@ export function InventoryModule({
   }, canManageInventory(user?.role) && pendingInventoryChangeRequests.length > 0 && /*#__PURE__*/React.createElement(Button, {
     type: "button",
     variant: "outline",
-    className: "inventory-review-requests-button border-amber-200 bg-white text-amber-900 hover:bg-amber-50 font-semibold shadow-sm transition-colors duration-200",
+    className: "inventory-review-requests-button inventory-approval-requests-button border-amber-200 bg-white text-amber-900 hover:bg-amber-50 font-semibold shadow-sm transition-all duration-200",
     onClick: () => setIsApprovalDialogOpen(true)
   }, /*#__PURE__*/React.createElement(AlertTriangle, {
     className: "w-4 h-4 mr-2"
   }), "Review Requests", pendingInventoryChangeRequests.length > 0 && /*#__PURE__*/React.createElement(Badge, {
-    className: "ml-2 bg-amber-100 text-amber-900 hover:bg-amber-100"
-  }, pendingInventoryChangeRequests.length))), /*#__PURE__*/React.createElement("div", {
+    className: "inventory-request-count-badge ml-2 bg-amber-100 text-amber-900 hover:bg-amber-100"
+  }, pendingInventoryChangeRequests.length)), canRequestInventoryMasterDataChange && myPendingInventoryChangeRequestCount > 0 && /*#__PURE__*/React.createElement(Button, {
+    type: "button",
+    variant: "outline",
+    className: "inventory-review-requests-button inventory-my-requests-button border-blue-200 bg-white text-blue-900 hover:bg-blue-50 font-semibold shadow-sm transition-all duration-200",
+    onClick: () => setIsMyRequestsDialogOpen(true)
+  }, /*#__PURE__*/React.createElement(Eye, {
+    className: "w-4 h-4 mr-2"
+  }), "My Requests", myPendingInventoryChangeRequestCount > 0 && /*#__PURE__*/React.createElement(Badge, {
+    className: "ml-2 bg-blue-100 text-blue-900 hover:bg-blue-100"
+  }, myPendingInventoryChangeRequestCount))), /*#__PURE__*/React.createElement("div", {
     className: "inventory-toolbar-primary-row"
   }, canPerformInventoryMovement(user.role) && /*#__PURE__*/React.createElement(Button, {
     type: "button",
