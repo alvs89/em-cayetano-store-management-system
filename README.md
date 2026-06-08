@@ -114,6 +114,8 @@ DATABASE_URL=your_postgresql_connection_string
 JWT_SECRET=your_secure_jwt_secret
 EMAIL_USER=your_email_address
 EMAIL_PASS=your_email_app_password
+# Production only: set the deployed frontend origin, for example https://your-site.example
+CORS_ORIGIN=
 ```
 
 Notes:
@@ -121,6 +123,7 @@ Notes:
 - `DATABASE_URL` is required.
 - `JWT_SECRET` should be a strong random string.
 - `EMAIL_USER` and `EMAIL_PASS` are required for OTP and email notifications.
+- Local development accepts `localhost` and `127.0.0.1` frontend origins automatically. Set `CORS_ORIGIN` only for production or a specific shared frontend URL.
 - Do not commit `.env` files.
 
 ### 3. Install Frontend Dependencies
@@ -214,6 +217,8 @@ The Vite development server usually runs on:
 ```text
 http://localhost:5173
 ```
+
+If Vite reports another local URL, such as `http://localhost:3000`, open that URL. The backend accepts local development origins automatically.
 
 ## Build Check
 

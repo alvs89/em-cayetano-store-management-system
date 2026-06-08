@@ -75,6 +75,7 @@ const CORS_ALLOWED_ORIGINS = (process.env.CORS_ORIGIN || process.env.CLIENT_URL 
   .split(',')
   .map(origin => origin.trim())
   .filter(Boolean);
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const ALLOWED_ROLES = ['Admin', 'Sales Encoder', 'Inventory Staff', 'Sales Encoder + Inventory Staff'];
 const ALLOWED_BRANCHES = ['Manggahan', 'San Rafael'];
 const OFFICIAL_INVENTORY_CATEGORIES = [
@@ -193,14 +194,14 @@ if (!JWT_SECRET) {
   throw new Error('JWT_SECRET must be configured in production.');
 }
 
-if (process.env.NODE_ENV === 'production' && CORS_ALLOWED_ORIGINS.length === 0) {
+if (IS_PRODUCTION && CORS_ALLOWED_ORIGINS.length === 0) {
   throw new Error('CORS_ORIGIN must be configured in production.');
 }
 
 app.disable('x-powered-by');
 
 function isLocalDevelopmentOrigin(origin) {
-  if (!origin || process.env.NODE_ENV === 'production') return false;
+  if (!origin || IS_PRODUCTION) return false;
 
   try {
     const { protocol, hostname } = new URL(origin);
@@ -214,7 +215,7 @@ function isLocalDevelopmentOrigin(origin) {
 function isTrustedRequestOrigin(origin) {
   if (!origin) return true;
   if (CORS_ALLOWED_ORIGINS.includes(origin)) return true;
-  return CORS_ALLOWED_ORIGINS.length === 0 && isLocalDevelopmentOrigin(origin);
+  return isLocalDevelopmentOrigin(origin);
 }
 
 app.use((req, res, next) => {
