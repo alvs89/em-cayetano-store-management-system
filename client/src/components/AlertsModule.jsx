@@ -1,4 +1,10 @@
-// Alerts module: shows actionable stock and system notices for staff review.
+/**
+ * Alerts Module
+ *
+ * Shows actionable stock, supplier payment, account, maintenance, and system
+ * notices. Alerts are filterable, paginated, and can navigate users to the
+ * related workflow while preserving read/unread state.
+ */
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Bell, CheckCircle, Clock, Info, Package, X } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -23,6 +29,12 @@ import {
 const NEW_BADGE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const ALERTS_PER_PAGE = 10;
 
+/**
+ * Converts an alert timestamp into a live relative-time label.
+ *
+ * @param {string|Date|null} value - Alert timestamp.
+ * @returns {string} Relative time label such as "Just now" or "2 hours ago".
+ */
 const formatRelativeTime = value => {
   if (!value) return 'No date available';
   const timestamp = new Date(value).getTime();
@@ -43,11 +55,23 @@ const formatRelativeTime = value => {
   return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
 };
 
+/**
+ * Cleans small grammar issues in generated alert copy.
+ *
+ * @param {string} message - Alert message text.
+ * @returns {string} Display-ready message.
+ */
 const formatAlertMessage = message => {
   if (!message) return '';
   return message.replace(/\b1 units\b/g, '1 unit');
 };
 
+/**
+ * Determines whether an unread alert should show the New badge.
+ *
+ * @param {string|Date|null} value - Alert timestamp.
+ * @returns {boolean} True when the alert is newer than the configured window.
+ */
 const isWithinNewBadgeWindow = value => {
   if (!value) return false;
   const timestamp = new Date(value).getTime();
@@ -56,6 +80,8 @@ const isWithinNewBadgeWindow = value => {
   return ageMs >= 0 && ageMs < NEW_BADGE_WINDOW_MS;
 };
 
+// Filter options group alerts by workflow area so staff can focus on the
+// operational issue they are trying to resolve.
 const ALERT_FILTER_OPTIONS = [
   { value: 'all', label: 'All Alerts' },
   { value: 'stock', label: 'Stock Alerts' },
@@ -66,6 +92,12 @@ const ALERT_FILTER_OPTIONS = [
   { value: 'maintenance', label: 'Maintenance' }
 ];
 
+/**
+ * Maps an alert to the filter category used by the UI.
+ *
+ * @param {object} alert - Alert object from DataContext.
+ * @returns {string} Filter key such as low-stock, maintenance, or supplier-payments.
+ */
 const getAlertFilterKey = alert => {
   if (alert.title === 'Out of Stock') return 'out-of-stock';
   if (alert.title === 'Low Stock Alert') return 'low-stock';
@@ -75,7 +107,10 @@ const getAlertFilterKey = alert => {
   return 'system';
 };
 
+// Shared responsive styles keep alert cards, tabs, filters, and pagination
+// readable across desktop and mobile layouts.
 const alertResponsiveStyles = `
+  /* Alert card footer and action layout keep timestamps and buttons aligned. */
   .alert-card-timestamp {
     display: inline-flex;
     align-items: center;
@@ -104,6 +139,7 @@ const alertResponsiveStyles = `
     white-space: nowrap;
   }
 
+  /* Horizontal tabs remain scrollable when many categories are visible. */
   .alerts-tabs-list {
     display: flex;
     flex-wrap: nowrap;
@@ -172,6 +208,7 @@ const alertResponsiveStyles = `
     color: #475569;
   }
 
+  /* Category filters sit below tabs and show per-filter counts. */
   .alerts-filter-bar {
     display: flex;
     flex-wrap: wrap;
@@ -203,6 +240,7 @@ const alertResponsiveStyles = `
     opacity: 0.72;
   }
 
+  /* Mobile alert cards stack actions below the message for easier tapping. */
   @media (max-width: 720px) {
     .alert-card-footer {
       align-items: flex-start;
@@ -217,6 +255,14 @@ const alertResponsiveStyles = `
   }
 `;
 
+/**
+ * Displays notification lists and alert management actions.
+ *
+ * @param {object} props - Component props.
+ * @param {object} props.user - Signed-in user used for admin-only info alerts.
+ * @param {Function} props.onNavigate - Navigation callback for actionable alerts.
+ * @returns {JSX.Element} Alerts screen with tabs, filters, pagination, and dismiss confirmation.
+ */
 export function AlertsModule({ user, onNavigate }) {
   const {
     alerts,
@@ -235,11 +281,22 @@ export function AlertsModule({ user, onNavigate }) {
   const [currentPage, setCurrentPage] = useState(1);
   const isAdmin = isAdminRole(user?.role);
 
+  /**
+   * Marks one alert as read and confirms the action to the user.
+   *
+   * @param {string|number} id - Alert identifier.
+   * @returns {void}
+   */
   const handleMarkAsRead = id => {
     markAlertRead(id);
     toast.success('Alert marked as read');
   };
 
+  /**
+   * Removes the selected alert after the dismiss confirmation dialog.
+   *
+   * @returns {void}
+   */
   const handleConfirmDismiss = () => {
     if (!alertToDismiss) return;
     dismissAlert(alertToDismiss.id);
@@ -247,11 +304,23 @@ export function AlertsModule({ user, onNavigate }) {
     toast.success('Alert dismissed');
   };
 
+  /**
+   * Marks one alert as unread so it remains visible for follow-up.
+   *
+   * @param {string|number} id - Alert identifier.
+   * @returns {void}
+   */
   const handleUnmarkAsRead = id => {
     unmarkAlertRead(id);
     toast.message('Alert marked as unread');
   };
 
+  /**
+   * Navigates to the alert's related module and passes any target context.
+   *
+   * @param {object} alert - Actionable alert with relatedModule and optional target metadata.
+   * @returns {void}
+   */
   const handleGoToRelated = alert => {
     if (!alert.relatedModule) return;
 
@@ -307,6 +376,12 @@ export function AlertsModule({ user, onNavigate }) {
     warnings: sortedWarningAlerts,
     ...(isAdmin ? { info: sortedInfoAlerts } : {}),
   };
+  /**
+   * Applies the selected category filter to an alert list.
+   *
+   * @param {Array<object>} list - Alerts to filter.
+   * @returns {Array<object>} Alerts matching the active filter.
+   */
   const filterAlerts = list => {
     if (alertFilter === 'all') return list;
     if (alertFilter === 'stock') {
@@ -314,6 +389,12 @@ export function AlertsModule({ user, onNavigate }) {
     }
     return list.filter(alert => getAlertFilterKey(alert) === alertFilter);
   };
+  /**
+   * Counts alerts for a filter option before it is displayed.
+   *
+   * @param {string} filterValue - Filter option key.
+   * @returns {number} Number of alerts matching the option.
+   */
   const getFilterCount = filterValue => {
     if (filterValue === 'all') return sortedAlerts.length;
     if (filterValue === 'stock') {
@@ -333,6 +414,12 @@ export function AlertsModule({ user, onNavigate }) {
   const activeTabAlerts = filterAlerts(alertsByTab[activeTab] || sortedAlerts);
   const activeTabUnreadAlerts = activeTabAlerts.filter(alert => !alert.read);
 
+  /**
+   * Slices the active alert list into a stable page model.
+   *
+   * @param {Array<object>} list - Alerts to paginate.
+   * @returns {object} Page items, page number, total pages, and total item count.
+   */
   const paginateAlerts = list => {
     const totalItems = list.length;
     const totalPages = Math.max(1, Math.ceil(totalItems / ALERTS_PER_PAGE));
@@ -350,6 +437,12 @@ export function AlertsModule({ user, onNavigate }) {
     };
   };
 
+  /**
+   * Changes the alert page while guarding against invalid page values.
+   *
+   * @param {number|Function} nextPage - Target page or updater callback.
+   * @returns {void}
+   */
   const goToPage = nextPage => {
     setCurrentPage(previousPage => {
       const previous = Number(previousPage);
@@ -413,18 +506,34 @@ export function AlertsModule({ user, onNavigate }) {
     return () => window.removeEventListener('alerts-target-tab', handleTargetTab);
   }, [isAdmin]);
 
+  /**
+   * Marks all currently visible unread alerts in the active tab as read.
+   *
+   * @returns {void}
+   */
   const handleMarkAllAsRead = () => {
     if (activeTabUnreadAlerts.length === 0) return;
     markAllAlertsRead(activeTabUnreadAlerts.map(alert => alert.id));
     toast.success(`${activeTabUnreadAlerts.length} alert${activeTabUnreadAlerts.length === 1 ? '' : 's'} marked as read`);
   };
 
+  /**
+   * Marks all currently visible alerts in the active tab as unread.
+   *
+   * @returns {void}
+   */
   const handleUnmarkAllAsRead = () => {
     if (activeTabAlerts.length === 0) return;
     unmarkAllAlertsRead(activeTabAlerts.map(alert => alert.id));
     toast.message(`${activeTabAlerts.length} alert${activeTabAlerts.length === 1 ? '' : 's'} marked as unread`);
   };
 
+  /**
+   * Renders alert cards with the current module action handlers.
+   *
+   * @param {Array<object>} list - Alerts to render.
+   * @returns {Array<JSX.Element>} Alert card elements.
+   */
   const renderAlertCards = list => list.map(alert => (
     <AlertCard
       key={alert.id}
@@ -436,6 +545,15 @@ export function AlertsModule({ user, onNavigate }) {
     />
   ));
 
+  /**
+   * Renders pagination controls for long alert lists.
+   *
+   * @param {object} pageModel - Pagination metadata from paginateAlerts.
+   * @param {number} pageModel.page - Current page.
+   * @param {number} pageModel.totalPages - Total pages.
+   * @param {number} pageModel.totalItems - Total items.
+   * @returns {JSX.Element|null} Pagination controls or null for single-page lists.
+   */
   const renderPaginationControls = ({ page, totalPages, totalItems }) => {
     if (totalPages <= 1) return null;
 
@@ -508,6 +626,12 @@ export function AlertsModule({ user, onNavigate }) {
     );
   };
 
+  /**
+   * Renders a paginated alert list for the active tab.
+   *
+   * @param {Array<object>} list - Filtered alerts for the selected tab.
+   * @returns {JSX.Element} Alert cards plus pagination controls.
+   */
   const renderAlertList = list => {
     const pagedAlerts = paginateAlerts(list);
 
@@ -862,6 +986,14 @@ export function AlertsModule({ user, onNavigate }) {
   );
 }
 
+/**
+ * Renders the empty state used by each alert tab.
+ *
+ * @param {object} props - Component props.
+ * @param {React.ReactNode} props.icon - Icon shown above the message.
+ * @param {string} props.message - Empty-state message.
+ * @returns {JSX.Element} Empty alert state.
+ */
 function EmptyAlerts({ icon, message }) {
   return (
     <div className="alerts-empty py-16 text-center">
@@ -871,7 +1003,23 @@ function EmptyAlerts({ icon, message }) {
   );
 }
 
+/**
+ * Renders one alert with read/unread, dismiss, and related-module actions.
+ *
+ * @param {object} props - Component props.
+ * @param {object} props.alert - Alert record to display.
+ * @param {Function} props.onMarkAsRead - Callback for marking the alert read.
+ * @param {Function} props.onUnmarkAsRead - Callback for marking the alert unread.
+ * @param {Function} props.onDismiss - Callback that opens dismiss confirmation.
+ * @param {Function} props.onGoToRelated - Callback for opening the related module.
+ * @returns {JSX.Element} Styled alert card.
+ */
 function AlertCard({ alert, onMarkAsRead, onUnmarkAsRead, onDismiss, onGoToRelated }) {
+  /**
+   * Chooses visual styling based on alert type and stock-specific titles.
+   *
+   * @returns {object} Badge, icon, and container styles for the alert.
+   */
   const getAlertTone = () => {
     if (alert.title === 'Out of Stock') {
       return {

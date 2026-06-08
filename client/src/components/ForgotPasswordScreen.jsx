@@ -1,5 +1,10 @@
-// Forgot password screen: validates the user's email and requests a password
-// reset verification code from the backend.
+/**
+ * Forgot Password Screen
+ *
+ * Validates the user's email and requests a password reset verification code
+ * from the backend. The reset screen receives server timing metadata so the
+ * countdown matches backend OTP expiry.
+ */
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
@@ -13,13 +18,30 @@ import { apiUrl } from '../utils/api';
 
 const emcLogoSrc = "/emc-logo.png";
 const RESEND_WAIT_DESCRIPTION = 'Please wait for the resend code timer to finish before requesting another code.';
+/**
+ * Performs lightweight email syntax validation before requesting a reset code.
+ *
+ * @param {string} value - Email address entered by the user.
+ * @returns {boolean} True when the value has a basic email shape.
+ */
 const isValidEmailAddress = value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
 
+/**
+ * Renders the forgot-password request form.
+ *
+ * @returns {JSX.Element} Email form and brand guidance panel.
+ */
 const ForgotPasswordScreen = () => {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
+  /**
+   * Requests a reset verification code and navigates to the password reset form.
+   *
+   * @param {React.FormEvent<HTMLFormElement>} e - Forgot-password form submit event.
+   * @returns {Promise<void>} Sends the request or reports validation/rate-limit feedback.
+   */
   const handleSendCode = async (e) => {
     e.preventDefault();
     const cleanEmail = email.trim().toLowerCase();
@@ -65,6 +87,7 @@ const ForgotPasswordScreen = () => {
   return (
     <div className="forgot-page auth-gradient-page min-h-screen flex">
       <style>{`
+        /* Forgot-password shell uses the same branded auth background as login. */
         .forgot-page {
           width: 100%;
           min-height: 100dvh;
@@ -85,6 +108,7 @@ const ForgotPasswordScreen = () => {
           gap: 1.5rem;
         }
 
+        /* Desktop layout balances the form with explanatory recovery copy. */
         @media (min-width: 1024px) {
           .forgot-brand-rule {
             display: block;
@@ -115,6 +139,7 @@ const ForgotPasswordScreen = () => {
           }
         }
 
+        /* Tablet and mobile layout centers the card and tightens spacing. */
         @media (max-width: 1023px) {
           .forgot-page {
             display: block;

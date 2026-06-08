@@ -31,11 +31,11 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
   const TOO_MANY_OTP_REQUESTS_MESSAGE = 'Too many OTP requests used. You have reached the resend limit for now. Please wait for the reset timer to finish before requesting a new code.';
   const TOO_MANY_EXPIRED_OTP_REQUESTS_MESSAGE = 'Too many OTP requests used. You have reached the resend limit, and the latest code has expired. Please wait for the reset timer to finish before requesting a new code.';
 
-  const skewMsRef = useRef(0); // captures server ↔ client clock drift
-  const expiresAtRef = useRef(null); // server-declared OTP expiry (ms)
+  const skewMsRef = useRef(0); // Tracks server/client clock drift for OTP countdowns.
+  const expiresAtRef = useRef(null); // Server-declared OTP expiry in milliseconds.
   const timerIdRef = useRef(null);
 
-  const EXPIRY_TOLERANCE_MS = 15000; // allow 15s cushion so 0:00 stays valid through network/drift jitter (matches backend)
+  const EXPIRY_TOLERANCE_MS = 15000; // Matches backend grace for network delay and clock jitter.
 
   const formatCooldownTime = (seconds) => {
     const safeSeconds = Math.max(1, Number(seconds) || 1);
@@ -70,8 +70,8 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
     );
   };
 
-  // THE FIX: Retrieve from Local Storage instead of Navigation State
-  // Temp values set during login -> 2FA step
+  // Login stores the temporary OTP challenge in localStorage so refreshing or
+  // navigating back to this screen does not lose the active verification step.
   const username = localStorage.getItem('temp_username');
   const email = localStorage.getItem('temp_email');
   const selectedBranch = localStorage.getItem('temp_branch_selected');
@@ -184,14 +184,14 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
     setLoading(true);
     let verifySucceeded = false;
     try {
-      // 1. Verify with Backend
+      // The backend verifies the code and returns the authenticated session only
+      // when the OTP, username, and selected branch are valid together.
       const response = await axios.post(apiUrl('/api/auth/verify-otp'), {
         username,
         code,
         branch: selectedBranch
       });
 
-      // 2. Success: Save Token
       const { token, user } = response.data;
 
       // Branch handling: allow Admin to choose any branch; employees must match account branch
@@ -216,7 +216,8 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
         localStorage.setItem('active_branch', resolvedBranch);
       }
 
-      // 3. CLEANUP (Remove temporary 2FA data)
+      // Clear temporary challenge data after success so an old OTP cannot be
+      // reused if the user returns to this screen later.
       localStorage.removeItem('temp_username');
       localStorage.removeItem('temp_email');
       localStorage.removeItem('temp_branch_selected');
@@ -234,7 +235,8 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
 
       verifySucceeded = true;
 
-      // Notify parent app to set authenticated user state; fallback to direct nav if not provided
+      // Notify the app shell to hydrate auth state; direct navigation is kept as
+      // a fallback for standalone rendering.
       if (typeof onSuccess === 'function') {
         onSuccess(user);
       } else {
@@ -252,10 +254,9 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
           toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
         },
       });
-      setCode(''); // Clear input on error
+      setCode('');
     } finally {
       setLoading(false);
-      // Timer continues running; no restart logic needed.
     }
   };
 
@@ -281,14 +282,14 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
       const serverTime = resp.data.serverTime || Date.now();
       const expiresAt = resp.data.expiresAt || new Date(Date.now() + 120000).toISOString();
 
-      // Persist new timestamps
+      // Persist new server timestamps so the countdown survives refreshes.
       localStorage.setItem('otp_2fa_issued_at', serverTime.toString());
       localStorage.setItem('otp_2fa_expires_at', expiresAt);
       localStorage.removeItem('otp_issued_at');
       localStorage.removeItem('otp_expires_at');
       startResendCooldown(resp.data.retryAfterSeconds || 60, resp.data.remainingAttempts === 0);
 
-      // Re-sync countdown with new values
+      // Re-sync countdown with the new server-issued expiry.
       const clientNow = Date.now();
       const newSkew = serverTime - clientNow;
       skewMsRef.current = newSkew;
@@ -296,7 +297,6 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
       const alignedNow = Date.now() + skewMsRef.current;
       setRemainingMs(expiresAtRef.current - alignedNow);
 
-      // Reset input and UI state
       setCode('');
       toast.success(resp.data.message || 'Verification code sent. Please check your email.', {
         classNames: {
@@ -343,7 +343,7 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
   };
 
   const formatTime = (ms) => {
-    // Use ceil to avoid displaying 0:00 too early when ~1s remains
+    // Use ceil so the UI does not display 0:00 while nearly one second remains.
     const total = Math.max(0, Math.ceil(ms / 1000));
     const minutes = Math.floor(total / 60);
     const seconds = total % 60;

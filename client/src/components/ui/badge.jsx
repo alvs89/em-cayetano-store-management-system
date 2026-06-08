@@ -4,6 +4,7 @@ import * as React from "react";
 import { Slot } from "@radix-ui/react-slot@1.1.2";
 import { cva } from "class-variance-authority@0.7.1";
 import { cn } from "./utils";
+// Badge variants centralize compact label styling for statuses, roles, and counts.
 const badgeVariants = cva("inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs font-medium w-fit whitespace-nowrap shrink-0 [&>svg]:size-3 gap-1 [&>svg]:pointer-events-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive transition-[color,box-shadow] overflow-hidden", {
   variants: {
     variant: {
@@ -17,6 +18,12 @@ const badgeVariants = cva("inline-flex items-center justify-center rounded-md bo
     variant: "default"
   }
 });
+/**
+ * Renders a compact badge, optionally through a Radix Slot child.
+ *
+ * @param {object} props - Badge props plus variant and asChild options.
+ * @returns {React.ReactElement} Badge element.
+ */
 function Badge({
   className,
   variant,

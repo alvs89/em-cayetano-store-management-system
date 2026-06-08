@@ -5,6 +5,8 @@ import * as React from "react";
 import { Slot } from "@radix-ui/react-slot@1.1.2";
 import { cva } from "class-variance-authority@0.7.1";
 import { cn } from "./utils";
+// Button variants centralize action styling so command buttons stay consistent
+// across forms, dialogs, tables, and icon controls.
 const buttonVariants = cva("inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all duration-150 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive", {
   variants: {
     variant: {
@@ -27,6 +29,13 @@ const buttonVariants = cva("inline-flex items-center justify-center gap-2 whites
     size: "default"
   }
 });
+/**
+ * Renders the shared button primitive.
+ *
+ * @param {object} props - Button props plus variant, size, and asChild options.
+ * @param {React.Ref} ref - Forwarded ref for focus management.
+ * @returns {React.ReactElement} Button or slotted child with button styling.
+ */
 const Button = /*#__PURE__*/React.forwardRef(({
   className,
   variant,

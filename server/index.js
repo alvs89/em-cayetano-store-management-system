@@ -1,5 +1,11 @@
-// Backend API server for authentication, inventory, sales, purchases, reports,
-// audit trail, backup/restore, and maintenance workflows.
+/**
+ * Backend API Server
+ *
+ * Centralizes authentication, branch-scoped inventory, sales invoices,
+ * purchase receiving, audit logs, reports, and maintenance operations.
+ * Most write endpoints wrap related database changes in transactions so
+ * official records, stock balances, and audit evidence stay synchronized.
+ */
 require('dotenv').config();
 
 const fs = require('fs');
@@ -267,6 +273,9 @@ const SALES_INVOICE_START_NUMBER = Math.max(
   Number.parseInt(process.env.SALES_INVOICE_START_NUMBER || '1', 10) || 1
 );
 
+// Older deployments stored official invoice numbers inside SALE-year-sequence
+// references. Normalize those values so migrations and reports use one
+// consistent six-digit Sales Invoice Number.
 function extractLegacyOfficialSalesInvoiceNumber(value) {
   const match = String(value || '').trim().match(LEGACY_SALES_INVOICE_NUMBER_REGEX);
   return match ? match[1] : '';
@@ -362,8 +371,8 @@ async function ensureSchema() {
     );
   `);
 
-  // Removed out-of-scope Daily Operations / Invoice Series modules. Drop legacy tables
-  // if they exist in older Neon databases so they cannot be mistaken for active data.
+  // Retire legacy tables from earlier project scopes so instructors and future
+  // developers do not mistake obsolete daily-operation records for live data.
   await pool.query('DROP TABLE IF EXISTS invoice_series_entries CASCADE;');
   await pool.query('DROP TABLE IF EXISTS daily_operations CASCADE;');
 
@@ -1748,6 +1757,8 @@ function buildBulletList(items) {
   `;
 }
 
+// Stock status is derived from the branch's manual low-stock threshold. The
+// reorder-planning fields remain advisory unless a human updates the threshold.
 function computeInventoryStatus(stockLevel, minStockLevel) {
   if (stockLevel <= 0) return 'Out of Stock';
   if (stockLevel <= minStockLevel) return 'Low Stock';
@@ -1758,6 +1769,8 @@ function hasReorderPlanningValue(value) {
   return value !== '' && value !== null && value !== undefined;
 }
 
+// Suggested reorder quantity follows a common inventory formula:
+// average daily sales x supplier lead time + safety stock.
 function computeReorderPoint({ averageDailySales = null, leadTimeDays = null, safetyStock = null } = {}) {
   if (
     !hasReorderPlanningValue(averageDailySales) ||
@@ -1815,6 +1828,8 @@ function formatDateAsPhilippineTimestamp(date) {
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
 }
 
+// Backdated business events store both the actual transaction date and the
+// encoding date, preserving operational history without hiding late entry.
 function parseOptionalActualTransactionAt(value, fieldName = 'Actual transaction date') {
   if (value === undefined || value === null || String(value).trim() === '') return null;
   const rawValue = String(value).trim();
@@ -1886,6 +1901,9 @@ function getTransactionTiming(body = {}) {
   };
 }
 
+// Uses the last 30 days of completed sales to estimate demand for reorder
+// planning. Manual overrides bypass this calculation when staff know demand is
+// seasonal or otherwise not represented by recent sales.
 async function calculateRecentAverageDailySales(client, inventoryId) {
   const result = await client.query(
     `SELECT
@@ -1935,6 +1953,8 @@ function normalizeInventoryIdentityToken(token) {
   return INVENTORY_UNIT_ALIASES[singularToken] || singularToken;
 }
 
+// Normalize product names aggressively enough to detect likely duplicates while
+// preserving meaningful hardware specifications such as sizes and gauges.
 function normalizeInventoryIdentityName(value) {
   return normalizeInventoryText(value)
     .replace(/[“”]/g, '"')
@@ -2160,6 +2180,8 @@ function parseOptionalPositiveDecimal(value, fieldName, { max = null } = {}) {
   return parsed;
 }
 
+// Profit is captured at sale time using the item's current cost. Historical
+// sales reports remain stable even if the product cost is edited later.
 function calculateSalesLineProfit({ quantitySold, unitCostAtSale, subtotal }) {
   const quantity = Number(quantitySold || 0);
   const unitCost = Number(unitCostAtSale || 0);
@@ -2683,6 +2705,8 @@ function getArchiveReasonLabel(reason) {
   return ARCHIVE_REASONS.get(reason) || '';
 }
 
+// Every official stock balance change records a movement row. Reports and
+// audit reviews rely on this ledger to explain why inventory changed.
 async function recordStockMovement(client, {
   inventoryId,
   productId,
@@ -2742,6 +2766,8 @@ async function recordStockMovement(client, {
   );
 }
 
+// System references are separate from official booklet invoice numbers. They
+// provide an internal transaction id even when refund records have no SI number.
 async function generateSalesNumber(client, transactionType = 'sale') {
   const year = new Date().getFullYear();
   const prefix = transactionType === 'refund' ? 'REFUND' : 'SALE';
@@ -2838,6 +2864,8 @@ async function peekNextOfficialSalesInvoiceNumber(client, branch) {
   return formatOfficialSalesInvoiceNumber(sequence);
 }
 
+// Lock the per-branch invoice sequence before accepting an SI number so two
+// cashiers cannot consume or validate the same expected number concurrently.
 async function lockOfficialSalesInvoiceSequence(client, branch) {
   const { invoiceYear, sequenceBranch } = await ensureSalesInvoiceSequence(client, branch);
   const result = await client.query(
@@ -2894,6 +2922,8 @@ async function generatePurchaseNumber(client) {
   return `PUR-${year}-${String(sequence).padStart(5, '0')}`;
 }
 
+// Recompute demand signals after sales and manual inventory changes so reorder
+// suggestions stay current without requiring a background job.
 async function refreshAverageDailySalesForInventory(client, inventoryId) {
   const inventoryResult = await client.query(
     `SELECT stock_level, min_stock_level, lead_time_days, safety_stock,
@@ -2944,6 +2974,8 @@ const ALLOWED_CLIENT_AUDIT_ACTIONS = new Set([
   'CHECK_DATA_INTEGRITY'
 ]);
 
+// Audit logs are the official narrative for sensitive changes. Keep details
+// structured so the UI can filter by actor, target, action, and business reason.
 async function recordAuditLog(db, {
   actorId,
   actorName,
@@ -2994,6 +3026,7 @@ function getPayloadValue(payload, keys, fallback = undefined) {
   return fallback;
 }
 
+// Prevent stale approval/edit forms from overwriting a newer inventory change.
 function assertFreshInventorySnapshot(expectedLastUpdated, currentLastUpdated) {
   if (!expectedLastUpdated || !currentLastUpdated) return;
 
@@ -3008,6 +3041,8 @@ function assertFreshInventorySnapshot(expectedLastUpdated, currentLastUpdated) {
   }
 }
 
+// Shared inventory validation keeps admin edits and approval requests aligned:
+// clean names/categories, validate quantities, and normalize reorder planning.
 function prepareInventoryPayload(payload, { currentRow = null, preserveCurrentQuantity = false } = {}) {
   const cleanName = cleanInventoryName(getPayloadValue(payload, ['name']));
   const cleanSupplier = cleanSupplierName(getPayloadValue(payload, ['supplierName', 'supplier_name'], currentRow?.supplier_name || ''));
@@ -4041,6 +4076,8 @@ function buildBackupMetadataHeader({ generatedAt, actorName, checksum, byteLengt
   ].join('\n');
 }
 
+// Restore accepts only complete backups generated by this application. Blocking
+// database-level commands reduces the risk of restoring an unsafe SQL file.
 function getRestoreValidationError(sql) {
   const normalized = String(sql || '').toLowerCase();
   const requiredMarkers = [
@@ -4194,6 +4231,8 @@ function recordOtpRequest(identifier) {
   };
 }
 
+// Authentication revalidates token_version against the database so password,
+// role, branch, and deactivation changes can invalidate old sessions.
 async function authenticate(req, res, next) {
   const authHeader = req.headers.authorization || '';
   if (!authHeader.startsWith('Bearer ')) {
@@ -5011,6 +5050,8 @@ app.patch('/api/admin/users/:id/details', authenticate, requireAdmin, async (req
   }
 });
 
+// Client-created audit events are restricted to an allowlist so the browser can
+// log legitimate user actions without forging arbitrary server-side events.
 app.post('/api/audit-logs', authenticate, async (req, res) => {
   const action = String(req.body.action || '').trim().toUpperCase();
   const targetName = typeof req.body.target_name === 'string' ? req.body.target_name.trim() : null;
@@ -5457,6 +5498,8 @@ app.get('/api/inventory', authenticate, async (req, res) => {
   }
 });
 
+// Inventory staff can submit requests, while admins review branch-scoped
+// changes before they affect official stock records.
 app.get('/api/inventory/change-requests', authenticate, async (req, res) => {
   if (!canPerformInventoryMovement(req.user)) {
     return res.status(403).json({
@@ -5748,6 +5791,8 @@ app.get('/api/stock-movements', authenticate, async (req, res) => {
   }
 });
 
+// Sales history returns transaction headers with nested line items, refund
+// totals, and invoice metadata so reports can be built from one API response.
 app.get('/api/sales', authenticate, async (req, res) => {
   try {
     const result = await pool.query(
@@ -5883,6 +5928,9 @@ app.get('/api/sales/next-invoice-number', authenticate, async (req, res) => {
   }
 });
 
+// Records a completed sale as one atomic unit: validate SI number/payment,
+// deduct inventory, capture profit, write stock movements, and create audit
+// evidence. If any step fails, no stock is deducted.
 app.post('/api/sales', authenticate, async (req, res) => {
   const {
     official_invoice_number = '',
@@ -6567,6 +6615,8 @@ async function findActiveInventoryForSalesRestore(client, historicalItem, branch
   return null;
 }
 
+// Refunds reference the original sale and reverse only the selected remaining
+// quantities. Restocked inventory items create stock-in movements for traceability.
 app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
   const salesTransactionId = Number(req.params.id);
   const cleanReason = String(req.body?.refund_reason || req.body?.reason || '').trim().slice(0, 500);
@@ -7237,6 +7287,8 @@ app.get('/api/purchases', authenticate, async (req, res) => {
   }
 });
 
+// Purchase receiving increases inventory and records supplier payment terms in
+// the same transaction so stock balances and payables cannot drift apart.
 app.post('/api/purchases', authenticate, async (req, res) => {
   if (!canPerformInventoryMovement(req.user)) {
     return res.status(403).json({
@@ -7573,6 +7625,8 @@ app.post('/api/purchases', authenticate, async (req, res) => {
   }
 });
 
+// Supplier payment status is limited to credit purchases because cash purchases
+// are treated as settled at the time of receiving.
 app.post('/api/purchases/:id/payment-status', authenticate, async (req, res) => {
   if (!canPerformInventoryMovement(req.user)) {
     return res.status(403).json({
@@ -7676,6 +7730,8 @@ app.post('/api/purchases/:id/payment-status', authenticate, async (req, res) => 
   }
 });
 
+// Admin-created inventory items immediately become official records. Duplicate
+// checks guard against accidentally splitting stock for the same product.
 app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
   const {
     name,
@@ -7996,6 +8052,8 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
   }
 });
 
+// Batch Stock Out supports non-sales deductions such as damaged, missing, or
+// transferred stock while preserving one movement record per affected item.
 app.post('/api/inventory/batch-stock-out', authenticate, async (req, res) => {
   const { items = [], movement_reason, movement_note } = req.body;
   const normalizedMovementReason = normalizeStockMovementReasonForAction('stock_out', movement_reason);
@@ -8154,6 +8212,8 @@ app.post('/api/inventory/batch-stock-out', authenticate, async (req, res) => {
   }
 });
 
+// Batch Stock Adjustment handles stock-in corrections and deliveries that do
+// not originate from the purchase receiving workflow.
 app.post('/api/inventory/batch-stock-adjustment', authenticate, async (req, res) => {
   const { items = [], movement_reason, movement_note } = req.body;
   const normalizedMovementReason = normalizeStockMovementReasonForAction('stock_in', movement_reason);
@@ -8305,6 +8365,8 @@ app.post('/api/inventory/batch-stock-adjustment', authenticate, async (req, res)
   }
 });
 
+// Inventory edits may change item identity, prices, reorder settings, or stock.
+// Quantity changes must include an explicit movement action and reason.
 app.put('/api/inventory/:id', authenticate, async (req, res) => {
   const { id } = req.params;
   const {
@@ -9268,6 +9330,8 @@ app.post('/api/archive/:id/restore', authenticate, requireAdmin, async (req, res
   }
 });
 
+// Backups are admin-only downloads with metadata and audit/system logs so a
+// reviewer can prove when a full database export was generated.
 app.get('/api/maintenance/backup', authenticate, requireAdmin, async (req, res) => {
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) {
@@ -9342,6 +9406,8 @@ app.get('/api/maintenance/backup', authenticate, requireAdmin, async (req, res) 
   );
 });
 
+// Declarative export definitions keep CSV generation consistent across
+// inventory, sales, purchases, archive, and audit datasets.
 const SELECTIVE_EXPORT_DEFINITIONS = {
   inventory: {
     label: 'Inventory',
@@ -9742,6 +9808,8 @@ app.post('/api/maintenance/optimize', authenticate, requireAdmin, async (req, re
   }
 });
 
+// Integrity checks compare official records against expected business rules:
+// stock status, transaction totals, item links, payment fields, and audit data.
 app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (req, res) => {
   try {
     const scopeBranches = ALLOWED_BRANCHES;
@@ -10281,6 +10349,8 @@ app.post(
   authenticate,
   requireAdmin,
   express.raw({ type: 'application/sql', limit: '25mb' }),
+  // Restore validates the uploaded SQL in a temporary schema before replacing
+  // live application tables, reducing the chance of a partial or unsafe restore.
   async (req, res) => {
     const dbUrl = process.env.DATABASE_URL;
     if (!dbUrl) {

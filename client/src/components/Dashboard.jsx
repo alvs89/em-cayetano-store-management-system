@@ -79,6 +79,8 @@ const getLocalDateKey = (value = new Date()) => {
   return `${year}-${month}-${day}`;
 };
 
+// Dashboard dates use local calendar keys because daily sales, quota progress,
+// and stock-count activity should follow branch operating days, not UTC rollover.
 const isToday = (value, todayKey = getLocalDateKey()) => {
   if (!value) return false;
   return getLocalDateKey(value) === todayKey;
@@ -113,6 +115,8 @@ const manualItemKey = item => {
   return name ? `${name}|${category}` : '';
 };
 
+// Top-selling aggregation combines tracked inventory lines by inventory id and
+// non-inventory lines by normalized name/category for fair dashboard ranking.
 const getTopSellingItem = sales => {
   const grouped = new Map();
   (sales || []).forEach(sale => {
@@ -220,6 +224,8 @@ export function Dashboard({
   const canUseReports = canAccessScreen(role, 'reports');
   const canUsePurchases = canAccessScreen(role, 'purchases');
 
+  // Inventory health cards are computed from the current branch snapshot. These
+  // counts are intentionally independent of the selected sales reporting period.
   const lowStockItems = inventory.filter(item => item.status === 'Low Stock');
   const outOfStockItems = inventory.filter(item => item.status === 'Out of Stock');
   const inStockItems = inventory.filter(item => item.status === 'In Stock');
@@ -264,6 +270,8 @@ export function Dashboard({
     };
   }, []);
 
+  // Sales period bounds drive the dashboard revenue/profit cards and the target
+  // report links, while daily quota remains anchored to today's branch sales.
   const getDashboardSalesBounds = (period = salesPeriod, dateKey = selectedSalesDate) => {
     const now = parseLocalDateKey(todayKey);
     const selectedDate = parseLocalDateKey(dateKey || todayKey);
@@ -403,6 +411,9 @@ export function Dashboard({
       .map(manualItemKey)
       .filter(Boolean)
   ).size;
+
+  // Stock count variance is a decision support workflow. The actual adjustment
+  // still routes to Inventory so stock movement reasons and audit trail are kept.
   const selectedCountItem = inventory.find(item => String(item.id) === String(stockCountForm.itemId));
   const filteredStockCountItems = React.useMemo(() => {
     const queryTokens = normalizeStockCountSearchText(stockCountSearch).split(' ').filter(Boolean);
@@ -603,6 +614,8 @@ export function Dashboard({
     onNavigate('inventory', { preserveInventoryNavigationState: true });
   };
 
+  // Dashboard buttons communicate targets through storage/events so destination
+  // modules can open the correct dialog or report after route navigation.
   const openInventoryAction = (action, itemId = '') => {
     if ((action === 'stock-in' || action === 'stock-out') && !canUseInventoryMovement) return;
     if (action === 'add-item' && !isAdmin) return;
@@ -1057,6 +1070,7 @@ export function Dashboard({
   return (
     <div className="dashboard-page min-h-screen bg-gray-50 p-4 md:p-8">
       <style>{`
+        /* Dashboard page shell establishes the neutral reporting surface shared by all summary cards. */
         .dashboard-page {
           color: #111827;
         }
@@ -1111,6 +1125,7 @@ export function Dashboard({
           padding: 12px;
         }
 
+        /* Sales filter controls keep dashboard metrics tied to the selected reporting period. */
         .dashboard-sales-filter-panel {
           padding: 14px 16px;
         }
@@ -1198,6 +1213,7 @@ export function Dashboard({
           min-height: 118px;
         }
 
+        /* Summary cards use consistent sizing so dashboard totals remain easy to compare. */
         .dashboard-summary-card {
           display: grid;
           grid-template-columns: minmax(0, 1fr) auto;
@@ -1537,6 +1553,7 @@ export function Dashboard({
           box-shadow: none;
         }
 
+        /* Quota dialog rules keep inventory warning details readable on narrow phones. */
         @media (max-width: 520px) {
           .dashboard-quota-dialog {
             width: min(420px, calc(100vw - 24px));
@@ -2083,6 +2100,7 @@ export function Dashboard({
           border-radius: 14px;
         }
 
+        /* Responsive dashboard rules collapse metric grids before columns become cramped. */
         @media (max-width: 1120px) {
           .dashboard-summary-grid,
           .dashboard-admin-summary-grid,

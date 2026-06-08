@@ -1,5 +1,9 @@
-// Audit Trail module: displays traceable user and system activity for
-// accountability across inventory, sales, purchases, and maintenance actions.
+/**
+ * Audit Trail Module
+ *
+ * Displays traceable user and system activity for accountability across
+ * inventory, sales, purchases, authentication, reports, and maintenance.
+ */
 import React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
@@ -35,6 +39,12 @@ const DATE_RANGES = {
 
 const DEFAULT_VISIBLE_RECORDS = 5;
 
+/**
+ * Groups raw audit action names into filter categories.
+ *
+ * @param {string} action - Raw audit action.
+ * @returns {string} Action group key used by filters and badges.
+ */
 const getActionGroup = action => {
   const normalized = String(action || '').toUpperCase();
   if (normalized.startsWith('AUTH_') || normalized.includes('LOGIN') || normalized.includes('OTP') || normalized.includes('SESSION')) return 'security';
@@ -47,6 +57,12 @@ const getActionGroup = action => {
   return 'inventory';
 };
 
+/**
+ * Chooses badge styling for an audit action group.
+ *
+ * @param {string} group - Action group key.
+ * @returns {string} Tailwind class list for the group badge.
+ */
 const getActionBadgeClass = group => {
   if (group === 'security') return 'border-amber-200 bg-amber-100 text-amber-800 hover:bg-amber-100';
   if (group === 'maintenance') return 'border-violet-200 bg-violet-100 text-violet-700 hover:bg-violet-100';
@@ -57,6 +73,12 @@ const getActionBadgeClass = group => {
   return 'bg-red-100 text-red-700 hover:bg-red-100';
 };
 
+/**
+ * Converts backend audit action identifiers into readable text.
+ *
+ * @param {string} action - Raw audit action.
+ * @returns {string} Display label.
+ */
 const formatActionLabel = action => {
   const value = String(action || 'UNKNOWN_ACTION');
   const [base, detail] = value.split(':').map(part => part.trim());
@@ -69,6 +91,12 @@ const formatActionLabel = action => {
   return detail ? `${label}: ${detail}` : label;
 };
 
+/**
+ * Formats detail field names for audit display.
+ *
+ * @param {string} value - Raw field key.
+ * @returns {string} Human-readable field label.
+ */
 const formatFieldLabel = value => {
   const normalized = String(value || '').replace(/[_\s-]/g, '').toLowerCase();
   if (normalized === 'ip') return 'IP Address';
@@ -82,16 +110,34 @@ const formatFieldLabel = value => {
     .join(' ');
 };
 
+/**
+ * Formats the audit target type.
+ *
+ * @param {string} value - Raw target type.
+ * @returns {string} Display label or default system record text.
+ */
 const formatTargetType = value => {
   const label = formatFieldLabel(value);
   return label || 'System Record';
 };
 
+/**
+ * Ensures audit details are always represented as an object.
+ *
+ * @param {*} details - Raw details payload from the API.
+ * @returns {object} Details object or empty object.
+ */
 const normalizeDetails = details => {
   if (!details || typeof details !== 'object' || Array.isArray(details)) return {};
   return details;
 };
 
+/**
+ * Formats sales customer type codes found in audit details.
+ *
+ * @param {string} value - Customer type code.
+ * @returns {string} Readable customer type.
+ */
 const formatCustomerType = value => {
   const customerTypes = {
     walk_in: 'Walk-in Customer',
@@ -103,8 +149,20 @@ const formatCustomerType = value => {
   return customerTypes[String(value || '').toLowerCase()] || formatFieldLabel(value) || 'None';
 };
 
+/**
+ * Detects detail fields that contain stock movement reason codes.
+ *
+ * @param {string} key - Detail field key.
+ * @returns {boolean} True when the field is a movement reason.
+ */
 const isMovementReasonField = key => String(key || '').replace(/[_\s-]/g, '').toLowerCase() === 'movementreason';
 
+/**
+ * Normalizes local IPv6 loopback formats for easier audit review.
+ *
+ * @param {string} value - Raw IP address.
+ * @returns {string} Readable IP address.
+ */
 const formatIpAddress = value => {
   const ip = String(value || '').trim();
   if (ip === '::1') return '127.0.0.1';
@@ -112,6 +170,12 @@ const formatIpAddress = value => {
   return ip || 'None';
 };
 
+/**
+ * Summarizes a browser user-agent string for security audit review.
+ *
+ * @param {string} value - Raw user-agent string.
+ * @returns {string} Browser and platform summary.
+ */
 const formatUserAgent = value => {
   const text = String(value || '').trim();
   if (!text) return 'Unknown device';
@@ -132,6 +196,13 @@ const formatUserAgent = value => {
   return `${browser} on ${platform}`;
 };
 
+/**
+ * Formats one audit detail value based on its field type.
+ *
+ * @param {*} value - Raw detail value.
+ * @param {string} [key=''] - Detail field key.
+ * @returns {string} Display-ready value.
+ */
 const formatDetailValue = (value, key = '') => {
   const normalizedKey = String(key || '').replace(/[_\s-]/g, '').toLowerCase();
   if (value === null || value === undefined || value === '') return 'None';
@@ -151,14 +222,48 @@ const formatDetailValue = (value, key = '') => {
   return String(value);
 };
 
+/**
+ * Returns non-empty audit detail entries.
+ *
+ * @param {*} details - Raw details payload.
+ * @returns {Array<Array>} Key/value entries suitable for rendering.
+ */
 const getDetailEntries = details => Object.entries(normalizeDetails(details))
   .filter(([, value]) => value !== null && value !== undefined && value !== '');
 
 const LONG_DETAIL_FIELDS = new Set(['remarks', 'reason', 'note', 'movementnote', 'cancelreason']);
+/**
+ * Checks whether a detail field should use block layout.
+ *
+ * @param {string} key - Detail field key.
+ * @returns {boolean} True for long text fields.
+ */
 const isLongDetailField = key => LONG_DETAIL_FIELDS.has(String(key || '').replace(/[_\s-]/g, '').toLowerCase());
+
+/**
+ * Checks whether a detail value contains nested structured data.
+ *
+ * @param {*} value - Detail value.
+ * @returns {boolean} True when the value is an object.
+ */
 const isStructuredDetailValue = value => value && typeof value === 'object';
+
+/**
+ * Decides whether a detail should render as a multiline block.
+ *
+ * @param {string} key - Detail field key.
+ * @param {*} value - Detail value.
+ * @returns {boolean} True when block rendering improves readability.
+ */
 const shouldUseDetailBlock = (key, value) => isLongDetailField(key) || isStructuredDetailValue(value);
 
+/**
+ * Converts a YYYY-MM-DD input into a Date boundary.
+ *
+ * @param {string} value - Date input value.
+ * @param {boolean} [endOfDay=false] - Uses the last millisecond of the day when true.
+ * @returns {Date|null} Parsed date or null.
+ */
 const parseDateInput = (value, endOfDay = false) => {
   const [year, month, day] = String(value || '').split('-').map(Number);
   if (!year || !month || !day) return null;
@@ -167,6 +272,14 @@ const parseDateInput = (value, endOfDay = false) => {
     : new Date(year, month - 1, day, 0, 0, 0, 0);
 };
 
+/**
+ * Resolves a date filter into start and end bounds.
+ *
+ * @param {string} range - Selected date range key.
+ * @param {string} [customStartDate=''] - Custom start date input.
+ * @param {string} [customEndDate=''] - Custom end date input.
+ * @returns {object} Start and end date bounds.
+ */
 const getDateRangeBounds = (range, customStartDate = '', customEndDate = '') => {
   const now = new Date();
   if (range === 'today') {
@@ -194,12 +307,25 @@ const getDateRangeBounds = (range, customStartDate = '', customEndDate = '') => 
   return { start: null, end: null };
 };
 
+/**
+ * Builds the title shown for an audit record.
+ *
+ * @param {object} log - Normalized audit log.
+ * @returns {string} Action label with optional target name.
+ */
 const getRecordTitle = log => {
   const action = formatActionLabel(log.action);
   const target = log.targetName && log.targetName !== 'System record' ? `: ${log.targetName}` : '';
   return `${action}${target}`;
 };
 
+/**
+ * Displays audit logs with search, action group filters, date filters, and pagination.
+ *
+ * @param {object} props - Component props.
+ * @param {object} props.user - Signed-in user shown in the page context.
+ * @returns {JSX.Element} Audit trail screen.
+ */
 export function AuditTrailModule({ user }) {
   const [auditLogs, setAuditLogs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -217,6 +343,11 @@ export function AuditTrailModule({ user }) {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
+  /**
+   * Loads audit logs from the backend and normalizes API field names for the UI.
+   *
+   * @returns {Promise<void>} Updates audit log state and loading/error flags.
+   */
   const fetchAuditLogs = async () => {
     setLoading(true);
     setError('');
@@ -278,6 +409,13 @@ export function AuditTrailModule({ user }) {
 
   const latestLog = auditLogs[0];
   // Paginate filtered logs
+  /**
+   * Slices filtered audit logs into a page model.
+   *
+   * @param {Array<object>} items - Filtered audit logs.
+   * @param {number} pageOverride - Optional page number.
+   * @returns {object} Page items and pagination metadata.
+   */
   const paginateItems = (items, pageOverride) => {
     const totalItems = (items?.length || 0);
     const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
@@ -292,6 +430,15 @@ export function AuditTrailModule({ user }) {
     };
   };
 
+  /**
+   * Renders windowed pagination controls for audit records.
+   *
+   * @param {number} totalPages - Total page count.
+   * @param {number} page - Active page.
+   * @param {Function} setPage - Page setter.
+   * @param {number} totalItems - Total filtered item count.
+   * @returns {JSX.Element|null} Pagination controls or null.
+   */
   const renderPaginationControls = (totalPages, page, setPage, totalItems) => {
     const activePage = Number(page ?? currentPage);
     const setActivePage = setPage ?? setCurrentPage;
@@ -358,6 +505,7 @@ export function AuditTrailModule({ user }) {
   return (
     <div className="audit-trail-page min-h-screen bg-gray-50 p-4 md:p-8">
       <style>{`
+        /* Audit hero and metrics summarize recent accountability activity. */
         .audit-hero {
           position: relative;
           overflow: hidden;
@@ -414,6 +562,7 @@ export function AuditTrailModule({ user }) {
           stroke-width: 2.25;
         }
 
+        /* Filter grid supports text search, action groups, and date-range review. */
         .audit-filter-grid {
           display: grid;
           grid-template-columns: minmax(280px, 1.4fr) minmax(210px, 0.8fr) minmax(210px, 0.8fr) auto;

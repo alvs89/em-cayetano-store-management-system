@@ -59,6 +59,9 @@ const ARCHIVE_REASON_OPTIONS = [
 const getArchiveReasonLabel = value =>
   ARCHIVE_REASON_OPTIONS.find(option => option.value === value)?.label || "";
 
+// Transaction timestamps may be backdated for real-world receiving or stock-count
+// corrections. The UI splits date and time for easier entry, then recombines the
+// value before sending it to the backend for reporting and audit storage.
 const toTransactionDateInputValue = value => {
   if (!value) return "";
   const date = new Date(value);
@@ -173,6 +176,9 @@ const INVENTORY_UNIT_ALIASES = {
   pieces: "pc"
 };
 
+// Inventory duplicate checks normalize product names aggressively so common
+// hardware-store variations such as inch marks, plural units, or x-by dimensions
+// do not create duplicate stock records for the same physical item.
 const normalizeDuplicateKeyPart = value => String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 const singularizeDuplicateToken = token => {
   const normalizedToken = token.replace(/([a-z])\1{2,}/g, "$1$1");
@@ -251,6 +257,10 @@ const areInventoryNameTokensSimilar = (left, right) => {
   const distance = levenshteinDistance(left, right);
   return distance <= (Math.max(left.length, right.length) >= 6 ? 2 : 1);
 };
+
+// Similar-name detection intentionally requires matching numeric tokens, such as
+// sizes or measurements, before prompting the user. This catches likely typos
+// while avoiding false matches between different product specifications.
 const areLikelyDuplicateInventoryNames = (leftName, rightName) => {
   const leftTokens = getInventoryIdentityTokens(leftName);
   const rightTokens = getInventoryIdentityTokens(rightName);
@@ -268,6 +278,9 @@ const areLikelyDuplicateInventoryNames = (leftName, rightName) => {
 
   return fuzzyMatches > 0;
 };
+
+// Form sanitizers keep invalid characters out of controlled inputs before the
+// data reaches inventory validation, API requests, or persisted recovery drafts.
 const isWholeNumberText = value => /^\d+$/.test(String(value ?? "").trim());
 const isDecimalNumberText = value => /^\d+(?:\.\d{1,2})?$/.test(String(value ?? "").trim());
 const notifyNumbersOnly = (fieldName, toastId) => {
@@ -303,6 +316,10 @@ const sanitizeInventoryTextInput = (value, fieldName, toastId) => {
   }
   return cleaned;
 };
+
+// Reorder planning separates the manual low-stock threshold from the suggested
+// reorder point. Alerts continue to use the manual threshold, while the preview
+// helps admins explain expected stock needs during reviews.
 const getActiveLowStockThreshold = item =>
   Number(item?.activeLowStockThreshold ?? item?.reorderLevel ?? 0);
 const getRecommendedReorderPoint = item => (
@@ -451,7 +468,7 @@ export function InventoryModule({
     safetyStock: ""
   });
 
-  // 🔄 Sorting state: track which column and direction to sort
+  // Sorting state controls both desktop and mobile inventory tables.
   const [sortBy, setSortBy] = useState('name');
   const [sortOrder, setSortOrder] = useState('asc');
   const [currentPage, setCurrentPage] = useState(1);
@@ -476,6 +493,9 @@ export function InventoryModule({
     canEditReorderPlanning || canPerformInventoryMovement(user?.role);
   const inventoryTableColumnCount =
     8 + (canViewReorderPlanning ? 1 : 0) + (canShowInventoryActions ? 1 : 0);
+
+  // Dashboard shortcuts temporarily drive Inventory filters/actions. As soon as
+  // the user changes a filter manually, Inventory owns the view state again.
   const markInventoryFiltersManual = () => {
     setIsDashboardTemporaryInventoryFilterActive(false);
   };
@@ -764,9 +784,9 @@ export function InventoryModule({
     }, 2400);
   }, []);
 
-  // 🔍 Filtered inventory using Linear Search Algorithm
-  // Linear Search: O(n) - iterates through each item sequentially
-  // Used here because we're filtering with multiple criteria (search + category)
+  // Filtered inventory view for staff search and stock review workflows.
+  // Combined text, category, supplier, and stock-status criteria help staff
+  // isolate actionable inventory records without changing the underlying data.
   const inventoryFilterContext = linearSearchAll(inventory, item => {
     const query = searchQuery.trim().toLowerCase();
     const supplierName = item.supplierName?.trim() || "";
@@ -1076,6 +1096,9 @@ export function InventoryModule({
     setSimilarDuplicatePrompt(null);
   };
 
+  // Dashboard cards dispatch storage/events instead of importing this module.
+  // This handler translates those cross-module intents into the same dialogs and
+  // permission checks used by direct Inventory actions.
   const applyDashboardInventoryAction = React.useCallback((action, itemId = "") => {
     if (!action) return;
     if (action === "add-item") {
@@ -1401,6 +1424,9 @@ export function InventoryModule({
     setArchiveReasonNote("");
   };
 
+  // Draft recovery prevents accidental data loss for unfinished inventory work.
+  // Drafts are local only and never create official records, stock movements, or
+  // approval requests until the user explicitly confirms the form.
   const persistInventoryDraft = React.useCallback((scope, data) => {
     saveFormDraft({ ...scope, data });
   }, []);
@@ -1776,6 +1802,8 @@ export function InventoryModule({
     (isBatchStockAdjustmentDialogOpen && hasBatchStockAdjustmentChanges()) ||
     (isBatchStockOutDialogOpen && hasBatchStockOutChanges());
 
+  // Before leaving the page, save recoverable drafts for operational forms that
+  // might contain counted stock, backdate notes, or pending master-data changes.
   React.useEffect(() => {
     if (!hasUnsavedInventoryDraftWork) return undefined;
     const handleBeforeUnload = event => {
@@ -1964,6 +1992,9 @@ export function InventoryModule({
 
   const realtimeDisplayOrderLabel = filteredInventory.length === 0 ? "No items" : displayOrderLabel;
 
+  // Approval rows compare only the fields admins need to evaluate. This keeps
+  // Inventory Staff change requests focused on business impact: identity,
+  // supplier, price, stock threshold, and reorder-planning values.
   const getFirstDefinedApprovalValue = (source, keys) => {
     for (const key of keys) {
       if (source?.[key] !== undefined && source?.[key] !== null) return source[key];
@@ -2211,6 +2242,7 @@ export function InventoryModule({
           </DialogHeader>
 
           <style>{`
+            /* Approval dialog layout supports admin review of pending inventory changes before records go live. */
             .inventory-approval-search-wrap {
               border-radius: 14px;
             }
@@ -2375,6 +2407,7 @@ export function InventoryModule({
               box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
             }
 
+            /* Fixed comparison tables keep before-and-after values aligned for approval decisions. */
             .inventory-approval-change-table {
               table-layout: fixed;
               width: 100%;
@@ -2429,6 +2462,7 @@ export function InventoryModule({
               color: #0f172a;
             }
 
+            /* Mobile approval rules stack controls while preserving the audit details reviewers need. */
             @media (max-width: 760px) {
               .inventory-approval-dialog {
                 display: grid;
@@ -3191,6 +3225,8 @@ export function InventoryModule({
     }
   };
 
+  // Creates an inventory master record or approval request after validating item
+  // identity, prices, stock thresholds, and duplicate active/archived records.
   const handleAddItem = async ({ allowSimilarDuplicate = false } = {}) => {
     if (!newItem.name || !newItem.category || !newItem.quantity || !newItem.reorderLevel) {
       toast.error("Please fill in all fields before adding an item.");
@@ -3430,7 +3466,8 @@ export function InventoryModule({
     }
   };
 
-  // 📦 Stock In
+  // Stock In increases available quantity and records a movement reason so
+  // manual adjustments remain traceable outside purchase receiving.
   const handleStockIn = async () => {
     if (!selectedItem || !stockAmount) {
       toast.error("Please enter a valid amount first.");
@@ -3472,7 +3509,8 @@ export function InventoryModule({
     }
   };
 
-  // 📉 Stock Out
+  // Stock Out decreases available quantity for non-sales reasons such as damage,
+  // expiry, transfer, or correction. Sales deductions are recorded separately.
   const handleStockOut = async () => {
     if (!selectedItem || !stockAmount) {
       toast.error("Please enter a valid amount first.");
@@ -3566,6 +3604,8 @@ export function InventoryModule({
 
   const getBatchAdjustmentRowItem = inventoryId => inventory.find(item => String(item.id) === String(inventoryId));
 
+  // Batch stock adjustment applies verified increases across multiple items
+  // while preventing duplicate lines that would overstate a single count.
   const handleBatchStockAdjustment = async () => {
     if (!batchStockAdjustmentReason) {
       toast.error("Please select the stock-in reason for this adjustment.");
@@ -3669,6 +3709,8 @@ export function InventoryModule({
 
   const getBatchRowItem = inventoryId => inventory.find(item => String(item.id) === String(inventoryId));
 
+  // Batch stock out applies non-sales deductions across multiple items and
+  // blocks quantities that exceed current available stock.
   const handleBatchStockOut = async () => {
     if (!batchStockOutReason) {
       toast.error("Please select the stock-out reason for this deduction.");
@@ -3733,6 +3775,8 @@ export function InventoryModule({
     }
   };
 
+  // Editing master data must preserve stock movement history; quantity remains
+  // unchanged here and staff changes are routed to admin approval when required.
   const handleEditItem = async ({ allowSimilarDuplicate = false } = {}) => {
     if (!selectedItem) return;
     const cleanName = editItem.name.trim().replace(/\s+/g, " ");
@@ -3930,7 +3974,8 @@ export function InventoryModule({
     }
   };
 
-  // Archive Item
+  // Archiving removes an item from active inventory without deleting historical
+  // sales, purchase, stock movement, or audit references.
   const handleArchiveItem = async () => {
     if (!selectedItem) return;
     if (!archiveReason) {
@@ -4312,10 +4357,12 @@ export function InventoryModule({
   return /*#__PURE__*/React.createElement("div", {
     className: "inventory-page min-h-screen bg-gray-50 p-4 md:p-8"
   }, /*#__PURE__*/React.createElement("style", null, `
+    /* Inventory list styles pair desktop tables with mobile cards for the same active item records. */
     .inventory-mobile-list {
       display: none;
     }
 
+    /* Row highlight animation guides users back to recently changed inventory records. */
     .inventory-row-highlight {
       animation: inventoryRowHighlightPulse 2.4s ease-out;
       box-shadow: inset 4px 0 0 #F59E0B;
@@ -4347,6 +4394,7 @@ export function InventoryModule({
       }
     }
 
+    /* Pagination controls limit long inventory lists without losing current result context. */
     .inventory-pagination {
       display: flex;
       align-items: center;
@@ -4385,6 +4433,7 @@ export function InventoryModule({
       color: #0f172a;
     }
 
+    /* Action button states use operation-specific colors to reduce stock movement mistakes. */
     .inventory-action-stock-in,
     .inventory-action-stock-out,
     .inventory-action-edit,
@@ -4444,6 +4493,7 @@ export function InventoryModule({
       box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.22);
     }
 
+    /* Header grid keeps status filters and primary inventory actions aligned across admin states. */
     .inventory-list-header {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
@@ -4924,6 +4974,7 @@ export function InventoryModule({
       margin-top: 2px;
     }
 
+    /* Responsive inventory rules switch dense tables into scan-friendly mobile cards. */
     @media (max-width: 760px) {
       .inventory-page {
         padding: 14px;

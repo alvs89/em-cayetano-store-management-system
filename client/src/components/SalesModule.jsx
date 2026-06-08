@@ -143,6 +143,8 @@ const getSaleRemarksText = sale =>
 const requiresPaymentConfirmation = paymentMethod => ['gcash', 'bank_transfer'].includes(paymentMethod);
 const VAT_RATE = 0.12;
 
+// VAT is treated as inclusive in the sale amount. The breakdown is displayed on
+// receipts and reports without changing the amount collected from the customer.
 const computeVatBreakdown = taxableAmount => {
   const gross = Number(taxableAmount || 0);
   const vatableSales = Number((gross / (1 + VAT_RATE)).toFixed(2));
@@ -562,6 +564,7 @@ const openReceiptPrintWindow = () => {
       <head>
         <title>Preparing Receipt</title>
         <style>
+          /* Loading window centers a simple status message while the receipt HTML is generated. */
           body {
             margin: 0;
             min-height: 100vh;
@@ -639,6 +642,7 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
       <head>
         <title>${safeDocumentNumber} ${escapeReceiptText(documentName)}</title>
         <style>
+          /* Print receipt CSS targets A4 output and avoids app-level styling leaking into the document. */
           @page { size: A4; margin: 0; }
           * { box-sizing: border-box; }
           body {
@@ -656,6 +660,7 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
             border: 1px solid #111827;
             background: #fff;
           }
+          /* Header grid separates store identity from official transaction numbering. */
           .header {
             display: grid;
             grid-template-columns: minmax(0, 1fr) 58mm;
@@ -798,6 +803,7 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
             gap: 10px;
             margin: 7px 0;
           }
+          /* Line-item table keeps sales, refunds, and non-inventory entries aligned for review. */
           table {
             width: calc(100% - 44px);
             margin: 14px 22px 0;
@@ -829,6 +835,7 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
             padding: 16px 22px 14px;
             align-items: start;
           }
+          /* Summary table mirrors the saved sale amounts, including VAT and discount breakdowns. */
           .summary-table {
             width: 100%;
             margin: 0;
@@ -1098,6 +1105,14 @@ const getSaleProductSearchText = item =>
     item.defaultSellingPrice
   ].filter(Boolean).join(' '));
 
+/**
+ * Sales recording workflow.
+ *
+ * Supports cashier checkout, official SI number validation, tracked and
+ * non-inventory lines, payment confirmation, receipt generation, refunds, and
+ * admin cancellation. Inventory deductions are finalized by the backend only
+ * after the whole sale passes validation.
+ */
 export function SalesModule({ user }) {
   const { inventory, salesTransactions, recordSale, refundSale, cancelSale, getNextSalesInvoiceNumber } = useData();
   const [officialInvoiceNumber, setOfficialInvoiceNumber] = useState('');
@@ -1158,6 +1173,9 @@ export function SalesModule({ user }) {
     userId: user?.id || user?.user_id || user?.username || 'current-user',
     branch: user?.branch || 'current-branch'
   }), [user?.branch, user?.id, user?.user_id, user?.username]);
+
+  // Manual sales lines are checked against inventory names so staff are warned
+  // when a supposed non-inventory item looks like an item that should deduct stock.
   const findInventoryItemByExactSalesName = itemName => {
     const normalizedItemName = normalizeSalesInventoryIdentityName(itemName);
     if (!normalizedItemName) return null;
@@ -1242,6 +1260,8 @@ export function SalesModule({ user }) {
     }
   }, [salesDraftScope]);
 
+  // The product picker lists only inventory that can actually be sold, preventing
+  // users from adding out-of-stock tracked items to a new checkout.
   const activeInventory = useMemo(
     () => mergeSort(
       inventory.filter(item => Number(item.quantity || 0) > 0),
@@ -1343,6 +1363,9 @@ export function SalesModule({ user }) {
         : 0
     };
   });
+
+  // Below-cost warnings do not block the sale, but they give staff and reviewers
+  // visibility into transactions that may reduce expected profit.
   const getBelowCostWarning = line => {
     if (!line || line.isManual || !line.item) return null;
     const costPrice = Number(line.item.costPrice || 0);
@@ -1362,6 +1385,8 @@ export function SalesModule({ user }) {
     .filter(Boolean);
   const cartLines = selectedLineDetails.filter(line => line.isManual ? line.itemName : (line.inventoryId && line.item));
 
+  // Sale totals are derived from the current cart and payment controls. These
+  // values are sent to the backend and also drive the receipt preview.
   const totalQuantity = selectedLineDetails.reduce((sum, line) => sum + (Number.isFinite(line.quantity) ? line.quantity : 0), 0);
   const subtotalAmount = selectedLineDetails.reduce((sum, line) => sum + (Number.isFinite(line.subtotal) ? line.subtotal : 0), 0);
   const selectedDiscountOption = discountOptions[discountType] || discountOptions.none;
@@ -1382,6 +1407,8 @@ export function SalesModule({ user }) {
     ? safeAmountReceived - totalAmount
     : 0;
 
+  // Electronic payments must be re-confirmed when the cart total changes after a
+  // GCash or bank-transfer confirmation was recorded.
   useEffect(() => {
     if (!needsPaymentConfirmation || !paymentConfirmed || paymentConfirmedAmount === null) return;
 
@@ -1400,6 +1427,9 @@ export function SalesModule({ user }) {
   );
   const cleanOfficialInvoiceNumber = officialInvoiceNumber.trim();
   const cleanInvoiceSequenceExceptionReason = invoiceSequenceExceptionReason.trim();
+
+  // Load the next expected physical Sales Invoice number so staff can compare it
+  // with the printed booklet before saving the transaction.
   useEffect(() => {
     let isMounted = true;
 
@@ -1473,6 +1503,8 @@ export function SalesModule({ user }) {
       : formatInvoiceRange(suggestedOfficialInvoiceNumber, enteredInvoiceSequenceNumber - 1)
     : '';
 
+  // Gaps in the official booklet sequence require a reason so reviewers can
+  // distinguish legitimate booklet use from accidental skipped invoice numbers.
   useEffect(() => {
     if (!isOfficialInvoiceSkippingSequence && invoiceSequenceExceptionReason) {
       setInvoiceSequenceExceptionReason('');
@@ -1510,6 +1542,8 @@ export function SalesModule({ user }) {
     officialInvoiceNumber.trim() !== '' &&
     (hasManualInvoiceEntry || officialInvoiceNumber.trim() !== autoFilledInvoiceNumber);
 
+  // Draft detection tracks operationally meaningful input only. Empty default
+  // form state should not create recoverable drafts or distract cashiers.
   const hasSalesFormInput = useMemo(() => (
     hasManualOfficialInvoiceValue ||
     invoiceSequenceExceptionReason.trim() !== '' ||
@@ -2204,6 +2238,8 @@ export function SalesModule({ user }) {
     toast.success('Selected items cleared.');
   };
 
+  // Pre-submit validation protects invoice uniqueness, available stock, payment
+  // confirmation, discount limits, and backdated transaction integrity.
   const validateSale = () => {
     const usedItems = new Set();
 
@@ -2403,6 +2439,9 @@ export function SalesModule({ user }) {
     return true;
   };
 
+  // Final submission sends one atomic sale request. The backend validates stock,
+  // invoice uniqueness, payment fields, and writes the sale, movement, profit,
+  // and audit records before the UI prints the receipt.
   const submitRecordSale = async () => {
     const receiptPrintWindow = openReceiptPrintWindow();
     setIsSaving(true);
@@ -2494,6 +2533,8 @@ export function SalesModule({ user }) {
     setCancelReason('');
   };
 
+  // Refund choices are limited to remaining refundable quantities so the same
+  // unit cannot be restored to stock more than once.
   const openRefundSaleDialog = sale => {
     const refundableItems = (sale?.items || [])
       .filter(item => Number(item.quantitySold || 0) > 0 && getRemainingRefundQuantity(item) > 0)
@@ -2602,6 +2643,9 @@ export function SalesModule({ user }) {
     }
   };
 
+  // Refund confirmation creates a separate negative transaction linked to the
+  // original sale. It supports partial returns while preserving original sale
+  // history for audit and reporting.
   const confirmRefundSale = async () => {
     if (!saleToRefund) return;
 
@@ -2689,6 +2733,8 @@ export function SalesModule({ user }) {
     }
   };
 
+  // Cancellation reverses the entire sale and restores tracked stock. It is kept
+  // separate from refunds to avoid double-restoring items after partial returns.
   const confirmCancelSale = async () => {
     const cleanReason = cancelReason.trim();
     if (!saleToCancel) return;
@@ -2718,12 +2764,14 @@ export function SalesModule({ user }) {
   return (
     <div className="sales-screen bg-gray-50 p-4 md:p-8">
       <style>{`
+        /* Sales screen shell prevents wide POS controls from creating horizontal page scroll. */
         .sales-screen {
           min-height: 0;
           max-width: 100%;
           overflow-x: hidden;
         }
 
+        /* Draft recovery dialog lets staff resume unfinished sales without silently losing work. */
         .sales-screen .draft-recovery-dialog {
           width: min(560px, calc(100vw - 1.5rem)) !important;
           max-width: min(560px, calc(100vw - 1.5rem)) !important;
@@ -2893,6 +2941,7 @@ export function SalesModule({ user }) {
           }
         }
 
+        /* Main sales grid separates product selection from the active transaction panel. */
         .sales-grid {
           display: grid;
           grid-template-columns: minmax(0, 1fr) minmax(340px, 410px);
@@ -6402,6 +6451,7 @@ export function SalesModule({ user }) {
           scrollbar-gutter: stable;
         }
 
+        /* Tablet rules collapse POS and history panels so checkout remains usable in one column. */
         @media (max-width: 1100px) {
           .sales-pos-layout {
             grid-template-columns: 1fr;
@@ -6511,6 +6561,7 @@ export function SalesModule({ user }) {
           }
         }
 
+        /* Non-inventory item dialog compresses form controls without hiding price or quantity inputs. */
         @media (max-width: 860px) {
           .sales-non-inventory-dialog {
             width: min(420px, calc(100vw - 1rem));

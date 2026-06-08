@@ -1,3 +1,12 @@
+/**
+ * Profitability Helpers
+ *
+ * Calculates actual earnings for dashboards and reports using sale-time cost
+ * snapshots. Keeping this logic in one utility prevents each report from
+ * making slightly different assumptions about discounts, delivery charges, and
+ * historical item costs.
+ */
+
 const toNumber = value => {
   const numberValue = Number(value || 0);
   return Number.isFinite(numberValue) ? numberValue : 0;
@@ -9,10 +18,14 @@ export const getSaleLineProfit = (sale, item) => {
   const lineSubtotal = roundMoney(item?.subtotal);
   const saleSubtotal = roundMoney(sale?.subtotalAmount ?? sale?.subtotal_amount ?? sale?.totalAmount);
   const discountAmount = roundMoney(sale?.discountAmount ?? sale?.discount_amount);
+  // Allocate transaction-level discounts proportionally to each line so item
+  // profit reports match the final amount the customer actually paid.
   const discountShare = saleSubtotal === 0
     ? 0
     : roundMoney((lineSubtotal / saleSubtotal) * discountAmount);
   const netSales = roundMoney(lineSubtotal - discountShare);
+  // Prefer stored cost snapshots from the completed sale. The fallback supports
+  // older records that only stored quantity and unit cost at sale time.
   const storedCost = item?.costSubtotal ?? item?.cost_subtotal;
   const costUsed = storedCost === null || storedCost === undefined
     ? roundMoney(toNumber(item?.quantitySold ?? item?.quantity_sold) * toNumber(item?.unitCostAtSale ?? item?.unit_cost_at_sale))
@@ -45,6 +58,8 @@ export const getProfitabilitySummary = (sales = []) =>
       summary.unitsSold += toNumber(item.quantitySold ?? item.quantity_sold);
     });
 
+    // Delivery fees are treated as revenue in summary profit because they are
+    // part of the collected sale total and have no tracked item cost here.
     summary.deliveryCharges = roundMoney(summary.deliveryCharges + deliveryCharge);
     summary.totalSales = roundMoney(summary.totalSales + deliveryCharge);
     summary.actualProfit = roundMoney(summary.actualProfit + deliveryCharge);
@@ -74,6 +89,8 @@ export const getProductProfitability = (sales = []) => {
       const itemName = String(item.itemName || item.item_name || '').trim();
       if (!itemName) return;
 
+      // Inventory items group by stable inventory id. Manual/non-inventory
+      // lines fall back to normalized name and category for report continuity.
       const key = item.inventoryId || item.inventory_id
         ? `inventory:${item.inventoryId || item.inventory_id}`
         : `item:${itemName.toLowerCase()}|${String(item.category || 'Other').toLowerCase()}`;

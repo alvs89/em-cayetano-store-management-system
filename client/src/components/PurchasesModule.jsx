@@ -45,6 +45,9 @@ const PAYMENT_TERMS = [
   { value: 'branch_transfer', label: 'Branch Transfer' }
 ];
 const CREDIT_TERM_OPTIONS = [15, 30, 60, 90, 120];
+
+// Payment-term suggestions are only defaults for receiving convenience. Staff
+// can override them when the actual supplier document uses different terms.
 const CATEGORY_PAYMENT_TERM_SUGGESTIONS = {
   Steel: { paymentTerms: 'cod', creditDays: 15 },
   Electricals: { paymentTerms: 'credit', creditDays: 90 },
@@ -96,6 +99,8 @@ const getPurchaseDueDatePreview = (actualTransactionAt, creditTermsDays) => {
   return baseDate.toISOString();
 };
 
+// Purchase receiving can be backdated to the real delivery date. The encoded
+// date remains available for audit while reports use the transaction date.
 const toTransactionDateInputValue = value => {
   if (!value) return '';
   const date = new Date(value);
@@ -130,6 +135,8 @@ const notifyPurchaseValidation = (message, id) => {
   toast.warning(message, { id, duration: 2500 });
 };
 
+// Quantity and unit-cost inputs are sanitized before controlled state updates so
+// receiving lines cannot carry negative, malformed, or over-precise values.
 const sanitizeWholeNumberInput = (value, fieldName = 'Quantity', toastId = 'purchase-whole-number') => {
   const rawValue = String(value ?? '');
   if (rawValue === '') return '';
@@ -219,6 +226,9 @@ const INVENTORY_STATUS_FILTER_OPTIONS = [
   { value: 'Out of Stock', label: 'Out of Stock' }
 ];
 
+// Reorder info combines manual low-stock status with supplier planning values.
+// The manual threshold remains the official alert trigger; recommendations help
+// staff estimate what to receive from suppliers.
 const getPurchaseInventoryStatus = item => {
   if (item?.status) return item.status;
   const quantity = Number(item?.quantity || 0);
@@ -267,6 +277,13 @@ const getPurchaseReorderInfo = item => {
   };
 };
 
+/**
+ * Purchase receiving workflow.
+ *
+ * Records supplier deliveries, supplier document references, payment terms, and
+ * received quantities. Saving a purchase increases inventory stock and updates
+ * cost/payment history through the shared data provider.
+ */
 export function PurchasesModule({ user, onNavigate }) {
   const { inventory, purchaseTransactions, recordPurchase, updatePurchasePaymentStatus } = useData();
   const [supplierName, setSupplierName] = useState('');
@@ -337,6 +354,8 @@ export function PurchasesModule({ user, onNavigate }) {
     [inventory]
   );
 
+  // The inventory picker can be scoped by supplier to reduce receiving mistakes,
+  // but unassigned inventory stays visible so supplier data can be completed.
   const filteredInventory = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     const selectedSupplier = useSupplierFilter ? normalizeSupplierForMatch(supplierName) : '';
@@ -391,6 +410,8 @@ export function PurchasesModule({ user, onNavigate }) {
   const paginatedInventory = filteredInventory.slice(inventoryPageStart, inventoryPageStart + INVENTORY_PAGE_SIZE);
   const inventoryShowingStart = filteredInventory.length === 0 ? 0 : inventoryPageStart + 1;
   const inventoryShowingEnd = Math.min(inventoryPageStart + INVENTORY_PAGE_SIZE, filteredInventory.length);
+  // Line-level selects use the same supplier scope, while preserving a selected
+  // item even if the user later changes the supplier filter.
   const supplierScopedInventory = useMemo(() => {
     const selectedSupplier = useSupplierFilter ? normalizeSupplierForMatch(supplierName) : '';
     if (!selectedSupplier) return sortedInventory;
@@ -466,6 +487,8 @@ export function PurchasesModule({ user, onNavigate }) {
     return [selectedItem, ...supplierScopedInventory];
   };
 
+  // Line details convert text inputs into numeric receiving quantities and costs
+  // used for validation, stock impact previews, and the final purchase payload.
   const lineDetails = purchaseLines.map(line => {
     const item = getInventoryById(line.inventoryId);
     const quantity = line.quantity === '' ? 0 : Number(line.quantity);
@@ -536,6 +559,8 @@ export function PurchasesModule({ user, onNavigate }) {
     supplierName
   ]);
   const selectedSupplierName = supplierName.trim();
+  // Supplier review warns when selected items point to a different supplier than
+  // the purchase header, helping prevent mixed supplier receiving records.
   const supplierReview = (() => {
     const groups = new Map();
     let unassignedCount = 0;
@@ -610,6 +635,8 @@ export function PurchasesModule({ user, onNavigate }) {
     }
   }, [creditTermsDays, paymentTerms, suggestedCreditTermsDays]);
 
+  // Recovered drafts are local-only worksheets. Restoring them never increases
+  // stock until the user confirms the purchase save.
   const applyRecoveredPurchaseDraft = draft => {
     const data = draft?.data || {};
     const draftLines = Array.isArray(data.purchaseLines) ? data.purchaseLines : [];
@@ -709,6 +736,8 @@ export function PurchasesModule({ user, onNavigate }) {
         unitCost: item.unitCost || ''
       }));
 
+  // Supplier reorder reports can hand off a draft to Purchases so staff can turn
+  // recommended reorder lines into an actual receiving worksheet.
   const applyPurchaseDraft = (draft, options = {}) => {
     if (!draft) return;
     if (draft.branch && user?.branch && draft.branch !== user.branch) {
@@ -961,6 +990,8 @@ export function PurchasesModule({ user, onNavigate }) {
     setIsConfirmPurchaseOpen(true);
   };
 
+  // Purchase validation protects supplier identity, document metadata, positive
+  // receiving quantities/costs, duplicate lines, credit terms, and backdating.
   const validatePurchase = () => {
     if (!supplierName.trim()) {
       toast.error('Select a supplier or choose Other to enter one.');
@@ -1025,6 +1056,8 @@ export function PurchasesModule({ user, onNavigate }) {
     return true;
   };
 
+  // Recording a purchase is the only step that increases inventory stock. The
+  // backend receives all lines together so stock and purchase history stay atomic.
   const handleRecordPurchase = async () => {
     if (!validatePurchase()) return;
     setIsSaving(true);
@@ -1160,6 +1193,8 @@ export function PurchasesModule({ user, onNavigate }) {
     || filteredPurchaseHistory[0]
     || null;
 
+  // Supplier payment status updates keep credit purchase follow-up separate from
+  // receiving, since payment can happen days after stock was added.
   const handleUpdatePurchasePaymentStatus = async (purchase, nextStatus) => {
     const purchaseId = purchase?.purchaseTransactionId || purchase?.id;
     if (!purchaseId) {
@@ -1186,10 +1221,12 @@ export function PurchasesModule({ user, onNavigate }) {
   return (
     <div className="purchase-screen bg-slate-50 p-4 md:p-6">
       <style>{`
+        /* Purchase screen styles support receiving inventory from supplier documents. */
         .purchase-screen {
           min-height: 100vh;
         }
 
+        /* Draft recovery dialog protects unfinished purchase entries from being lost. */
         .purchase-screen .draft-recovery-dialog {
           width: min(560px, calc(100vw - 1.5rem)) !important;
           max-width: min(560px, calc(100vw - 1.5rem)) !important;
@@ -1363,6 +1400,7 @@ export function PurchasesModule({ user, onNavigate }) {
           margin-bottom: 1.25rem;
         }
 
+        /* Main page shell keeps purchase forms, item search, and totals visually grouped. */
         .purchase-page {
           display: grid;
           gap: 1rem;
@@ -1448,6 +1486,7 @@ export function PurchasesModule({ user, onNavigate }) {
           line-height: 1.25rem;
         }
 
+        /* Document grid captures supplier, reference, payment, and purchase date details. */
         .purchase-doc-grid {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
@@ -1854,6 +1893,7 @@ export function PurchasesModule({ user, onNavigate }) {
           padding: 1rem 1.5rem;
         }
 
+        /* Inventory picker lets staff add existing items to a receiving transaction. */
         .purchase-current {
           display: flex;
           min-height: 0;
@@ -2157,6 +2197,7 @@ export function PurchasesModule({ user, onNavigate }) {
           color: #059669;
         }
 
+        /* Purchase lines table previews stock and cost impact before the entry is saved. */
         .purchase-lines-wrap {
           max-height: 18.5rem;
           overflow-y: auto;
@@ -2412,6 +2453,7 @@ export function PurchasesModule({ user, onNavigate }) {
           grid-column: span 2;
         }
 
+        /* History dialog supports payment follow-up and review of received purchases. */
         .purchase-history-dialog {
           width: min(1180px, calc(100vw - 2rem));
           max-height: min(88vh, 840px);
@@ -2658,6 +2700,7 @@ export function PurchasesModule({ user, onNavigate }) {
           background: #b91c1c;
         }
 
+        /* Wide-table breakpoint stacks workspace columns before panels collide. */
         @media (max-width: 1320px) {
           .purchase-details-layout,
           .purchase-doc-grid,
@@ -2684,6 +2727,7 @@ export function PurchasesModule({ user, onNavigate }) {
           }
         }
 
+        /* Mobile purchase rules turn tables into labeled rows and make actions full-width. */
         @media (max-width: 820px) {
           .purchase-screen {
             padding: 0.75rem;

@@ -5,6 +5,13 @@ import * as React from "react";
 import { toast } from "sonner";
 import { cn } from "./utils";
 
+/**
+ * Resolves the numeric validation mode from input props.
+ *
+ * @param {string} inputMode - Native inputMode value.
+ * @param {string} numericMode - Explicit data-numeric-mode value.
+ * @returns {string|null} "whole", "decimal", or null.
+ */
 const getNumericMode = (inputMode, numericMode) => {
   if (numericMode === "whole" || numericMode === "decimal") return numericMode;
   if (inputMode === "numeric") return "whole";
@@ -12,17 +19,38 @@ const getNumericMode = (inputMode, numericMode) => {
   return null;
 };
 
+/**
+ * Reads the current text selection from an input.
+ *
+ * @param {HTMLInputElement} target - Input element.
+ * @returns {object} Selection start and end positions.
+ */
 const getSelectionRange = target => ({
   start: target.selectionStart ?? String(target.value || "").length,
   end: target.selectionEnd ?? target.selectionStart ?? String(target.value || "").length
 });
 
+/**
+ * Builds the next value after replacing the selected text.
+ *
+ * @param {HTMLInputElement} target - Input element.
+ * @param {string} text - Inserted text.
+ * @returns {string} Candidate input value.
+ */
 const replaceSelectedText = (target, text) => {
   const value = String(target.value || "");
   const { start, end } = getSelectionRange(target);
   return `${value.slice(0, start)}${text}${value.slice(end)}`;
 };
 
+/**
+ * Sanitizes whole-number and decimal text before it reaches form state.
+ *
+ * @param {*} value - Raw input value.
+ * @param {string} mode - Numeric mode.
+ * @param {number} [decimalPlaces=2] - Maximum decimal places.
+ * @returns {string} Sanitized numeric text.
+ */
 const sanitizeNumericValue = (value, mode, decimalPlaces = 2) => {
   const rawValue = String(value ?? "");
   if (mode === "whole") return rawValue.replace(/\D/g, "");
@@ -33,12 +61,25 @@ const sanitizeNumericValue = (value, mode, decimalPlaces = 2) => {
   return `${whole}.${decimalParts.join("").slice(0, decimalPlaces)}`;
 };
 
+/**
+ * Builds the warning message shown when invalid numeric input is blocked.
+ *
+ * @param {string} mode - Numeric mode.
+ * @param {string} label - User-facing field label.
+ * @returns {string} Toast message.
+ */
 const getNumericMessage = (mode, label) => (
   mode === "whole"
     ? `${label} accepts whole numbers only.`
     : `${label} accepts numbers and one decimal point only.`
 );
 
+/**
+ * Converts an input id/name into a readable field label.
+ *
+ * @param {string} value - Input id or name.
+ * @returns {string} Human-readable label.
+ */
 const humanizeIdentifier = value => {
   const label = String(value || "")
     .replace(/[-_]+/g, " ")
@@ -48,6 +89,14 @@ const humanizeIdentifier = value => {
   return label || "This field";
 };
 
+/**
+ * Shows a de-duplicated toast when numeric input rejects a character.
+ *
+ * @param {string} mode - Numeric mode.
+ * @param {string} label - Field label.
+ * @param {string} toastId - Stable toast id.
+ * @returns {void}
+ */
 const notifyNumericInputBlocked = (mode, label, toastId) => {
   toast.warning(getNumericMessage(mode, label), {
     id: toastId,
@@ -55,6 +104,12 @@ const notifyNumericInputBlocked = (mode, label, toastId) => {
   });
 };
 
+/**
+ * Renders the shared input primitive with optional numeric guards.
+ *
+ * @param {object} props - Input props plus data-numeric-mode validation options.
+ * @returns {React.ReactElement} Input element.
+ */
 function Input({
   className,
   type,

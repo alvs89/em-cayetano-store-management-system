@@ -1,12 +1,27 @@
-// Shared page header: keeps module titles, branch labels, and header actions
-// visually consistent across the application.
+/**
+ * Page Header Components
+ *
+ * Provides a shared branded header for modules, including title text,
+ * optional actions, current branch, and live date/time display.
+ */
 import React, { useEffect, useState } from 'react';
 
+/**
+ * Builds the branch label shown in the header time badge.
+ *
+ * @param {string} userBranch - Branch assigned to the current session.
+ * @returns {string} Branch label or unavailable fallback.
+ */
 const getLocationLabel = userBranch => {
   if (userBranch) return `${userBranch} Branch`;
   return 'Branch unavailable';
 };
 
+/**
+ * Resolves the active branch from browser session storage.
+ *
+ * @returns {string} Stored active branch, stored user branch, or empty string.
+ */
 const getSessionBranch = () => {
   try {
     const activeBranch = localStorage.getItem('active_branch');
@@ -19,6 +34,12 @@ const getSessionBranch = () => {
   }
 };
 
+/**
+ * Formats a Date object for header display.
+ *
+ * @param {Date} date - Date to format.
+ * @returns {string} Localized date label or unavailable fallback.
+ */
 const formatDate = date => {
   try {
     return new Intl.DateTimeFormat(undefined, {
@@ -31,6 +52,12 @@ const formatDate = date => {
   }
 };
 
+/**
+ * Formats a Date object as a live clock label.
+ *
+ * @param {Date} date - Date to format.
+ * @returns {string} Localized time label or unavailable fallback.
+ */
 const formatTime = date => {
   try {
     return new Intl.DateTimeFormat(undefined, {
@@ -44,6 +71,13 @@ const formatTime = date => {
   }
 };
 
+/**
+ * Displays the current branch, date, and live time in the page header.
+ *
+ * @param {object} props - Component props.
+ * @param {string} props.userBranch - Branch label to prefer over session storage.
+ * @returns {JSX.Element} Live branch/date/time badge.
+ */
 export function HeaderTimeBadge({ userBranch }) {
   const [now, setNow] = useState(() => new Date());
 
@@ -64,6 +98,7 @@ export function HeaderTimeBadge({ userBranch }) {
   return (
     <>
       <style>{`
+        /* Header time badge keeps branch and clock visible without overflowing. */
         .page-header-time-badge {
           display: grid;
           gap: 0.2rem;
@@ -92,6 +127,7 @@ export function HeaderTimeBadge({ userBranch }) {
           line-height: 1.3;
         }
 
+        /* Tablet layout moves the badge under the title area when needed. */
         @media (max-width: 920px) {
           .page-header-time-badge {
             width: 100%;
@@ -100,6 +136,7 @@ export function HeaderTimeBadge({ userBranch }) {
           }
         }
 
+        /* Mobile layout allows branch and timestamp text to wrap to two lines. */
         @media (max-width: 640px) {
           .page-header-time-badge {
             gap: 0.16rem;
@@ -131,6 +168,20 @@ export function HeaderTimeBadge({ userBranch }) {
   );
 }
 
+/**
+ * Renders the branded module header used across the application.
+ *
+ * @param {object} props - Component props.
+ * @param {string} props.title - Main module title.
+ * @param {string} props.subtitle - Supporting subtitle text.
+ * @param {React.ReactNode} props.icon - Optional module icon.
+ * @param {React.ReactNode} props.children - Optional header controls/actions.
+ * @param {string} props.userName - Optional user name for greeting text.
+ * @param {string} props.userBranch - Optional branch override.
+ * @param {string} props.userRole - Optional role label for user context.
+ * @param {boolean} [props.showUserContext=false] - Shows user/branch/role context when true.
+ * @returns {JSX.Element} Shared page header.
+ */
 export function PageHeader({
   title,
   subtitle,

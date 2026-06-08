@@ -1,5 +1,10 @@
-// Login screen: validates credentials, calls backend login, and starts the
-// two-factor verification flow when an OTP challenge is required.
+/**
+ * Login Screen
+ *
+ * Validates credentials, resolves the user's assigned branch, calls backend
+ * login, and starts the two-factor verification flow when an OTP challenge is
+ * required.
+ */
 import axios from 'axios';
 import { useState, useEffect } from "react";
 import { AlertCircle, CheckCircle, Eye, EyeOff, Loader2, Lock, Store, User } from "lucide-react";
@@ -16,6 +21,15 @@ import { apiUrl } from "../utils/api";
 const emcLogoSrc = "/emc-logo.png";
 const LOGIN_BACKGROUND_CLASS = "login-screen-active";
 
+/**
+ * Renders the login form and handles branch-aware authentication.
+ *
+ * @param {object} props - Component props.
+ * @param {Function} props.onLogin - Callback invoked when login returns a token.
+ * @param {Function} props.onNavigateTo2FA - Callback invoked when OTP verification is required.
+ * @param {Function} props.onForgotPassword - Optional callback for password recovery navigation.
+ * @returns {JSX.Element} Login form and brand panel.
+ */
 export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -58,6 +72,13 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
     }
   }, [branch, username, password, branchHintShown]);
 
+  /**
+   * Requests the branch assigned to the entered credentials.
+   *
+   * @param {string} loginUsername - Username entered by the user.
+   * @param {string} loginPassword - Password entered by the user.
+   * @returns {Promise<object>} Assigned branch, role, and branch-lock status.
+   */
   const fetchAssignedBranchForCredentials = async (loginUsername, loginPassword) => {
     const response = await axios.post(apiUrl('/api/auth/assigned-branch'), {
       username: loginUsername,
@@ -126,6 +147,14 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
     };
   }, [username, password]);
 
+  /**
+   * Persists OTP challenge metadata and opens the two-factor screen.
+   *
+   * @param {object} loginData - Backend login response containing username/email.
+   * @param {object} otpData - Backend OTP response containing timing and resend metadata.
+   * @param {object} options - Flow options for reused OTP and selected branch.
+   * @returns {void}
+   */
   const continueToTwoFactor = (loginData, otpData = {}, { reusedExistingCode = false, loginBranch = branch } = {}) => {
     const challengeUsername = String(loginData.username || username || '').trim();
     const challengeEmail = loginData.email || '';
@@ -177,7 +206,12 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
     }
   };
 
-  // Submit credentials; on success either receive token or trigger 2FA flow
+  /**
+   * Submits credentials and either completes login or starts OTP verification.
+   *
+   * @param {React.FormEvent<HTMLFormElement>} e - Login form submit event.
+   * @returns {Promise<void>} Updates auth state, redirects, or reports validation errors.
+   */
   const handleLogin = async (e) => {
     e.preventDefault();
 
@@ -291,6 +325,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
   return (
     <div className="login-page auth-gradient-page min-h-screen flex">
       <style>{`
+        /* Login background fills the viewport and keeps the branded gradient stable. */
         html,
         body,
         #root,
@@ -384,6 +419,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
           z-index: 1;
         }
 
+        /* Desktop layout shows the form and the marketing/support panel side by side. */
         @media (min-width: 1024px) {
           .login-brand-rule {
             display: block;
@@ -419,6 +455,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
           }
         }
 
+        /* Mobile and tablet layout centers the login card and reduces visual density. */
         @media (max-width: 1023px) {
           html,
           body,

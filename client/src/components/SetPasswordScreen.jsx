@@ -1,5 +1,9 @@
-// Set password screen: verifies the reset code, enforces password policy, and
-// completes password reset with the backend.
+/**
+ * Set Password Screen
+ *
+ * Verifies the password reset code, enforces password policy, tracks OTP
+ * expiry/cooldown timing, and submits the new password to the backend.
+ */
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import axios from 'axios';
@@ -18,13 +22,19 @@ import {
 import { PASSWORD_HELP_TEXT, validatePasswordPolicy } from '../utils/passwordPolicy';
 
 const emcLogoSrc = "/emc-logo.png";
-const EXPIRY_TOLERANCE_MS = 15000; // 15s grace to match backend acceptance
+const EXPIRY_TOLERANCE_MS = 15000; // 15s grace to match backend acceptance.
 const EXPIRED_MESSAGE = "Your code is no longer valid. Please click the resend button.";
 const RESEND_WAIT_DESCRIPTION = 'Please wait for the resend code timer to finish before requesting another code.';
 const EXPIRED_RESEND_WAIT_DESCRIPTION = 'Code expired. Wait until the resend code timer finishes, then request a new code.';
 const TOO_MANY_OTP_REQUESTS_DESCRIPTION = 'Too many OTP requests used. You have reached the resend limit for now. Please wait for the reset timer to finish before requesting a new code.';
 const TOO_MANY_EXPIRED_OTP_REQUESTS_DESCRIPTION = 'Too many OTP requests used. You have reached the resend limit, and the latest code has expired. Please wait for the reset timer to finish before requesting a new code.';
 
+/**
+ * Formats resend cooldown seconds for user-facing messages.
+ *
+ * @param {number} seconds - Remaining cooldown seconds.
+ * @returns {string} Human-readable cooldown duration.
+ */
 const formatCooldownTime = (seconds) => {
   const safeSeconds = Math.max(1, Number(seconds) || 1);
   if (safeSeconds < 60) {
@@ -42,6 +52,11 @@ const formatCooldownTime = (seconds) => {
   return `${minuteText} and ${remainingSeconds} second${remainingSeconds === 1 ? '' : 's'}`;
 };
 
+/**
+ * Renders the reset-password form and OTP resend controls.
+ *
+ * @returns {JSX.Element} Password reset screen.
+ */
 const SetPasswordScreen = () => {
   const [otp, setOtp] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -120,6 +135,13 @@ const SetPasswordScreen = () => {
     return () => clearInterval(id);
   }, [cooldownStorageKey, exhaustedStorageKey, location.state?.remainingAttempts, location.state?.retryAfterSeconds]);
 
+  /**
+   * Stores resend cooldown timing so refreshes cannot bypass OTP resend limits.
+   *
+   * @param {number} [seconds=60] - Cooldown duration from the backend.
+   * @param {boolean} [attemptsExhausted=false] - Whether the resend limit was exhausted.
+   * @returns {void}
+   */
   const startResendCooldown = (seconds = 60, attemptsExhausted = false) => {
     const safeSeconds = Math.max(1, Number(seconds) || 60);
     localStorage.setItem(cooldownStorageKey, (Date.now() + safeSeconds * 1000).toString());
@@ -132,6 +154,12 @@ const SetPasswordScreen = () => {
     setResendAttemptsExhausted(attemptsExhausted);
   };
 
+  /**
+   * Formats OTP expiry milliseconds as MM:SS.
+   *
+   * @param {number} ms - Remaining milliseconds.
+   * @returns {string} Countdown label.
+   */
   const formatTime = (ms) => {
     const total = Math.max(0, Math.ceil(ms / 1000));
     const minutes = Math.floor(total / 60);
@@ -139,12 +167,25 @@ const SetPasswordScreen = () => {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
+  /**
+   * Sanitizes verification-code typing to numeric OTP characters.
+   *
+   * @param {string} value - Raw input value.
+   * @returns {void}
+   */
   const handleOtpChange = (value) => {
     handleVerificationCodeChange(value, setOtp, {
       toastId: 'set-password-otp-numeric-only',
     });
   };
 
+  /**
+   * Creates a password field updater that enforces the maximum password length.
+   *
+   * @param {Function} setter - State setter for the target password field.
+   * @param {string} toastId - Toast id used to avoid duplicate messages.
+   * @returns {Function} Field value handler.
+   */
   const handlePasswordFieldChange = (setter, toastId) => (value) => {
     if (value.length > 64) {
       toast.error("Password must not exceed 64 characters.", {
@@ -158,6 +199,12 @@ const SetPasswordScreen = () => {
     setter(value);
   };
 
+  /**
+   * Validates the OTP and new password before submitting the reset request.
+   *
+   * @param {React.FormEvent<HTMLFormElement>} e - Reset form submit event.
+   * @returns {Promise<void>} Completes password reset or reports validation errors.
+   */
   const handleReset = async (e) => {
     e.preventDefault();
     const isPastGrace = remainingMs < -EXPIRY_TOLERANCE_MS;
@@ -227,6 +274,11 @@ const SetPasswordScreen = () => {
     }
   };
 
+  /**
+   * Requests a new reset code while respecting backend resend cooldowns.
+   *
+   * @returns {Promise<void>} Sends a new OTP or displays cooldown/rate-limit feedback.
+   */
   const handleResend = async () => {
     if (!email) return;
     if (resendCooldownSeconds > 0) {

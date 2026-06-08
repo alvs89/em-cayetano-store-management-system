@@ -40,6 +40,8 @@ const isBackdatedRecord = record => {
   return encodedDate.getTime() - transactionDate.getTime() > 60 * 1000 || Boolean(record.backdateReason);
 };
 
+// Backdated records show both transaction and encoded dates so report viewers
+// can separate business-period reporting from audit timing.
 const formatEncodedDate = record => isBackdatedRecord(record) ? formatDateTime(record.encodedAt) : '-';
 
 const getCategoryDisplay = item => {
@@ -85,10 +87,11 @@ export function ReportsModule({
   const [isConvertingItem, setIsConvertingItem] = useState(false);
   const reportDateInputRef = useRef(null);
   const reorderQuantityDefaultsRef = useRef({});
-  // Pagination state: limit displayed results to 10 per page
+
+  // Pagination keeps large reports readable while export functions still use
+  // the complete filtered dataset.
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
-  // Per-category pagination state (category -> page)
   const [categoryPages, setCategoryPages] = useState({});
   const allowedReportTypes = React.useMemo(() => getReportTypeOptionsForRole(user?.role), [user?.role]);
   const defaultReportType = React.useMemo(() => getDefaultReportTypeForRole(user?.role), [user?.role]);
@@ -97,7 +100,8 @@ export function ReportsModule({
   const isInventorySnapshotReport = inventorySnapshotReportTypes.includes(reportType);
   const reportUsesCategoryFilter = categoryFilterReportTypes.includes(reportType);
 
-  // Handle period change with refresh animation
+  // Filter changes briefly dim report cards to make recalculated data feel
+  // deliberate without changing the underlying records.
   useEffect(() => {
     setIsRefreshing(true);
     const timer = setTimeout(() => {
@@ -106,7 +110,8 @@ export function ReportsModule({
     return () => clearTimeout(timer);
   }, [reportPeriod, selectedReportDate, customStartDate, customEndDate]);
 
-  // Reset page when report filters change
+  // Reset pagination when report scope changes so users start at the beginning
+  // of the newly filtered dataset.
   useEffect(() => {
     setCurrentPage(1);
     setCategoryPages({});
@@ -126,7 +131,8 @@ export function ReportsModule({
     };
   };
 
-  // Render pagination controls. Optional `page` and `setPage` allow per-list pagination.
+  // Optional page setters support both global report pagination and independent
+  // category sections without duplicating pagination rendering.
   const renderPaginationControls = (totalPages, page, setPage, totalItems) => {
     const activePageValue = Number(page ?? currentPage);
     const activePage = Number.isFinite(activePageValue) && activePageValue > 0 ? activePageValue : 1;
@@ -147,7 +153,8 @@ export function ReportsModule({
       }
     };
     if (!totalPages || totalPages <= 1) return null;
-    // Windowed pagination: show first, last, and current +/- 2 pages with ellipses
+    // Windowed pagination shows first/last pages plus nearby pages for large
+    // result sets without crowding the report footer.
     const pages = [];
     if (totalPages <= 7) {
       for (let i = 1; i <= totalPages; i++) pages.push(i);
@@ -429,8 +436,8 @@ export function ReportsModule({
     return `${formatReportPeriodDate(start)} – ${formatReportPeriodDate(end)}`;
   };
 
-  // 🔍 Filter inventory by category using Linear Search Algorithm
-  // Linear Search: O(n) - efficient for filtering with conditions
+  // Period-based records use transaction dates so sales, purchases, and stock
+  // movements appear in the business period when the activity actually happened.
   const reportMovements = (stockMovements || []).filter(isMovementInReportPeriod);
   const reportSalesTransactions = (salesTransactions || []).filter(isSaleInReportPeriod);
   const reportPurchaseTransactions = (purchaseTransactions || []).filter(purchase => {
@@ -481,6 +488,9 @@ export function ReportsModule({
     return Number.isFinite(number) && number >= 0 ? number : null;
   };
 
+  // Suggested reorder points are derived from supplier lead time and sales
+  // velocity when available. They support planning but do not replace the manual
+  // low-stock threshold used for official stock-status badges.
   const getReportEstimatedReorderPoint = item => {
     const value = item?.recommendedReorderPoint;
     if (value !== null && value !== undefined && value !== '') {
@@ -546,7 +556,8 @@ export function ReportsModule({
     reorderReviewSuggested: isSuggestedForReorderReview(item)
   });
 
-  // Calculate current inventory snapshot statistics. Activity reports use the selected period separately.
+  // Current inventory reports are snapshots, not period reports. Activity
+  // reports below use the selected period separately.
   const computedReportInventory = inventory.map(withComputedReportStockStatus);
   const totalItems = computedReportInventory.length;
   const totalQuantity = computedReportInventory.reduce((sum, item) => sum + item.quantity, 0);
@@ -554,7 +565,8 @@ export function ReportsModule({
   const lowStockItems = computedReportInventory.filter(item => item.status === 'Low Stock').length;
   const outOfStockItems = computedReportInventory.filter(item => item.status === 'Out of Stock').length;
   const attentionItems = lowStockItems + outOfStockItems;
-  // Get unique categories from the current inventory snapshot.
+  // Categories come from the current inventory snapshot so archived or old-only
+  // transaction categories do not appear in live stock summaries.
   const categories = Array.from(new Set(computedReportInventory.map(item => item.category).filter(Boolean)))
     .sort((a, b) => a.localeCompare(b));
 
@@ -563,8 +575,8 @@ export function ReportsModule({
     return sortByNameAsc(linearSearchAll(computedReportInventory, item => item.category === selectedCategory));
   };
 
-  // 🔍 Get low stock items using Linear Search Algorithm
-  // Finds items that need restocking attention, with out-of-stock first.
+  // Low-stock reports prioritize out-of-stock items first, then low-stock items,
+  // so restocking urgency is obvious during panel review.
   const getLowStockItems = () => {
     const restockItems = linearSearchAll(
       computedReportInventory,
@@ -611,6 +623,8 @@ export function ReportsModule({
 
   const getReviewTokens = value => normalizeReviewText(value).split(' ').filter(Boolean);
 
+  // Manual/non-inventory sales can later be converted into tracked inventory.
+  // Similarity checks keep that conversion from duplicating an existing item.
   const getBasicSimilarityScore = (left, right) => {
     const leftText = normalizeReviewText(left);
     const rightText = normalizeReviewText(right);
@@ -702,6 +716,8 @@ export function ReportsModule({
     return Number(normalized);
   };
 
+  // Conversion creates a real inventory item from repeated non-inventory sales
+  // after admin review, preserving an audit event that links the source report.
   const convertUntrackedItemToInventory = async () => {
     const cleanName = conversionDraft.name.trim().replace(/\s+/g, ' ');
     const cleanSupplier = conversionDraft.supplierName.trim().replace(/\s+/g, ' ');
@@ -1041,6 +1057,8 @@ export function ReportsModule({
   const getEarningsSalesTransactions = () =>
     getFilteredSalesTransactions().filter(sale => sale.status !== 'cancelled');
 
+  // Actual earnings reports use sold-item cost snapshots captured at sale time,
+  // so later inventory cost edits do not rewrite historical profit.
   const getEarningsSummary = () =>
     getProfitabilitySummary(getEarningsSalesTransactions());
 
@@ -1074,6 +1092,8 @@ export function ReportsModule({
       totalQuantity: 0
     });
 
+  // Supplier reorder rows include both urgent manual-threshold shortages and
+  // planning suggestions where supplier lead time indicates a future risk.
   const getSupplierReorderItems = () =>
     sortByQuantityAsc(inventory.map(withComputedReportStockStatus).filter(item =>
       item.status === 'Out of Stock' ||
@@ -1176,6 +1196,8 @@ export function ReportsModule({
 
   const getSelectedSupplierReorderGroup = () => getSupplierReorderGroups()[0] || null;
 
+  // Preparing a purchase draft hands selected reorder quantities to Purchases.
+  // The draft remains non-official until staff confirms supplier receiving.
   const handleGeneratePurchaseDraft = group => {
     const selectedItems = getSelectedReorderItems(group);
     const purchaseDraft = buildPurchaseDraftFromReorderGroup({
@@ -1212,6 +1234,8 @@ export function ReportsModule({
     }
   }, [inventory, selectedCategory, reportType, selectedReorderSupplier]);
 
+  // Keep editable reorder quantities synchronized with current recommendations,
+  // while preserving user edits unless the old value was still the prior default.
   useEffect(() => {
     const reorderItems = getSupplierReorderItems();
     setReorderQuantities(prev => {
@@ -2385,11 +2409,13 @@ export function ReportsModule({
   return (
     <div className="reports-page min-h-screen bg-gray-50 p-4 md:p-8">
       <style>{`
+        /* Report view toggles between desktop tables and mobile cards without changing the source data. */
         .reports-mobile-category-list { display: none; }
         .reports-movement-mobile-list { display: none; }
         .reports-mobile-record-list { display: none; }
         .reports-desktop-table { display: block; }
 
+        /* Scroll areas contain large report tables while keeping the page header and filters accessible. */
         .reports-scroll-area {
           max-height: clamp(360px, 52vh, 620px);
           overflow: auto;
@@ -2418,6 +2444,7 @@ export function ReportsModule({
           background: #94a3b8;
         }
 
+        /* POS summary highlights the key cash/credit totals used when reconciling daily sales. */
         .reports-pos-summary {
           display: grid;
           grid-template-columns: 1fr;
@@ -2538,6 +2565,7 @@ export function ReportsModule({
           font-size: 1.08rem;
         }
 
+        /* Comparison summary groups period-over-period metrics for faster evaluation. */
         .reports-comparison-summary {
           display: grid;
           gap: 0.65rem;
@@ -2789,6 +2817,7 @@ export function ReportsModule({
           display: none;
         }
 
+        /* Period controls align preset and custom date filters that drive every report calculation. */
         .reports-period-control-row {
           display: grid;
           grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
@@ -2895,6 +2924,7 @@ export function ReportsModule({
           }
         }
 
+        /* Empty states explain filtered-out report results without implying data was deleted. */
         .reports-empty-state {
           display: flex;
           min-height: 220px;
@@ -2965,6 +2995,7 @@ export function ReportsModule({
           min-width: 0;
         }
 
+        /* Report tables use contained scrolling because inventory and supplier reports can be wide. */
         .reports-desktop-table,
         .reports-movement-desktop-table,
         .reports-category-table {
@@ -3930,6 +3961,7 @@ export function ReportsModule({
           padding: 1rem 1.5rem;
         }
 
+        /* Medium-screen rules rebalance report cards before the desktop table layout becomes cramped. */
         @media (max-width: 1024px) {
           .reports-data-card {
             border-radius: 18px;
@@ -3993,6 +4025,7 @@ export function ReportsModule({
           }
         }
 
+        /* Mobile rules replace dense tables with stacked records for inventory and movement reports. */
         @media (max-width: 767px) {
           .reports-page { padding: 14px; }
           .reports-page > .mb-8 { margin-bottom: 18px; }
@@ -5837,10 +5870,12 @@ export function ReportsModule({
   return /*#__PURE__*/React.createElement("div", {
     className: "reports-page min-h-screen bg-gray-50 p-4 md:p-8"
   }, /*#__PURE__*/React.createElement("style", null, `
+    /* Report view toggles between desktop tables and mobile cards without changing the source data. */
     .reports-mobile-category-list {
       display: none;
     }
 
+    /* Mobile report rules replace dense tables with stacked records for easier scanning. */
     @media (max-width: 760px) {
       .reports-page {
         padding: 14px;

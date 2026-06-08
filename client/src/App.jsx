@@ -98,6 +98,7 @@ function AppContent() {
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const { unreadAlertCount } = useData();
   // Normalize user fields coming from localStorage/server to a consistent shape
+  // so navigation, role checks, and account badges read the same properties.
   const normalizeUser = (user) => {
     if (!user) return null;
     return {
@@ -172,7 +173,8 @@ function AppContent() {
     sessionStorage.removeItem(AUTH_LAST_ACTIVITY_KEY);
   };
 
-  // Called after password+2FA success to enter the app
+  // Called after password and 2FA success to establish the browser session and
+  // notify shared data providers that authenticated data can be refreshed.
   const handleLogin = (user) => {
     const normalized = normalizeUser(user);
     sessionStorage.setItem(AUTH_SESSION_KEY, 'true');
@@ -305,7 +307,8 @@ function AppContent() {
     window.dispatchEvent(new CustomEvent("dashboard-inventory-reset"));
   };
 
-  // Sidebar navigation handler
+  // Central navigation guard enforces role-based access before a module is shown
+  // and clears dashboard-driven inventory filters when they are no longer needed.
   const navigateTo = (screen, options = {}) => {
     if (currentUser && !canAccessScreen(currentUser.role, screen)) {
       toast.info("This action is not available for your current role.");
@@ -363,6 +366,8 @@ function AppContent() {
   useEffect(() => {
     if (!currentUser) return undefined;
 
+    // Admin accounts time out sooner because they can approve users, edit
+    // permissions, and run maintenance operations.
     markSessionActivity();
     let lastRecordedActivity = Date.now();
     const timeoutMs = getIdleTimeoutMsForRole(currentUser.role);

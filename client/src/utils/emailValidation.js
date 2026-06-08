@@ -1,3 +1,5 @@
+// Email validation helpers surface common domain typos before account creation,
+// reducing failed OTP delivery caused by mistyped public email domains.
 const COMMON_EMAIL_DOMAIN_CORRECTIONS = new Map([
   ["gmai.com", "gmail.com"],
   ["gmal.com", "gmail.com"],

@@ -1,5 +1,9 @@
-// Archive module: lets administrators review, restore, or manage records
-// removed from active inventory views.
+/**
+ * Archive Module
+ *
+ * Lets users review inventory records removed from active inventory views and
+ * allows authorized restore actions that return archived items to active stock.
+ */
 import React from 'react';
 import { useState } from "react";
 import { ArchiveRestore, Search, Filter, Archive, CheckCircle, Info, ArrowUpDown, ArrowUp, ArrowDown, X } from "lucide-react";
@@ -33,19 +37,53 @@ const ARCHIVE_REASON_LABELS = {
   other: "Other"
 };
 
+/**
+ * Converts an archive reason code into display text.
+ *
+ * @param {string} reason - Archive reason code.
+ * @returns {string} Reason label or fallback.
+ */
 const getArchiveReasonLabel = reason => ARCHIVE_REASON_LABELS[reason] || "Not specified";
+
+/**
+ * Formats the archive reason with custom notes when applicable.
+ *
+ * @param {object} item - Archived inventory item.
+ * @returns {string} Display-ready archive reason.
+ */
 const getArchiveReasonDisplay = item => {
   const reasonLabel = getArchiveReasonLabel(item?.archiveReason);
   const reasonNote = String(item?.archiveReasonNote || "").trim();
   return item?.archiveReason === "other" && reasonNote ? `${reasonLabel}: ${reasonNote}` : reasonLabel;
 };
+
+/**
+ * Extracts the optional category note from an archived item.
+ *
+ * @param {object} item - Archived inventory item.
+ * @returns {string} Trimmed category note.
+ */
 const getCategoryNote = item => String(item?.categoryNote || "").trim();
+
+/**
+ * Formats category text with its archived category note.
+ *
+ * @param {object} item - Archived inventory item.
+ * @returns {string} Category label for tables and cards.
+ */
 const getArchiveCategoryDisplay = item => {
   const category = item?.category || "Uncategorized";
   const note = getCategoryNote(item);
   return note ? `${category}: ${note}` : category;
 };
 
+/**
+ * Displays archived inventory with filters, sorting, pagination, and restore flow.
+ *
+ * @param {object} props - Component props.
+ * @param {object} props.user - Signed-in user context.
+ * @returns {JSX.Element} Archive screen.
+ */
 export function ArchiveModule({
   user
 }) {
@@ -74,12 +112,23 @@ export function ArchiveModule({
     categoryFilter !== "all" ||
     supplierFilter !== "all" ||
     archiveReasonFilter !== "all";
+  /**
+   * Clears all archive search and filter controls.
+   *
+   * @returns {void}
+   */
   const clearArchiveFilters = () => {
     setSearchQuery("");
     setCategoryFilter("all");
     setSupplierFilter("all");
     setArchiveReasonFilter("all");
   };
+  /**
+   * Temporarily highlights an archived row after navigation or search focus.
+   *
+   * @param {string|number} id - Archived item id.
+   * @returns {void}
+   */
   const highlightArchiveRow = React.useCallback(id => {
     if (!id) return;
     const normalizedId = String(id);
@@ -110,7 +159,20 @@ export function ArchiveModule({
     return matchesSearch && matchesCategory && matchesSupplier && matchesArchiveReason;
   });
 
+  /**
+   * Resolves the primary display id for sorting and table output.
+   *
+   * @param {object} item - Archived inventory item.
+   * @returns {string|number} Archive code or id.
+   */
   const getArchiveId = item => item.archiveCode || item.id || "";
+
+  /**
+   * Resolves the archived timestamp used for date sorting.
+   *
+   * @param {object} item - Archived inventory item.
+   * @returns {number} Archive date timestamp.
+   */
   const getArchiveDate = item => new Date(item.archivedAt || item.lastUpdated || 0).getTime();
 
   const sortedArchive = [...filteredArchive].sort((a, b) => {
@@ -184,6 +246,12 @@ export function ArchiveModule({
     return () => window.removeEventListener("archive-row-highlight", handleArchiveRowHighlight);
   }, [archivedInventory, highlightArchiveRow]);
 
+  /**
+   * Applies table sorting or toggles direction for the active sort column.
+   *
+   * @param {string} column - Column key to sort by.
+   * @returns {void}
+   */
   const handleSort = column => {
     const nextSortOrder = sortBy === column
       ? sortOrder === "asc" ? "desc" : "asc"
@@ -192,6 +260,12 @@ export function ArchiveModule({
     setSortOrder(nextSortOrder);
   };
 
+  /**
+   * Renders the up/down sort indicator for a table header.
+   *
+   * @param {string} column - Column key.
+   * @returns {React.ReactElement} Sort indicator element.
+   */
   const renderSortIndicator = column => {
     const isActive = sortBy === column;
     const isAscending = isActive && sortOrder === "asc";
@@ -206,6 +280,14 @@ export function ArchiveModule({
     }));
   };
 
+  /**
+   * Renders a sortable table header button.
+   *
+   * @param {string} column - Column key.
+   * @param {string} label - Header label.
+   * @param {string} [align='left'] - Header alignment.
+   * @returns {React.ReactElement} Sort button.
+   */
   const renderSortButton = (column, label, align = "left") => /*#__PURE__*/React.createElement("button", {
     type: "button",
     onClick: () => handleSort(column),
@@ -214,6 +296,11 @@ export function ArchiveModule({
     className: `flex w-full items-center gap-1 ${align === "right" ? "justify-end" : "justify-start"}`
   }, /*#__PURE__*/React.createElement("span", null, label), renderSortIndicator(column)));
 
+  /**
+   * Renders archive pagination when the filtered list exceeds one page.
+   *
+   * @returns {React.ReactElement|null} Pagination controls or null.
+   */
   const renderArchivePagination = () => sortedArchive.length > ARCHIVE_ITEMS_PER_PAGE ? /*#__PURE__*/React.createElement("div", {
     className: "archive-pagination",
     "aria-label": "Archive pagination"
@@ -250,7 +337,11 @@ export function ArchiveModule({
 
   const realtimeOrderLabel = filteredArchive.length === 0 ? "No items" : orderLabel;
 
-  // Restore a selected item back to active inventory after confirmation.
+  /**
+   * Restores the selected archived item back to active inventory after confirmation.
+   *
+   * @returns {Promise<void>} Calls the restore API through DataContext and highlights the restored row.
+   */
   const handleUnarchiveItem = async () => {
     if (!selectedItem) return;
     const itemToRestore = selectedItem;
@@ -278,10 +369,12 @@ export function ArchiveModule({
   return /*#__PURE__*/React.createElement("div", {
     className: "archive-page min-h-screen bg-gray-50 p-4 md:p-8"
   }, /*#__PURE__*/React.createElement("style", null, `
+    /* Mobile archive cards are hidden on desktop where the data table is preferred. */
     .archive-mobile-list {
       display: none;
     }
 
+    /* Highlight animation draws attention to an archived row opened from search. */
     .archive-row-highlight {
       animation: archiveRowHighlightPulse 2.4s ease-out;
       box-shadow: inset 4px 0 0 #F59E0B;
@@ -313,6 +406,7 @@ export function ArchiveModule({
       }
     }
 
+    /* Pagination keeps archived inventory review manageable for large histories. */
     .archive-pagination {
       display: flex;
       align-items: center;
@@ -338,6 +432,7 @@ export function ArchiveModule({
       min-width: 104px;
     }
 
+    /* Search and filter grid lets users narrow archive records before restoring. */
     .archive-search-grid {
       display: grid;
       grid-template-columns: minmax(280px, 1fr) repeat(3, minmax(160px, 190px)) 132px;

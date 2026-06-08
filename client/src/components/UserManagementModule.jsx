@@ -29,6 +29,9 @@ const isValidEmailAddress = value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(va
 const SETUP_ACCOUNT_CREDENTIALS_KEY = "setup_account_credentials";
 const ROLE_FILTER_ALL = "all";
 
+// Temporary setup credentials are held in sessionStorage only so admins can copy
+// first-login passwords during the current browser session without persisting
+// secrets longer than necessary.
 const credentialOwnerKey = credentials =>
   String(credentials?.userId || credentials?.email || credentials?.username || "").trim().toLowerCase();
 
@@ -266,7 +269,8 @@ export function UserManagementModule() {
       const existing = prev.find(u => u.id === updatedUser.id);
       if (!existing) return [...prev, updatedUser];
 
-      // Preserve any fields the API did not return (e.g., role or role) to keep badges visible.
+      // Preserve fields the API did not return so role, branch, and status badges
+      // stay visible after partial admin actions.
       const merged = {
         ...existing,
         ...updatedUser,

@@ -1,5 +1,10 @@
-// Search module: provides indexed cross-module lookup for inventory, sales,
-// purchases, and archived records.
+/**
+ * Search Module
+ *
+ * Provides cross-module lookup across active inventory, archived inventory,
+ * sales, and purchases. The module builds a client-side search index so users
+ * can search operational records and jump directly to the related workflow.
+ */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, ArrowRight, Box, BriefcaseBusiness, CalendarDays, ExternalLink, Filter, Package, ReceiptText, Search, ShoppingCart, UserRound, X } from "lucide-react";
 import { formatDateTime, formatPurchasePaymentTerms } from "../utils/format";
@@ -12,6 +17,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { useData } from "./DataContext";
 import { PageHeader } from "./PageHeader";
 
+/**
+ * Formats a product category with its optional category note.
+ *
+ * @param {object} product - Inventory or archive product record.
+ * @returns {string} Category display text.
+ */
 const getCategoryDisplay = product => {
   const category = product?.category || "Uncategorized";
   const note = String(product?.categoryNote || "").trim();
@@ -22,6 +33,12 @@ const SEARCH_DEBOUNCE_MS = 140;
 const MAX_SEARCH_RESULTS = 60;
 const SEARCH_RESULT_ROWS_PER_PAGE = 4;
 
+/**
+ * Normalizes text for case-insensitive and accent-insensitive search matching.
+ *
+ * @param {*} value - Value to normalize into searchable text.
+ * @returns {string} Lowercase alphanumeric search string.
+ */
 const normalizeSearchText = value => String(value ?? "")
   .normalize("NFD")
   .replace(/[\u0300-\u036f]/g, "")
@@ -29,24 +46,55 @@ const normalizeSearchText = value => String(value ?? "")
   .replace(/[^a-z0-9]+/g, " ")
   .trim();
 
+/**
+ * Splits normalized text into search tokens.
+ *
+ * @param {*} value - Raw value to tokenize.
+ * @returns {Array<string>} Non-empty search tokens.
+ */
 const tokenize = value => normalizeSearchText(value).split(/\s+/).filter(Boolean);
 
+/**
+ * Joins nested values into one searchable string.
+ *
+ * @param {Array<*>} values - Values that may include nested arrays.
+ * @returns {string} Space-separated compact text.
+ */
 const compactJoin = values => values
   .flat()
   .filter(value => value !== null && value !== undefined && String(value).trim() !== "")
   .map(value => String(value).trim())
   .join(" ");
 
+/**
+ * Joins unique non-empty values for summaries and search fields.
+ *
+ * @param {Array<*>} values - Values that may include nested arrays.
+ * @returns {string} Comma-separated unique text.
+ */
 const uniqueCompactJoin = values => Array.from(new Set(values
   .flat()
   .filter(value => value !== null && value !== undefined && String(value).trim() !== "")
   .map(value => String(value).trim()))).join(", ");
 
+/**
+ * Collects unique non-empty string values.
+ *
+ * @param {Array<*>} values - Values that may include nested arrays.
+ * @returns {Array<string>} Unique trimmed strings.
+ */
 const uniqueCompactValues = values => Array.from(new Set(values
   .flat()
   .filter(value => value !== null && value !== undefined && String(value).trim() !== "")
   .map(value => String(value).trim())));
 
+/**
+ * Creates a short item summary for sales and purchase result subtitles.
+ *
+ * @param {Array<object>} items - Line items from a transaction.
+ * @param {string} [singularLabel='item'] - Label used for the "more" suffix.
+ * @returns {string} First item name plus remaining count, or empty string.
+ */
 const formatItemSummary = (items, singularLabel = "item") => {
   const names = uniqueCompactValues(items.map(item => item.itemName || item.name));
   if (names.length === 0) return "";
@@ -55,15 +103,40 @@ const formatItemSummary = (items, singularLabel = "item") => {
   return `${names[0]} + ${remaining} more ${singularLabel}${remaining === 1 ? "" : "s"}`;
 };
 
+/**
+ * Formats Philippine peso amounts for search result details.
+ *
+ * @param {*} value - Numeric amount.
+ * @returns {string} PHP currency label.
+ */
 const formatCurrency = value => new Intl.NumberFormat("en-PH", {
   style: "currency",
   currency: "PHP",
   minimumFractionDigits: 2,
 }).format(Number(value || 0));
 
+/**
+ * Safely reads sale line items from a transaction.
+ *
+ * @param {object} sale - Sale transaction record.
+ * @returns {Array<object>} Sale items or an empty array.
+ */
 const getSaleItems = sale => Array.isArray(sale?.items) ? sale.items : [];
+
+/**
+ * Safely reads purchase line items from a transaction.
+ *
+ * @param {object} purchase - Purchase transaction record.
+ * @returns {Array<object>} Purchase items or an empty array.
+ */
 const getPurchaseItems = purchase => Array.isArray(purchase?.items) ? purchase.items : [];
 
+/**
+ * Chooses the icon component for a search result type.
+ *
+ * @param {string} type - Search record type.
+ * @returns {React.ComponentType} Lucide icon component.
+ */
 const getRecordIcon = type => {
   switch (type) {
     case "inventory":
@@ -79,6 +152,12 @@ const getRecordIcon = type => {
   }
 };
 
+/**
+ * Converts an internal result type into a user-facing label.
+ *
+ * @param {string} type - Search record type.
+ * @returns {string} Display label for the result type.
+ */
 const getRecordTypeLabel = type => {
   switch (type) {
     case "inventory":
@@ -94,6 +173,13 @@ const getRecordTypeLabel = type => {
   }
 };
 
+/**
+ * Displays cross-module search and navigation results.
+ *
+ * @param {object} props - Component props.
+ * @param {Function} props.onNavigate - Callback used to open the related module.
+ * @returns {JSX.Element} Search screen with filters, results, pagination, and result navigation.
+ */
 export function SearchModule({ onNavigate }) {
   const { inventory, archivedInventory, salesTransactions, purchaseTransactions } = useData();
   const [searchQuery, setSearchQuery] = useState("");
@@ -113,6 +199,8 @@ export function SearchModule({ onNavigate }) {
     [archivedInventory, inventory]
   );
 
+  // Build a unified index from separate modules so search can compare records
+  // consistently across products, archive rows, sales, and purchases.
   const searchIndex = useMemo(() => {
     const records = [];
 
@@ -354,6 +442,8 @@ export function SearchModule({ onNavigate }) {
     return () => window.removeEventListener("dashboard-search-filter", handleDashboardSearchFilter);
   }, []);
 
+  // Search scoring favors exact codes and titles first, then important text,
+  // then broader token matches so common words do not drown out precise results.
   const searchResults = useMemo(() => {
     const queryTokens = tokenize(debouncedSearchQuery);
     const hasQuery = queryTokens.length > 0;
@@ -426,6 +516,11 @@ export function SearchModule({ onNavigate }) {
     const grid = resultsGridRef.current;
     if (!grid) return undefined;
 
+    /**
+     * Reads the rendered grid columns so pagination shows full rows.
+     *
+     * @returns {void}
+     */
     const updateColumnCount = () => {
       const templateColumns = window.getComputedStyle(grid).gridTemplateColumns;
       const columnCount = templateColumns
@@ -462,6 +557,12 @@ export function SearchModule({ onNavigate }) {
     }
   }, [currentPage, totalSearchPages]);
 
+  /**
+   * Updates the current search result page while staying inside valid bounds.
+   *
+   * @param {number|Function} updater - Target page number or updater callback.
+   * @returns {void}
+   */
   const setSearchPage = updater => {
     setCurrentPage(previousPage => {
       const nextPage = typeof updater === "function" ? updater(previousPage) : updater;
@@ -471,6 +572,11 @@ export function SearchModule({ onNavigate }) {
     });
   };
 
+  /**
+   * Renders pagination controls for large search result sets.
+   *
+   * @returns {JSX.Element|null} Pagination controls or null when all results fit.
+   */
   const renderSearchPagination = () => {
     if (searchResults.length <= searchResultsPerPage) return null;
 
@@ -539,6 +645,12 @@ export function SearchModule({ onNavigate }) {
     );
   };
 
+  /**
+   * Opens the module associated with a search result and passes focus context.
+   *
+   * @param {object} result - Search result record selected by the user.
+   * @returns {void}
+   */
   const openSearchRecord = result => {
     if (!result) return;
 
@@ -612,6 +724,7 @@ export function SearchModule({ onNavigate }) {
   return (
     <div className="search-products-page min-h-screen bg-gray-50 p-4 md:p-8">
       <style>{`
+        /* Search page shell prevents wide result cards from overflowing. */
         .search-products-page,
         .search-products-page * {
           box-sizing: border-box;
@@ -648,6 +761,7 @@ export function SearchModule({ onNavigate }) {
           padding-top: 0;
         }
 
+        /* Filter controls let users narrow results by type, category, status, and sorting. */
         .search-controls-grid {
           display: grid;
           grid-template-columns: minmax(0, 1fr) minmax(10rem, 0.22fr) minmax(12rem, 0.26fr) minmax(11rem, 0.24fr);

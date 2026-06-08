@@ -1,4 +1,10 @@
-// Help module: role-aware in-app guidance and user manual generation.
+/**
+ * Help Module
+ *
+ * Provides role-aware FAQs, task guides, troubleshooting, support contacts,
+ * and downloadable user manuals. Content is filtered by the signed-in user's
+ * role so staff only see guidance for actions they are allowed to perform.
+ */
 import React, { useMemo, useState } from 'react';
 import jsPDF from 'jspdf';
 import {
@@ -25,6 +31,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { PageHeader } from './PageHeader';
 import { getRoleLabel, isAdminRole, normalizeRole, ROLE_VALUES } from '../utils/roles';
 
+// Role groups keep help content aligned with the same access model used by the
+// dashboard, inventory, sales, reports, and maintenance modules.
 const HELP_ROLES = {
   ALL: [ROLE_VALUES.ADMIN, ROLE_VALUES.SALES_ENCODER, ROLE_VALUES.INVENTORY_STAFF, ROLE_VALUES.SALES_INVENTORY_STAFF],
   ADMIN: [ROLE_VALUES.ADMIN],
@@ -32,6 +40,7 @@ const HELP_ROLES = {
   INVENTORY: [ROLE_VALUES.ADMIN, ROLE_VALUES.INVENTORY_STAFF, ROLE_VALUES.SALES_INVENTORY_STAFF],
 };
 
+// Topic filter options shown in the Help header.
 const topicOptions = [
   { value: 'all', label: 'All Topics' },
   { value: 'faqs', label: 'FAQs' },
@@ -41,6 +50,7 @@ const topicOptions = [
   { value: 'contact', label: 'Contact Support' },
 ];
 
+// Official support contact details are declared once for cards, links, and PDF output.
 const supportEmail = 'emcayetanotrading@gmail.com';
 const supportTelephone = '8285-9611';
 const supportCellphone = '(0918) 930-6300';
@@ -48,6 +58,7 @@ const mailtoHref = `mailto:${supportEmail}?subject=${encodeURIComponent('Help Re
 const telephoneHref = `tel:${supportTelephone.replace(/\D/g, '')}`;
 const cellphoneHref = `tel:${supportCellphone.replace(/\D/g, '')}`;
 
+// Contact-card metadata drives both the compact Help page cards and modal view.
 const supportContacts = [
   {
     id: 'email',
@@ -78,6 +89,7 @@ const supportContacts = [
   },
 ];
 
+// Role-specific summaries explain allowed modules and responsibilities.
 const roleHelpAccess = {
   [ROLE_VALUES.ADMIN]: {
     title: 'Admin / Owner Guide',
@@ -143,6 +155,7 @@ const roleHelpAccess = {
   },
 };
 
+// FAQ entries are role-scoped because some answers expose admin-only workflows.
 const faqs = [
   {
     id: 'login-2fa',
@@ -377,6 +390,7 @@ const faqs = [
 const FAQ_CARD_PREVIEW_LIMIT = 14;
 const GUIDE_CARD_PREVIEW_LIMIT = 9;
 
+// Step-by-step guides document the daily workflows each role can perform.
 const guides = [
   {
     id: 'daily-start',
@@ -1049,11 +1063,24 @@ const glossaryTerms = [
 
 const roleFallback = roleHelpAccess[ROLE_VALUES.INVENTORY_STAFF];
 
+/**
+ * Checks whether a help item should be visible for a role.
+ *
+ * @param {object} item - FAQ, guide, rule, troubleshooting, or glossary entry.
+ * @param {string} role - Normalized role value from the roles utility.
+ * @returns {boolean} True when the item has no custom role list or includes the role.
+ */
 const itemAllowedForRole = (item, role) => {
   const allowedRoles = item.roles || HELP_ROLES.ALL;
   return allowedRoles.includes(role);
 };
 
+/**
+ * Builds searchable text for a help item.
+ *
+ * @param {object} item - Help content object with optional question, title, steps, or body text.
+ * @returns {string} Lowercase combined text used by keyword filtering.
+ */
 const getItemText = item => {
   return [
     item.question,
@@ -1070,13 +1097,42 @@ const getItemText = item => {
     .toLowerCase();
 };
 
+/**
+ * Tests a help item against the current search query.
+ *
+ * @param {object} item - Help item to check.
+ * @param {string} query - Already-normalized search query.
+ * @returns {boolean} True when there is no query or the item contains the query.
+ */
 const matchesQuery = (item, query) => !query || getItemText(item).includes(query);
 
+/**
+ * Converts display text into a safe filename fragment.
+ *
+ * @param {string} value - Display text to convert.
+ * @returns {string} Lowercase hyphenated slug for downloaded manual filenames.
+ */
 const slugify = value => String(value || 'user')
   .toLowerCase()
   .replace(/[^a-z0-9]+/g, '-')
   .replace(/^-|-$/g, '');
 
+/**
+ * Generates and downloads the role-based user manual PDF.
+ *
+ * @param {object} params - Filtered manual content and role metadata.
+ * @param {string} params.roleLabel - Human-readable role name shown in the PDF.
+ * @param {object} params.roleAccess - Role summary including modules and tasks.
+ * @param {Array<object>} params.visibleFaqs - FAQs allowed for the current role.
+ * @param {Array<object>} params.visibleGuides - Guides allowed for the current role.
+ * @param {Array<object>} params.visibleGuidelines - Guidelines allowed for the current role.
+ * @param {Array<object>} params.visibleTroubleshooting - Troubleshooting entries allowed for the current role.
+ * @param {Array<object>} params.visibleWorkflows - Manual workflow entries allowed for the current role.
+ * @param {Array<object>} params.visibleDataEntryRules - Data-entry rules allowed for the current role.
+ * @param {Array<object>} params.visibleSecurityReminders - Security reminders allowed for the current role.
+ * @param {Array<object>} params.visibleGlossaryTerms - Glossary terms allowed for the current role.
+ * @returns {void} Saves a PDF file through jsPDF.
+ */
 function createUserManualPdf({
   roleLabel,
   roleAccess,
@@ -1102,6 +1158,11 @@ function createUserManualPdf({
   let y = margin;
   let sectionNumber = 0;
 
+  /**
+   * Draws the brand accent strip on the active PDF page.
+   *
+   * @returns {void}
+   */
   const drawPageAccent = () => {
     doc.setFillColor(...brandRed);
     doc.rect(0, 0, 14, pageHeight, 'F');
@@ -1109,17 +1170,35 @@ function createUserManualPdf({
     doc.rect(14, 0, 8, pageHeight, 'F');
   };
 
+  /**
+   * Adds a new PDF page and resets the vertical cursor.
+   *
+   * @returns {void}
+   */
   const addManualPage = () => {
     doc.addPage();
     drawPageAccent();
     y = margin;
   };
 
+  /**
+   * Moves to a new page when the next content block would overflow.
+   *
+   * @param {number} needed - Estimated vertical space required in points.
+   * @returns {void}
+   */
   const ensureSpace = needed => {
     if (y + needed <= pageHeight - margin - 8) return;
     addManualPage();
   };
 
+  /**
+   * Estimates wrapped text height using the active PDF width.
+   *
+   * @param {string} text - Text to measure.
+   * @param {object} options - Font size, style, indentation, and line-height settings.
+   * @returns {number} Estimated height in PDF points.
+   */
   const estimateTextHeight = (text, { size = 10.5, style = 'normal', indent = 0, lineHeight = 14 } = {}) => {
     doc.setFont('helvetica', style);
     doc.setFontSize(size);
@@ -1127,6 +1206,13 @@ function createUserManualPdf({
     return Math.max(lineHeight, lines.length * lineHeight);
   };
 
+  /**
+   * Writes wrapped text to the PDF and advances the vertical cursor.
+   *
+   * @param {string} text - Text to render.
+   * @param {object} options - Font, color, spacing, indentation, and line-height options.
+   * @returns {void}
+   */
   const addText = (text, { size = 10.5, style = 'normal', color = bodyText, gap = 8, indent = 0, lineHeight = 14 } = {}) => {
     doc.setFont('helvetica', style);
     doc.setFontSize(size);
@@ -1137,6 +1223,13 @@ function createUserManualPdf({
     y += lines.length * lineHeight + gap;
   };
 
+  /**
+   * Writes a bullet paragraph and supports bold labels before a colon.
+   *
+   * @param {string} text - Bullet text, optionally formatted as "Label: value".
+   * @param {object} options - Font, color, spacing, indentation, and line-height options.
+   * @returns {void}
+   */
   const addBulletText = (text, { size = 10.5, color = bodyText, gap = 6, indent = 0, lineHeight = 14 } = {}) => {
     const bulletX = margin + indent;
     const textX = bulletX + 14;
@@ -1179,6 +1272,13 @@ function createUserManualPdf({
     y += lines.length * lineHeight + gap;
   };
 
+  /**
+   * Writes a glossary-style bullet with a bold term and wrapped definition.
+   *
+   * @param {string} term - Glossary term or label.
+   * @param {string} definition - Description associated with the term.
+   * @returns {void}
+   */
   const addTermBullet = (term, definition) => {
     const bulletX = margin;
     const textX = bulletX + 14;
@@ -1199,6 +1299,14 @@ function createUserManualPdf({
     y += definitionLines.length * lineHeight + 8;
   };
 
+  /**
+   * Writes a bold inline label followed by wrapped value text.
+   *
+   * @param {string} label - Label shown before the value.
+   * @param {string} value - Value or sentence shown after the label.
+   * @param {object} options - Indentation, spacing, and line-height options.
+   * @returns {void}
+   */
   const addLabeledText = (label, value, { indent = 0, gap = 6, lineHeight = 14 } = {}) => {
     const textX = margin + indent;
     const labelText = `${label}: `;
@@ -1217,6 +1325,11 @@ function createUserManualPdf({
     y += valueLines.length * lineHeight + gap;
   };
 
+  /**
+   * Creates the cover page for the downloadable manual.
+   *
+   * @returns {void}
+   */
   const addCoverPage = () => {
     drawPageAccent();
     doc.setFillColor(255, 247, 237);
@@ -1270,6 +1383,12 @@ function createUserManualPdf({
     });
   };
 
+  /**
+   * Adds a table-of-contents placeholder before content page numbers are known.
+   *
+   * @param {Array<string>} sections - Section titles to list.
+   * @returns {Array<object>} TOC entries that will be updated with final page links.
+   */
   const addTableOfContents = sections => {
     addManualPage();
     const tocPage = doc.internal.getCurrentPageInfo().pageNumber;
@@ -1280,6 +1399,12 @@ function createUserManualPdf({
     return sections.map((title, index) => ({ title, index: index + 1, page: tocPage }));
   };
 
+  /**
+   * Redraws the table of contents with final section page links.
+   *
+   * @param {Array<object>} entries - TOC entries returned by addTableOfContents.
+   * @returns {void}
+   */
   const drawTableOfContents = entries => {
     const tocPage = entries[0]?.page;
     if (!tocPage) return;
@@ -1325,6 +1450,11 @@ function createUserManualPdf({
     });
   };
 
+  /**
+   * Starts the main manual body after the cover and TOC pages.
+   *
+   * @returns {void}
+   */
   const startContent = () => {
     addManualPage();
     doc.setFont('helvetica', 'bold');
@@ -1343,6 +1473,13 @@ function createUserManualPdf({
   };
 
   const sectionPageMap = new Map();
+  /**
+   * Adds a numbered section heading and records its page for the TOC.
+   *
+   * @param {string} title - Section heading.
+   * @param {number} minimumFollowingSpace - Space reserved after the heading.
+   * @returns {void}
+   */
   const addSection = (title, minimumFollowingSpace = 72) => {
     sectionNumber += 1;
     ensureSpace(42 + minimumFollowingSpace);
@@ -1358,6 +1495,13 @@ function createUserManualPdf({
     y += 18;
   };
 
+  /**
+   * Writes a group of bullet paragraphs with page-break protection.
+   *
+   * @param {Array<string>} items - Bullet text values.
+   * @param {object} options - Preview count used to estimate page space.
+   * @returns {void}
+   */
   const addBulletList = (items, { previewCount = 2 } = {}) => {
     const previewHeight = items.slice(0, previewCount).reduce((sum, item) => (
       sum + estimateTextHeight(item, { indent: 22 }) + 6
@@ -1367,6 +1511,12 @@ function createUserManualPdf({
     y += 4;
   };
 
+  /**
+   * Writes ordered workflow steps in the manual.
+   *
+   * @param {Array<string>} steps - Step text values.
+   * @returns {void}
+   */
   const addNumberedSteps = steps => {
     const previewHeight = steps.slice(0, 2).reduce((sum, step, stepIndex) => (
       sum + estimateTextHeight(`${stepIndex + 1}. ${step}`, { indent: 12 }) + 3
@@ -1377,6 +1527,13 @@ function createUserManualPdf({
     });
   };
 
+  /**
+   * Writes a bold label followed by a related bullet list.
+   *
+   * @param {string} label - Lead-in text for the bullet group.
+   * @param {Array<string>} items - Bullet text values.
+   * @returns {void}
+   */
   const addLabelAndBulletList = (label, items) => {
     const previewItems = items.slice(0, 2);
     const needed = 18 + previewItems.reduce((sum, item) => (
@@ -1387,6 +1544,14 @@ function createUserManualPdf({
     addBulletList(items);
   };
 
+  /**
+   * Writes a guide block with heading, summary, and optional numbered steps.
+   *
+   * @param {string} heading - Guide title.
+   * @param {string} body - Short guide summary.
+   * @param {Array<string>} steps - Optional ordered steps.
+   * @returns {void}
+   */
   const addGuideBlock = (heading, body, steps = []) => {
     const firstStep = steps[0] ? estimateTextHeight(`1. ${steps[0]}`, { indent: 12 }) : 0;
     const needed = estimateTextHeight(heading, { style: 'bold', size: 11 }) +
@@ -1511,6 +1676,17 @@ function createUserManualPdf({
   doc.save(`em-cayetano-${slugify(roleLabel)}-user-manual.pdf`);
 }
 
+/**
+ * Renders a reusable section heading for Help cards.
+ *
+ * @param {object} props - Component props.
+ * @param {React.ReactNode} props.icon - Icon shown inside the colored tile.
+ * @param {string} [props.tone='blue'] - Color tone suffix for the icon tile.
+ * @param {string} props.title - Section title text.
+ * @param {string} props.subtitle - Short explanation under the title.
+ * @param {Function} [props.onShowAll] - Optional callback that opens the full-view modal.
+ * @returns {JSX.Element} Section heading with optional Show All action.
+ */
 function SectionTitle({ icon, tone = 'blue', title, subtitle, onShowAll }) {
   return (
     <div className="help-section-title">
@@ -1528,6 +1704,13 @@ function SectionTitle({ icon, tone = 'blue', title, subtitle, onShowAll }) {
   );
 }
 
+/**
+ * Renders official support contact cards.
+ *
+ * @param {object} props - Component props.
+ * @param {boolean} [props.showAction=false] - Shows the email action button in modal view.
+ * @returns {JSX.Element} Contact cards with mailto and tel links.
+ */
 function SupportContactList({ showAction = false }) {
   return (
     <div className="help-contact-list" aria-label="Official support contact information">
@@ -1553,6 +1736,14 @@ function SupportContactList({ showAction = false }) {
   );
 }
 
+/**
+ * Renders the empty state for filtered Help content.
+ *
+ * @param {object} props - Component props.
+ * @param {string} [props.title] - Empty-state title.
+ * @param {string} [props.message] - Empty-state guidance text.
+ * @returns {JSX.Element} Empty-state panel.
+ */
 function EmptyCard({ title = 'No help topics found.', message = 'Try another keyword or choose All Topics.' }) {
   return (
     <div className="help-empty-state">
@@ -1563,6 +1754,13 @@ function EmptyCard({ title = 'No help topics found.', message = 'Try another key
   );
 }
 
+/**
+ * Displays role-aware help content and manual export tools.
+ *
+ * @param {object} props - Component props.
+ * @param {object} props.user - Signed-in user object containing role and branch data.
+ * @returns {JSX.Element} Help page with search, filters, cards, modal detail view, and PDF download.
+ */
 export function HelpModule({ user }) {
   const [query, setQuery] = useState('');
   const [topic, setTopic] = useState('all');
@@ -1576,6 +1774,8 @@ export function HelpModule({ user }) {
   const isAdmin = isAdminRole(normalizedRole);
   const normalizedQuery = query.trim().toLowerCase();
 
+  // Memoized filters keep search responsive while avoiding repeated role/query
+  // filtering work on every render inside the Help page.
   const visibleFaqs = useMemo(() => {
     return faqs
       .filter(item => itemAllowedForRole(item, normalizedRole))
@@ -1635,6 +1835,11 @@ export function HelpModule({ user }) {
     contact: 'Contact Support',
   }[fullView];
 
+  /**
+   * Downloads a role-filtered PDF manual for the current user.
+   *
+   * @returns {void}
+   */
   const handleDownloadManual = () => {
     const isAllowed = item => itemAllowedForRole(item, normalizedRole);
     const sortByTerm = (a, b) => a.term.localeCompare(b.term, undefined, { sensitivity: 'base' });
@@ -1652,6 +1857,11 @@ export function HelpModule({ user }) {
     });
   };
 
+  /**
+   * Clears keyword and topic filters so all role-allowed topics are visible.
+   *
+   * @returns {void}
+   */
   const clearSearch = () => {
     setQuery('');
     setTopic('all');
@@ -1660,6 +1870,7 @@ export function HelpModule({ user }) {
   return (
     <div className="help-page min-h-screen bg-gray-50 p-4 md:p-8">
       <style>{`
+        /* Page shell and filter controls keep Help readable inside the app layout. */
         .help-page {
           color: #172033;
         }
@@ -1733,6 +1944,7 @@ export function HelpModule({ user }) {
           color: #0f172a;
         }
 
+        /* Role summary card explains the signed-in account's allowed modules and tasks. */
         .help-role-card {
           margin-top: 24px;
           border-color: #dbeafe;
@@ -1807,6 +2019,7 @@ export function HelpModule({ user }) {
           background: #ea580c;
         }
 
+        /* Main content grid separates FAQs/guides from troubleshooting and contact cards. */
         .help-grid {
           margin-top: 22px;
           display: grid;
@@ -1847,6 +2060,7 @@ export function HelpModule({ user }) {
           padding: 20px;
         }
 
+        /* Section headings keep all Help cards visually consistent. */
         .help-section-title {
           display: grid;
           grid-template-columns: 44px minmax(0, 1fr) auto;
@@ -1911,6 +2125,7 @@ export function HelpModule({ user }) {
           box-shadow: none;
         }
 
+        /* Expandable rows reveal answers without navigating away from the Help page. */
         .help-list {
           display: grid;
           gap: 2px;
@@ -2072,6 +2287,7 @@ export function HelpModule({ user }) {
           font-weight: 850;
         }
 
+        /* Numbered guide steps make procedures easy to follow during store work. */
         .help-guide-steps,
         .help-fullview-steps {
           display: grid;
@@ -2099,6 +2315,7 @@ export function HelpModule({ user }) {
           line-height: 1;
         }
 
+        /* Guidelines and contact cards present compact operational reminders. */
         .help-guidelines {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2193,6 +2410,7 @@ export function HelpModule({ user }) {
           background: #ea580c;
         }
 
+        /* Empty state appears when search and topic filters remove all visible topics. */
         .help-empty-state {
           display: grid;
           place-items: center;
@@ -2217,6 +2435,7 @@ export function HelpModule({ user }) {
           font-size: 13px;
         }
 
+        /* Full-view modal shows complete role-filtered content without leaving Help. */
         .help-fullview-backdrop {
           position: fixed;
           inset: 0;
@@ -2289,6 +2508,7 @@ export function HelpModule({ user }) {
           line-height: 1.6;
         }
 
+        /* Responsive rules collapse grids and controls for tablets and phones. */
         @media (max-width: 1180px) {
           .help-role-content,
           .help-grid,

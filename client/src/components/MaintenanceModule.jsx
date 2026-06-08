@@ -1,5 +1,11 @@
-// Maintenance module: supports administrative system operations such as backup,
-// restore, log cleanup, and maintenance-related audit visibility.
+/**
+ * Maintenance Module
+ *
+ * Provides Admin / Owner tools for database backup, database restore,
+ * selective CSV export, log cleanup, optimization, and integrity checking.
+ * These actions affect system-wide records, so the UI uses confirmations,
+ * role checks, progress feedback, and clear safety messaging.
+ */
 import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { API_BASE_URL } from '../utils/api';
@@ -37,10 +43,14 @@ import {
   AlertDialogTitle,
 } from './ui/alert-dialog';
 
+// Shared maintenance constants keep file validation, confirmation wording, and
+// backend URL construction consistent across the module.
 const API_BASE = API_BASE_URL;
 const MAX_RESTORE_FILE_SIZE_BYTES = 25 * 1024 * 1024;
 const RESTORE_CONFIRMATION_TEXT = 'RESTORE';
 
+// Datasets available for admin CSV exports. These are report/review exports,
+// not restore-capable database backups.
 const SELECTIVE_EXPORT_DATASETS = [
   { value: 'inventory', label: 'Inventory' },
   { value: 'sales', label: 'Sales' },
@@ -49,12 +59,19 @@ const SELECTIVE_EXPORT_DATASETS = [
   { value: 'audit', label: 'Audit Trail' },
 ];
 
+// Branch filter options used for branch-scoped exportable datasets.
 const EXPORT_BRANCH_OPTIONS = [
   { value: 'all', label: 'All Branches' },
   { value: 'San Rafael', label: 'San Rafael' },
   { value: 'Manggahan', label: 'Manggahan' },
 ];
 
+/**
+ * Formats a timestamp for compact display in maintenance cards.
+ *
+ * @param {string|Date|null} value - Timestamp from the backend summary.
+ * @returns {string} Localized date/time text or a fallback when no record exists.
+ */
 const compactDateTime = value => {
   if (!value) return 'No backup recorded yet';
   const date = new Date(value);
@@ -68,6 +85,12 @@ const compactDateTime = value => {
   });
 };
 
+/**
+ * Converts an environment key into a readable label.
+ *
+ * @param {string} value - Environment value from Vite variables.
+ * @returns {string} Human-readable environment name.
+ */
 const formatEnvironmentLabel = value => {
   const normalized = String(value || '').trim();
   if (!normalized) return 'Production';
@@ -76,6 +99,8 @@ const formatEnvironmentLabel = value => {
     .replace(/\b\w/g, char => char.toUpperCase());
 };
 
+// Metadata for maintenance actions keeps button labels, dialog copy, endpoints,
+// and warning tone in one place.
 const maintenanceActionCopy = {
   clearLogs: {
     title: 'Clear old system-wide logs?',
@@ -106,6 +131,13 @@ const maintenanceActionCopy = {
   },
 };
 
+/**
+ * Extracts the most useful error message from a failed fetch response.
+ *
+ * @param {Response} res - Failed browser fetch response.
+ * @param {string} fallback - Message to use when the response body is unavailable.
+ * @returns {Promise<string>} Backend error details, text response, or fallback.
+ */
 const getFetchErrorMessage = async (res, fallback) => {
   try {
     const contentType = res.headers.get('content-type') || '';
@@ -127,6 +159,15 @@ const getFetchErrorMessage = async (res, fallback) => {
   }
 };
 
+/**
+ * Renders the colored icon tile used by maintenance cards.
+ *
+ * @param {object} props - Component props.
+ * @param {React.ReactNode} props.children - Icon content.
+ * @param {string} [props.tone='red'] - Visual tone key.
+ * @param {string} [props.className=''] - Extra class names for layout adjustments.
+ * @returns {JSX.Element} Icon tile container.
+ */
 function IconTile({ children, tone = 'red', className = '' }) {
   const tones = {
     red: 'bg-red-50 text-red-600',
@@ -143,6 +184,16 @@ function IconTile({ children, tone = 'red', className = '' }) {
   );
 }
 
+/**
+ * Renders a consistent heading for maintenance sections.
+ *
+ * @param {object} props - Component props.
+ * @param {React.ReactNode} props.icon - Icon displayed beside the heading.
+ * @param {string} props.tone - Icon tile tone.
+ * @param {string} props.title - Section title.
+ * @param {string} props.description - Operational description under the title.
+ * @returns {JSX.Element} Section heading block.
+ */
 function SectionHeading({ icon, tone, title, description }) {
   return (
     <div className="maintenance-section-heading">
@@ -155,6 +206,16 @@ function SectionHeading({ icon, tone, title, description }) {
   );
 }
 
+/**
+ * Renders one system-information label/value row.
+ *
+ * @param {object} props - Component props.
+ * @param {string} props.label - Row label.
+ * @param {React.ReactNode} props.value - Displayed value.
+ * @param {string} [props.valueClassName=''] - Optional value styling.
+ * @param {boolean} [props.full=false] - Makes the row span the full info grid.
+ * @returns {JSX.Element} Information row.
+ */
 function InfoRow({ label, value, valueClassName = '', full = false }) {
   return (
     <div className={`maintenance-info-row text-sm ${full ? 'maintenance-info-row-full' : ''}`}>
@@ -164,6 +225,13 @@ function InfoRow({ label, value, valueClassName = '', full = false }) {
   );
 }
 
+/**
+ * Displays admin maintenance tools and system summary information.
+ *
+ * @param {object} props - Component props.
+ * @param {object} props.user - Signed-in user used for role and branch checks.
+ * @returns {JSX.Element} Maintenance screen with backup, restore, export, and optimization tools.
+ */
 export function MaintenanceModule({ user }) {
   const fileInputRef = useRef();
   const [isBackingUp, setIsBackingUp] = useState(false);
@@ -198,6 +266,8 @@ export function MaintenanceModule({ user }) {
   const exportDateScopeText = exportDateFrom || exportDateTo
     ? `Date range: ${exportDateFrom || 'earliest record'} to ${exportDateTo || 'latest record'}.`
     : 'Date range: all available dates.';
+  // Include the signed-in branch even if it is not part of the static branch
+  // list, which protects exports after future branch additions.
   const exportBranchOptions = React.useMemo(() => {
     const options = [...EXPORT_BRANCH_OPTIONS];
     if (signedInBranch && !options.some(option => option.value === signedInBranch)) {
@@ -206,6 +276,11 @@ export function MaintenanceModule({ user }) {
     return options;
   }, [signedInBranch]);
 
+  /**
+   * Loads current maintenance summary data from the backend.
+   *
+   * @returns {Promise<void>} Updates local summary state or marks the database offline.
+   */
   const loadSummary = async () => {
     try {
       const token = localStorage.getItem('token');
@@ -222,15 +297,22 @@ export function MaintenanceModule({ user }) {
     }
   };
 
+  // Load summary information on mount so backup/restore cards show current status.
   useEffect(() => {
     loadSummary();
   }, []);
 
+  // Default branch-scoped exports to the user's branch when the account has one.
   useEffect(() => {
     if (!signedInBranch) return;
     setExportBranch(branch => branch && branch !== 'current' ? branch : signedInBranch);
   }, [signedInBranch]);
 
+  /**
+   * Restores selective-export filters to their default values.
+   *
+   * @returns {void}
+   */
   const resetSelectiveExport = () => {
     setExportDataset('inventory');
     setExportBranch(signedInBranch || 'all');
@@ -239,6 +321,11 @@ export function MaintenanceModule({ user }) {
     setExportDateTo('');
   };
 
+  /**
+   * Downloads a full SQL database backup after admin confirmation.
+   *
+   * @returns {Promise<void>} Streams the backup to a local file and refreshes the summary.
+   */
   const confirmBackup = async () => {
     if (!isAdmin || isBackingUp) return;
     setIsBackingUp(true);
@@ -269,6 +356,12 @@ export function MaintenanceModule({ user }) {
     }
   };
 
+  /**
+   * Validates the selected restore file before opening the restore confirmation dialog.
+   *
+   * @param {React.ChangeEvent<HTMLInputElement>} e - File input change event.
+   * @returns {Promise<void>} Stores a valid .sql file or clears invalid selections.
+   */
   const handleRestore = async (e) => {
     const file = e.target.files?.[0];
     if (!file) {
@@ -291,6 +384,11 @@ export function MaintenanceModule({ user }) {
     setShowRestoreDialog(true);
   };
 
+  /**
+   * Clears restore file state and resets the hidden file input.
+   *
+   * @returns {void}
+   */
   const resetRestoreSelection = () => {
     setSelectedRestoreFile(null);
     setRestoreConfirmation('');
@@ -298,8 +396,16 @@ export function MaintenanceModule({ user }) {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  /**
+   * Confirms and submits a full database restore request.
+   *
+   * @returns {Promise<void>} Uploads the selected SQL backup, refreshes summary data, and broadcasts reload events.
+   */
   const confirmRestore = async () => {
+    // Guard against accidental or duplicate restore submissions.
     if (!selectedRestoreFile || !isAdmin || isRestoring) return;
+    // Require an explicit typed confirmation because restore replaces current
+    // application records with the uploaded backup contents.
     if (restoreConfirmation.trim().toUpperCase() !== RESTORE_CONFIRMATION_TEXT) {
       toast.error('Restore confirmation required', {
         description: `Type ${RESTORE_CONFIRMATION_TEXT} to confirm this database restore.`,
@@ -308,6 +414,8 @@ export function MaintenanceModule({ user }) {
     }
     setIsRestoring(true);
     const restoreToastId = 'database-restore-progress';
+    // Keep the admin informed because restore can briefly invalidate currently
+    // loaded inventory, sales, purchase, and user data on open screens.
     toast.loading('Database restore in progress...', {
       id: restoreToastId,
       description: 'Screens may briefly refresh while restored records reload.',
@@ -317,6 +425,7 @@ export function MaintenanceModule({ user }) {
     });
     try {
       const token = localStorage.getItem('token');
+      // Upload the raw SQL bytes expected by the backend restore endpoint.
       const sql = await selectedRestoreFile.arrayBuffer();
       const res = await fetch(`${API_BASE}/api/maintenance/restore`, {
         method: 'POST',
@@ -327,6 +436,7 @@ export function MaintenanceModule({ user }) {
         body: sql,
       });
       if (!res.ok) throw new Error(await getFetchErrorMessage(res, 'Restore failed'));
+      // Notify all open modules to reload from the restored database state.
       window.dispatchEvent(new Event('database-restored'));
       toast.success('Database restored successfully.', {
         id: restoreToastId,
@@ -338,6 +448,8 @@ export function MaintenanceModule({ user }) {
       await loadSummary();
       window.dispatchEvent(new Event('maintenance-action-completed'));
     } catch (err) {
+      // Surface backend validation details when the backup is incomplete,
+      // unsupported, or rejected by the restore safety checks.
       const description = err.message && err.message !== 'Restore failed'
         ? err.message
         : 'The backup could not be restored. Please verify that the selected file is a valid backup from this system and try again.';
@@ -354,6 +466,11 @@ export function MaintenanceModule({ user }) {
     }
   };
 
+  /**
+   * Downloads a filtered CSV export for reporting and review.
+   *
+   * @returns {Promise<void>} Saves the CSV selected by dataset, branch, columns, and date filters.
+   */
   const downloadSelectiveExport = async () => {
     if (exportDisabled) {
       if (hasExportDateError) {
@@ -405,11 +522,22 @@ export function MaintenanceModule({ user }) {
     }
   };
 
+  /**
+   * Opens the confirmation dialog for a safe maintenance action.
+   *
+   * @param {string} actionKey - Key from maintenanceActionCopy.
+   * @returns {void}
+   */
   const requestMaintenanceAction = actionKey => {
     if (!isAdmin || activeMaintenanceAction) return;
     setPendingMaintenanceAction(actionKey);
   };
 
+  /**
+   * Runs the selected maintenance action after confirmation.
+   *
+   * @returns {Promise<void>} Calls the backend endpoint, records the result, and refreshes summary data.
+   */
   const confirmMaintenanceAction = async () => {
     if (!pendingMaintenanceAction || activeMaintenanceAction) return;
     const action = maintenanceActionCopy[pendingMaintenanceAction];
@@ -453,6 +581,7 @@ export function MaintenanceModule({ user }) {
   return (
     <div className="maintenance-page min-h-screen bg-gray-50 p-4 md:p-8">
       <style>{`
+        /* Page shell prevents horizontal overflow from wide controls and dialogs. */
         .maintenance-page {
           overflow-x: hidden;
         }
@@ -472,6 +601,7 @@ export function MaintenanceModule({ user }) {
           min-height: 140px;
         }
 
+        /* Desktop layout keeps high-risk actions beside system context. */
         .maintenance-layout {
           display: grid;
           grid-template-columns: minmax(0, 1.62fr) minmax(360px, 0.9fr);
@@ -530,6 +660,7 @@ export function MaintenanceModule({ user }) {
           overflow-wrap: anywhere;
         }
 
+        /* Backup and restore cards are paired because both affect full database state. */
         .maintenance-action-grid {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -573,6 +704,7 @@ export function MaintenanceModule({ user }) {
           border-left: 1px solid #e5e7eb;
         }
 
+        /* Selective export is review-only CSV output, separate from SQL backups. */
         .maintenance-export-panel {
           border: 1px solid #d7e0ea;
           border-radius: 14px;
@@ -880,6 +1012,7 @@ export function MaintenanceModule({ user }) {
           box-shadow: 0 12px 22px rgba(15, 23, 42, 0.12);
         }
 
+        /* Restore button uses a warning color because it can replace live records. */
         .maintenance-restore-button {
           background-color: #f59e0b;
           color: #ffffff;
@@ -896,6 +1029,7 @@ export function MaintenanceModule({ user }) {
           opacity: 0.68;
         }
 
+        /* Optimization tools run safe maintenance jobs and report their results. */
         .maintenance-optimization-grid {
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -963,6 +1097,7 @@ export function MaintenanceModule({ user }) {
           padding-right: 18px;
         }
 
+        /* System information rows summarize database status and maintenance history. */
         .maintenance-info-list {
           display: grid;
           gap: 0;
@@ -1178,6 +1313,7 @@ export function MaintenanceModule({ user }) {
           line-height: inherit;
         }
 
+        /* Restore dialog highlights the selected backup and required confirmation keyword. */
         .maintenance-restore-file-name,
         .maintenance-restore-keyword {
           color: #dc2626;
@@ -1245,6 +1381,7 @@ export function MaintenanceModule({ user }) {
           box-shadow: none;
         }
 
+        /* Responsive rules stack maintenance tools before controls become cramped. */
         @media (max-width: 1180px) {
           .maintenance-layout {
             grid-template-columns: 1fr;

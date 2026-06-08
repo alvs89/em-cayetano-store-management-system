@@ -11,6 +11,8 @@ const DataContext = createContext(undefined);
 const formatUnitQuantity = quantity => `${quantity} ${Number(quantity) === 1 ? "unit" : "units"}`;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// Client-side status calculations mirror the backend so the UI can display
+// immediate stock state while waiting for refreshed server data.
 const computeStockStatusFromLevels = (quantity, reorderLevel) => {
   const stockLevel = Number(quantity || 0);
   const threshold = Number(reorderLevel || 0);
@@ -25,6 +27,9 @@ const normalizeOptionalNumber = value => (
 const OFFICIAL_INVOICE_NUMBER_PATTERN = /^\d{6}$/;
 const LEGACY_SALES_INVOICE_NUMBER_PATTERN = /^SI-\d{4}-(\d{6})$/i;
 
+// Preserve compatibility with older sales records that stored invoice numbers
+// as system references while newer records store the six-digit official booklet
+// number separately.
 const extractLegacyOfficialInvoiceNumber = value => {
   const match = String(value || "").trim().match(LEGACY_SALES_INVOICE_NUMBER_PATTERN);
   return match ? match[1] : "";
@@ -43,6 +48,8 @@ const resolveOfficialInvoiceNumber = (officialInvoiceNumber, salesNumber) => {
 const getEffectiveLowStockThreshold = product =>
   normalizeOptionalNumber(product.active_low_stock_threshold ?? product.min_stock_level ?? 0);
 
+// Normalizes backend approval-request rows into the same camelCase shape used by
+// the Inventory module review dialog.
 const mapInventoryChangeRequest = request => ({
   id: request.request_id?.toString() ?? '',
   requestType: request.request_type || '',
@@ -69,6 +76,8 @@ const getStockAlertEventId = (prefix, item) => {
   return `${prefix}-${item.id}-${quantityKey}-${timestampKey}`;
 };
 
+// Stock alerts are generated from current inventory state instead of stored as
+// permanent rows, so repeated refreshes do not duplicate low/out-of-stock notices.
 const generateInventoryAlerts = inventory => {
   const alerts = [];
   inventory.forEach(item => {
@@ -180,6 +189,9 @@ const buildSystemEventAlert = event => {
   }
 };
 
+// Admin-only system alerts surface operational risks such as missing backups,
+// pending registrations, and maintenance events without exposing these notices
+// to sales or inventory-only accounts.
 const generateSystemAlerts = (summary, role) => {
   const alerts = [];
 
@@ -235,6 +247,8 @@ const generateSystemAlerts = (summary, role) => {
   return alerts;
 };
 
+// Supplier payment alerts are limited to inventory-authorized roles because
+// credit purchases affect receiving follow-up and supplier payment tracking.
 const generateSupplierPaymentAlerts = (purchases, role) => {
   if (!canPerformInventoryMovement(role)) return [];
 
@@ -294,7 +308,7 @@ export function DataProvider({ children }) {
   const [salesTransactions, setSalesTransactions] = useState([]);
   const [purchaseTransactions, setPurchaseTransactions] = useState([]);
   const [inventoryChangeRequests, setInventoryChangeRequests] = useState([]);
-  const [users, setUsers] = useState([]); // User logic remains as before
+  const [users, setUsers] = useState([]);
   const [loadingInventory, setLoadingInventory] = useState(true);
   const [inventoryError, setInventoryError] = useState(null);
   const [systemSummary, setSystemSummary] = useState({
@@ -330,7 +344,8 @@ export function DataProvider({ children }) {
     }
   });
 
-  // Fetch inventory from backend
+  // Fetch inventory from backend and map database columns to the frontend shape
+  // expected by modules, reports, alerts, and stock movement previews.
   const fetchInventory = useCallback(async (options = {}) => {
     const { showLoading = true } = options;
     if (showLoading) {
@@ -346,7 +361,6 @@ export function DataProvider({ children }) {
       const res = await axios.get(apiUrl("/api/inventory"), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      // Map backend fields to frontend shape
       const items = (res.data.products || []).map((p) => {
         const mapped = {
           id: p.inventory_id?.toString() ?? '',
@@ -756,6 +770,8 @@ export function DataProvider({ children }) {
     refreshSystemSummary();
   }, [fetchInventory, fetchArchivedInventory, fetchStockMovements, fetchSalesTransactions, fetchPurchaseTransactions, fetchInventoryChangeRequests, refreshSystemSummary]);
 
+  // Authentication, restore, and maintenance events can change every shared
+  // dataset at once, so the provider refreshes all module state from the server.
   useEffect(() => {
     const handleAuthStateChanged = () => {
       try {
@@ -783,6 +799,8 @@ export function DataProvider({ children }) {
     };
   }, [fetchInventory, fetchArchivedInventory, fetchStockMovements, fetchSalesTransactions, fetchPurchaseTransactions, fetchInventoryChangeRequests, refreshSystemSummary]);
 
+  // Keep dashboards and module views current during local multi-tab use. These
+  // intervals complement event-based refreshes after writes and maintenance work.
   useEffect(() => {
     const id = setInterval(fetchInventory, 30000);
 
@@ -973,7 +991,8 @@ export function DataProvider({ children }) {
     setReadAlertIds(prev => prev.filter(alertId => !idsToUnmark.includes(alertId)));
   };
 
-  // Add new inventory item
+  // Add new inventory item. The backend remains the source of truth for item
+  // codes, audit logging, duplicate enforcement, and branch ownership.
   const addInventoryItem = async (item) => {
     const token = localStorage.getItem("token");
     const res = await axios.post(
@@ -1002,7 +1021,9 @@ export function DataProvider({ children }) {
     return res.data.product;
   };
 
-  // Update inventory item (stock in/out, edit)
+  // Update inventory item for master-data edits and single-item movements.
+  // Stock changes include movement metadata so audit trail and reports can
+  // distinguish receiving, manual adjustment, and non-sales deduction activity.
   const updateInventoryItem = async (id, updates) => {
     const token = localStorage.getItem("token");
     // Optimistic UI update: only refresh the visible timestamp for stock quantity changes.
@@ -1070,13 +1091,14 @@ export function DataProvider({ children }) {
         { headers: token ? { Authorization: `Bearer ${token}` } : {} }
       );
 
-      // Re-sync with server to ensure canonical state
+      // Re-sync with server to ensure canonical state after backend validation,
+      // trigger-generated averages, item-code formatting, and audit writes.
       await fetchInventory();
       await fetchArchivedInventory();
       await fetchStockMovements();
       return res.data.product;
     } catch (err) {
-      // On error, reload from server to revert optimistic change
+      // On error, reload from server to revert optimistic changes.
       await fetchInventory();
       await fetchArchivedInventory();
       await fetchStockMovements();
@@ -1084,6 +1106,8 @@ export function DataProvider({ children }) {
     }
   };
 
+  // Batch stock out handles verified non-sales deductions in one API call while
+  // preserving one movement trail per affected item.
   const batchStockOut = async ({ items, movementReason, movementNote, actualTransactionAt, backdateReason }) => {
     const token = localStorage.getItem("token");
     try {
@@ -1113,6 +1137,8 @@ export function DataProvider({ children }) {
     }
   };
 
+  // Batch stock adjustment handles verified increases that are not purchase
+  // receipts, such as count corrections or owner-approved inventory adjustments.
   const batchStockAdjustment = async ({ items, movementReason, movementNote, actualTransactionAt, backdateReason }) => {
     const token = localStorage.getItem("token");
     try {
@@ -1142,6 +1168,9 @@ export function DataProvider({ children }) {
     }
   };
 
+  // Sales recording posts the entire checkout transaction so the backend can
+  // atomically validate invoice sequence, deduct tracked stock, compute profit,
+  // and write audit/history rows.
   const recordSale = async ({ officialInvoiceNumber, invoiceSequenceExceptionReason, customerType, customerName, customerTin, customerAddress, items, remarks, paymentMethod, discountType, discountAmount, deliveryCharge, amountReceived, paymentReference, paymentConfirmed, actualTransactionAt, backdateReason }) => {
     const token = localStorage.getItem("token");
     try {
@@ -1193,6 +1222,8 @@ export function DataProvider({ children }) {
     }
   };
 
+  // Refunds are separate transactions linked to the original sale. The backend
+  // restores eligible tracked stock and prevents over-refunding prior quantities.
   const refundSale = async ({ saleId, items, refundReason, actualTransactionAt, backdateReason }) => {
     const token = localStorage.getItem("token");
     try {
@@ -1226,6 +1257,8 @@ export function DataProvider({ children }) {
     }
   };
 
+  // Purchase receiving posts supplier document details and line costs together
+  // so stock, average costs, supplier payments, and movement history stay aligned.
   const recordPurchase = async ({ supplierName, documentType, documentTypeNote, documentNumber, paymentTerms, creditTermsDays, remarks, items, actualTransactionAt, backdateReason }) => {
     const token = localStorage.getItem("token");
     try {
@@ -1263,6 +1296,8 @@ export function DataProvider({ children }) {
     }
   };
 
+  // Payment updates refresh both purchase history and supplier-payment alerts so
+  // paid credit purchases stop appearing as actionable follow-ups.
   const updatePurchasePaymentStatus = async (purchaseId, paymentStatus) => {
     const token = localStorage.getItem("token");
     try {
@@ -1286,6 +1321,8 @@ export function DataProvider({ children }) {
     }
   };
 
+  // Sale cancellation is an admin-level reversal of the full sale. Partial
+  // customer returns should use refund records instead.
   const cancelSale = async (saleId, cancelReason) => {
     const token = localStorage.getItem("token");
     try {
@@ -1308,7 +1345,8 @@ export function DataProvider({ children }) {
     }
   };
 
-  // Archive (delete) inventory item
+  // Archive inventory item without deleting its historical references. Reports,
+  // sales history, purchases, and stock movements can still resolve the record.
   const archiveInventoryItem = async (id, archiveReason, archiveReasonNote = "") => {
     const token = localStorage.getItem("token");
 
