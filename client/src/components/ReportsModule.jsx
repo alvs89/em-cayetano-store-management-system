@@ -87,6 +87,10 @@ export function ReportsModule({
   const [isConvertingItem, setIsConvertingItem] = useState(false);
   const reportDateInputRef = useRef(null);
   const reorderQuantityDefaultsRef = useRef({});
+  const formatDateInputDisplay = value => {
+    const [year, month, day] = String(value || '').split('-');
+    return year && month && day ? `${month}/${day}/${year}` : 'Select date';
+  };
 
   // Pagination keeps large reports readable while export functions still use
   // the complete filtered dataset.
@@ -2485,7 +2489,7 @@ export function ReportsModule({
 
         .reports-pos-summary-grid {
           display: grid;
-          grid-template-columns: minmax(150px, 0.85fr) minmax(260px, 1.15fr);
+          grid-template-columns: repeat(4, minmax(0, 1fr));
           gap: 0;
           overflow: hidden;
           border: 1px solid #e2e8f0;
@@ -2526,7 +2530,7 @@ export function ReportsModule({
           display: block;
           margin-top: 0.25rem;
           color: #0f172a;
-          font-size: clamp(1.05rem, 1.25vw, 1.25rem);
+          font-size: clamp(1rem, 1.15vw, 1.2rem);
           font-weight: 850;
           line-height: 1.25;
           overflow-wrap: anywhere;
@@ -2540,29 +2544,6 @@ export function ReportsModule({
         .reports-pos-summary-item-due strong {
           font-size: clamp(1.15rem, 1.45vw, 1.4rem);
           color: #166534;
-        }
-
-        .reports-pos-payment-counts {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 0;
-          margin-top: 0.35rem;
-        }
-
-        .reports-pos-payment-count {
-          min-width: 0;
-          border-left: 2px solid #cbd5e1;
-          padding: 0.1rem 0.65rem;
-        }
-
-        .reports-pos-payment-count span {
-          color: #111827;
-          font-size: 0.64rem;
-        }
-
-        .reports-pos-payment-count strong {
-          margin-top: 0.15rem;
-          font-size: 1.08rem;
         }
 
         /* Comparison summary groups period-over-period metrics for faster evaluation. */
@@ -2839,10 +2820,7 @@ export function ReportsModule({
         }
 
         .reports-custom-range-grid {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          grid-column: span 2;
-          gap: 1rem;
+          display: contents;
         }
 
         .reports-custom-date-field {
@@ -2881,23 +2859,65 @@ export function ReportsModule({
           display: flex;
         }
 
-        .reports-custom-date-input {
-          appearance: none;
-          -webkit-appearance: none;
+        .reports-custom-date-control {
+          position: relative;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.75rem;
+          overflow: hidden;
+          padding-right: 1rem;
           cursor: pointer;
-          outline: none;
+        }
+
+        .reports-custom-date-display {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          pointer-events: none;
+        }
+
+        .reports-custom-date-icon {
+          width: 1rem;
+          height: 1rem;
+          flex: 0 0 auto;
+          color: #111827;
+          pointer-events: none;
+        }
+
+        .reports-custom-date-native {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          margin: 0;
+          border: 0;
+          opacity: 0;
+          padding: 0;
+          color: transparent;
+          cursor: pointer;
+        }
+
+        .reports-custom-date-native::-webkit-calendar-picker-indicator {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          cursor: pointer;
         }
 
         .reports-period-control-row [data-reports-control]:hover {
-          border-color: #facc15;
+          border-color: #ffff00;
           background: #ffffff;
         }
 
         .reports-period-control-row [data-reports-control]:focus,
-        .reports-period-control-row [data-reports-control]:focus-visible {
-          border-color: #f59e0b;
+        .reports-period-control-row [data-reports-control]:focus-visible,
+        .reports-period-control-row [data-reports-control]:focus-within {
+          border-color: #ffff00;
           background: #ffffff;
-          box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
+          box-shadow: 0 0 0 3px rgba(255, 255, 0, 0.24);
           outline: none;
         }
 
@@ -4012,7 +4032,7 @@ export function ReportsModule({
           }
 
           .reports-pos-summary-grid {
-            grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+            grid-template-columns: repeat(4, minmax(0, 1fr));
             justify-content: stretch;
           }
 
@@ -4090,13 +4110,13 @@ export function ReportsModule({
             transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
           }
           .reports-date-picker-pill:hover {
-            border-color: #facc15;
+            border-color: #ffff00;
             background: #ffffff;
           }
           .reports-date-picker-pill:focus-visible {
             outline: none;
-            border-color: #f59e0b;
-            box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
+            border-color: #ffff00;
+            box-shadow: 0 0 0 3px rgba(255, 255, 0, 0.24);
           }
           .reports-date-picker-input {
             width: 150px;
@@ -4113,9 +4133,9 @@ export function ReportsModule({
             transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
           }
           .reports-date-picker-input:focus {
-            border-color: #f59e0b;
+            border-color: #ffff00;
             background: #ffffff;
-            box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
+            box-shadow: 0 0 0 3px rgba(255, 255, 0, 0.24);
           }
           .reports-date-range-text {
             min-width: 0;
@@ -4142,18 +4162,8 @@ export function ReportsModule({
             cursor: pointer;
           }
 
-          .reports-custom-date-input {
-            width: 100%;
-            height: 46px;
-            min-height: 46px;
-            border: 1px solid #d1d5db;
-            border-radius: 12px;
-            background: #ffffff;
-            padding: 0 12px;
-            color: #172033;
-            font-weight: 700;
-            cursor: pointer;
-            outline: none;
+          .reports-custom-date-control {
+            padding-right: 12px;
           }
 
           .reports-metric-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: 12px; margin-bottom: 16px; }
@@ -4213,14 +4223,19 @@ export function ReportsModule({
             line-height: 1.45;
           }
           .reports-pos-summary-grid {
-            grid-template-columns: 1fr;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 0;
           }
           .reports-pos-summary-item {
-            border-right: 0;
             border-bottom: 1px solid #e2e8f0;
             min-height: 64px;
             padding: 9px 12px;
+          }
+          .reports-pos-summary-item:nth-child(2n) {
+            border-right: 0;
+          }
+          .reports-pos-summary-item:nth-last-child(-n + 2) {
+            border-bottom: 0;
           }
           .reports-pos-summary-item:last-child { border-bottom: 0; }
           .reports-pos-summary-item-due { box-shadow: inset 3px 0 0 #22c55e; }
@@ -4255,14 +4270,6 @@ export function ReportsModule({
 
           .reports-top-product-stats {
             grid-template-columns: 1fr;
-          }
-          .reports-pos-payment-counts {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 0;
-          }
-          .reports-pos-payment-count {
-            padding-top: 0.1rem;
-            padding-bottom: 0.1rem;
           }
           .reports-movement-desktop-table { display: none; }
           .reports-movement-mobile-list { display: grid; gap: 10px; }
@@ -4343,18 +4350,20 @@ export function ReportsModule({
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
           .reports-pos-summary-grid {
-            grid-template-columns: 1fr;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
           }
           .reports-pos-summary-item {
-            border-right: 0;
             border-bottom: 1px solid #e2e8f0;
             min-height: 58px;
             padding: 8px 12px;
           }
-          .reports-pos-summary-item:last-child { border-bottom: 0; }
-          .reports-pos-payment-counts {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+          .reports-pos-summary-item:nth-child(2n) {
+            border-right: 0;
           }
+          .reports-pos-summary-item:nth-last-child(-n + 2) {
+            border-bottom: 0;
+          }
+          .reports-pos-summary-item:last-child { border-bottom: 0; }
         }
 
         @media (max-width: 360px) {
@@ -4363,6 +4372,18 @@ export function ReportsModule({
           .reports-mobile-category-stats,
           .reports-movement-stats {
             grid-template-columns: 1fr;
+          }
+          .reports-pos-summary-grid {
+            grid-template-columns: 1fr;
+          }
+          .reports-pos-summary-item {
+            border-right: 0;
+          }
+          .reports-pos-summary-item:nth-last-child(-n + 2) {
+            border-bottom: 1px solid #e2e8f0;
+          }
+          .reports-pos-summary-item:last-child {
+            border-bottom: 0;
           }
         }
       `}</style>
@@ -4420,25 +4441,33 @@ export function ReportsModule({
                     <div className="reports-custom-range-grid">
                       <div className="reports-custom-date-field">
                         <label htmlFor="reports-custom-start" className="reports-custom-date-label">Start Date</label>
-                        <Input
-                          id="reports-custom-start"
-                          data-reports-control
-                          type="date"
-                          value={customStartDate}
-                          onChange={event => setCustomStartDate(event.target.value)}
-                          className="reports-custom-date-input"
-                        />
+                        <div data-reports-control className="reports-custom-date-control">
+                          <span className="reports-custom-date-display">{formatDateInputDisplay(customStartDate)}</span>
+                          <Calendar className="reports-custom-date-icon" aria-hidden="true" />
+                          <Input
+                            id="reports-custom-start"
+                            type="date"
+                            value={customStartDate}
+                            onChange={event => setCustomStartDate(event.target.value)}
+                            className="reports-custom-date-native"
+                            aria-label="Select custom report start date"
+                          />
+                        </div>
                       </div>
                       <div className="reports-custom-date-field">
                         <label htmlFor="reports-custom-end" className="reports-custom-date-label">End Date</label>
-                        <Input
-                          id="reports-custom-end"
-                          data-reports-control
-                          type="date"
-                          value={customEndDate}
-                          onChange={event => setCustomEndDate(event.target.value)}
-                          className="reports-custom-date-input"
-                        />
+                        <div data-reports-control className="reports-custom-date-control">
+                          <span className="reports-custom-date-display">{formatDateInputDisplay(customEndDate)}</span>
+                          <Calendar className="reports-custom-date-icon" aria-hidden="true" />
+                          <Input
+                            id="reports-custom-end"
+                            type="date"
+                            value={customEndDate}
+                            onChange={event => setCustomEndDate(event.target.value)}
+                            className="reports-custom-date-native"
+                            aria-label="Select custom report end date"
+                          />
+                        </div>
                       </div>
                     </div>
                   ) : (
@@ -5411,17 +5440,12 @@ export function ReportsModule({
                           <strong>{formatCurrency(getSalesFinancialSummary().deliveryCharge)}</strong>
                         </div>
                         <div className="reports-pos-summary-item">
-                          <span>Payment Mix (Transactions)</span>
-                          <div className="reports-pos-payment-counts">
-                            <div className="reports-pos-payment-count">
-                              <span>Cash</span>
-                              <strong>{getSalesFinancialSummary().cashTransactions}</strong>
-                            </div>
-                            <div className="reports-pos-payment-count">
-                              <span>Non-cash</span>
-                              <strong>{getSalesFinancialSummary().nonCashTransactions}</strong>
-                            </div>
-                          </div>
+                          <span>Cash Transactions</span>
+                          <strong>{getSalesFinancialSummary().cashTransactions}</strong>
+                        </div>
+                        <div className="reports-pos-summary-item">
+                          <span>Non-cash Transactions</span>
+                          <strong>{getSalesFinancialSummary().nonCashTransactions}</strong>
                         </div>
                       </div>
                     </div>

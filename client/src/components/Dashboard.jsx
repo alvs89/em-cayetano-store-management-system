@@ -506,16 +506,34 @@ export function Dashboard({
     unitSingular: 'unit',
     unitPlural: 'units'
   });
+  const dashboardYear = parseLocalDateKey(todayKey).getFullYear();
   const salesReportTarget = {
     today: { period: 'daily', date: todayKey },
     week: { period: 'weekly', date: todayKey },
     month: { period: 'monthly', date: todayKey },
+    year: {
+      period: 'custom',
+      date: todayKey,
+      customStartDate: `${dashboardYear}-01-01`,
+      customEndDate: `${dashboardYear}-12-31`
+    },
     day: { period: 'daily', date: selectedSalesDate || todayKey }
   }[salesPeriod];
 
   const openDashboardSalesReport = () => {
     if (canUseReports && salesReportTarget) {
       openTargetReport('sales-movements', salesReportTarget);
+      return;
+    }
+    if (canUseSales) openSalesHistory(salesPeriod === 'today' ? 'today' : 'all');
+  };
+
+  const openDashboardBestSellerReport = () => {
+    if (canUseReports && topSellingDashboardPeriod && salesReportTarget) {
+      openTargetReport(
+        topSellingDashboardPeriod.isManual ? 'untracked-sales' : 'sales-movements',
+        salesReportTarget
+      );
       return;
     }
     if (canUseSales) openSalesHistory(salesPeriod === 'today' ? 'today' : 'all');
@@ -780,7 +798,7 @@ export function Dashboard({
         : 'No item sales for selected dates',
       icon: Package,
       tone: 'green',
-      action: canUseReports || canUseSales ? openDashboardSalesReport : undefined
+      action: canUseReports || canUseSales ? openDashboardBestSellerReport : undefined
     },
     ...stockStatusCards
   ].filter(Boolean);
@@ -859,7 +877,7 @@ export function Dashboard({
         : 'No item sales for selected dates',
       icon: Package,
       tone: 'green',
-      action: canUseReports || canUseSales ? openDashboardSalesReport : undefined
+      action: canUseReports || canUseSales ? openDashboardBestSellerReport : undefined
     },
     (isAdmin || isInventoryAuthorizedView) && {
       label: 'Stock Movements Today',
