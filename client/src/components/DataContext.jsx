@@ -189,9 +189,8 @@ const buildSystemEventAlert = event => {
   }
 };
 
-// Admin-only system alerts surface operational risks such as missing backups,
-// pending registrations, and maintenance events without exposing these notices
-// to sales or inventory-only accounts.
+// Admin-only system alerts surface operational risks such as missing backups
+// and maintenance events without exposing these notices to sales or inventory-only accounts.
 const generateSystemAlerts = (summary, role) => {
   const alerts = [];
 
@@ -224,20 +223,6 @@ const generateSystemAlerts = (summary, role) => {
         relatedModule: 'maintenance'
       });
     }
-
-    (summary.pendingRegistrations || []).forEach(user => {
-      const branchLabel = user.branch ? ` for ${user.branch}` : "";
-      alerts.push({
-        id: `pending-user-${user.user_id}`,
-        type: 'info',
-        title: 'Pending User Account',
-        message: `${user.full_name || user.username || 'A user'}${branchLabel} is still waiting for account review.`,
-        timestampRaw: user.created_at || new Date().toISOString(),
-        read: false,
-        actionable: true,
-        relatedModule: 'user-management'
-      });
-    });
 
     (summary.recentSystemEvents || []).forEach(event => {
       alerts.push(buildSystemEventAlert(event));
@@ -962,17 +947,6 @@ export function DataProvider({ children }) {
       // Ignore storage write failures.
     }
   }, [readAlertIds]);
-
-  useEffect(() => {
-    if (!isAdminRole(activeUserRole)) return;
-
-    const activePendingAlertIds = new Set(
-      (systemSummary.pendingRegistrations || []).map(user => `pending-user-${user.user_id}`)
-    );
-    if (activePendingAlertIds.size === 0) return;
-
-    setDismissedAlertIds(prev => prev.filter(alertId => !activePendingAlertIds.has(alertId)));
-  }, [activeUserRole, systemSummary.pendingRegistrations]);
 
   const alerts = useMemo(() => {
     const inventoryAlerts = generateInventoryAlerts(inventory);

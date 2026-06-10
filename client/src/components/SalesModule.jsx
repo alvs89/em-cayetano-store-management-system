@@ -8598,23 +8598,23 @@ function NonInventoryItemDialog({
                     ))}
                   </SelectContent>
                 </Select>
-                {(draft.category || 'Other') === 'Other' && (
-                  <div className="mt-2 space-y-1">
-                    <Label className="text-xs font-semibold text-slate-700">Optional: note</Label>
-                    <Textarea
-                      value={draft.categoryNote || ''}
-                      maxLength={240}
-                      placeholder="E.g., Special-order item not listed in inventory."
-                      disabled={isSaving}
-                      className="min-h-[64px] resize-y text-sm"
-                      onChange={event => onDraftChange('categoryNote', event.target.value.slice(0, 240))}
-                    />
-                  </div>
-                )}
               </div>
             </div>
+            {(draft.category || 'Other') === 'Other' && (
+              <div className="sales-non-inventory-field sales-non-inventory-note-row">
+                <Label className="text-xs font-semibold text-slate-700">Optional: note</Label>
+                <Textarea
+                  value={draft.categoryNote || ''}
+                  maxLength={240}
+                  placeholder="E.g., Special-order item not listed in inventory."
+                  disabled={isSaving}
+                  className="min-h-[64px] resize-y text-sm"
+                  onChange={event => onDraftChange('categoryNote', event.target.value.slice(0, 240))}
+                />
+              </div>
+            )}
             <div className="sales-non-inventory-total" aria-live="polite">
-              <span>Line Total</span>
+              <span>Item Total</span>
               <strong>{formatCurrency(lineTotal)}</strong>
             </div>
             {!isEditing && sessionCount > 0 && (

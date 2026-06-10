@@ -17,7 +17,6 @@ import {
   TrendingUp,
   Truck,
   Wallet,
-  Users,
   X
 } from 'lucide-react';
 import { Badge } from './ui/badge';
@@ -208,7 +207,7 @@ export function Dashboard({
     unreadAlertCount,
     stockMovements,
     salesTransactions,
-    users,
+    inventoryChangeRequests,
     systemSummary,
     updateDailySalesTarget
   } = useData();
@@ -392,7 +391,15 @@ export function Dashboard({
   const stockInTodayCount = stockMovementsToday.filter(movement => String(movement.action || '').toLowerCase() === 'stock in').length;
   const stockOutTodayCount = stockMovementsToday.filter(movement => String(movement.action || '').toLowerCase() === 'stock out').length;
   const unitsMovedToday = stockMovementsToday.reduce((sum, movement) => sum + Number(movement.quantityChanged || 0), 0);
-  const pendingUserCount = isAdmin ? (users || []).filter(account => account.status === 'Pending').length : 0;
+  const pendingItemRequests = isAdmin
+    ? (inventoryChangeRequests || []).filter(request => String(request.status || 'pending').toLowerCase() === 'pending')
+    : [];
+  const pendingNewItemRequestCount = pendingItemRequests.filter(request => request.requestType === 'add_item').length;
+  const pendingEditItemRequestCount = pendingItemRequests.filter(request => request.requestType === 'edit_item').length;
+  const pendingItemRequestParts = [
+    pendingNewItemRequestCount > 0 ? `${pendingNewItemRequestCount} new item${pendingNewItemRequestCount === 1 ? '' : 's'}` : '',
+    pendingEditItemRequestCount > 0 ? `${pendingEditItemRequestCount} update${pendingEditItemRequestCount === 1 ? '' : 's'}` : ''
+  ].filter(Boolean);
   const getTodayDateKey = () => todayKey || getLocalDateKey();
   const manualReviewSales = completedSales.filter(sale => (sale.items || []).some(isNonInventorySaleItem));
   const manualReviewDates = manualReviewSales
@@ -693,15 +700,6 @@ export function Dashboard({
     onNavigate('alerts');
   };
 
-  const openUserManagementTab = tab => {
-    if (!isAdmin) return;
-    localStorage.setItem('user_management_target_tab', tab);
-    window.dispatchEvent(new CustomEvent('user-management-target-tab', {
-      detail: { tab }
-    }));
-    onNavigate('user-management');
-  };
-
   const openStockCountAdjustment = action => {
     const selectedItemId = selectedCountItem?.id;
     setIsStockCountDialogOpen(false);
@@ -981,13 +979,13 @@ export function Dashboard({
       tone: 'blue',
       action: () => openAlertsTab('unread')
     },
-    isAdmin && pendingUserCount > 0 && {
-      label: 'Pending user requests',
-      detail: 'Review employee access',
-      value: pendingUserCount,
-      icon: Users,
-      tone: 'red',
-      action: () => openUserManagementTab('pending')
+    isAdmin && pendingItemRequests.length > 0 && {
+      label: 'Pending item requests',
+      detail: pendingItemRequestParts.length > 0 ? pendingItemRequestParts.join(', ') : 'Employee inventory requests',
+      value: pendingItemRequests.length,
+      icon: ClipboardCheck,
+      tone: 'amber',
+      action: () => openInventoryAction('review-item-requests')
     },
     (isAdmin || isInventoryAuthorizedView) && manualReviewCount > 0 && {
       label: 'Manual items for review',
@@ -2701,4 +2699,3 @@ function ActionButton({
     </button>
   );
 }
-

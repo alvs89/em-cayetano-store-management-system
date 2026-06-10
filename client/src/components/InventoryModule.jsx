@@ -1117,6 +1117,19 @@ export function InventoryModule({
   // permission checks used by direct Inventory actions.
   const applyDashboardInventoryAction = React.useCallback((action, itemId = "") => {
     if (!action) return;
+    if (action === "review-item-requests") {
+      if (!canManageInventory(user?.role)) {
+        toast.error("Item request review is available only to Admin / Owner accounts.");
+        return;
+      }
+      setApprovalRequestFilter("all");
+      setApprovalRequestSearch("");
+      setApprovalRequestSort("newest");
+      setApprovalRequestPage(1);
+      setIsApprovalDialogOpen(true);
+      return;
+    }
+
     if (action === "add-item") {
       if (!canOpenInventoryMasterDataForm) {
         toast.error("Add Item is available only to Admin / Owner and inventory-authorized accounts.");
