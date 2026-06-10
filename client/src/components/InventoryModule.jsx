@@ -3794,7 +3794,10 @@ export function InventoryModule({
         toast.success(`${cleanName} added successfully!`, { description: `Initial stock: ${formatUnitQuantity(quantity)}` });
       }
     } catch (err) {
-      toast.error("Failed to add item", { description: err?.response?.data?.error || err.message });
+      const duplicatePendingRequest = err?.response?.data?.code === "DUPLICATE_PENDING_INVENTORY_REQUEST";
+      toast.error(duplicatePendingRequest ? "Item request already pending" : "Failed to add item", {
+        description: err?.response?.data?.error || err.message
+      });
     }
   };
 
@@ -4350,7 +4353,10 @@ export function InventoryModule({
       });
       closeEditDialog();
     } catch (err) {
-      toast.error("Failed to update item", { description: err?.response?.data?.error || err.message });
+      const duplicatePendingRequest = err?.response?.data?.code === "DUPLICATE_PENDING_INVENTORY_REQUEST";
+      toast.error(duplicatePendingRequest ? "Item request already pending" : "Failed to update item", {
+        description: err?.response?.data?.error || err.message
+      });
     }
   };
 
@@ -5362,6 +5368,18 @@ export function InventoryModule({
     .inventory-add-dialog-content .inventory-dialog-footer {
       margin-top: 0;
       padding-top: 2px !important;
+    }
+
+    .inventory-restore-archived-button:not(:disabled):hover {
+      background: #B45309 !important;
+      color: #ffffff !important;
+      transform: translateY(-1px);
+      box-shadow: 0 14px 24px rgba(180, 83, 9, 0.30) !important;
+    }
+
+    .inventory-restore-archived-button:not(:disabled):focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.45), 0 14px 24px rgba(180, 83, 9, 0.26) !important;
     }
 
     .inventory-archive-general-warning {
@@ -6543,125 +6561,163 @@ export function InventoryModule({
     leadTimeDays: newItem.leadTimeDays,
     safetyStock: newItem.safetyStock
   }), archivedDuplicatePrompt && /*#__PURE__*/React.createElement("div", {
-    className: "flex flex-col text-amber-950",
+    className: "inventory-add-field inventory-add-field-full text-slate-950",
     style: {
-      gap: "12px",
       border: "1px solid #F59E0B",
       background: "#FFFBEB",
-      borderRadius: "10px",
-      padding: "12px"
+      borderRadius: "14px",
+      padding: "16px",
+      display: "grid",
+      gap: "14px",
+      boxShadow: "0 10px 24px rgba(245, 158, 11, 0.10)"
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      display: "flex",
-      gap: "10px",
-      alignItems: "flex-start"
+      display: "grid",
+      gridTemplateColumns: "auto minmax(0, 1fr)",
+      gap: "12px",
+      alignItems: "start"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true",
+    style: {
+      width: "34px",
+      height: "34px",
+      borderRadius: "10px",
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "#FEF3C7",
+      color: "#B45309",
+      border: "1px solid #FCD34D"
     }
   }, /*#__PURE__*/React.createElement(AlertTriangle, {
-    className: "shrink-0 text-amber-600",
-    style: {
-      width: "18px",
-      height: "18px",
-      marginTop: "1px"
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "min-w-0",
-    style: {
-      display: "grid",
-      gap: "4px"
-    }
-  }, /*#__PURE__*/React.createElement("p", {
-    className: "font-semibold",
-    style: {
-      fontSize: "13px"
-    }
-  }, "Archived item already exists"), /*#__PURE__*/React.createElement("p", {
-    style: {
-      fontSize: "13px",
-      lineHeight: "1.45"
-    }
-  }, "An archived item with the same name and category already exists. Please restore the archived item instead of creating a duplicate record."), /*#__PURE__*/React.createElement("p", {
-    style: {
-      display: "flex",
-      flexWrap: "wrap",
-      gap: "8px",
-      marginTop: "4px"
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "font-semibold text-amber-950",
-    style: {
-      display: "inline-flex",
-      alignItems: "center",
-      gap: "6px",
-      border: "1px solid #F59E0B",
-      background: "#FEF3C7",
-      borderRadius: "999px",
-      padding: "5px 10px",
-      fontSize: "12px"
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "text-amber-700"
-  }, "Name:"), archivedDuplicatePrompt.name), /*#__PURE__*/React.createElement("span", {
-    className: "font-semibold text-amber-950",
-    style: {
-      display: "inline-flex",
-      alignItems: "center",
-      gap: "6px",
-      border: "1px solid #F59E0B",
-      background: "#FEF3C7",
-      borderRadius: "999px",
-      padding: "5px 10px",
-      fontSize: "12px"
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "text-amber-700"
-  }, "Category:"), archivedDuplicatePrompt.category)))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      justifyContent: "flex-end"
-    }
-  }, /*#__PURE__*/React.createElement(Button, {
-    type: "button",
-    className: "font-semibold shadow-sm transition-colors",
-    disabled: isRestoringArchivedDuplicate,
-    onClick: () => restoreArchivedDuplicate(archivedDuplicatePrompt),
-    style: {
-      height: "34px",
-      minWidth: "112px",
-      borderRadius: "10px",
-      padding: "0 14px",
-      fontSize: "13px",
-      background: isRestoringArchivedDuplicate ? "#B45309" : "#D97706",
-      color: "#FFFFFF",
-      border: "1px solid #B45309",
-      boxShadow: "0 8px 18px rgba(217, 119, 6, 0.22)"
-    }
-  }, isRestoringArchivedDuplicate ? "Restoring..." : "Restore Item"))), /*#__PURE__*/React.createElement("div", {
-    className: "flex items-center text-blue-950",
-    style: {
-      gap: "12px",
-      border: "1px solid #BFDBFE",
-      background: "#EFF6FF",
-      borderRadius: "10px",
-      padding: "10px 12px"
-    }
-  }, /*#__PURE__*/React.createElement(Info, {
-    className: "shrink-0 text-blue-600",
     style: {
       width: "18px",
       height: "18px"
     }
-  }), /*#__PURE__*/React.createElement("p", {
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "min-w-0"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "font-bold text-slate-950",
     style: {
-      fontSize: "13px"
+      fontSize: "15px",
+      lineHeight: "1.25"
     }
-  }, "You can edit item details later from the inventory page.")), /*#__PURE__*/React.createElement(DialogFooter, {
+  }, "Archived match found"), /*#__PURE__*/React.createElement("p", {
+    className: "text-slate-700",
+    style: {
+      marginTop: "4px",
+      fontSize: "13px",
+      lineHeight: "1.5"
+    }
+  }, "This item already exists in Archive. Restore the existing record to preserve item history and avoid duplicate inventory records."))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+      gap: "10px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      border: "1px solid #FDE68A",
+      background: "#FFFFFF",
+      borderRadius: "10px",
+      padding: "10px 12px",
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "font-semibold text-amber-700",
+    style: {
+      display: "block",
+      fontSize: "11px",
+      lineHeight: "1.2"
+    }
+  }, "Archived Item"), /*#__PURE__*/React.createElement("strong", {
+    className: "text-slate-950",
+    style: {
+      display: "block",
+      marginTop: "4px",
+      fontSize: "13px",
+      lineHeight: "1.35",
+      overflowWrap: "anywhere"
+    }
+  }, archivedDuplicatePrompt.name)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      border: "1px solid #FDE68A",
+      background: "#FFFFFF",
+      borderRadius: "10px",
+      padding: "10px 12px",
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "font-semibold text-amber-700",
+    style: {
+      display: "block",
+      fontSize: "11px",
+      lineHeight: "1.2"
+    }
+  }, "Category"), /*#__PURE__*/React.createElement("strong", {
+    className: "text-slate-950",
+    style: {
+      display: "block",
+      marginTop: "4px",
+      fontSize: "13px",
+      lineHeight: "1.35",
+      overflowWrap: "anywhere"
+    }
+  }, archivedDuplicatePrompt.category))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexWrap: "wrap",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: "12px",
+      borderTop: "1px solid #FDE68A",
+      paddingTop: "12px"
+    }
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "flex min-w-0 items-start text-slate-700",
+    style: {
+      gap: "8px",
+      fontSize: "12px",
+      lineHeight: "1.45",
+      flex: "1 1 260px"
+    }
+  }, /*#__PURE__*/React.createElement(Info, {
+    className: "shrink-0 text-blue-600",
+    style: {
+      width: "16px",
+      height: "16px",
+      marginTop: "1px"
+    }
+  }), /*#__PURE__*/React.createElement("span", null, "After restoring, you can edit the item details from the inventory page.")), /*#__PURE__*/React.createElement(Button, {
+    type: "button",
+    className: "inventory-restore-archived-button font-semibold",
+    disabled: isRestoringArchivedDuplicate,
+    onClick: () => restoreArchivedDuplicate(archivedDuplicatePrompt),
+    style: {
+      height: "38px",
+      minWidth: "128px",
+      borderRadius: "10px",
+      padding: "0 16px",
+      fontSize: "13px",
+      background: isRestoringArchivedDuplicate ? "#B45309" : "#D97706",
+      color: "#FFFFFF",
+      border: "1px solid #B45309",
+      boxShadow: "0 10px 18px rgba(217, 119, 6, 0.24)",
+      transition: "transform 150ms ease, background-color 150ms ease, box-shadow 150ms ease"
+    }
+  }, isRestoringArchivedDuplicate ? "Restoring..." : "Restore Item"))), /*#__PURE__*/React.createElement(DialogFooter, {
     className: "inventory-dialog-footer pt-2",
     style: {
       display: "flex",
       flexDirection: "row",
       justifyContent: "flex-end",
-      gap: "10px"
+      alignItems: "center",
+      gap: "10px",
+      width: "100%",
+      gridColumn: "1 / -1",
+      alignSelf: "stretch"
     }
   }, /*#__PURE__*/React.createElement(Button, {
     type: "button",

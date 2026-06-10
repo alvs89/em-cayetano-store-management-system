@@ -5554,6 +5554,31 @@ app.post('/api/inventory/change-requests', authenticate, async (req, res) => {
     return res.status(400).json({ error: 'A valid inventory item is required for edit approval requests.' });
   }
 
+  if (requestType === 'add_item') {
+    const pendingAddRequests = await pool.query(
+      `SELECT request_id, requested_by, item_name, requested_payload
+       FROM inventory_change_requests
+       WHERE branch = $1
+         AND request_type = 'add_item'
+         AND status = 'pending'
+       ORDER BY requested_at DESC, request_id DESC`,
+      [req.user.branch]
+    );
+    const duplicatePendingRequest = pendingAddRequests.rows.find(row =>
+      normalizeInventoryIdentityName(row.requested_payload?.name || row.item_name) === normalizeInventoryIdentityName(cleanItemName)
+    );
+
+    if (duplicatePendingRequest) {
+      const isOwnRequest = Number(duplicatePendingRequest.requested_by) === Number(req.user.id);
+      return res.status(409).json({
+        code: 'DUPLICATE_PENDING_INVENTORY_REQUEST',
+        error: isOwnRequest
+          ? `You already submitted a pending request for "${cleanItemName}". Please wait for Admin review.`
+          : `A pending request for "${cleanItemName}" already exists for this branch. Please wait for Admin review instead of submitting another request.`
+      });
+    }
+  }
+
   let currentSnapshot = null;
   if (requestType === 'edit_item') {
     const currentResult = await pool.query(
@@ -5587,6 +5612,28 @@ app.post('/api/inventory/change-requests', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'The inventory item for this edit request was not found in your branch.' });
     }
     currentSnapshot = mapInventoryRow(currentResult.rows[0], { includeCostPrice: true });
+
+    const pendingEditRequest = await pool.query(
+      `SELECT request_id, requested_by
+       FROM inventory_change_requests
+       WHERE branch = $1
+         AND request_type = 'edit_item'
+         AND inventory_id = $2
+         AND status = 'pending'
+       ORDER BY requested_at DESC, request_id DESC
+       LIMIT 1`,
+      [req.user.branch, inventoryId]
+    );
+
+    if (pendingEditRequest.rowCount > 0) {
+      const isOwnRequest = Number(pendingEditRequest.rows[0].requested_by) === Number(req.user.id);
+      return res.status(409).json({
+        code: 'DUPLICATE_PENDING_INVENTORY_REQUEST',
+        error: isOwnRequest
+          ? `You already submitted a pending edit request for "${cleanItemName}". Please wait for Admin review.`
+          : `A pending edit request for "${cleanItemName}" already exists for this branch. Please wait for Admin review instead of submitting another request.`
+      });
+    }
   }
 
   try {
