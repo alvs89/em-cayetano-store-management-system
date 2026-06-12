@@ -219,6 +219,11 @@
       line-height: 1.5;
     }
 
+    label > .text-red-600:last-child,
+    [data-slot="label"] > .text-red-600:last-child {
+      margin-left: -0.35rem;
+    }
+
     button {
       font-size: var(--text-base);
       font-weight: var(--font-weight-medium);
@@ -1371,6 +1376,12 @@ input.actual-transaction-part-input[data-slot="input"]:focus-visible {
 [data-sonner-toast][data-front="true"][data-type="success"] [data-description],
 [data-sonner-toast][data-front="true"][data-type="success"] [data-icon] {
   color: #047857 !important;
+}
+
+[data-sonner-toast][data-front="true"].purchase-remove-toast {
+  border-color: #fed7aa !important;
+  background: #fff7ed !important;
+  box-shadow: 0 16px 32px rgba(154, 52, 18, 0.14) !important;
 }
 
 [data-sonner-toast][data-front="true"][data-type="error"] [data-title],

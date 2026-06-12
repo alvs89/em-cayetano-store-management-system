@@ -375,7 +375,7 @@ export function TwoFactorAuthScreen({ onSuccess, onBackToLogin }) {
 
             <form onSubmit={handleVerify} className="space-y-6">
               <div className="space-y-2">
-                <Label htmlFor="code" className="text-gray-800">Enter 6-digit code</Label>
+                <Label htmlFor="code" className="text-gray-800">Enter 6-digit code <span className="text-red-600">*</span></Label>
                 <Input
                   id="code"
                   type="text"

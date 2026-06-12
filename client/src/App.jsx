@@ -615,7 +615,7 @@ function AppContent() {
 
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="required-current-password">Temporary Password</Label>
+              <Label htmlFor="required-current-password">Temporary Password <span className="text-red-600">*</span></Label>
               <div className="relative">
                 <Input
                   id="required-current-password"
@@ -639,7 +639,7 @@ function AppContent() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="required-new-password">New Password</Label>
+              <Label htmlFor="required-new-password">New Password <span className="text-red-600">*</span></Label>
               <div className="relative">
                 <Input
                   id="required-new-password"
@@ -664,7 +664,7 @@ function AppContent() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="required-confirm-password">Confirm New Password</Label>
+              <Label htmlFor="required-confirm-password">Confirm New Password <span className="text-red-600">*</span></Label>
               <div className="relative">
                 <Input
                   id="required-confirm-password"

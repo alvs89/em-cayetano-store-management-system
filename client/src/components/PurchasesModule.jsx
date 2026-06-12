@@ -76,6 +76,8 @@ const formatCurrency = value =>
     minimumFractionDigits: 2
   }).format(Number(value || 0));
 
+const RequiredMark = () => <span className="text-red-600">*</span>;
+
 const formatDateTime = value => {
   if (!value) return 'No date';
   const date = new Date(value);
@@ -925,7 +927,28 @@ export function PurchasesModule({ user, onNavigate }) {
   };
 
   const removeLine = index => {
+    const removedLine = purchaseLines[index];
+    const removedItemName = lineDetails[index]?.item?.name || 'Purchase line';
     setPurchaseLines(prev => prev.length === 1 ? [emptyPurchaseLine()] : prev.filter((_, lineIndex) => lineIndex !== index));
+    toast.warning(`${removedItemName} removed from current purchase.`, {
+      className: 'purchase-remove-toast',
+      action: removedLine ? {
+        label: 'Undo',
+        onClick: () => {
+          setPurchaseLines(prev => {
+            const restored = [...prev];
+            restored.splice(Math.min(index, restored.length), 0, removedLine);
+            return restored;
+          });
+        }
+      } : undefined,
+      actionButtonStyle: {
+        background: '#92400e',
+        border: '1px solid #92400e',
+        color: '#ffffff',
+        fontWeight: 800
+      }
+    });
   };
 
   const addInventoryItemToPurchase = item => {
@@ -2221,7 +2244,7 @@ export function PurchasesModule({ user, onNavigate }) {
 
         .purchase-lines-table th:nth-child(2),
         .purchase-lines-table td:nth-child(2) {
-          width: 22%;
+          width: 21%;
         }
 
         .purchase-lines-table th:nth-child(3),
@@ -2234,7 +2257,7 @@ export function PurchasesModule({ user, onNavigate }) {
 
         .purchase-lines-table th:nth-child(5),
         .purchase-lines-table td:nth-child(5) {
-          width: 26%;
+          width: 25%;
           text-align: center;
         }
 
@@ -2246,7 +2269,7 @@ export function PurchasesModule({ user, onNavigate }) {
 
         .purchase-lines-table th:nth-child(7),
         .purchase-lines-table td:nth-child(7) {
-          width: 9%;
+          width: 11%;
           text-align: center;
         }
 
@@ -2281,6 +2304,30 @@ export function PurchasesModule({ user, onNavigate }) {
 
         .purchase-line-highlight > td {
           background: transparent;
+        }
+
+        .purchase-remove-line-button {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.35rem;
+          width: auto;
+          min-width: 5.25rem;
+          padding-left: 0.65rem;
+          padding-right: 0.7rem;
+          font-weight: 800;
+          transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease, transform 120ms ease;
+        }
+
+        .purchase-remove-line-button:hover,
+        .purchase-remove-line-button:focus-visible {
+          border-color: #fca5a5;
+          background: #fef2f2;
+          color: #b91c1c;
+        }
+
+        .purchase-remove-line-button:active {
+          transform: scale(0.96);
         }
 
         @keyframes purchase-line-highlight {
@@ -3225,7 +3272,7 @@ export function PurchasesModule({ user, onNavigate }) {
             <CardContent className="purchase-card-content">
               <div className="purchase-doc-grid">
                 <div className="purchase-doc-column">
-                  <Field label="Supplier">
+                  <Field label={<>Supplier <RequiredMark /></>}>
                     <div className="purchase-supplier-field-group">
                       <Select
                         value={supplierSelectValue}
@@ -3352,7 +3399,7 @@ export function PurchasesModule({ user, onNavigate }) {
                   </Field>
                 </div>
                 <div className="purchase-doc-column">
-                  <Field label="Document Type">
+                  <Field label={<>Document Type <RequiredMark /></>}>
                     <Select
                       value={documentType}
                       onValueChange={value => {
@@ -3369,17 +3416,23 @@ export function PurchasesModule({ user, onNavigate }) {
                       </SelectContent>
                     </Select>
                     {documentType === 'OTHER' && (
-                      <Input
-                        value={documentTypeNote}
-                        maxLength={240}
-                        onChange={event => setDocumentTypeNote(event.target.value.slice(0, 240))}
-                        placeholder="E.g., Supplier delivery slip without DR/SI/OR label."
-                        disabled={isSaving}
-                        className="mt-2 h-10"
-                      />
+                      <div className="mt-2 space-y-2">
+                        <Label htmlFor="purchase-document-type-note" className="text-xs font-bold text-slate-700">
+                          Document Type Note <RequiredMark />
+                        </Label>
+                        <Input
+                          id="purchase-document-type-note"
+                          value={documentTypeNote}
+                          maxLength={240}
+                          onChange={event => setDocumentTypeNote(event.target.value.slice(0, 240))}
+                          placeholder="E.g., Supplier delivery slip without DR/SI/OR label."
+                          disabled={isSaving}
+                          className="h-10"
+                        />
+                      </div>
                     )}
                   </Field>
-                  <Field label="Terms">
+                  <Field label={<>Terms <RequiredMark /></>}>
                     <Select
                       value={paymentTerms}
                       onValueChange={value => {
@@ -3401,7 +3454,7 @@ export function PurchasesModule({ user, onNavigate }) {
                     {paymentTerms === 'credit' && (
                       <div className="mt-3 space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
                         <Label htmlFor="purchase-credit-terms" className="text-sm font-semibold text-amber-950">
-                          Credit Term
+                          Credit Term <RequiredMark />
                         </Label>
                         <Select value={String(creditTermsDays || '')} onValueChange={setCreditTermsDays} disabled={isSaving}>
                           <SelectTrigger id="purchase-credit-terms" className="h-10 bg-white">
@@ -3915,13 +3968,14 @@ export function PurchasesModule({ user, onNavigate }) {
                             <Button
                               type="button"
                               variant="outline"
-                              size="icon"
-                              className="h-9 w-9 border-red-200 text-red-600 hover:bg-red-50"
+                              className="purchase-remove-line-button h-9 border-red-200 text-red-600 hover:bg-red-50"
                               onClick={() => removeLine(index)}
                               disabled={isSaving}
-                              title="Remove line"
+                              title="Remove line from current purchase"
+                              aria-label={`Remove ${line.item?.name || `purchase line ${index + 1}`}`}
                             >
                               <Trash2 className="h-4 w-4" />
+                              <span>Remove</span>
                             </Button>
                           </TableCell>
                         </TableRow>

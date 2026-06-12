@@ -2388,7 +2388,7 @@ export function UserManagementModule() {
             <form onSubmit={handleCreateUserAccount} className="space-y-4 py-2">
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="create-full-name-field space-y-2 md:col-span-2">
-                  <Label htmlFor="create-full-name">Full Name</Label>
+                  <Label htmlFor="create-full-name">Full Name <span className="text-red-600">*</span></Label>
                   <Input
                     id="create-full-name"
                     value={newAccount.fullName}
@@ -2407,7 +2407,7 @@ export function UserManagementModule() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="create-username">Username</Label>
+                  <Label htmlFor="create-username">Username <span className="text-red-600">*</span></Label>
                   <Input
                     id="create-username"
                     value={newAccount.username}
@@ -2427,7 +2427,7 @@ export function UserManagementModule() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="create-email">Email</Label>
+                  <Label htmlFor="create-email">Email <span className="text-red-600">*</span></Label>
                   <Input
                     id="create-email"
                     type="email"
@@ -2442,7 +2442,7 @@ export function UserManagementModule() {
                   {renderEmailTypoWarning(newAccountEmailTypoSuggestion)}
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="create-role">System Role</Label>
+                  <Label htmlFor="create-role">System Role <span className="text-red-600">*</span></Label>
                   <Select
                     value={newAccount.role}
                     onValueChange={value => setNewAccount(prev => ({ ...prev, role: value }))}
@@ -2464,7 +2464,7 @@ export function UserManagementModule() {
                   </p>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="create-branch">Assigned Branch</Label>
+                  <Label htmlFor="create-branch">Assigned Branch <span className="text-red-600">*</span></Label>
                   <Select
                     value={newAccount.branch}
                     onValueChange={value => setNewAccount(prev => ({ ...prev, branch: value }))}
@@ -2674,7 +2674,7 @@ export function UserManagementModule() {
             </DialogHeader>
             <form onSubmit={handleUpdateAccountDetails} className="user-account-details-form">
               <div className="space-y-2">
-                <Label htmlFor="edit-full-name">Full Name</Label>
+                <Label htmlFor="edit-full-name">Full Name <span className="text-red-600">*</span></Label>
                 <Input
                   id="edit-full-name"
                   value={accountDetails.fullName}
@@ -2697,7 +2697,7 @@ export function UserManagementModule() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="edit-email">Email Address</Label>
+                  <Label htmlFor="edit-email">Email Address <span className="text-red-600">*</span></Label>
                   <Input
                     id="edit-email"
                     type="email"
@@ -2740,7 +2740,7 @@ export function UserManagementModule() {
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="role">Role</Label>
+                <Label htmlFor="role">Role <span className="text-red-600">*</span></Label>
                 <Select value={newRole} onValueChange={setNewRole}>
                   <SelectTrigger id="role" className="user-role-select-trigger">
                     <SelectValue />
@@ -2879,7 +2879,7 @@ export function UserManagementModule() {
                 <Input id="current-branch" value={selectedUser?.branch || ""} disabled className="bg-gray-50" />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="new-branch">New Branch</Label>
+                <Label htmlFor="new-branch">New Branch <span className="text-red-600">*</span></Label>
                 <Select value={newBranch} onValueChange={setNewBranch}>
                   <SelectTrigger id="new-branch">
                     <SelectValue placeholder="Select a branch" />

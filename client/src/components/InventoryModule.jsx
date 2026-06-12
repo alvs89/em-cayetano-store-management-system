@@ -4480,7 +4480,7 @@ export function InventoryModule({
               className="font-semibold text-slate-950"
               style={{ display: "block", marginBottom: "8px", fontSize: "14px", lineHeight: "1.25" }}
             >
-              Item Name
+              Item Name <span className="text-red-600">*</span>
             </Label>
             <Input
               id="edit-item-name"
@@ -4501,7 +4501,7 @@ export function InventoryModule({
               className="font-semibold text-slate-950"
               style={{ display: "block", marginBottom: "8px", fontSize: "14px", lineHeight: "1.25" }}
             >
-              Category
+              Category <span className="text-red-600">*</span>
             </Label>
             <Select
               value={editItem.category}
@@ -4618,7 +4618,7 @@ export function InventoryModule({
               className="font-semibold text-slate-950"
               style={{ display: "block", marginBottom: "8px", fontSize: "14px", lineHeight: "1.25" }}
             >
-              Manual Low-Stock Threshold
+              Manual Low-Stock Threshold <span className="text-red-600">*</span>
             </Label>
             <Input
               id="edit-reorder-level"
@@ -6260,7 +6260,9 @@ export function InventoryModule({
       fontSize: "14px",
       lineHeight: "1.25"
     }
-  }, "Item Name"), /*#__PURE__*/React.createElement(Input, {
+  }, "Item Name ", /*#__PURE__*/React.createElement("span", {
+    className: "text-red-600"
+  }, "*")), /*#__PURE__*/React.createElement(Input, {
     id: "item-name",
     value: newItem.name,
     onChange: e => {
@@ -6295,7 +6297,9 @@ export function InventoryModule({
       fontSize: "14px",
       lineHeight: "1.25"
     }
-  }, "Category"), /*#__PURE__*/React.createElement(Select, {
+  }, "Category ", /*#__PURE__*/React.createElement("span", {
+    className: "text-red-600"
+  }, "*")), /*#__PURE__*/React.createElement(Select, {
     value: newItem.category,
     onValueChange: value => {
       setArchivedDuplicatePrompt(null);
@@ -6435,7 +6439,9 @@ export function InventoryModule({
       fontSize: "14px",
       lineHeight: "1.25"
     }
-  }, "Initial Stock Quantity"), /*#__PURE__*/React.createElement(Input, {
+  }, "Initial Stock Quantity ", /*#__PURE__*/React.createElement("span", {
+    className: "text-red-600"
+  }, "*")), /*#__PURE__*/React.createElement(Input, {
     id: "quantity",
     type: "text",
     min: "0",
@@ -6465,7 +6471,9 @@ export function InventoryModule({
       fontSize: "14px",
       lineHeight: "1.25"
     }
-  }, "Manual Low-Stock Threshold"), /*#__PURE__*/React.createElement(Input, {
+  }, "Manual Low-Stock Threshold ", /*#__PURE__*/React.createElement("span", {
+    className: "text-red-600"
+  }, "*")), /*#__PURE__*/React.createElement(Input, {
     id: "reorder-level",
     type: "text",
     min: "0",
@@ -7055,7 +7063,9 @@ export function InventoryModule({
       fontSize: "14px",
       lineHeight: "1.25"
     }
-  }, "Adjustment Reason"), /*#__PURE__*/React.createElement(Select, {
+  }, "Adjustment Reason ", /*#__PURE__*/React.createElement("span", {
+    className: "text-red-600"
+  }, "*")), /*#__PURE__*/React.createElement(Select, {
     value: batchStockAdjustmentReason,
     onValueChange: value => {
       setBatchStockAdjustmentReason(value);
@@ -7087,7 +7097,9 @@ export function InventoryModule({
     className: "space-y-1"
   }, /*#__PURE__*/React.createElement(Label, {
     className: "text-xs font-semibold text-slate-700"
-  }, "Item"), /*#__PURE__*/React.createElement(Select, {
+  }, "Item ", /*#__PURE__*/React.createElement("span", {
+    className: "text-red-600"
+  }, "*")), /*#__PURE__*/React.createElement(Select, {
     value: row.inventoryId,
     onValueChange: value => updateBatchStockAdjustmentRow(index, "inventoryId", value)
   }, /*#__PURE__*/React.createElement(SelectTrigger, {
@@ -7106,7 +7118,9 @@ export function InventoryModule({
     className: "space-y-1"
   }, /*#__PURE__*/React.createElement(Label, {
     className: "text-xs font-semibold text-slate-700"
-  }, "Quantity to Add"), /*#__PURE__*/React.createElement(Input, {
+  }, "Quantity to Add ", /*#__PURE__*/React.createElement("span", {
+    className: "text-red-600"
+  }, "*")), /*#__PURE__*/React.createElement(Input, {
     type: "text",
     inputMode: "numeric",
     "data-validation-label": "Batch Stock Adjustment Quantity",
@@ -7272,7 +7286,9 @@ export function InventoryModule({
       fontSize: "14px",
       lineHeight: "1.25"
     }
-  }, "Stock-Out Reason"), /*#__PURE__*/React.createElement(Select, {
+  }, "Stock-Out Reason ", /*#__PURE__*/React.createElement("span", {
+    className: "text-red-600"
+  }, "*")), /*#__PURE__*/React.createElement(Select, {
     value: batchStockOutReason,
     onValueChange: value => {
       setBatchStockOutReason(value);
@@ -7307,7 +7323,9 @@ export function InventoryModule({
       className: "space-y-1"
     }, /*#__PURE__*/React.createElement(Label, {
       className: "text-xs font-semibold text-slate-700"
-    }, "Item"), /*#__PURE__*/React.createElement(Select, {
+    }, "Item ", /*#__PURE__*/React.createElement("span", {
+      className: "text-red-600"
+    }, "*")), /*#__PURE__*/React.createElement(Select, {
       value: row.inventoryId,
       onValueChange: value => updateBatchStockOutRow(index, "inventoryId", value)
     }, /*#__PURE__*/React.createElement(SelectTrigger, {
@@ -7326,7 +7344,9 @@ export function InventoryModule({
       className: "space-y-1"
     }, /*#__PURE__*/React.createElement(Label, {
       className: "text-xs font-semibold text-slate-700"
-    }, "Quantity"), /*#__PURE__*/React.createElement(Input, {
+    }, "Quantity ", /*#__PURE__*/React.createElement("span", {
+      className: "text-red-600"
+    }, "*")), /*#__PURE__*/React.createElement(Input, {
       type: "text",
       inputMode: "numeric",
       "data-validation-label": "Batch Stock Out Quantity",
@@ -7432,7 +7452,9 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "dashboard-stock-action-item",
     className: "font-semibold text-slate-950"
-  }, "Inventory Item"), /*#__PURE__*/React.createElement(Select, {
+  }, "Inventory Item ", /*#__PURE__*/React.createElement("span", {
+    className: "text-red-600"
+  }, "*")), /*#__PURE__*/React.createElement(Select, {
     value: dashboardPickerItemId,
     onValueChange: setDashboardPickerItemId
   }, /*#__PURE__*/React.createElement(SelectTrigger, {
@@ -7573,7 +7595,9 @@ export function InventoryModule({
       fontSize: "14px",
       lineHeight: "1.25"
     }
-  }, "Quantity to Add"), /*#__PURE__*/React.createElement(Input, {
+  }, "Quantity to Add ", /*#__PURE__*/React.createElement("span", {
+    className: "text-red-600"
+  }, "*")), /*#__PURE__*/React.createElement(Input, {
     id: "stock-in-amount",
     type: "text",
     inputMode: "numeric",
@@ -7603,7 +7627,9 @@ export function InventoryModule({
       fontSize: "14px",
       lineHeight: "1.25"
     }
-  }, "Reason for Stock In"), /*#__PURE__*/React.createElement(Select, {
+  }, "Reason for Stock In ", /*#__PURE__*/React.createElement("span", {
+    className: "text-red-600"
+  }, "*")), /*#__PURE__*/React.createElement(Select, {
     value: stockInReason,
     onValueChange: value => {
       setStockInReason(value);
@@ -7771,7 +7797,9 @@ export function InventoryModule({
       fontSize: "14px",
       lineHeight: "1.25"
     }
-  }, "Quantity to Remove"), /*#__PURE__*/React.createElement(Input, {
+  }, "Quantity to Remove ", /*#__PURE__*/React.createElement("span", {
+    className: "text-red-600"
+  }, "*")), /*#__PURE__*/React.createElement(Input, {
     id: "stock-out-amount",
     type: "text",
     inputMode: "numeric",
@@ -7801,7 +7829,9 @@ export function InventoryModule({
       fontSize: "14px",
       lineHeight: "1.25"
     }
-  }, "Reason for Stock Out"), /*#__PURE__*/React.createElement(Select, {
+  }, "Reason for Stock Out ", /*#__PURE__*/React.createElement("span", {
+    className: "text-red-600"
+  }, "*")), /*#__PURE__*/React.createElement(Select, {
     value: stockOutReason,
     onValueChange: value => {
       setStockOutReason(value);
@@ -8071,7 +8101,9 @@ export function InventoryModule({
       fontSize: "14px",
       lineHeight: "1.25"
     }
-  }, "Reason for Archiving"), /*#__PURE__*/React.createElement(Select, {
+  }, "Reason for Archiving ", /*#__PURE__*/React.createElement("span", {
+    className: "text-red-600"
+  }, "*")), /*#__PURE__*/React.createElement(Select, {
     value: archiveReason,
     onValueChange: value => {
       setArchiveReason(value);
@@ -8104,7 +8136,9 @@ export function InventoryModule({
       fontSize: "14px",
       lineHeight: "1.25"
     }
-  }, "Other Reason"), /*#__PURE__*/React.createElement(Textarea, {
+  }, "Other Reason ", /*#__PURE__*/React.createElement("span", {
+    className: "text-red-600"
+  }, "*")), /*#__PURE__*/React.createElement(Textarea, {
     id: "archive-reason-note",
     value: archiveReasonNote,
     onChange: event => setArchiveReasonNote(event.target.value.slice(0, 240)),

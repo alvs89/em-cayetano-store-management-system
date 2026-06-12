@@ -10,6 +10,8 @@ import {
   FileText,
   HelpCircle,
   Home,
+  Eye,
+  EyeOff,
   Package,
   PackagePlus,
   ReceiptText,
@@ -38,6 +40,8 @@ const formatCurrency = value =>
     currency: 'PHP',
     minimumFractionDigits: 2
   }).format(Number(value || 0));
+
+const RequiredMark = () => <span className="text-red-600">*</span>;
 
 const sanitizeWholeNumberInput = (value, fieldName, toastId) => {
   const rawValue = String(value || '');
@@ -201,6 +205,13 @@ export function Dashboard({
   const [stockCountSearch, setStockCountSearch] = React.useState('');
   const [isStockCountSelectorOpen, setIsStockCountSelectorOpen] = React.useState(false);
   const [stockCountActiveIndex, setStockCountActiveIndex] = React.useState(0);
+  const [showFinancialValues, setShowFinancialValues] = React.useState(() => {
+    try {
+      return localStorage.getItem('dashboardFinancialValuesVisible') !== 'false';
+    } catch {
+      return true;
+    }
+  });
 
   const {
     inventory,
@@ -222,6 +233,14 @@ export function Dashboard({
   const isInventoryAuthorizedView = canUseInventoryMovement && !isAdmin;
   const canUseReports = canAccessScreen(role, 'reports');
   const canUsePurchases = canAccessScreen(role, 'purchases');
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('dashboardFinancialValuesVisible', showFinancialValues ? 'true' : 'false');
+    } catch {
+      // Privacy mode is still usable when browser storage is unavailable.
+    }
+  }, [showFinancialValues]);
 
   // Inventory health cards are computed from the current branch snapshot. These
   // counts are intentionally independent of the selected sales reporting period.
@@ -768,6 +787,7 @@ export function Dashboard({
       value: formatCurrency(overallSalesAmount),
       helpText: 'Formula: add all completed invoice totals.',
       detail: `${completedSales.length} completed transaction${completedSales.length === 1 ? '' : 's'}`,
+      sensitive: true,
       icon: ReceiptText,
       tone: 'blue',
       action: canUseSales ? () => openSalesHistory('all') : undefined
@@ -777,6 +797,7 @@ export function Dashboard({
       value: formatCurrency(overallProfitSummary.puhunanUsed),
       helpText: 'Formula: quantity sold x saved item cost.',
       detail: 'Total cost of sold items',
+      sensitive: true,
       icon: Wallet,
       tone: 'amber',
       action: canUseReports ? () => openTargetReport('actual-earnings') : undefined
@@ -786,6 +807,8 @@ export function Dashboard({
       value: formatCurrency(overallProfitSummary.actualProfit),
       helpText: 'Formula: Overall Sales - Cost of Goods Sold.',
       detail: `${overallProfitSummary.profitMargin.toLocaleString(undefined, { maximumFractionDigits: 1 })}% profit margin`,
+      sensitive: true,
+      maskedDetail: '**** profit margin',
       icon: Wallet,
       tone: overallProfitSummary.actualProfit >= 0 ? 'green' : 'red',
       action: canUseReports ? () => openTargetReport('actual-earnings') : undefined
@@ -834,6 +857,7 @@ export function Dashboard({
       value: formatCurrency(dashboardProfitSummary.totalSales),
       helpText: 'Formula: add completed sales for selected dates.',
       detail: `${dashboardSales.length} transaction${dashboardSales.length === 1 ? '' : 's'} for ${salesPeriodRangeLabel}`,
+      sensitive: true,
       icon: ReceiptText,
       tone: 'blue',
       comparison: salesAmountComparison,
@@ -844,6 +868,7 @@ export function Dashboard({
       value: formatCurrency(dashboardProfitSummary.puhunanUsed),
       helpText: 'Formula: quantity sold for selected dates x saved item cost.',
       detail: 'Cost of sold items for selected dates',
+      sensitive: true,
       icon: Wallet,
       tone: 'amber',
       action: canUseReports ? () => openTargetReport('actual-earnings', salesReportTarget) : undefined
@@ -853,6 +878,8 @@ export function Dashboard({
       value: formatCurrency(dashboardProfitSummary.actualProfit),
       helpText: 'Formula: selected sales - selected Cost of Goods Sold.',
       detail: `${dashboardProfitSummary.profitMargin.toLocaleString(undefined, { maximumFractionDigits: 1 })}% profit margin`,
+      sensitive: true,
+      maskedDetail: '**** profit margin',
       icon: TrendingUp,
       tone: dashboardProfitSummary.actualProfit >= 0 ? 'green' : 'red',
       comparison: actualProfitComparison,
@@ -864,6 +891,9 @@ export function Dashboard({
       detail: hasDailySalesTarget
         ? `${formatCurrency(salesTodayAmount)} of ${formatCurrency(dailySalesTarget)} reached`
         : 'No daily quota set',
+      sensitive: true,
+      maskedValue: '****',
+      maskedDetail: 'PHP ***** of PHP ***** reached',
       icon: Target,
       tone: hasDailySalesTarget && salesTodayAmount >= dailySalesTarget ? 'green' : 'amber',
       progress: hasDailySalesTarget ? quotaProgress : undefined,
@@ -897,6 +927,20 @@ export function Dashboard({
       action: canUseReports || canUseSales ? openDashboardSalesReport : undefined
     }
   ].filter(Boolean);
+  const hasSensitiveSummaryCards = primaryCards.some(card => card.sensitive);
+  const applyFinancialPrivacy = card => (
+    card.sensitive && !showFinancialValues
+      ? {
+        ...card,
+        value: card.maskedValue || 'PHP *****',
+        detail: card.maskedDetail || card.detail,
+        comparison: null,
+        progress: undefined
+      }
+      : card
+  );
+  const displayPrimaryCards = primaryCards.map(applyFinancialPrivacy);
+  const displayOperationsCards = operationsCards.map(applyFinancialPrivacy);
 
   // Quick actions intentionally open task-specific workflows, filtered views,
   // or dialogs instead of duplicating the sidebar's module navigation.
@@ -1076,7 +1120,7 @@ export function Dashboard({
         </div>
       </div>
       <div className="dashboard-summary-grid dashboard-operations-grid">
-        {operationsCards.map(card => (
+        {displayOperationsCards.map(card => (
           <SummaryCard key={card.label} {...card} />
         ))}
       </div>
@@ -1116,6 +1160,26 @@ export function Dashboard({
           padding: 15px 16px;
           border-bottom: 1px solid #e5edf6;
           background: #ffffff;
+        }
+
+        .dashboard-privacy-toggle {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.45rem;
+          min-height: 2.35rem;
+          border-color: #cbd5e1;
+          background: #ffffff;
+          color: #334155;
+          font-size: 0.82rem;
+          font-weight: 800;
+          white-space: nowrap;
+        }
+
+        .dashboard-privacy-toggle:hover,
+        .dashboard-privacy-toggle:focus-visible {
+          border-color: #94a3b8;
+          background: #f8fafc;
+          color: #0f172a;
         }
 
         .dashboard-panel-title {
@@ -2192,6 +2256,12 @@ export function Dashboard({
             padding: 12px;
           }
 
+          .dashboard-privacy-toggle {
+            min-height: 2.25rem;
+            padding-left: 0.75rem;
+            padding-right: 0.75rem;
+          }
+
           .dashboard-sales-filter-panel {
             padding: 12px;
           }
@@ -2363,9 +2433,22 @@ export function Dashboard({
                 {isInventoryStaff ? 'Key stock condition indicators for the branch.' : 'Key sales and stock indicators for the branch.'}
               </p>
             </div>
+            {hasSensitiveSummaryCards && (
+              <Button
+                type="button"
+                variant="outline"
+                className="dashboard-privacy-toggle"
+                onClick={() => setShowFinancialValues(prev => !prev)}
+                aria-pressed={showFinancialValues}
+                aria-label={showFinancialValues ? 'Hide financial dashboard values' : 'Show financial dashboard values'}
+              >
+                {showFinancialValues ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                <span>{showFinancialValues ? 'Hide Values' : 'Show Values'}</span>
+              </Button>
+            )}
           </div>
           <div className={`dashboard-summary-grid ${isAdmin ? 'dashboard-admin-summary-grid' : ''}`}>
-            {primaryCards.map(card => (
+            {displayPrimaryCards.map(card => (
               <SummaryCard key={card.label} {...card} />
             ))}
           </div>
@@ -2468,7 +2551,7 @@ export function Dashboard({
           <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="stock-count-item">Item Counted</Label>
+                <Label htmlFor="stock-count-item">Item Counted <RequiredMark /></Label>
                 <div className="dashboard-stock-search">
                   <Input
                     id="stock-count-item"
@@ -2538,7 +2621,7 @@ export function Dashboard({
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="physical-count">Actual Counted Quantity</Label>
+                <Label htmlFor="physical-count">Actual Counted Quantity <RequiredMark /></Label>
                 <Input
                   id="physical-count"
                   inputMode="numeric"

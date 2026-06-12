@@ -169,6 +169,8 @@ const getReceiptVatBreakdown = sale => {
   return computeVatBreakdown(getTaxableSalesAmount(sale));
 };
 
+const RequiredMark = () => <span className="text-red-600">*</span>;
+
 const escapeReceiptText = value =>
   String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -1260,11 +1262,11 @@ export function SalesModule({ user }) {
     }
   }, [salesDraftScope]);
 
-  // The product picker lists only inventory that can actually be sold, preventing
-  // users from adding out-of-stock tracked items to a new checkout.
+  // The product picker keeps unavailable items visible so staff know the product
+  // exists, while the add action still prevents selling zero-stock inventory.
   const activeInventory = useMemo(
     () => mergeSort(
-      inventory.filter(item => Number(item.quantity || 0) > 0),
+      [...inventory],
       (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, {
         numeric: true,
         sensitivity: 'base'
@@ -3266,25 +3268,6 @@ export function SalesModule({ user }) {
           color: #166534;
         }
 
-        .sales-digital-payment-note {
-          grid-column: 1 / -1;
-          display: flex;
-          gap: 0.65rem;
-          border: 1px solid #bfdbfe;
-          border-radius: 0.75rem;
-          background: #eff6ff;
-          padding: 0.8rem 0.9rem;
-          color: #334155;
-          font-size: 0.8125rem;
-          line-height: 1.45;
-        }
-
-        .sales-digital-payment-note svg {
-          margin-top: 0.1rem;
-          flex-shrink: 0;
-          color: #2563eb;
-        }
-
         .sales-readonly-user svg {
           width: 1rem;
           height: 1rem;
@@ -4144,6 +4127,23 @@ export function SalesModule({ user }) {
 
         .sales-refund-side-form .sales-refund-textarea {
           min-height: 4.35rem;
+        }
+
+        .sales-refund-policy-note {
+          display: grid;
+          gap: 0.35rem;
+          border: 1px solid #fde68a;
+          border-radius: 0.7rem;
+          background: #fffbeb;
+          padding: 0.75rem;
+          color: #78350f;
+          font-size: 0.78rem;
+          line-height: 1.45;
+        }
+
+        .sales-refund-policy-note strong {
+          color: #451a03;
+          font-size: 0.8rem;
         }
 
         .sales-refund-reason-suggestions {
@@ -5966,6 +5966,7 @@ export function SalesModule({ user }) {
 
         .sales-product-card.is-out-of-stock {
           background: #f8fafc;
+          border-style: dashed;
         }
 
         .sales-product-card.is-selected {
@@ -7306,7 +7307,7 @@ export function SalesModule({ user }) {
               <div className="sales-product-list">
                 {filteredSaleInventory.length === 0 ? (
                   <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-600">
-                    <p>No available inventory items match the selected filters.</p>
+                    <p>No inventory items match the selected filters.</p>
                     <Button
                       type="button"
                       variant="outline"
@@ -7362,7 +7363,7 @@ export function SalesModule({ user }) {
                           aria-label={`${isAlreadySelected ? 'Already added: ' : isOutOfStock ? 'Out of stock: ' : 'Add '}${item.name}`}
                         >
                           <ShoppingCart className="h-4 w-4" />
-                          {isAlreadySelected ? 'Added' : isOutOfStock ? 'Out' : 'Add'}
+                          {isAlreadySelected ? 'Added' : isOutOfStock ? 'Out of Stock' : 'Add'}
                         </button>
                       </span>
                     </div>
@@ -7424,7 +7425,7 @@ export function SalesModule({ user }) {
               <div className="sales-form-section sales-customer-section">
                 <div className="sales-customer-grid">
                   <div className="space-y-2">
-                    <Label htmlFor="customer-type">Customer Type</Label>
+                    <Label htmlFor="customer-type">Customer Type <RequiredMark /></Label>
                     <Select value={customerType} onValueChange={setCustomerType}>
                       <SelectTrigger id="customer-type" className="sales-customer-control">
                         <SelectValue placeholder="Select customer type" />
@@ -7513,7 +7514,7 @@ export function SalesModule({ user }) {
                         {line.isManual ? (
                           <>
                             <div className="space-y-2">
-                              <Label>Non-Inventory Item Description <span className="text-red-600">*</span></Label>
+                              <Label>Non-Inventory Item Description <RequiredMark /></Label>
                               <Input
                                 value={line.itemName}
                                 maxLength={150}
@@ -7560,7 +7561,7 @@ export function SalesModule({ user }) {
                           </>
                         ) : (
                           <div className="space-y-2">
-                            <Label>Inventory Item <span className="text-red-600">*</span></Label>
+                            <Label>Inventory Item <RequiredMark /></Label>
                             <select
                               value={line.inventoryId}
                               onChange={event => updateLineInventoryItem(index, event.target.value)}
@@ -7583,7 +7584,7 @@ export function SalesModule({ user }) {
                           </div>
                         )}
                         <div className="space-y-2">
-                          <Label>Quantity Sold <span className="text-red-600">*</span></Label>
+                          <Label>Quantity Sold <RequiredMark /></Label>
                           <Input
                             type="text"
                             min="1"
@@ -7599,7 +7600,7 @@ export function SalesModule({ user }) {
                           />
                         </div>
                         <div className="space-y-2">
-                          <Label>Unit Price</Label>
+                          <Label>Unit Price <RequiredMark /></Label>
                           <div className="sales-readonly-price">
                             {line.unitPrice ? formatCurrency(line.unitPrice) : 'Select item first'}
                           </div>
@@ -7713,7 +7714,7 @@ export function SalesModule({ user }) {
                   <div className="sales-pos-customer-bar">
                     <div className="sales-pos-field sales-invoice-number-field">
                       <Label htmlFor="sale-official-invoice-number">
-                        Sales Invoice No. <span className="text-red-600">*</span>
+                        Sales Invoice No. <RequiredMark />
                       </Label>
                       <div className="sales-invoice-input-row">
                         <Input
@@ -7753,7 +7754,7 @@ export function SalesModule({ user }) {
                             </span>
                           </p>
                           <div className="sales-pos-field">
-                            <Label htmlFor="sale-invoice-sequence-reason">Booklet Note</Label>
+                            <Label htmlFor="sale-invoice-sequence-reason">Booklet Note <RequiredMark /></Label>
                             <Textarea
                               id="sale-invoice-sequence-reason"
                               value={invoiceSequenceExceptionReason}
@@ -7802,7 +7803,7 @@ export function SalesModule({ user }) {
                           }
                         }}
                       >
-                        Customer Type
+                        Customer Type <RequiredMark />
                       </Label>
                       <Select value={customerType} open={isCustomerTypeOpen} onOpenChange={setIsCustomerTypeOpen} onValueChange={setCustomerType}>
                         <SelectTrigger id="customer-type" aria-labelledby="customer-type-label" className="sales-customer-control">
@@ -7919,7 +7920,7 @@ export function SalesModule({ user }) {
                           </div>
                           <div className="sales-cart-controls">
                             <div className="sales-cart-quantity-field">
-                              <span className="sales-cart-control-label">Quantity</span>
+                              <span className="sales-cart-control-label">Quantity <RequiredMark /></span>
                               <div className="sales-qty-stepper" aria-label={`Quantity for ${displayName || 'non-inventory item'}`}>
                                 <button
                                   type="button"
@@ -7959,7 +7960,7 @@ export function SalesModule({ user }) {
                             </div>
                             <div className="sales-cart-secondary-controls">
                               <div className="sales-cart-price-field">
-                                <span className="sales-cart-control-label">Unit Price</span>
+                                <span className="sales-cart-control-label">Unit Price <RequiredMark /></span>
                                 <input
                                   type="text"
                                   inputMode="decimal"
@@ -8119,7 +8120,7 @@ export function SalesModule({ user }) {
                   </div>
                   <div className="sales-payment-grid">
                     <div className="sales-payment-field">
-                      <Label htmlFor="payment-method">Payment Method</Label>
+                      <Label htmlFor="payment-method">Payment Method <RequiredMark /></Label>
                       <Select value={paymentMethod} onValueChange={handlePaymentMethodChange}>
                         <SelectTrigger id="payment-method" className="sales-customer-control">
                           <SelectValue placeholder="Select payment method" />
@@ -8146,7 +8147,7 @@ export function SalesModule({ user }) {
                     </div>
                     <div className="sales-payment-field">
                       <Label htmlFor="sale-discount">
-                        {selectedDiscountOption.manual ? 'Manual Discount Amount' : 'Discount Amount'}
+                        {selectedDiscountOption.manual ? <>Manual Discount Amount <RequiredMark /></> : 'Discount Amount'}
                       </Label>
                       <Input
                         id="sale-discount"
@@ -8169,7 +8170,9 @@ export function SalesModule({ user }) {
                       />
                     </div>
                     <div className="sales-payment-field">
-                      <Label htmlFor="amount-received">Amount Received{paymentMethod === 'cash' ? '' : ', auto-recorded'}</Label>
+                      <Label htmlFor="amount-received">
+                        Amount Received{paymentMethod === 'cash' ? <> <RequiredMark /></> : ', auto-recorded'}
+                      </Label>
                       <div className="sales-payment-input-row">
                         <Input
                           id="amount-received"
@@ -8206,7 +8209,7 @@ export function SalesModule({ user }) {
                           />
                         </div>
                         <div className="sales-payment-field">
-                          <Label>Payment Confirmation</Label>
+                          <Label>Payment Confirmation <RequiredMark /></Label>
                           <button
                             type="button"
                             className={`sales-payment-confirmation ${paymentConfirmed ? 'sales-payment-confirmation-checked' : ''}`}
@@ -8232,16 +8235,10 @@ export function SalesModule({ user }) {
                               <small>
                                 {paymentConfirmed
                                   ? `Confirmed for ${formatCurrency(totalAmount)}`
-                                  : 'Required for GCash and bank transfer payments'}
+                                  : 'Verify credited payment before saving'}
                               </small>
                             </span>
                           </button>
-                        </div>
-                        <div className="sales-digital-payment-note">
-                          <Info className="h-4 w-4" />
-                          <p>
-                            Confirm the received payment before completing the sale.
-                          </p>
                         </div>
                       </>
                     )}
@@ -8511,7 +8508,7 @@ function NonInventoryItemDialog({
 
           <div className="sales-non-inventory-form">
             <div className="sales-non-inventory-field">
-              <Label htmlFor="non-inventory-name">Item Description <span className="text-red-600">*</span></Label>
+              <Label htmlFor="non-inventory-name">Item Description <RequiredMark /></Label>
               <Input
                 id="non-inventory-name"
                 className="sales-non-inventory-control"
@@ -8525,7 +8522,7 @@ function NonInventoryItemDialog({
 
             <div className="sales-non-inventory-grid">
               <div className="sales-non-inventory-field">
-                <Label htmlFor="non-inventory-quantity">Quantity <span className="text-red-600">*</span></Label>
+                <Label htmlFor="non-inventory-quantity">Quantity <RequiredMark /></Label>
                 <div className="sales-non-inventory-quantity-control">
                   <Input
                     id="non-inventory-quantity"
@@ -8564,7 +8561,7 @@ function NonInventoryItemDialog({
                 </div>
               </div>
               <div className="sales-non-inventory-field">
-                <Label htmlFor="non-inventory-unit-price">Unit Price <span className="text-red-600">*</span></Label>
+                <Label htmlFor="non-inventory-unit-price">Unit Price <RequiredMark /></Label>
                 <Input
                   id="non-inventory-unit-price"
                   className="sales-non-inventory-control"
@@ -8886,7 +8883,7 @@ function CancelSaleDialog({ open, sale, reason, onReasonChange, onOpenChange, on
             </div>
           </DialogHeader>
           <div className="sales-cancel-reason-group">
-            <Label htmlFor="sale-cancel-reason" className="sales-cancel-reason-label">Cancellation Reason</Label>
+            <Label htmlFor="sale-cancel-reason" className="sales-cancel-reason-label">Cancellation Reason <RequiredMark /></Label>
             <Textarea
               id="sale-cancel-reason"
               value={reason}
@@ -9121,8 +9118,12 @@ function RefundSaleDialog({
               </aside>
 
               <div className="sales-refund-side-form">
+                <div className="sales-refund-policy-note" role="note">
+                  <strong>Refund policy reminder</strong>
+                  <span>Verify the original invoice, returned quantity, item condition, and reason before saving. Refund amounts cannot exceed the remaining refundable amount for each item.</span>
+                </div>
                 <div className="sales-refund-field">
-                  <Label htmlFor="refund-reason">Refund Reason</Label>
+                  <Label htmlFor="refund-reason">Refund Reason <RequiredMark /></Label>
                   <Textarea
                     id="refund-reason"
                     value={reason}

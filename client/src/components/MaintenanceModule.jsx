@@ -1955,7 +1955,7 @@ export function MaintenanceModule({ user }) {
 
                 <div className="maintenance-export-grid">
                   <div className="maintenance-export-field">
-                    <label htmlFor="selective-export-dataset">Dataset</label>
+                    <label htmlFor="selective-export-dataset">Dataset <span className="text-red-600">*</span></label>
                     <div className="maintenance-export-control">
                       <select
                         id="selective-export-dataset"
@@ -1973,7 +1973,7 @@ export function MaintenanceModule({ user }) {
 
                   {exportUsesBranch && (
                     <div className="maintenance-export-field">
-                      <label htmlFor="selective-export-branch">Branch Scope</label>
+                      <label htmlFor="selective-export-branch">Branch Scope <span className="text-red-600">*</span></label>
                       <div className="maintenance-export-control">
                         <select
                           id="selective-export-branch"
@@ -1991,7 +1991,7 @@ export function MaintenanceModule({ user }) {
                   )}
 
                   <div className="maintenance-export-field">
-                    <label htmlFor="selective-export-columns">Column Set</label>
+                    <label htmlFor="selective-export-columns">Column Set <span className="text-red-600">*</span></label>
                     <div className="maintenance-export-control">
                       <select
                         id="selective-export-columns"
@@ -2296,7 +2296,7 @@ export function MaintenanceModule({ user }) {
                 </AlertDialogDescription>
                 <div className="mt-4">
                   <label htmlFor="restore-confirmation" className="maintenance-restore-label">
-                    Type <span className="maintenance-restore-keyword">{RESTORE_CONFIRMATION_TEXT}</span> to continue
+                    Type <span className="maintenance-restore-keyword">{RESTORE_CONFIRMATION_TEXT}</span> to continue <span className="text-red-600">*</span>
                   </label>
                   <Input
                     id="restore-confirmation"

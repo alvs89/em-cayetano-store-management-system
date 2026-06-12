@@ -80,6 +80,18 @@ function timestampFromDaysAgo(daysAgo, hour = 8, minute = 0) {
   return date > PRESENTATION_NOW ? new Date(PRESENTATION_NOW) : date;
 }
 
+function timestampTomorrowMorning(hour = 8, minute = 0) {
+  const date = addDays(PRESENTATION_NOW, 1);
+  const safeHour = Math.min(Math.max(hour, 7), 9);
+  const safeMinute = safeHour === 7
+    ? Math.max(minute, 30)
+    : safeHour === 9
+      ? 0
+      : Math.min(Math.max(minute, 0), 59);
+  date.setHours(safeHour, safeMinute, 0, 0);
+  return date;
+}
+
 function minutesBefore(date, minutes) {
   return new Date(date.getTime() - minutes * 60 * 1000);
 }
@@ -319,7 +331,11 @@ function buildEvents(inventoryRowsByBranch) {
     if (isRainySlowDay) count = Math.max(0, count - 1);
 
     for (let index = 0; index < count; index += 1) {
-      const branch = index % 3 === 2 ? 'San Rafael' : pick(BRANCHES);
+      const branch = daysAgo <= 1
+        ? BRANCHES[index % BRANCHES.length]
+        : index % 3 === 2
+          ? 'San Rafael'
+          : pick(BRANCHES);
       const customerType = index === 0 && (isWeekend || daysAgo % 9 === 0)
         ? 'contractor'
         : index === 1 && daysAgo % 5 === 0
@@ -338,6 +354,37 @@ function buildEvents(inventoryRowsByBranch) {
       });
     }
   }
+
+  [
+    {
+      branch: 'Manggahan',
+      customerType: 'contractor',
+      createdAt: timestampTomorrowMorning(8, 12)
+    },
+    {
+      branch: 'Manggahan',
+      customerType: 'walk_in',
+      createdAt: timestampTomorrowMorning(8, 36)
+    },
+    {
+      branch: 'San Rafael',
+      customerType: 'regular',
+      createdAt: timestampTomorrowMorning(8, 48)
+    },
+    {
+      branch: 'San Rafael',
+      customerType: 'walk_in',
+      createdAt: timestampTomorrowMorning(8, 57)
+    }
+  ].forEach(event => {
+    events.push({
+      type: 'sale',
+      branch: event.branch,
+      customerType: event.customerType,
+      createdAt: event.createdAt,
+      rows: inventoryRowsByBranch.get(event.branch)
+    });
+  });
 
   for (const [branch, itemPatterns] of [
     ['Manggahan', [/PLASTIC SHEET 8" -- BLUE/, /COLORED GUTTER -- FLASHING/, /BOYSEN - LATEX.*1L/, /COCO -- 2X2X8/]],
@@ -1207,8 +1254,10 @@ async function refreshDemoInventory() {
         (SELECT COUNT(*) FROM backup_logs) AS backup_logs,
         (SELECT COUNT(*) FROM branch_inventory WHERE status = 'Low Stock') AS low_stock,
         (SELECT COUNT(*) FROM branch_inventory WHERE status = 'Out of Stock') AS out_of_stock,
-        (SELECT COUNT(DISTINCT DATE(created_at)) FROM sales_transactions) AS sales_days
-    `);
+        (SELECT COUNT(DISTINCT DATE(created_at)) FROM sales_transactions) AS sales_days,
+        (SELECT COUNT(*) FROM sales_transactions WHERE DATE(created_at) = DATE($1::timestamp + INTERVAL '1 day')) AS tomorrow_sales,
+        (SELECT COALESCE(MAX(created_at)::text, '') FROM sales_transactions WHERE created_at > $1::timestamp) AS latest_future_sale
+    `, [PRESENTATION_NOW]);
 
     await client.query('COMMIT');
 
@@ -1216,6 +1265,7 @@ async function refreshDemoInventory() {
       status: 'presentation_data_ready',
       generatedAt: PRESENTATION_NOW.toISOString(),
       anchorDate: TODAY_KEY,
+      allowedFutureWindow: `${formatDateKey(addDays(PRESENTATION_NOW, 1))} 07:30-09:00 PHT`,
       salesCreated,
       counts: summary.rows[0]
     }, null, 2));
