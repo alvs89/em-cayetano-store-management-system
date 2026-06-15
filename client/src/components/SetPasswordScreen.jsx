@@ -11,7 +11,7 @@ import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Button } from './ui/button';
-import { Eye, EyeOff, ShieldCheck, Mail } from 'lucide-react';
+import { CheckCircle2, Eye, EyeOff, ShieldCheck, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiUrl } from '../utils/api';
 import {
@@ -19,7 +19,7 @@ import {
   handleVerificationCodeChange,
   handleVerificationCodePaste,
 } from '../utils/verificationCode';
-import { PASSWORD_HELP_TEXT, validatePasswordPolicy } from '../utils/passwordPolicy';
+import { PASSWORD_REQUIREMENTS, validatePasswordPolicy } from '../utils/passwordPolicy';
 
 const emcLogoSrc = "/emc-logo.png";
 const EXPIRY_TOLERANCE_MS = 15000; // 15s grace to match backend acceptance.
@@ -370,7 +370,7 @@ const SetPasswordScreen = () => {
 
             <form onSubmit={handleReset} className="space-y-6">
               <div className="space-y-2">
-                <Label htmlFor="otp" className="text-gray-800 flex items-center gap-1">Verification Code <span className="text-red-600">*</span></Label>
+                <Label htmlFor="otp" className="text-gray-800">Verification Code</Label>
                 <Input
                   id="otp"
                   type="text"
@@ -389,7 +389,7 @@ const SetPasswordScreen = () => {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="newPassword" className="text-gray-800 flex items-center gap-1">New Password <span className="text-red-600">*</span></Label>
+                <Label htmlFor="newPassword" className="text-gray-800">New Password</Label>
                 <div className="relative">
                   <Input
                     id="newPassword"
@@ -413,7 +413,7 @@ const SetPasswordScreen = () => {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="confirmPassword" className="text-gray-800 flex items-center gap-1">Confirm Password <span className="text-red-600">*</span></Label>
+                <Label htmlFor="confirmPassword" className="text-gray-800">Confirm Password</Label>
                 <div className="relative">
                   <Input
                     id="confirmPassword"
@@ -436,9 +436,17 @@ const SetPasswordScreen = () => {
                 </div>
               </div>
 
-              <p className="text-sm leading-relaxed text-slate-600">
-                {PASSWORD_HELP_TEXT}
-              </p>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-sm font-semibold text-slate-800">Password requirements</p>
+                <ul className="password-requirements-list mt-3 text-sm leading-5 text-slate-600">
+                  {PASSWORD_REQUIREMENTS.map(requirement => (
+                    <li key={requirement} className="flex items-start gap-2">
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" strokeWidth={2.25} />
+                      <span>{requirement}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
 
               <Button
                 type="submit"

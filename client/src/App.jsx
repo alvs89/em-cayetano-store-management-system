@@ -18,6 +18,7 @@ import {
   Menu,
   X,
   Lock,
+  CheckCircle2,
   Eye,
   EyeOff,
   ReceiptText,
@@ -43,7 +44,7 @@ import { toast, Toaster } from "sonner";
 import { DataProvider, useData } from "./components/DataContext";
 import { Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { apiUrl } from './utils/api';
-import { PASSWORD_HELP_TEXT, validatePasswordPolicy } from './utils/passwordPolicy';
+import { PASSWORD_REQUIREMENTS, validatePasswordPolicy } from './utils/passwordPolicy';
 import { canAccessScreen, getRoleLabel, isAdminRole, normalizeRole } from './utils/roles';
 import { LoginScreen } from "./components/LoginScreen";
 import { TwoFactorAuthScreen } from "./components/TwoFactorAuthScreen";
@@ -615,7 +616,7 @@ function AppContent() {
 
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="required-current-password">Temporary Password <span className="text-red-600">*</span></Label>
+              <Label htmlFor="required-current-password">Temporary Password</Label>
               <div className="relative">
                 <Input
                   id="required-current-password"
@@ -639,7 +640,7 @@ function AppContent() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="required-new-password">New Password <span className="text-red-600">*</span></Label>
+              <Label htmlFor="required-new-password">New Password</Label>
               <div className="relative">
                 <Input
                   id="required-new-password"
@@ -664,7 +665,7 @@ function AppContent() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="required-confirm-password">Confirm New Password <span className="text-red-600">*</span></Label>
+              <Label htmlFor="required-confirm-password">Confirm New Password</Label>
               <div className="relative">
                 <Input
                   id="required-confirm-password"
@@ -688,9 +689,17 @@ function AppContent() {
                 </button>
               </div>
             </div>
-            <p className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">
-              {PASSWORD_HELP_TEXT}
-            </p>
+            <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+              <p className="text-sm font-semibold text-blue-950">Password requirements</p>
+              <ul className="password-requirements-list mt-3 text-sm leading-5 text-blue-900">
+                {PASSWORD_REQUIREMENTS.map(requirement => (
+                  <li key={requirement} className="flex items-start gap-2">
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-blue-700" strokeWidth={2.25} />
+                    <span>{requirement}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
 
           <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">

@@ -89,5 +89,11 @@ export function validatePasswordPolicy(password, accountDetails = {}) {
   return null;
 }
 
-export const PASSWORD_HELP_TEXT =
-  'Use 8 to 64 characters and include at least one letter or number. Choose a password that is easy for you to remember but hard for others to guess.';
+export const PASSWORD_REQUIREMENTS = [
+  '8 to 64 characters',
+  'At least one letter or number',
+  'Avoid common passwords',
+  'Avoid using your name, username, or email'
+];
+
+export const PASSWORD_HELP_TEXT = PASSWORD_REQUIREMENTS.join('. ') + '.';

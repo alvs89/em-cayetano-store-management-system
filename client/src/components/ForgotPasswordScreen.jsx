@@ -282,7 +282,7 @@ const ForgotPasswordScreen = () => {
 
             <form onSubmit={handleSendCode} className="forgot-form">
               <div className="forgot-field space-y-2">
-                <Label htmlFor="email" className="text-gray-800 flex items-center gap-1">Email <span className="text-red-600">*</span></Label>
+                <Label htmlFor="email" className="text-gray-800">Email</Label>
                 <div className="relative">
                   <Mail className="forgot-email-icon pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
                   <Input

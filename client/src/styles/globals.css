@@ -219,11 +219,6 @@
       line-height: 1.5;
     }
 
-    label > .text-red-600:last-child,
-    [data-slot="label"] > .text-red-600:last-child {
-      margin-left: -0.35rem;
-    }
-
     button {
       font-size: var(--text-base);
       font-weight: var(--font-weight-medium);
@@ -235,6 +230,26 @@
       font-weight: var(--font-weight-normal);
       line-height: 1.5;
     }
+  }
+}
+
+[data-slot="label"]:has(> .text-red-600:last-child) {
+  gap: 0.25rem !important;
+}
+
+label:not([data-slot="label"]) > .text-red-600:last-child {
+  margin-left: 0.15rem;
+}
+
+.password-requirements-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.5rem 1.25rem;
+}
+
+@media (min-width: 520px) {
+  .password-requirements-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

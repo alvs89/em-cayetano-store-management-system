@@ -677,7 +677,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
 
             <form onSubmit={handleLogin} className="login-form space-y-6">
               <div className="login-field space-y-2">
-                <Label htmlFor="username" className="text-gray-800">Username <span className="text-red-600">*</span></Label>
+                <Label htmlFor="username" className="text-gray-800">Username</Label>
                 <div className="relative">
                   <User className="login-field-icon pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
                   <Input
@@ -692,7 +692,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
               </div>
 
               <div className="login-field space-y-2">
-                <Label htmlFor="password" className="text-gray-800">Password <span className="text-red-600">*</span></Label>
+                <Label htmlFor="password" className="text-gray-800">Password</Label>
                 <div className="relative">
                   <Lock className="login-field-icon pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
                   <Input
@@ -715,7 +715,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
               </div>
 
               <div className="login-field space-y-2">
-                <Label htmlFor="branch" className="text-gray-800">Branch <span className="text-red-600">*</span></Label>
+                <Label htmlFor="branch" className="text-gray-800">Branch</Label>
                 <div className="relative">
                   <Store className="login-field-icon pointer-events-none absolute left-4 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-slate-500" />
                   <Select
