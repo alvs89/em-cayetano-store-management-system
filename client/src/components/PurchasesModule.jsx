@@ -480,6 +480,11 @@ export function PurchasesModule({ user, onNavigate }) {
   const getInventoryById = inventoryId =>
     inventory.find(item => String(item.id) === String(inventoryId));
 
+  const getDefaultUnitCostForInventoryItem = item => {
+    const costPrice = Number(item?.costPrice);
+    return Number.isFinite(costPrice) && costPrice > 0 ? costPrice.toFixed(2) : '';
+  };
+
   const getPurchaseLineInventoryOptions = currentInventoryId => {
     if (!currentInventoryId) return supplierScopedInventory;
     const selectedItem = getInventoryById(currentInventoryId);
@@ -732,11 +737,14 @@ export function PurchasesModule({ user, onNavigate }) {
   const getValidDraftLines = draft =>
     (draft?.items || [])
       .filter(item => getInventoryById(item.inventoryId) && Number(item.quantity || 0) > 0)
-      .map(item => ({
-        inventoryId: String(item.inventoryId),
-        quantity: String(Math.max(1, Math.floor(Number(item.quantity || 1)))),
-        unitCost: item.unitCost || ''
-      }));
+      .map(item => {
+        const inventoryItem = getInventoryById(item.inventoryId);
+        return {
+          inventoryId: String(item.inventoryId),
+          quantity: String(Math.max(1, Math.floor(Number(item.quantity || 1)))),
+          unitCost: item.unitCost || getDefaultUnitCostForInventoryItem(inventoryItem)
+        };
+      });
 
   // Supplier reorder reports can hand off a draft to Purchases so staff can turn
   // recommended reorder lines into an actual receiving worksheet.
@@ -861,7 +869,17 @@ export function PurchasesModule({ user, onNavigate }) {
       return;
     }
 
-    updateLine(index, 'inventoryId', inventoryId);
+    const selectedItem = getInventoryById(inventoryId);
+    const defaultUnitCost = getDefaultUnitCostForInventoryItem(selectedItem);
+    setPurchaseLines(prev => prev.map((line, lineIndex) => {
+      if (lineIndex !== index) return line;
+      const hasManualUnitCost = String(line.unitCost || '').trim() !== '';
+      return {
+        ...line,
+        inventoryId,
+        unitCost: hasManualUnitCost ? line.unitCost : defaultUnitCost
+      };
+    }));
   };
 
   const updateLineQuantity = (index, rawValue) => {
@@ -965,7 +983,7 @@ export function PurchasesModule({ user, onNavigate }) {
     const preparedLine = {
       inventoryId: String(item.id),
       quantity: '1',
-      unitCost: ''
+      unitCost: getDefaultUnitCostForInventoryItem(item)
     };
 
     setPurchaseLines(prev => {

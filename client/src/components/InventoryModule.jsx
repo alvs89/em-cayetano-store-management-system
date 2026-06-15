@@ -493,8 +493,9 @@ export function InventoryModule({
   const canEditReorderPlanning = canManageInventory(user?.role);
   const canViewReorderPlanning =
     canEditReorderPlanning || canPerformInventoryMovement(user?.role);
+  const canViewInventoryUnitCost = canPerformInventoryMovement(user?.role);
   const inventoryTableColumnCount =
-    8 + (canViewReorderPlanning ? 1 : 0) + (canShowInventoryActions ? 1 : 0);
+    8 + (canViewInventoryUnitCost ? 1 : 0) + (canViewReorderPlanning ? 1 : 0) + (canShowInventoryActions ? 1 : 0);
 
   // Dashboard shortcuts temporarily drive Inventory filters/actions. As soon as
   // the user changes a filter manually, Inventory owns the view state again.
@@ -877,6 +878,12 @@ export function InventoryModule({
     if (!bHasValue) return -1;
     return (aValue - bValue) * direction;
   };
+  const formatInventoryCurrency = (value, fallback = "Not set") => {
+    const amount = Number(value);
+    return Number.isFinite(amount) && amount > 0
+      ? `P${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      : fallback;
+  };
 
   // 📊 Sorted inventory using Merge Sort Algorithm
   // Merge Sort: O(n log n) - efficient sorting for any data size
@@ -894,6 +901,8 @@ export function InventoryModule({
         return mergeSort(filteredInventory, (a, b) => (a.supplierName || '').localeCompare(b.supplierName || '') * direction);
       case 'srp':
         return mergeSort(filteredInventory, (a, b) => compareOptionalNumber(a, b, item => item.defaultSellingPrice, direction));
+      case 'cost':
+        return mergeSort(filteredInventory, (a, b) => compareOptionalNumber(a, b, item => item.costPrice, direction));
       case 'quantity':
         return mergeSort(filteredInventory, (a, b) => ((a.quantity ?? 0) - (b.quantity ?? 0)) * direction);
       case 'status':
@@ -913,6 +922,13 @@ export function InventoryModule({
   React.useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, categoryFilter, supplierFilter, stockStatusFilter, sortBy, sortOrder]);
+
+  React.useEffect(() => {
+    if (!canViewInventoryUnitCost && sortBy === 'cost') {
+      setSortBy('name');
+      setSortOrder('asc');
+    }
+  }, [canViewInventoryUnitCost, sortBy]);
 
   React.useEffect(() => {
     setCurrentPage(page => Math.min(Math.max(page, 1), totalPages));
@@ -2011,10 +2027,12 @@ export function InventoryModule({
   const sortLabel = (() => {
     if (sortBy === 'id') return 'Item Code';
     if (sortBy === 'date') return 'Last Updated';
+    if (sortBy === 'srp') return 'SRP';
+    if (sortBy === 'cost') return 'Unit Cost';
     return sortBy.charAt(0).toUpperCase() + sortBy.slice(1);
   })();
   const displayOrderLabel = (() => {
-    if (sortBy === 'id' || sortBy === 'quantity') return sortOrder === 'asc' ? 'Low to High' : 'High to Low';
+    if (sortBy === 'id' || sortBy === 'quantity' || sortBy === 'srp' || sortBy === 'cost') return sortOrder === 'asc' ? 'Low to High' : 'High to Low';
     if (sortBy === 'date') return sortOrder === 'asc' ? 'Oldest First' : 'Newest First';
     return sortOrder === 'asc' ? 'A to Z' : 'Z to A';
   })();
@@ -2061,7 +2079,7 @@ export function InventoryModule({
     { label: "Category Note", beforeKeys: ["categoryNote", "category_note"], afterKeys: ["categoryNote"] },
     { label: "Supplier", beforeKeys: ["supplierName", "supplier_name"], afterKeys: ["supplierName"] },
     { label: "SRP", beforeKeys: ["defaultSellingPrice", "default_selling_price"], afterKeys: ["defaultSellingPrice"], type: "money" },
-    { label: "Cost", beforeKeys: ["costPrice", "cost_price"], afterKeys: ["costPrice"], type: "money" },
+    { label: "Unit Cost", beforeKeys: ["costPrice", "cost_price"], afterKeys: ["costPrice"], type: "money" },
     { label: "Stock", beforeKeys: ["quantity", "stock_level"], afterKeys: ["quantity"], type: "stock" },
     { label: "Manual Low-Stock Limit", beforeKeys: ["reorderLevel", "min_stock_level"], afterKeys: ["reorderLevel"], type: "stock" },
     { label: "Lead Time", beforeKeys: ["leadTimeDays", "lead_time_days"], afterKeys: ["leadTimeDays"], type: "stock" },
@@ -2097,7 +2115,7 @@ export function InventoryModule({
       { label: "Category Note", value: formatApprovalValue(payload.categoryNote, "text", "Not provided") },
       { label: "Supplier", value: formatApprovalValue(payload.supplierName, "text", "Not provided") },
       { label: "SRP", value: formatApprovalValue(payload.defaultSellingPrice, "money", "Not provided") },
-      { label: "Cost", value: formatApprovalValue(payload.costPrice, "money", "Not provided") },
+      { label: "Unit Cost", value: formatApprovalValue(payload.costPrice, "money", "Not provided") },
       { label: "Initial Stock", value: formatApprovalValue(payload.quantity, "stock", "0") },
       { label: "Manual Low-Stock Limit", value: formatApprovalValue(payload.reorderLevel, "stock", "Not provided") },
       { label: "Lead Time", value: formatApprovalValue(payload.leadTimeDays, "stock", "Not provided") },
@@ -2122,7 +2140,7 @@ export function InventoryModule({
         className: "border-orange-200 bg-orange-50 text-orange-800"
       };
     }
-    if (changedLabels.has("SRP") || changedLabels.has("Cost")) {
+    if (changedLabels.has("SRP") || changedLabels.has("Unit Cost")) {
       return {
         label: "Price Update",
         summary: `${changeRows.length} ${changeRows.length === 1 ? "field" : "fields"} modified`,
@@ -3641,13 +3659,17 @@ export function InventoryModule({
       return;
     }
     const costPriceText = String(newItem.costPrice || "").trim();
+    if (canManageInventory(user?.role) && !costPriceText) {
+      toast.error("Enter a Default Unit Cost before saving this item.");
+      return;
+    }
     if (costPriceText && !isDecimalNumberText(costPriceText)) {
-      toast.error("Cost Price must be a valid amount with up to 2 decimal places.");
+      toast.error("Default Unit Cost must be a valid amount with up to 2 decimal places.");
       return;
     }
     const costPrice = costPriceText ? Number(costPriceText) : "";
     if (costPrice !== "" && costPrice <= 0) {
-      toast.error("Cost Price must be greater than zero.");
+      toast.error("Default Unit Cost must be greater than zero.");
       return;
     }
     if (isNaN(quantity) || quantity < 0) {
@@ -4181,13 +4203,17 @@ export function InventoryModule({
       return;
     }
     const costPriceText = String(editItem.costPrice || "").trim();
+    if (canManageInventory(user?.role) && !costPriceText) {
+      toast.error("Enter a Default Unit Cost before saving this item.");
+      return;
+    }
     if (costPriceText && !isDecimalNumberText(costPriceText)) {
-      toast.error("Cost Price must be a valid amount with up to 2 decimal places.");
+      toast.error("Default Unit Cost must be a valid amount with up to 2 decimal places.");
       return;
     }
     const costPrice = costPriceText ? Number(costPriceText) : "";
     if (costPrice !== "" && costPrice <= 0) {
-      toast.error("Cost Price must be greater than zero.");
+      toast.error("Default Unit Cost must be greater than zero.");
       return;
     }
 
@@ -4588,7 +4614,7 @@ export function InventoryModule({
               className="font-semibold text-slate-950"
               style={{ display: "block", marginBottom: "8px", fontSize: "14px", lineHeight: "1.25" }}
             >
-              Cost Price
+              Default Unit Cost {canManageInventory(user?.role) && <span className="text-red-600">*</span>}
             </Label>
             <Input
               id="edit-cost-price"
@@ -4599,14 +4625,16 @@ export function InventoryModule({
               value={editItem.costPrice}
               onChange={e => updateEditItemDraft(previous => ({
                 ...previous,
-                costPrice: sanitizeDecimalInput(e.target.value, "Cost Price", "edit-cost-price-numbers-only")
+                costPrice: sanitizeDecimalInput(e.target.value, "Default Unit Cost", "edit-cost-price-numbers-only")
               }))}
               placeholder="e.g., 205.00"
               className="border-slate-300 bg-white text-slate-950"
               style={{ height: "42px", borderRadius: "10px", fontSize: "14px", padding: "0 14px" }}
             />
             <p className="text-slate-700" style={{ fontSize: "12px" }}>
-              Optional. This is the amount paid per unit and becomes the default Unit Cost in purchase drafts.
+              {canManageInventory(user?.role)
+                ? "Required for approved inventory records. Used as the default supplier cost for purchases, profit computation, and actual earnings reports."
+                : "May be completed by Admin/Owner during approval if the exact supplier cost is not yet available."}
             </p>
           </div>
 
@@ -6404,7 +6432,9 @@ export function InventoryModule({
       fontSize: "14px",
       lineHeight: "1.25"
     }
-  }, "Cost Price"), /*#__PURE__*/React.createElement(Input, {
+  }, "Default Unit Cost ", canManageInventory(user?.role) && /*#__PURE__*/React.createElement("span", {
+    className: "text-red-600"
+  }, "*")), /*#__PURE__*/React.createElement(Input, {
     id: "cost-price",
     type: "text",
     min: "0.01",
@@ -6413,7 +6443,7 @@ export function InventoryModule({
     value: newItem.costPrice,
     onChange: e => updateNewItemDraft(previous => ({
       ...previous,
-      costPrice: sanitizeDecimalInput(e.target.value, "Cost Price", "add-cost-price-numbers-only")
+      costPrice: sanitizeDecimalInput(e.target.value, "Default Unit Cost", "add-cost-price-numbers-only")
     })),
     placeholder: "e.g., 205.00",
     className: "border-slate-300 bg-white text-slate-950",
@@ -6428,7 +6458,7 @@ export function InventoryModule({
     style: {
       fontSize: "12px"
     }
-  }, "Optional. This is the amount paid per unit and becomes the default Unit Cost in purchase drafts.")), renderAddSectionHeader("Stock Level and Alert Threshold"), /*#__PURE__*/React.createElement("div", {
+  }, canManageInventory(user?.role) ? "Required for approved inventory records. Used as the default supplier cost for purchases, profit computation, and actual earnings reports." : "May be completed by Admin/Owner during approval if the exact supplier cost is not yet available.")), renderAddSectionHeader("Stock Level and Alert Threshold"), /*#__PURE__*/React.createElement("div", {
     className: "inventory-add-field space-y-1.5"
   }, /*#__PURE__*/React.createElement(Label, {
     htmlFor: "quantity",
@@ -6772,7 +6802,9 @@ export function InventoryModule({
     className: "w-[190px]"
   }, renderSortButton('supplier', 'Supplier')), /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[130px] text-right"
-  }, renderSortButton('srp', 'SRP', 'right')), /*#__PURE__*/React.createElement(TableHead, {
+  }, renderSortButton('srp', 'SRP', 'right')), canViewInventoryUnitCost && /*#__PURE__*/React.createElement(TableHead, {
+    className: "w-[130px] text-right"
+  }, renderSortButton('cost', 'Unit Cost', 'right')), /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[120px] text-right"
   }, renderSortButton('quantity', 'Quantity', 'right')), /*#__PURE__*/React.createElement(TableHead, {
     className: "w-[150px]"
@@ -6800,7 +6832,9 @@ export function InventoryModule({
     className: "font-mono text-sm align-middle"
   }, item.itemCode || item.id), /*#__PURE__*/React.createElement(TableCell, null, item.name), /*#__PURE__*/React.createElement(TableCell, null, getInventoryCategoryDisplay(item)), /*#__PURE__*/React.createElement(TableCell, null, item.supplierName || "Unassigned"), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-right font-medium text-slate-900"
-  }, item.defaultSellingPrice ? `P${Number(item.defaultSellingPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "No price"), /*#__PURE__*/React.createElement(TableCell, {
+  }, formatInventoryCurrency(item.defaultSellingPrice, "No price")), canViewInventoryUnitCost && /*#__PURE__*/React.createElement(TableCell, {
+    className: "text-right font-medium text-slate-900"
+  }, formatInventoryCurrency(item.costPrice, "Not set")), /*#__PURE__*/React.createElement(TableCell, {
     className: "text-right"
   }, item.quantity), /*#__PURE__*/React.createElement(TableCell, null, /*#__PURE__*/React.createElement(Badge, {
     className: getStatusBadgeClass(getComputedStockStatus(item))
@@ -6856,7 +6890,7 @@ export function InventoryModule({
   }, /*#__PURE__*/React.createElement("div", {
     className: "inventory-mobile-sortbar",
     "aria-label": "Sort inventory items"
-  }, [["id", "Code"], ["name", "Name"], ["category", "Category"], ["supplier", "Supplier"], ["srp", "SRP"], ["quantity", "Qty"], ["status", "Status"], ["date", "Updated"]].map(([column, label]) => /*#__PURE__*/React.createElement(Button, {
+  }, [["id", "Code"], ["name", "Name"], ["category", "Category"], ["supplier", "Supplier"], ["srp", "SRP"], canViewInventoryUnitCost ? ["cost", "Unit Cost"] : null, ["quantity", "Qty"], ["status", "Status"], ["date", "Updated"]].filter(Boolean).map(([column, label]) => /*#__PURE__*/React.createElement(Button, {
     key: column,
     type: "button",
     variant: "outline",
@@ -6902,6 +6936,18 @@ export function InventoryModule({
   }, "Supplier"), /*#__PURE__*/React.createElement("span", {
     className: "inventory-mobile-value"
   }, item.supplierName || "Unassigned")), /*#__PURE__*/React.createElement("div", {
+    className: "inventory-mobile-field"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "inventory-mobile-label"
+  }, "SRP"), /*#__PURE__*/React.createElement("span", {
+    className: "inventory-mobile-value"
+  }, formatInventoryCurrency(item.defaultSellingPrice, "No price"))), canViewInventoryUnitCost && /*#__PURE__*/React.createElement("div", {
+    className: "inventory-mobile-field"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "inventory-mobile-label"
+  }, "Unit Cost"), /*#__PURE__*/React.createElement("span", {
+    className: "inventory-mobile-value"
+  }, formatInventoryCurrency(item.costPrice, "Not set"))), /*#__PURE__*/React.createElement("div", {
     className: "inventory-mobile-field"
   }, /*#__PURE__*/React.createElement("span", {
     className: "inventory-mobile-label"

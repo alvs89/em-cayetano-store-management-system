@@ -1165,21 +1165,40 @@ export function Dashboard({
         .dashboard-privacy-toggle {
           display: inline-flex;
           align-items: center;
-          gap: 0.45rem;
-          min-height: 2.35rem;
-          border-color: #cbd5e1;
-          background: #ffffff;
+          justify-content: center;
+          width: 2.25rem;
+          height: 2.25rem;
+          min-height: 2.25rem;
+          border: 0;
+          border-radius: 999px;
+          background: transparent;
           color: #334155;
-          font-size: 0.82rem;
-          font-weight: 800;
-          white-space: nowrap;
+          padding: 0;
+          box-shadow: none;
+          transition: background-color 140ms ease, color 140ms ease;
         }
 
         .dashboard-privacy-toggle:hover,
         .dashboard-privacy-toggle:focus-visible {
-          border-color: #94a3b8;
           background: #f8fafc;
           color: #0f172a;
+          box-shadow: none;
+        }
+
+        .dashboard-privacy-toggle-hidden {
+          color: #b45309;
+        }
+
+        .dashboard-privacy-toggle-hidden:hover,
+        .dashboard-privacy-toggle-hidden:focus-visible {
+          background: #fffbeb;
+          color: #92400e;
+        }
+
+        .dashboard-privacy-actions {
+          display: inline-flex;
+          align-items: center;
+          flex-shrink: 0;
         }
 
         .dashboard-panel-title {
@@ -2257,9 +2276,9 @@ export function Dashboard({
           }
 
           .dashboard-privacy-toggle {
-            min-height: 2.25rem;
-            padding-left: 0.75rem;
-            padding-right: 0.75rem;
+            width: 2.15rem;
+            height: 2.15rem;
+            min-height: 2.15rem;
           }
 
           .dashboard-sales-filter-panel {
@@ -2434,17 +2453,18 @@ export function Dashboard({
               </p>
             </div>
             {hasSensitiveSummaryCards && (
-              <Button
-                type="button"
-                variant="outline"
-                className="dashboard-privacy-toggle"
-                onClick={() => setShowFinancialValues(prev => !prev)}
-                aria-pressed={showFinancialValues}
-                aria-label={showFinancialValues ? 'Hide financial dashboard values' : 'Show financial dashboard values'}
-              >
-                {showFinancialValues ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                <span>{showFinancialValues ? 'Hide Values' : 'Show Values'}</span>
-              </Button>
+              <div className="dashboard-privacy-actions">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className={`dashboard-privacy-toggle ${showFinancialValues ? '' : 'dashboard-privacy-toggle-hidden'}`}
+                  onClick={() => setShowFinancialValues(prev => !prev)}
+                  aria-pressed={showFinancialValues}
+                  aria-label={showFinancialValues ? 'Hide sensitive metrics' : 'Show sensitive metrics'}
+                >
+                  {showFinancialValues ? <Eye className="h-5 w-5" /> : <EyeOff className="h-5 w-5" />}
+                </Button>
+              </div>
             )}
           </div>
           <div className={`dashboard-summary-grid ${isAdmin ? 'dashboard-admin-summary-grid' : ''}`}>

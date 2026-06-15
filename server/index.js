@@ -2181,6 +2181,15 @@ function parseOptionalPositiveDecimal(value, fieldName, { max = null } = {}) {
   return parsed;
 }
 
+function requireOfficialInventoryCostPrice(costPrice) {
+  if (costPrice === null || costPrice === undefined || costPrice === '') {
+    const error = new Error('Default unit cost is required before an inventory item can be saved or approved as an official inventory record.');
+    error.statusCode = 400;
+    throw error;
+  }
+  return costPrice;
+}
+
 // Profit is captured at sale time using the item's current cost. Historical
 // sales reports remain stable even if the product cost is edited later.
 function calculateSalesLineProfit({ quantitySold, unitCostAtSale, subtotal }) {
@@ -3044,7 +3053,7 @@ function assertFreshInventorySnapshot(expectedLastUpdated, currentLastUpdated) {
 
 // Shared inventory validation keeps admin edits and approval requests aligned:
 // clean names/categories, validate quantities, and normalize reorder planning.
-function prepareInventoryPayload(payload, { currentRow = null, preserveCurrentQuantity = false } = {}) {
+function prepareInventoryPayload(payload, { currentRow = null, preserveCurrentQuantity = false, requireCostPrice = false } = {}) {
   const cleanName = cleanInventoryName(getPayloadValue(payload, ['name']));
   const cleanSupplier = cleanSupplierName(getPayloadValue(payload, ['supplierName', 'supplier_name'], currentRow?.supplier_name || ''));
   const canonicalCategory = canonicalizeInventoryCategory(getPayloadValue(payload, ['category'], currentRow?.category));
@@ -3079,9 +3088,12 @@ function prepareInventoryPayload(payload, { currentRow = null, preserveCurrentQu
   );
   const costPrice = parseOptionalPositiveDecimal(
     getPayloadValue(payload, ['costPrice', 'cost_price'], currentRow?.cost_price ?? null),
-    'Cost price',
+    'Default unit cost',
     { max: 100000000 }
   );
+  if (requireCostPrice) {
+    requireOfficialInventoryCostPrice(costPrice);
+  }
   const averageDailySalesMode = normalizeAverageDailySalesMode(getPayloadValue(payload, ['averageDailySalesMode', 'average_daily_sales_mode'], currentRow?.average_daily_sales_mode || 'auto'));
   const manualAverageDailySales = averageDailySalesMode === 'manual'
     ? parseOptionalNonNegativeDecimal(
@@ -3125,7 +3137,7 @@ function prepareInventoryPayload(payload, { currentRow = null, preserveCurrentQu
 }
 
 async function applyApprovedInventoryAddRequest(client, { request, actorId }) {
-  const values = prepareInventoryPayload(request.requested_payload || {});
+  const values = prepareInventoryPayload(request.requested_payload || {}, { requireCostPrice: true });
 
   const activeExactNameDuplicate = await findExactActiveInventoryItemByName(client, {
     branch: request.branch,
@@ -3322,7 +3334,8 @@ async function applyApprovedInventoryEditRequest(client, { request, actorId }) {
 
   const values = prepareInventoryPayload(request.requested_payload || {}, {
     currentRow: inventoryRow,
-    preserveCurrentQuantity: true
+    preserveCurrentQuantity: true,
+    requireCostPrice: true
   });
   const previousQuantity = Number(inventoryRow.stock_level || 0);
   const nextAverageDailySales = values.averageDailySalesMode === 'manual'
@@ -3491,7 +3504,7 @@ async function applyApprovedInventoryEditRequest(client, { request, actorId }) {
   if (categoryNoteChanged) changedFields.push('category note');
   if (supplierChanged) changedFields.push('supplier');
   if (defaultSellingPriceChanged) changedFields.push('default selling price');
-  if (costPriceChanged) changedFields.push('cost price');
+  if (costPriceChanged) changedFields.push('unit cost');
   if (reorderLevelChanged) changedFields.push('reorder level');
   if (reorderPlanningChanged) changedFields.push('reorder planning');
 
@@ -3793,6 +3806,10 @@ function canRecordSales(user) {
 function canPerformInventoryMovement(user) {
   const role = normalizeRole(user?.role);
   return role === 'Admin' || role === 'Inventory Staff' || role === 'Sales Encoder + Inventory Staff';
+}
+
+function canViewInventoryUnitCost(user) {
+  return canPerformInventoryMovement(user);
 }
 
 function getRoleLabel(role) {
@@ -5492,7 +5509,7 @@ app.get('/api/inventory', authenticate, async (req, res) => {
        ORDER BY p.name ASC`,
       [req.user.branch]
     );
-    return res.json({ products: result.rows.map(row => mapInventoryRow(row, { includeCostPrice: isAdmin(req.user) })) });
+    return res.json({ products: result.rows.map(row => mapInventoryRow(row, { includeCostPrice: canViewInventoryUnitCost(req.user) })) });
   } catch (err) {
     console.error('Fetch products error:', err);
     return res.status(500).json({ error: 'Failed to load products' });
@@ -5800,7 +5817,7 @@ app.get('/api/archive', authenticate, async (req, res) => {
       [req.user.branch]
     );
 
-    return res.json({ archivedProducts: result.rows.map(row => mapArchivedInventoryRow(row, { includeCostPrice: isAdmin(req.user) })) });
+    return res.json({ archivedProducts: result.rows.map(row => mapArchivedInventoryRow(row, { includeCostPrice: canViewInventoryUnitCost(req.user) })) });
   } catch (err) {
     console.error('Get archive error:', err);
     return res.status(500).json({ error: 'Failed to load archive' });
@@ -7860,7 +7877,8 @@ app.post('/api/inventory', authenticate, requireAdmin, async (req, res) => {
     const stockLevel = parseNonNegativeInteger(stock_level, 'Stock level');
     const minStockLevel = parseNonNegativeInteger(min_stock_level, 'Manual low-stock threshold');
     const defaultSellingPrice = parseOptionalPositiveDecimal(default_selling_price, 'Default selling price', { max: 100000000 });
-    const costPrice = parseOptionalPositiveDecimal(cost_price, 'Cost price', { max: 100000000 });
+    const costPrice = parseOptionalPositiveDecimal(cost_price, 'Default unit cost', { max: 100000000 });
+    requireOfficialInventoryCostPrice(costPrice);
     const leadTimeDays = parseOptionalNonNegativeInteger(lead_time_days, 'Supplier lead time', { max: 365 });
     const safetyStock = parseOptionalNonNegativeInteger(safety_stock, 'Safety stock', { max: 100000 });
     const averageDailySalesMode = normalizeAverageDailySalesMode(average_daily_sales_mode);
@@ -8525,7 +8543,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       : parseOptionalPositiveDecimal(default_selling_price, 'Default selling price', { max: 100000000 });
     const nextCostPrice = cost_price === undefined
       ? (inventoryRow.cost_price === null || inventoryRow.cost_price === undefined ? null : Number(inventoryRow.cost_price))
-      : parseOptionalPositiveDecimal(cost_price, 'Cost price', { max: 100000000 });
+      : parseOptionalPositiveDecimal(cost_price, 'Default unit cost', { max: 100000000 });
     const status = computeInventoryStatus(nextQuantity, getEffectiveReorderThreshold({
       min_stock_level: nextMinStockLevel,
       lead_time_days: nextLeadTimeDays,
@@ -8600,6 +8618,10 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       !costPriceChanged &&
       !reorderLevelChanged &&
       !reorderPlanningChanged;
+
+    if (isAdmin(req.user) && !isValidStockMovementRequest) {
+      requireOfficialInventoryCostPrice(nextCostPrice);
+    }
 
     if (action && quantityChanged && !expectedDirectionIsValid) {
       await client.query('ROLLBACK');
@@ -8908,7 +8930,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
       if (categoryNoteChanged) changedFields.push('category note');
       if (supplierChanged) changedFields.push('supplier');
       if (defaultSellingPriceChanged) changedFields.push('default selling price');
-      if (costPriceChanged) changedFields.push('cost price');
+      if (costPriceChanged) changedFields.push('unit cost');
       if (previousQuantity !== nextQuantity) changedFields.push('quantity');
       if (Number(inventoryRow.min_stock_level || 0) !== nextMinStockLevel) changedFields.push('reorder level');
       if (reorderPlanningChanged) changedFields.push('reorder planning');
@@ -8975,7 +8997,7 @@ app.put('/api/inventory/:id', authenticate, async (req, res) => {
     }
 
     await client.query('COMMIT');
-    return res.json({ product: mapInventoryRow(updatedItem, { includeCostPrice: isAdmin(req.user) }) });
+    return res.json({ product: mapInventoryRow(updatedItem, { includeCostPrice: canViewInventoryUnitCost(req.user) }) });
   } catch (err) {
     await client.query('ROLLBACK');
     if (err.statusCode) {
