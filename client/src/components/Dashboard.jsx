@@ -388,9 +388,9 @@ export function Dashboard({
     return saleDate >= start && saleDate <= end;
   };
 
-  const salesToday = (salesTransactions || []).filter(sale => sale.status !== 'cancelled' && isToday(sale.createdAt, todayKey));
+  const salesToday = (salesTransactions || []).filter(sale => sale.status === 'completed' && isToday(sale.createdAt, todayKey));
   const stockMovementsToday = (stockMovements || []).filter(movement => isToday(movement.createdAt, todayKey));
-  const completedSales = (salesTransactions || []).filter(sale => sale.status !== 'cancelled');
+  const completedSales = (salesTransactions || []).filter(sale => sale.status === 'completed');
   const dashboardSales = completedSales.filter(isSaleInDashboardPeriod);
   const previousDashboardSales = completedSales.filter(isSaleInPreviousDashboardPeriod);
   const topSellingDashboardPeriod = getTopSellingItem(dashboardSales);

@@ -1059,7 +1059,7 @@ export function ReportsModule({
   };
 
   const getEarningsSalesTransactions = () =>
-    getFilteredSalesTransactions().filter(sale => sale.status !== 'cancelled');
+    getFilteredSalesTransactions().filter(sale => sale.status === 'completed');
 
   // Actual earnings reports use sold-item cost snapshots captured at sale time,
   // so later inventory cost edits do not rewrite historical profit.

@@ -420,6 +420,10 @@ export function DataProvider({ children }) {
           defaultSellingPrice: p.default_selling_price === null || p.default_selling_price === undefined ? '' : Number(p.default_selling_price),
           costPrice: p.cost_price === null || p.cost_price === undefined ? '' : Number(p.cost_price),
           quantity: p.stock_level,
+          reservedQuantity: Number(p.reserved_stock || 0),
+          availableQuantity: p.available_stock === null || p.available_stock === undefined
+            ? Number(p.stock_level || 0)
+            : Number(p.available_stock || 0),
           reorderLevel: p.min_stock_level,
           leadTimeDays: normalizeOptionalNumber(p.lead_time_days),
           safetyStock: normalizeOptionalNumber(p.safety_stock),
@@ -1262,13 +1266,25 @@ export function DataProvider({ children }) {
 
   // Refunds are separate transactions linked to the original sale. The backend
   // restores eligible tracked stock and prevents over-refunding prior quantities.
-  const refundSale = async ({ saleId, items, refundReason, actualTransactionAt, backdateReason }) => {
+  const refundSale = async ({
+    saleId,
+    items,
+    refundReason,
+    itemCondition,
+    restockDecision,
+    refundPolicyAcknowledged,
+    actualTransactionAt,
+    backdateReason
+  }) => {
     const token = localStorage.getItem("token");
     try {
       const res = await axios.post(
         apiUrl(`/api/sales/${saleId}/refund`),
         {
           refund_reason: refundReason,
+          item_condition: itemCondition,
+          restock_decision: restockDecision,
+          refund_policy_acknowledged: refundPolicyAcknowledged,
           actual_transaction_at: actualTransactionAt,
           backdate_reason: backdateReason,
           items: items.map(item => ({

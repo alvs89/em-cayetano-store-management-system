@@ -1,7 +1,7 @@
 // Sales module: handles POS checkout, receipt/invoice printing, sales history,
 // refunds, and inventory deductions for tracked items.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Minus, ReceiptText, Trash2, ShoppingCart, History, CheckCircle, Info, PackageCheck, AlertTriangle, TrendingUp, User, Coins, ClipboardList, Search, CalendarDays, Clock, Tag, Wallet, MessageSquareText, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Pencil, RotateCcw } from 'lucide-react';
+import { Plus, Minus, ReceiptText, Trash2, ShoppingCart, History, CheckCircle, Info, PackageCheck, AlertTriangle, TrendingUp, User, Coins, ClipboardList, Search, CalendarDays, Clock, Tag, Wallet, MessageSquareText, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Pencil, RotateCcw, Filter } from 'lucide-react';
 import { toast } from 'sonner';
 import jsPDF from 'jspdf';
 import { PageHeader } from './PageHeader';
@@ -132,6 +132,12 @@ const getSaleItemCategoryDisplay = item => {
   return note ? `${category}: ${note}` : category;
 };
 
+const getAvailableSaleStock = item => Number(
+  item?.availableQuantity === null || item?.availableQuantity === undefined
+    ? item?.quantity || 0
+    : item.availableQuantity || 0
+);
+
 const getSaleItemNotes = sale =>
   (sale?.items || [])
     .map(item => String(item.categoryNote || item.category_note || '').trim())
@@ -140,7 +146,8 @@ const getSaleItemNotes = sale =>
 const getSaleRemarksText = sale =>
   String(sale?.remarks || '').trim() || getSaleItemNotes(sale).join('\n');
 
-const requiresPaymentConfirmation = paymentMethod => ['gcash', 'bank_transfer'].includes(paymentMethod);
+const requiresPaymentConfirmation = paymentMethod => paymentMethod === 'gcash';
+const requiresPaymentReference = paymentMethod => paymentMethod === 'gcash' || paymentMethod === 'bank_transfer';
 const VAT_RATE = 0.12;
 
 // VAT is treated as inclusive in the sale amount. The breakdown is displayed on
@@ -971,6 +978,30 @@ const getRemainingRefundAmount = item =>
 const hasRefundedSaleItems = sale =>
   (sale?.items || []).some(item => Number(item?.refundedQuantity || 0) > 0 || Number(item?.refundedAmount || 0) > 0);
 
+const isFullyRefundedSale = sale =>
+  !isRefundSalesRecord(sale) &&
+  hasRefundedSaleItems(sale) &&
+  (sale?.items || [])
+    .filter(item => Number(item?.quantitySold || 0) > 0)
+    .every(item => getRemainingRefundQuantity(item) <= 0);
+
+const getSalesHistoryStatusFilterValue = sale => {
+  if (isRefundSalesRecord(sale)) return 'refund_records';
+  if (sale?.status === 'cancelled') return 'cancelled';
+  if (isFullyRefundedSale(sale)) return 'refunded';
+  if (hasRefundedSaleItems(sale)) return 'partially_refunded';
+  return 'completed';
+};
+
+const SALES_HISTORY_STATUS_FILTERS = [
+  { value: 'all', label: 'All Sales' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'partially_refunded', label: 'Partially Refunded' },
+  { value: 'refunded', label: 'Refunded' },
+  { value: 'cancelled', label: 'Cancelled' },
+  { value: 'refund_records', label: 'Refund Records' }
+];
+
 // Centralizes refund limit wording so real-time validation and final checks stay consistent.
 const getRefundableQuantityLimitMessage = maxQuantity =>
   `Only ${maxQuantity} unit${Number(maxQuantity) === 1 ? ' is' : 's are'} refundable for this item.`;
@@ -988,6 +1019,19 @@ const REFUND_REASON_SUGGESTIONS = [
   { label: 'Changed Decision', value: 'Customer changed purchase decision.' },
   { label: 'Replacement Request', value: 'Customer requested item replacement.' },
   { label: 'Sale Reversed', value: 'Sale transaction reversed after verification.' }
+];
+
+const REFUND_ITEM_CONDITION_OPTIONS = [
+  { value: 'resalable', label: 'Resalable / Unused' },
+  { value: 'defective', label: 'Defective' },
+  { value: 'damaged', label: 'Damaged' },
+  { value: 'used_or_installed', label: 'Used / Installed' },
+  { value: 'missing_parts', label: 'Missing Parts or Packaging' }
+];
+
+const REFUND_RESTOCK_OPTIONS = [
+  { value: 'return_to_stock', label: 'Return to Sellable Stock' },
+  { value: 'do_not_restock', label: 'Do Not Restock' }
 ];
 
 const normalizeRefundReasonText = value =>
@@ -1152,6 +1196,9 @@ export function SalesModule({ user }) {
   const [saleToRefund, setSaleToRefund] = useState(null);
   const [refundLines, setRefundLines] = useState([]);
   const [refundReason, setRefundReason] = useState('');
+  const [refundItemCondition, setRefundItemCondition] = useState('resalable');
+  const [refundRestockDecision, setRefundRestockDecision] = useState('return_to_stock');
+  const [refundPolicyAccepted, setRefundPolicyAccepted] = useState(false);
   const [refundActualTransactionAt, setRefundActualTransactionAt] = useState('');
   const [refundBackdateReason, setRefundBackdateReason] = useState('');
   const [completedSale, setCompletedSale] = useState(null);
@@ -1164,6 +1211,7 @@ export function SalesModule({ user }) {
   const [productPage, setProductPage] = useState(1);
   const [historySearch, setHistorySearch] = useState('');
   const [historyPeriod, setHistoryPeriod] = useState('all');
+  const [historyStatusFilter, setHistoryStatusFilter] = useState('all');
   const [selectedHistorySaleId, setSelectedHistorySaleId] = useState('');
   const [isClearItemsConfirmOpen, setIsClearItemsConfirmOpen] = useState(false);
   const [recoverableSalesDraft, setRecoverableSalesDraft] = useState(null);
@@ -1307,8 +1355,8 @@ export function SalesModule({ user }) {
     const sorters = {
       name_az: (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' }),
       name_za: (a, b) => String(b.name || '').localeCompare(String(a.name || ''), undefined, { numeric: true, sensitivity: 'base' }),
-      stock_low: (a, b) => Number(a.quantity || 0) - Number(b.quantity || 0),
-      stock_high: (a, b) => Number(b.quantity || 0) - Number(a.quantity || 0),
+      stock_low: (a, b) => getAvailableSaleStock(a) - getAvailableSaleStock(b),
+      stock_high: (a, b) => getAvailableSaleStock(b) - getAvailableSaleStock(a),
       price_low: (a, b) => Number(a.defaultSellingPrice || 0) - Number(b.defaultSellingPrice || 0),
       price_high: (a, b) => Number(b.defaultSellingPrice || 0) - Number(a.defaultSellingPrice || 0)
     };
@@ -1748,7 +1796,12 @@ export function SalesModule({ user }) {
       return true;
     };
 
-    const periodFilteredSales = sortedSales.filter(matchesPeriod);
+    const matchesStatus = sale =>
+      historyStatusFilter === 'all' || getSalesHistoryStatusFilterValue(sale) === historyStatusFilter;
+
+    const periodFilteredSales = sortedSales
+      .filter(matchesPeriod)
+      .filter(matchesStatus);
     const query = historySearch.trim().toLowerCase();
     if (!query) return periodFilteredSales;
 
@@ -1791,7 +1844,7 @@ export function SalesModule({ user }) {
 
       return searchableText.includes(query);
     });
-  }, [historyPeriod, historySearch, sortedSales]);
+  }, [historyPeriod, historySearch, historyStatusFilter, sortedSales]);
 
   const selectedHistorySale = useMemo(() => {
     if (!selectedHistorySaleId) return null;
@@ -1826,7 +1879,7 @@ export function SalesModule({ user }) {
         return line;
       }
 
-      const availableStock = Number(selectedItem.quantity || 0);
+      const availableStock = getAvailableSaleStock(selectedItem);
       const requestedQuantity = Number(rawValue);
 
       if (Number.isFinite(requestedQuantity) && requestedQuantity <= 0) {
@@ -2017,7 +2070,7 @@ export function SalesModule({ user }) {
 
     const existingInventoryItem = findInventoryItemByExactSalesName(itemName);
     if (existingInventoryItem) {
-      const isOutOfStock = Number(existingInventoryItem.quantity || 0) <= 0 || existingInventoryItem.status === 'Out of Stock';
+      const isOutOfStock = getAvailableSaleStock(existingInventoryItem) <= 0 || existingInventoryItem.status === 'Out of Stock';
       toast.error('This item already exists in Inventory', {
         description: isOutOfStock
           ? `"${existingInventoryItem.name}" is currently out of stock. Use Stock In or Purchase Entry before selling it, instead of adding it as non-inventory.`
@@ -2096,7 +2149,7 @@ export function SalesModule({ user }) {
       return;
     }
 
-    const availableStock = Number(item.quantity || 0);
+    const availableStock = getAvailableSaleStock(item);
     if (availableStock <= 0) {
       toast.warning(`${item.name} is out of stock and cannot be added to the sale.`);
       return;
@@ -2139,7 +2192,7 @@ export function SalesModule({ user }) {
         return line;
       }
 
-      const availableStock = Number(selectedItem.quantity || 0);
+      const availableStock = getAvailableSaleStock(selectedItem);
       const currentQuantity = Number(line.quantity || 0);
       const nextQuantity = Math.max(1, currentQuantity + change);
 
@@ -2303,7 +2356,7 @@ export function SalesModule({ user }) {
         }
         const existingInventoryItem = findInventoryItemByExactSalesName(line.itemName);
         if (existingInventoryItem) {
-          const isOutOfStock = Number(existingInventoryItem.quantity || 0) <= 0 || existingInventoryItem.status === 'Out of Stock';
+          const isOutOfStock = getAvailableSaleStock(existingInventoryItem) <= 0 || existingInventoryItem.status === 'Out of Stock';
           toast.error(`${line.itemName} already exists in Inventory`, {
             description: isOutOfStock
               ? 'This tracked item is out of stock. Record Stock In or Purchase Entry first before selling it.'
@@ -2330,8 +2383,9 @@ export function SalesModule({ user }) {
         return false;
       }
 
-      if (line.quantity > Number(line.item.quantity || 0)) {
-        toast.error(`${line.item.name} has only ${line.item.quantity} unit${Number(line.item.quantity) === 1 ? '' : 's'} available.`);
+      if (line.quantity > getAvailableSaleStock(line.item)) {
+        const availableStock = getAvailableSaleStock(line.item);
+        toast.error(`${line.item.name} has only ${availableStock} unit${availableStock === 1 ? '' : 's'} available.`);
         return false;
       }
 
@@ -2412,16 +2466,21 @@ export function SalesModule({ user }) {
     }
 
     if (needsPaymentConfirmation && !paymentConfirmed) {
-      toast.error('Confirm that the GCash or bank transfer payment was received before completing the sale.');
+      toast.error('Confirm that the GCash payment was received before completing the sale.');
       return false;
     }
 
     if (needsPaymentConfirmation && paymentConfirmedAmount !== null && Number(paymentConfirmedAmount) !== Number(totalAmount.toFixed(2))) {
-      toast.error('Payment total changed. Please confirm the GCash or bank transfer payment again.');
+      toast.error('Payment total changed. Please confirm the GCash payment again.');
       return false;
     }
 
-    if (needsPaymentConfirmation && paymentReference.trim().length > 120) {
+    if (paymentMethod === 'bank_transfer' && paymentReference.trim().length < 3) {
+      toast.error('Enter the bank transfer reference number before completing the sale.');
+      return false;
+    }
+
+    if (requiresPaymentReference(paymentMethod) && paymentReference.trim().length > 120) {
       toast.error('Payment reference must be 120 characters or fewer.');
       return false;
     }
@@ -2461,8 +2520,8 @@ export function SalesModule({ user }) {
         discountAmount: safeDiscountAmount,
         deliveryCharge: safeDeliveryCharge,
         amountReceived: paymentMethod === 'cash' ? safeAmountReceived : totalAmount,
-        paymentReference: needsPaymentConfirmation ? paymentReference.trim() : '',
-        paymentConfirmed: needsPaymentConfirmation || paymentMethod === 'cash',
+        paymentReference: requiresPaymentReference(paymentMethod) ? paymentReference.trim() : '',
+        paymentConfirmed: needsPaymentConfirmation || paymentMethod === 'cash' || paymentMethod === 'bank_transfer',
         actualTransactionAt: actualTransactionAt || '',
         backdateReason: isPastTransactionDate(actualTransactionAt) ? backdateReason.trim() : '',
         items: selectedLineDetails.map(line => ({
@@ -2560,6 +2619,9 @@ export function SalesModule({ user }) {
     setSaleToRefund(sale);
     setRefundLines(refundableItems);
     setRefundReason('');
+    setRefundItemCondition('resalable');
+    setRefundRestockDecision('return_to_stock');
+    setRefundPolicyAccepted(false);
     setRefundActualTransactionAt('');
     setRefundBackdateReason('');
   };
@@ -2569,6 +2631,9 @@ export function SalesModule({ user }) {
     setSaleToRefund(null);
     setRefundLines([]);
     setRefundReason('');
+    setRefundItemCondition('resalable');
+    setRefundRestockDecision('return_to_stock');
+    setRefundPolicyAccepted(false);
     setRefundActualTransactionAt('');
     setRefundBackdateReason('');
   };
@@ -2693,6 +2758,16 @@ export function SalesModule({ user }) {
       return;
     }
 
+    if (!refundPolicyAccepted) {
+      toast.error('Please acknowledge the refund and return policy before recording.');
+      return;
+    }
+
+    if (refundRestockDecision === 'return_to_stock' && refundItemCondition !== 'resalable') {
+      toast.error('Only resalable returned items can be added back to sellable stock.');
+      return;
+    }
+
     if (refundActualTransactionAt) {
       const selectedDate = new Date(refundActualTransactionAt);
       if (Number.isNaN(selectedDate.getTime())) {
@@ -2710,6 +2785,9 @@ export function SalesModule({ user }) {
       const refundRecord = await refundSale({
         saleId: saleToRefund.id,
         refundReason: cleanReason,
+        itemCondition: refundItemCondition,
+        restockDecision: refundRestockDecision,
+        refundPolicyAcknowledged: refundPolicyAccepted,
         actualTransactionAt: refundActualTransactionAt || '',
         backdateReason: isPastTransactionDate(refundActualTransactionAt) ? refundBackdateReason.trim() : '',
         items: selectedRefundLines.map(line => ({
@@ -2718,12 +2796,15 @@ export function SalesModule({ user }) {
           refundAmount: Number(line.refundAmountValue.toFixed(2))
         }))
       });
-      toast.success('Refund recorded and stock restored.', {
+      toast.success(refundRestockDecision === 'return_to_stock' ? 'Refund recorded and stock restored.' : 'Refund recorded without restocking.', {
         description: `${getPrimaryDocumentNumber(refundRecord)} was saved.`
       });
       setSaleToRefund(null);
       setRefundLines([]);
       setRefundReason('');
+      setRefundItemCondition('resalable');
+      setRefundRestockDecision('return_to_stock');
+      setRefundPolicyAccepted(false);
       setRefundActualTransactionAt('');
       setRefundBackdateReason('');
     } catch (err) {
@@ -3392,9 +3473,9 @@ export function SalesModule({ user }) {
         .sales-history-detail-header {
           display: flex;
           flex-direction: column;
-          gap: 0.95rem;
-          margin-bottom: 1.1rem;
-          padding-bottom: 1.05rem;
+          gap: 0.75rem;
+          margin-bottom: 0.9rem;
+          padding-bottom: 0.85rem;
           border-bottom: 1px solid #e2e8f0;
         }
 
@@ -3427,7 +3508,7 @@ export function SalesModule({ user }) {
 
         .sales-history-detail-date-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
           gap: 0.65rem;
           min-width: 0;
         }
@@ -3439,9 +3520,9 @@ export function SalesModule({ user }) {
           align-items: center;
           min-width: 0;
           border: 1px solid #e2e8f0;
-          border-radius: 0.75rem;
+          border-radius: 0.65rem;
           background: #f8fafc;
-          padding: 0.7rem 0.8rem;
+          padding: 0.62rem 0.75rem;
         }
 
         .sales-history-detail-date-card-warning {
@@ -3483,20 +3564,23 @@ export function SalesModule({ user }) {
         }
 
         .sales-history-detail-actions {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(7.75rem, 1fr));
-          align-items: stretch;
-          gap: 0.55rem;
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 0.45rem;
           min-width: 0;
         }
 
         .sales-history-action-button {
-          min-height: 2.65rem;
+          min-height: 2.35rem;
           justify-content: center;
-          gap: 0.5rem;
-          border-radius: 0.7rem;
-          font-size: 0.88rem;
-          font-weight: 850;
+          gap: 0.42rem;
+          border-radius: 0.62rem;
+          padding-left: 0.78rem;
+          padding-right: 0.78rem;
+          font-size: 0.8rem;
+          font-weight: 800;
+          white-space: nowrap;
           transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 120ms ease;
         }
 
@@ -3564,7 +3648,7 @@ export function SalesModule({ user }) {
           align-items: flex-start;
           gap: 0.55rem;
           border: 1px solid #bfdbfe;
-          border-radius: 0.75rem;
+          border-radius: 0.65rem;
           background: #eff6ff;
           color: #1e3a8a;
           padding: 0.7rem 0.8rem;
@@ -3586,6 +3670,53 @@ export function SalesModule({ user }) {
           gap: 0.45rem;
           font-weight: 850;
           white-space: nowrap;
+        }
+
+        .sales-history-detail-field {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr);
+          align-items: center;
+          gap: 0.7rem;
+          min-width: 0;
+          border: 1px solid #e2e8f0;
+          border-radius: 0.68rem;
+          background: #f8fafc;
+          padding: 0.65rem 0.75rem;
+        }
+
+        .sales-history-detail-field-icon {
+          display: inline-flex;
+          width: 2rem;
+          height: 2rem;
+          align-items: center;
+          justify-content: center;
+          border-radius: 0.62rem;
+          background: #eff6ff;
+          color: #2563eb;
+        }
+
+        .sales-history-detail-field-label {
+          display: block;
+          color: #64748b;
+          font-size: 0.72rem;
+          font-weight: 750;
+          line-height: 1.15;
+        }
+
+        .sales-history-detail-field-value {
+          display: block;
+          margin-top: 0.18rem;
+          color: #0f172a;
+          font-size: 0.92rem;
+          font-weight: 850;
+          line-height: 1.25;
+          overflow-wrap: anywhere;
+        }
+
+        .sales-history-detail-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(12.5rem, 1fr));
+          gap: 0.65rem;
         }
 
         .sales-cancel-dialog {
@@ -4520,12 +4651,20 @@ export function SalesModule({ user }) {
         .sales-receipt-preview-dialog {
           width: min(100% - 1.5rem, 32rem);
           max-width: min(100% - 1.5rem, 32rem) !important;
+          max-height: min(92dvh, 900px);
           border-radius: 1rem;
+          overflow: hidden;
         }
 
         .sales-receipt-preview-content {
           position: relative;
+          display: flex;
+          max-height: min(92dvh, 900px);
+          min-height: 0;
+          flex-direction: column;
           padding: 1.25rem;
+          overflow-y: auto;
+          overscroll-behavior: contain;
         }
 
         .sales-receipt-close-button {
@@ -4551,8 +4690,27 @@ export function SalesModule({ user }) {
           color: #0f172a;
         }
 
+        .sales-receipt-preview-title-row {
+          display: grid;
+          grid-template-columns: 2.25rem minmax(0, 1fr);
+          align-items: start;
+          column-gap: 0.85rem;
+        }
+
+        .sales-receipt-preview-status-icon {
+          display: inline-flex;
+          width: 2.25rem;
+          height: 2.25rem;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid #e2e8f0;
+          border-radius: 999px;
+          margin-top: -0.1rem;
+        }
+
         .sales-receipt-paper {
           width: min(100%, 30rem);
+          flex-shrink: 0;
           margin: 1rem auto 0;
           border: 1px solid #cbd5e1;
           border-radius: 0.5rem;
@@ -4652,10 +4810,50 @@ export function SalesModule({ user }) {
         }
 
         .sales-receipt-actions {
-          display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 0.65rem;
-          margin-top: 1rem;
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          align-items: center;
+          gap: 0.55rem;
+          margin-top: 0.95rem;
+          padding-top: 0.85rem;
+          border-top: 1px solid #e2e8f0;
+        }
+
+        .sales-receipt-actions .sales-action-button {
+          min-height: 2.45rem;
+          border-radius: 0.65rem;
+          padding-left: 0.9rem;
+          padding-right: 0.9rem;
+          font-size: 0.86rem;
+          font-weight: 750;
+          white-space: nowrap;
+        }
+
+        .sales-receipt-start-button {
+          border-color: #cbd5e1;
+          background: #ffffff;
+          color: #475569;
+        }
+
+        .sales-receipt-start-button:hover,
+        .sales-receipt-start-button:focus-visible {
+          border-color: #94a3b8;
+          background: #f8fafc;
+          color: #0f172a;
+        }
+
+        .sales-receipt-actions .sales-transaction-summary-button {
+          border-color: #cbd5e1;
+          background: #ffffff;
+          color: #334155;
+        }
+
+        .sales-receipt-actions .sales-transaction-summary-button:hover,
+        .sales-receipt-actions .sales-transaction-summary-button:focus-visible {
+          border-color: #64748b;
+          background: #f8fafc;
+          color: #0f172a;
         }
 
         .sales-cancel-icon {
@@ -4670,18 +4868,174 @@ export function SalesModule({ user }) {
           color: #c2410c;
         }
 
-        @media (max-width: 640px) {
+        @media (max-width: 780px) {
+          .sales-receipt-preview-dialog {
+            width: min(100vw - 1rem, 40rem);
+            max-width: min(100vw - 1rem, 40rem) !important;
+            max-height: calc(100dvh - 1rem);
+            border-radius: 0.95rem;
+          }
+
+          .sales-receipt-preview-content {
+            max-height: calc(100dvh - 1rem);
+            padding: 1rem;
+          }
+
+          .sales-receipt-close-button {
+            top: 0.75rem;
+            right: 0.75rem;
+          }
+
+          .sales-receipt-preview-title-row {
+            grid-template-columns: 2rem minmax(0, 1fr);
+            column-gap: 0.65rem;
+            padding-right: 2.65rem;
+          }
+
+          .sales-receipt-preview-status-icon {
+            width: 2rem;
+            height: 2rem;
+            margin-top: 0;
+          }
+
+          .sales-receipt-paper {
+            width: 100%;
+            padding: 0.85rem;
+          }
+
           .sales-receipt-preview-header {
             grid-template-columns: 1fr;
-            gap: 0.75rem;
+            gap: 0.6rem;
           }
 
           .sales-receipt-preview-invoice {
             text-align: center;
           }
 
+          .sales-receipt-preview-title {
+            font-size: 1.32rem;
+          }
+
           .sales-receipt-preview-number {
             white-space: normal;
+          }
+
+          .sales-receipt-actions {
+            position: sticky;
+            bottom: -1rem;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), #ffffff 34%);
+            padding-bottom: 0.15rem;
+          }
+        }
+
+        @media (max-width: 520px) {
+          .sales-receipt-preview-dialog {
+            width: calc(100vw - 1rem);
+            max-width: calc(100vw - 1rem) !important;
+            max-height: calc(100dvh - 1rem);
+            border-radius: 0.8rem;
+          }
+
+          .sales-receipt-preview-content {
+            max-height: calc(100dvh - 1rem);
+            padding: 0.7rem;
+          }
+
+          .sales-receipt-preview-title-row {
+            grid-template-columns: 1.6rem minmax(0, 1fr);
+            column-gap: 0.5rem;
+            padding-right: 2.1rem;
+          }
+
+          .sales-receipt-preview-title-row .text-lg {
+            font-size: 1rem;
+            line-height: 1.2;
+          }
+
+          .sales-receipt-preview-title-row .text-sm {
+            margin-top: 0.35rem;
+            font-size: 0.82rem;
+            line-height: 1.45;
+          }
+
+          .sales-receipt-preview-status-icon {
+            width: 1.6rem;
+            height: 1.6rem;
+          }
+
+          .sales-receipt-preview-status-icon svg {
+            width: 0.95rem;
+            height: 0.95rem;
+          }
+
+          .sales-receipt-close-button {
+            width: 1.95rem;
+            height: 1.95rem;
+            top: 0.6rem;
+            right: 0.6rem;
+          }
+
+          .sales-receipt-paper {
+            margin-top: 0.7rem;
+            padding: 0.65rem;
+          }
+
+          .sales-receipt-preview-brand-name {
+            font-size: 0.85rem;
+          }
+
+          .sales-receipt-preview-tin,
+          .sales-receipt-preview-address,
+          .sales-receipt-preview-contact {
+            font-size: 0.58rem;
+            line-height: 1.12;
+          }
+
+          .sales-receipt-preview-prop {
+            font-size: 0.62rem;
+          }
+
+          .sales-receipt-preview-sales {
+            font-size: 0.62rem;
+          }
+
+          .sales-receipt-preview-title {
+            font-size: 1.05rem;
+          }
+
+          .sales-receipt-preview-number {
+            margin-top: 0.3rem;
+            font-size: 0.62rem;
+          }
+
+          .sales-receipt-divider {
+            margin: 0.55rem 0;
+          }
+
+          .sales-receipt-row {
+            gap: 0.55rem;
+            font-size: 0.68rem;
+            line-height: 1.1rem;
+          }
+
+          .sales-receipt-item {
+            padding: 0.25rem 0;
+            font-size: 0.7rem;
+            line-height: 1.08rem;
+          }
+
+          .sales-receipt-actions {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 0.45rem;
+            margin-top: 0.6rem;
+            padding-top: 0.55rem;
+          }
+
+          .sales-receipt-actions .sales-action-button {
+            width: 100%;
+            min-height: 2.15rem;
+            font-size: 0.8rem;
           }
 
           .sales-cancel-icon {
@@ -4939,7 +5293,7 @@ export function SalesModule({ user }) {
 
         .sales-history-filter-panel {
           display: grid;
-          grid-template-columns: minmax(320px, 1fr) minmax(420px, auto);
+          grid-template-columns: minmax(320px, 1fr) minmax(560px, auto);
           align-items: center;
           gap: 1rem;
         }
@@ -4966,7 +5320,7 @@ export function SalesModule({ user }) {
 
         .sales-history-filter-controls {
           display: grid;
-          grid-template-columns: minmax(13rem, 15rem) minmax(8.5rem, auto) minmax(8.5rem, auto);
+          grid-template-columns: minmax(11rem, 13rem) minmax(13rem, 15rem) minmax(8.5rem, auto) minmax(8.5rem, auto);
           align-items: center;
           gap: 0.75rem;
           color: #475569;
@@ -7323,7 +7677,9 @@ export function SalesModule({ user }) {
                   const defaultPrice = Number(item.defaultSellingPrice || 0);
                   const existingLine = saleLines.find(line => String(line.inventoryId) === String(item.id));
                   const selectedQuantity = Number(existingLine?.quantity || 0);
-                  const isOutOfStock = Number(item.quantity || 0) <= 0;
+                  const availableStock = getAvailableSaleStock(item);
+                  const reservedStock = Number(item.reservedQuantity || 0);
+                  const isOutOfStock = availableStock <= 0;
                   const isAlreadySelected = selectedQuantity > 0;
                   return (
                     <div
@@ -7341,7 +7697,13 @@ export function SalesModule({ user }) {
                           <span className="sales-product-meta">
                             <span>{getSaleItemCategoryDisplay(item)}</span>
                             <span>&middot;</span>
-                            <span>{item.quantity} unit{Number(item.quantity) === 1 ? '' : 's'}</span>
+                            <span>{availableStock} available</span>
+                            {reservedStock > 0 && (
+                              <>
+                                <span>&middot;</span>
+                                <span>{reservedStock} pending</span>
+                              </>
+                            )}
                             {selectedQuantity > 0 && (
                               <>
                                 <span>&middot;</span>
@@ -7575,9 +7937,9 @@ export function SalesModule({ user }) {
                                 <option
                                   key={item.id}
                                   value={String(item.id)}
-                                  disabled={usedByOtherLine.has(String(item.id))}
+                                  disabled={usedByOtherLine.has(String(item.id)) || getAvailableSaleStock(item) <= 0}
                                 >
-                                  {item.itemCode ? `${item.itemCode} - ` : ''}{item.name}
+                                  {item.itemCode ? `${item.itemCode} - ` : ''}{item.name}{getAvailableSaleStock(item) <= 0 ? ' (No available stock)' : ''}
                                 </option>
                               ))}
                             </select>
@@ -7625,8 +7987,8 @@ export function SalesModule({ user }) {
                             <PackageCheck className="h-5 w-5" />
                           </span>
                           <div className="min-w-0">
-                            <span className="sales-stock-preview-label">Current Stock</span>
-                            <strong className="sales-stock-preview-value">{selectedItem ? `${selectedItem.quantity} unit${Number(selectedItem.quantity) === 1 ? '' : 's'}` : 'Select item'}</strong>
+                            <span className="sales-stock-preview-label">Available to Sell</span>
+                            <strong className="sales-stock-preview-value">{selectedItem ? `${getAvailableSaleStock(selectedItem)} unit${getAvailableSaleStock(selectedItem) === 1 ? '' : 's'}` : 'Select item'}</strong>
                           </div>
                         </div>
                         <div className={`sales-stock-preview-item ${selectedItem ? 'sales-stock-preview-item-warning' : 'sales-stock-preview-item-muted'}`}>
@@ -7639,7 +8001,7 @@ export function SalesModule({ user }) {
                           </div>
                         </div>
                         <div className={`sales-stock-preview-item ${
-                          selectedItem && Number(line.quantity || 0) > Number(selectedItem.quantity || 0)
+                          selectedItem && Number(line.quantity || 0) > getAvailableSaleStock(selectedItem)
                             ? 'sales-stock-preview-item-danger'
                             : selectedItem && line.quantity !== ''
                               ? 'sales-stock-preview-item-ok'
@@ -7650,11 +8012,11 @@ export function SalesModule({ user }) {
                           </span>
                           <div className="min-w-0">
                             <span className="sales-stock-preview-label">After Sale</span>
-                            <strong className={`sales-stock-preview-value ${selectedItem && Number(line.quantity || 0) > Number(selectedItem.quantity || 0) ? 'text-red-700' : ''}`}>
+                            <strong className={`sales-stock-preview-value ${selectedItem && Number(line.quantity || 0) > getAvailableSaleStock(selectedItem) ? 'text-red-700' : ''}`}>
                               {selectedItem && line.quantity !== ''
-                                ? Number(line.quantity || 0) > Number(selectedItem.quantity || 0)
-                                  ? 'Exceeds Current Stock'
-                                  : `${Number(selectedItem.quantity || 0) - Number(line.quantity || 0)} unit${Math.abs(Number(selectedItem.quantity || 0) - Number(line.quantity || 0)) === 1 ? '' : 's'}`
+                                ? Number(line.quantity || 0) > getAvailableSaleStock(selectedItem)
+                                  ? 'Exceeds Available Stock'
+                                  : `${getAvailableSaleStock(selectedItem) - Number(line.quantity || 0)} unit${Math.abs(getAvailableSaleStock(selectedItem) - Number(line.quantity || 0)) === 1 ? '' : 's'}`
                                 : 'Enter quantity'}
                             </strong>
                           </div>
@@ -7902,7 +8264,7 @@ export function SalesModule({ user }) {
                       if (!line.isManual && !selectedItem) return null;
                       const displayName = line.isManual ? detail.itemName : selectedItem.name;
                       const displayCategory = line.isManual ? detail.category : selectedItem.category;
-                      const remainingStock = line.isManual ? null : Math.max(Number(selectedItem.quantity || 0) - Number(detail.quantity || 0), 0);
+                      const remainingStock = line.isManual ? null : Math.max(getAvailableSaleStock(selectedItem) - Number(detail.quantity || 0), 0);
                       const belowCostWarning = getBelowCostWarning(detail);
 
                       return (
@@ -8195,10 +8557,12 @@ export function SalesModule({ user }) {
                         )}
                       </div>
                     </div>
-                    {needsPaymentConfirmation && (
+                    {requiresPaymentReference(paymentMethod) && (
                       <>
                         <div className="sales-payment-field">
-                          <Label htmlFor="payment-reference">Reference Number</Label>
+                          <Label htmlFor="payment-reference">
+                            Reference Number{paymentMethod === 'bank_transfer' ? <> <RequiredMark /></> : null}
+                          </Label>
                           <Input
                             id="payment-reference"
                             value={paymentReference}
@@ -8207,39 +8571,46 @@ export function SalesModule({ user }) {
                             disabled={isSaving}
                             maxLength={120}
                           />
+                          {paymentMethod === 'bank_transfer' && (
+                            <p className="sales-payment-helper text-slate-600">
+                              Record the bank transaction reference as payment proof for audit and receipt lookup.
+                            </p>
+                          )}
                         </div>
-                        <div className="sales-payment-field">
-                          <Label>Payment Confirmation <RequiredMark /></Label>
-                          <button
-                            type="button"
-                            className={`sales-payment-confirmation ${paymentConfirmed ? 'sales-payment-confirmation-checked' : ''}`}
-                            role="checkbox"
-                            aria-checked={paymentConfirmed}
-                            aria-label="Payment received and verified"
-                            onClick={() => {
-                              const checked = !paymentConfirmed;
-                              setPaymentConfirmed(checked);
-                              setPaymentConfirmedAmount(checked ? Number(totalAmount.toFixed(2)) : null);
-                            }}
-                            disabled={isSaving}
-                          >
-                            <span className="sales-payment-confirmation-box" aria-hidden="true">
-                              {paymentConfirmed ? (
-                                <CheckCircle className="h-4 w-4" />
-                              ) : (
-                                <span className="h-2.5 w-2.5 rounded-full border border-slate-300 bg-white" />
-                              )}
-                            </span>
-                            <span className="sales-payment-confirmation-text">
-                              <span>Payment received and verified</span>
-                              <small>
-                                {paymentConfirmed
-                                  ? `Confirmed for ${formatCurrency(totalAmount)}`
-                                  : 'Verify credited payment before saving'}
-                              </small>
-                            </span>
-                          </button>
-                        </div>
+                        {needsPaymentConfirmation && (
+                          <div className="sales-payment-field">
+                            <Label>Payment Confirmation <RequiredMark /></Label>
+                            <button
+                              type="button"
+                              className={`sales-payment-confirmation ${paymentConfirmed ? 'sales-payment-confirmation-checked' : ''}`}
+                              role="checkbox"
+                              aria-checked={paymentConfirmed}
+                              aria-label="Payment received and verified"
+                              onClick={() => {
+                                const checked = !paymentConfirmed;
+                                setPaymentConfirmed(checked);
+                                setPaymentConfirmedAmount(checked ? Number(totalAmount.toFixed(2)) : null);
+                              }}
+                              disabled={isSaving}
+                            >
+                              <span className="sales-payment-confirmation-box" aria-hidden="true">
+                                {paymentConfirmed ? (
+                                  <CheckCircle className="h-4 w-4" />
+                                ) : (
+                                  <span className="h-2.5 w-2.5 rounded-full border border-slate-300 bg-white" />
+                                )}
+                              </span>
+                              <span className="sales-payment-confirmation-text">
+                                <span>Payment received and verified</span>
+                                <small>
+                                  {paymentConfirmed
+                                    ? `Confirmed for ${formatCurrency(totalAmount)}`
+                                    : 'Verify credited payment before saving'}
+                                </small>
+                              </span>
+                            </button>
+                          </div>
+                        )}
                       </>
                     )}
                     <div className="sales-payment-field">
@@ -8318,8 +8689,13 @@ export function SalesModule({ user }) {
         totalSalesCount={sortedSales.length}
         searchValue={historySearch}
         periodValue={historyPeriod}
+        statusValue={historyStatusFilter}
         onPeriodChange={value => {
           setHistoryPeriod(value);
+          setSelectedHistorySaleId('');
+        }}
+        onStatusChange={value => {
+          setHistoryStatusFilter(value);
           setSelectedHistorySaleId('');
         }}
         onSearchChange={value => {
@@ -8390,9 +8766,18 @@ export function SalesModule({ user }) {
         sale={saleToRefund}
         lines={refundLines}
         reason={refundReason}
+        itemCondition={refundItemCondition}
+        restockDecision={refundRestockDecision}
+        policyAccepted={refundPolicyAccepted}
         actualTransactionAt={refundActualTransactionAt}
         backdateReason={refundBackdateReason}
         onReasonChange={setRefundReason}
+        onItemConditionChange={value => {
+          setRefundItemCondition(value);
+          if (value !== 'resalable') setRefundRestockDecision('do_not_restock');
+        }}
+        onRestockDecisionChange={setRefundRestockDecision}
+        onPolicyAcceptedChange={setRefundPolicyAccepted}
         onActualTransactionAtChange={handleRefundActualTransactionAtChange}
         onBackdateReasonChange={setRefundBackdateReason}
         onLineChange={updateRefundLine}
@@ -8682,8 +9067,8 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
             <X className="h-4 w-4" />
           </button>
           <DialogHeader className="text-left">
-            <div className="flex items-start gap-3 pr-10">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-green-50 text-green-700">
+            <div className="sales-receipt-preview-title-row pr-10">
+              <span className="sales-receipt-preview-status-icon bg-green-50 text-green-700">
                 <CheckCircle className="h-5 w-5" />
               </span>
               <div className="min-w-0">
@@ -8756,7 +9141,7 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
               <div className="sales-receipt-row"><span>VATable Sales</span><span>{formatCurrency(receiptVat.vatableSales)}</span></div>
               <div className="sales-receipt-row"><span>VAT 12%</span><span>{formatCurrency(receiptVat.vatAmount)}</span></div>
               <div className="sales-receipt-row text-sm font-bold"><span>AMOUNT DUE</span><span>{formatCurrency(sale?.totalAmount)}</span></div>
-              <div className="sales-receipt-row"><span>Paid ({paymentMethodLabels[sale?.paymentMethod] || 'Cash'})</span><span>{formatCurrency(sale?.amountReceived ?? sale?.totalAmount)}</span></div>
+              <div className="sales-receipt-row"><span>{`Paid (${paymentMethodLabels[sale?.paymentMethod] || 'Cash'})`}</span><span>{formatCurrency(sale?.amountReceived ?? sale?.totalAmount)}</span></div>
               <div className="sales-receipt-row"><span>Change</span><span>{formatCurrency(sale?.changeAmount)}</span></div>
               {sale?.paymentReference && (
                 <div className="sales-receipt-row"><span>Reference</span><span>{sale.paymentReference}</span></div>
@@ -8768,7 +9153,7 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
             <Button
               type="button"
               variant="outline"
-              className="sales-action-button hover:bg-slate-100"
+              className="sales-action-button sales-receipt-start-button"
               onClick={onStartNewSale}
             >
               Start New Sale
@@ -8925,9 +9310,15 @@ function RefundSaleDialog({
   sale,
   lines,
   reason,
+  itemCondition,
+  restockDecision,
+  policyAccepted,
   actualTransactionAt,
   backdateReason,
   onReasonChange,
+  onItemConditionChange,
+  onRestockDecisionChange,
+  onPolicyAcceptedChange,
   onActualTransactionAtChange,
   onBackdateReasonChange,
   onLineChange,
@@ -9120,7 +9511,45 @@ function RefundSaleDialog({
               <div className="sales-refund-side-form">
                 <div className="sales-refund-policy-note" role="note">
                   <strong>Refund policy reminder</strong>
-                  <span>Verify the original invoice, returned quantity, item condition, and reason before saving. Refund amounts cannot exceed the remaining refundable amount for each item.</span>
+                  <span>Verify the original invoice, sale date, returned quantity, item condition, and refund reason before saving. Return eligibility depends on the reason and condition; only unused, resalable items may return to sellable stock.</span>
+                </div>
+                <div className="sales-refund-field">
+                  <Label htmlFor="refund-item-condition">Returned Item Condition <RequiredMark /></Label>
+                  <Select value={itemCondition} onValueChange={onItemConditionChange} disabled={isSubmitting}>
+                    <SelectTrigger id="refund-item-condition" className="sales-refund-input">
+                      <SelectValue placeholder="Select item condition" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {REFUND_ITEM_CONDITION_OPTIONS.map(option => (
+                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="sales-refund-helper">
+                    Items used, damaged by the customer, defective, or missing parts should not return to sellable inventory.
+                  </p>
+                </div>
+                <div className="sales-refund-field">
+                  <Label htmlFor="refund-restock-decision">Inventory Action <RequiredMark /></Label>
+                  <Select value={restockDecision} onValueChange={onRestockDecisionChange} disabled={isSubmitting}>
+                    <SelectTrigger id="refund-restock-decision" className="sales-refund-input">
+                      <SelectValue placeholder="Select inventory action" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {REFUND_RESTOCK_OPTIONS.map(option => (
+                        <SelectItem
+                          key={option.value}
+                          value={option.value}
+                          disabled={option.value === 'return_to_stock' && itemCondition !== 'resalable'}
+                        >
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="sales-refund-helper">
+                    This controls whether stock is restored. Financial refund records are still saved either way.
+                  </p>
                 </div>
                 <div className="sales-refund-field">
                   <Label htmlFor="refund-reason">Refund Reason <RequiredMark /></Label>
@@ -9168,6 +9597,28 @@ function RefundSaleDialog({
                     </div>
                   </div>
                 </div>
+
+                <button
+                  type="button"
+                  className={`sales-payment-confirmation ${policyAccepted ? 'sales-payment-confirmation-checked' : ''}`}
+                  role="checkbox"
+                  aria-checked={policyAccepted}
+                  aria-label="Refund policy acknowledged"
+                  onClick={() => onPolicyAcceptedChange(!policyAccepted)}
+                  disabled={isSubmitting}
+                >
+                  <span className="sales-payment-confirmation-box" aria-hidden="true">
+                    {policyAccepted ? (
+                      <CheckCircle className="h-4 w-4" />
+                    ) : (
+                      <span className="h-2.5 w-2.5 rounded-full border border-slate-300 bg-white" />
+                    )}
+                  </span>
+                  <span className="sales-payment-confirmation-text">
+                    <span>Refund rules reviewed</span>
+                    <small>Proof of purchase, sale date, eligible reason, returned condition, and remaining refundable quantity were checked.</small>
+                  </span>
+                </button>
 
                 <div className="sales-refund-field">
                   <Label>Refund Transaction Date (optional)</Label>
@@ -9251,7 +9702,9 @@ function SalesHistoryDialog({
   totalSalesCount,
   searchValue,
   periodValue,
+  statusValue,
   onPeriodChange,
+  onStatusChange,
   onSearchChange,
   selectedSale,
   onSelectSale,
@@ -9322,6 +9775,17 @@ function SalesHistoryDialog({
                   <SelectItem value="today">Today</SelectItem>
                   <SelectItem value="week">This Week</SelectItem>
                   <SelectItem value="month">This Month</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={statusValue} onValueChange={onStatusChange}>
+                <SelectTrigger className="sales-history-filter rounded-lg border-slate-200 bg-white">
+                  <Filter className="h-4 w-4 text-slate-500" />
+                  <SelectValue placeholder="Status filter" />
+                </SelectTrigger>
+                <SelectContent>
+                  {SALES_HISTORY_STATUS_FILTERS.map(option => (
+                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <Badge variant="secondary" className="sales-history-count-pill bg-slate-100 text-slate-800">
@@ -9460,13 +9924,13 @@ function SalesHistoryDialog({
 
 function HistoryDetail({ icon, label, value }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+    <div className="sales-history-detail-field">
+      <span className="sales-history-detail-field-icon">
         {icon}
       </span>
       <div className="min-w-0">
-        <span className="block text-sm font-medium text-slate-700">{label}</span>
-        <strong className="mt-1 block break-words text-base text-slate-900">{value}</strong>
+        <span className="sales-history-detail-field-label">{label}</span>
+        <strong className="sales-history-detail-field-value">{value}</strong>
       </div>
     </div>
   );
@@ -9566,18 +10030,6 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
               <RotateCcw className="h-4 w-4" />
               Refund Items
             </Button>
-          ) : canRefundSales ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="sales-history-action-button sales-history-refund-button sales-history-action-button-disabled"
-              disabled
-              title={refundUnavailableText}
-            >
-              <RotateCcw className="h-4 w-4" />
-              Refund Unavailable
-            </Button>
           ) : null}
           {canCancelThisSale && (
             <Button
@@ -9589,7 +10041,7 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
               title="Cancel the entire sale and restore all tracked inventory from this transaction."
             >
               <X className="h-4 w-4" />
-              Cancel Entire Sale
+              Cancel Sale
             </Button>
           )}
         </div>
@@ -9624,7 +10076,7 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
         </div>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="sales-history-detail-grid">
         {!isRefund && <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="Invoice No." value={displayNumber} />}
         {isRefund && <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="Refund Ref." value={displayNumber} />}
         {systemReferenceNumber && <HistoryDetail icon={<ClipboardList className="h-5 w-5" />} label="System Ref." value={systemReferenceNumber} />}
@@ -9649,7 +10101,7 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
         {sale.paymentReference && (
           <HistoryDetail icon={<ClipboardList className="h-5 w-5" />} label="Payment Reference" value={sale.paymentReference} />
         )}
-        {requiresPaymentConfirmation(sale.paymentMethod) && (
+        {(requiresPaymentConfirmation(sale.paymentMethod) || sale.paymentMethod === 'bank_transfer') && (
           <HistoryDetail icon={<CheckCircle className="h-5 w-5" />} label="Payment Confirmation" value={sale.paymentConfirmedBy ? `Confirmed by ${sale.paymentConfirmedBy}` : 'Confirmed'} />
         )}
         {sale.backdateReason && (

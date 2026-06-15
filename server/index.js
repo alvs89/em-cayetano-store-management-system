@@ -1114,6 +1114,37 @@ async function ensureSchema() {
   `);
 
   await pool.query(`
+    ALTER TABLE sales_transactions
+    DROP CONSTRAINT IF EXISTS sales_transactions_status_check;
+  `);
+
+  await pool.query(`
+    UPDATE sales_transactions
+    SET status = CASE
+      WHEN status IS NULL OR status NOT IN ('completed', 'cancelled') THEN 'cancelled'
+      ELSE 'completed'
+    END,
+        cancel_reason = CASE
+          WHEN (status IS NULL OR status NOT IN ('completed', 'cancelled')) AND (cancel_reason IS NULL OR TRIM(cancel_reason) = '')
+            THEN 'Legacy unfinalized sales workflow retired before completion.'
+          ELSE cancel_reason
+        END,
+        cancelled_at = CASE
+          WHEN (status IS NULL OR status NOT IN ('completed', 'cancelled')) AND cancelled_at IS NULL
+            THEN ${PHILIPPINE_NOW_SQL}
+          ELSE cancelled_at
+        END
+    WHERE status IS NULL
+       OR status NOT IN ('completed', 'cancelled');
+  `);
+
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ADD CONSTRAINT sales_transactions_status_check
+    CHECK (status IN ('completed', 'cancelled'));
+  `);
+
+  await pool.query(`
     UPDATE sales_transactions
     SET subtotal_amount = total_amount
     WHERE subtotal_amount = 0 AND total_amount > 0;
@@ -1888,6 +1919,12 @@ function cleanBackdateReason(value) {
   return cleaned.slice(0, 240) || null;
 }
 
+function normalizeOptionalTimestampParam(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
+  return value;
+}
+
 function cleanInvoiceSequenceExceptionReason(value) {
   if (value === undefined || value === null) return null;
   const cleaned = String(value).trim().replace(/\s+/g, ' ');
@@ -2390,6 +2427,8 @@ function mapInventoryRow(row, options = {}) {
     recommended_reorder_point: computeReorderPoint(row),
     active_low_stock_threshold: getEffectiveReorderThreshold(row),
     suggested_order_quantity: computeSuggestedOrderQuantity(row),
+    reserved_stock: Number(row.reserved_stock || 0),
+    available_stock: Math.max(0, Number(row.stock_level || 0) - Number(row.reserved_stock || 0)),
     status: computeInventoryStatus(Number(row.stock_level || 0), getEffectiveReorderThreshold(row)),
     branch: row.branch,
     last_updated: row.last_updated
@@ -2756,7 +2795,7 @@ async function recordStockMovement(client, {
        encoded_at,
        backdate_reason
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, (SELECT full_name FROM users WHERE user_id = $12), COALESCE($13::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $14)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, (SELECT full_name FROM users WHERE user_id = $12), COALESCE(NULLIF($13::text, '')::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $14)`,
     [
       inventoryId,
       productId,
@@ -2770,7 +2809,7 @@ async function recordStockMovement(client, {
       reason || null,
       note || null,
       actorId,
-      actualTransactionAt,
+      normalizeOptionalTimestampParam(actualTransactionAt),
       backdateReason || null
     ]
   );
@@ -5496,7 +5535,8 @@ app.get('/api/inventory', authenticate, async (req, res) => {
          bi.average_daily_sales_override_reason,
          bi.status,
          bi.branch,
-         bi.last_updated
+         bi.last_updated,
+         0 AS reserved_stock
        FROM branch_inventory bi
        INNER JOIN products p ON p.product_id = bi.product_id
        WHERE bi.branch = $1
@@ -6023,9 +6063,9 @@ app.post('/api/sales', authenticate, async (req, res) => {
   const allowedCustomerTypes = new Set(['walk_in', 'sister_company', 'hardware_reseller', 'regular', 'contractor']);
   const normalizedPaymentMethod = String(payment_method || 'cash').trim().toLowerCase();
   const allowedPaymentMethods = new Set(['cash', 'gcash', 'bank_transfer', 'credit']);
-  const requiresPaymentConfirmation = ['gcash', 'bank_transfer'].includes(normalizedPaymentMethod);
-  const cleanPaymentReference = String(payment_reference || '').trim().slice(0, 120) || null;
   const isPaymentConfirmed = payment_confirmed === true || payment_confirmed === 'true';
+  const requiresPaymentConfirmation = normalizedPaymentMethod === 'gcash';
+  const cleanPaymentReference = String(payment_reference || '').trim().slice(0, 120) || null;
   const cleanOfficialInvoiceNumber = normalizeOfficialSalesInvoiceNumber(official_invoice_number);
   const cleanInvoiceSequenceReason = cleanInvoiceSequenceExceptionReason(invoice_sequence_exception_reason);
   let transactionTiming;
@@ -6094,7 +6134,13 @@ app.post('/api/sales', authenticate, async (req, res) => {
 
   if (requiresPaymentConfirmation && !isPaymentConfirmed) {
     return res.status(400).json({
-      error: 'Please confirm that the GCash or bank transfer payment was received before completing the sale.'
+      error: 'Please confirm that the GCash payment was received before completing the sale.'
+    });
+  }
+
+  if (normalizedPaymentMethod === 'bank_transfer' && !cleanPaymentReference) {
+    return res.status(400).json({
+      error: 'Enter the bank transfer reference number before completing the sale.'
     });
   }
 
@@ -6397,6 +6443,8 @@ app.post('/api/sales', authenticate, async (req, res) => {
     const changeAmount = normalizedPaymentMethod === 'cash'
       ? Number((effectiveAmountReceived - netTotalAmount).toFixed(2))
       : 0;
+    const transactionStatus = 'completed';
+    const transactionPaymentConfirmed = true;
 
     const transactionResult = await client.query(
       `INSERT INTO sales_transactions (
@@ -6434,7 +6482,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
          official_invoice_expected_number,
          official_invoice_exception_reason
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, true, $20, $21, ${PHILIPPINE_NOW_SQL}, 'completed', $22, $23, $24, COALESCE($25::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $26, $27, $28, $29)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, CASE WHEN $20 THEN ${PHILIPPINE_NOW_SQL} ELSE NULL END, $23, $24, $25, $26, COALESCE(NULLIF($27::text, '')::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $28, $29, $30, $31)
        RETURNING *`,
       [
         salesNumber,
@@ -6456,8 +6504,10 @@ app.post('/api/sales', authenticate, async (req, res) => {
         effectiveAmountReceived,
         changeAmount,
         cleanPaymentReference,
-        req.user.id,
-        soldByName,
+        transactionPaymentConfirmed,
+        transactionPaymentConfirmed ? req.user.id : null,
+        transactionPaymentConfirmed ? soldByName : null,
+        transactionStatus,
         req.user.id,
         soldByName,
         cleanRemarks,
@@ -6495,7 +6545,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
            new_quantity,
            created_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, COALESCE($19::timestamp, ${PHILIPPINE_NOW_SQL}))
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, COALESCE(NULLIF($19::text, '')::timestamp, ${PHILIPPINE_NOW_SQL}))
          RETURNING *`,
         [
           salesTransaction.sales_transaction_id,
@@ -6579,11 +6629,12 @@ app.post('/api/sales', authenticate, async (req, res) => {
         vatAmount,
         totalAmount: netTotalAmount,
         paymentMethod: normalizedPaymentMethod,
+        paymentStatus: transactionStatus,
         amountReceived: effectiveAmountReceived,
         changeAmount,
         paymentReference: cleanPaymentReference,
-        paymentConfirmed: true,
-        paymentConfirmedBy: soldByName,
+        paymentConfirmed: transactionPaymentConfirmed,
+        paymentConfirmedBy: transactionPaymentConfirmed ? soldByName : null,
         itemCount: insertedItems.length,
         salePriceOverrides,
         remarks: cleanRemarks,
@@ -6688,6 +6739,11 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
   const salesTransactionId = Number(req.params.id);
   const cleanReason = String(req.body?.refund_reason || req.body?.reason || '').trim().slice(0, 500);
   const refundItems = Array.isArray(req.body?.items) ? req.body.items : [];
+  const itemCondition = String(req.body?.item_condition || req.body?.itemCondition || '').trim();
+  const restockDecision = String(req.body?.restock_decision || req.body?.restockDecision || '').trim();
+  const refundPolicyAcknowledged = req.body?.refund_policy_acknowledged === true || req.body?.refundPolicyAcknowledged === true;
+  const validRefundItemConditions = new Set(['resalable', 'defective', 'damaged', 'used_or_installed', 'missing_parts']);
+  const validRefundRestockDecisions = new Set(['return_to_stock', 'do_not_restock']);
 
   if (!canRecordSales(req.user)) {
     return res.status(403).json({
@@ -6705,6 +6761,22 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
 
   if (refundItems.length === 0) {
     return res.status(400).json({ error: 'Select at least one item to refund.' });
+  }
+
+  if (!refundPolicyAcknowledged) {
+    return res.status(400).json({ error: 'Please acknowledge the refund and return policy before recording the refund.' });
+  }
+
+  if (!validRefundItemConditions.has(itemCondition)) {
+    return res.status(400).json({ error: 'Please select the returned item condition.' });
+  }
+
+  if (!validRefundRestockDecisions.has(restockDecision)) {
+    return res.status(400).json({ error: 'Please select whether the returned item should be added back to sellable stock.' });
+  }
+
+  if (restockDecision === 'return_to_stock' && itemCondition !== 'resalable') {
+    return res.status(400).json({ error: 'Only resalable returned items can be added back to inventory stock.' });
   }
 
   let transactionTiming;
@@ -6740,6 +6812,11 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
     if (originalSale.status === 'cancelled') {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Cancelled sales cannot be refunded.' });
+    }
+
+    if (originalSale.status !== 'completed') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only completed sales can be refunded.' });
     }
 
     if ((originalSale.transaction_type || 'sale') === 'refund') {
@@ -6857,7 +6934,7 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
       let previousQuantity = null;
       let newQuantity = null;
 
-      if (originalItem.is_inventory_item !== false && originalItem.inventory_id) {
+      if (originalItem.is_inventory_item !== false && originalItem.inventory_id && restockDecision === 'return_to_stock') {
         const currentItem = await findActiveInventoryForSalesRestore(client, originalItem, req.user.branch);
 
         if (!currentItem) {
@@ -6893,7 +6970,7 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
           previousQuantity,
           newQuantity,
           reason: 'customer_refund',
-          note: `Customer refund for Invoice ${originalInvoiceNumber}. System ref ${originalSale.sales_number}. Reason: ${cleanReason}`,
+          note: `Customer refund for Invoice ${originalInvoiceNumber}. System ref ${originalSale.sales_number}. Reason: ${cleanReason}. Condition: ${itemCondition}.`,
           actorId: req.user.id,
           actualTransactionAt: transactionTiming.actualTransactionAt,
           backdateReason: transactionTiming.backdateReason
@@ -6975,7 +7052,7 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
          encoded_at,
          backdate_reason
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 'none', 'Refund', 0, $9, $10, $11, $12, $13, 0, $14, true, $15, $16, ${PHILIPPINE_NOW_SQL}, 'completed', 'refund', $17, $18, $19, $20, COALESCE($21::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $22)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 'none', 'Refund', 0, $9, $10, $11, $12, $13, 0, $14, true, $15, $16, ${PHILIPPINE_NOW_SQL}, 'completed', 'refund', $17, $18, $19, $20, COALESCE(NULLIF($21::text, '')::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $22)
        RETURNING *`,
       [
         refundNumber,
@@ -6997,7 +7074,7 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
         salesTransactionId,
         req.user.id,
         encodedByName,
-        `Refund for Invoice ${originalInvoiceNumber}. System ref ${originalSale.sales_number}. Reason: ${cleanReason}`,
+        `Refund for Invoice ${originalInvoiceNumber}. System ref ${originalSale.sales_number}. Reason: ${cleanReason}. Condition: ${itemCondition}. ${restockDecision === 'return_to_stock' ? 'Returned to sellable stock.' : 'Not returned to sellable stock.'}`,
         transactionTiming.actualTransactionAt,
         transactionTiming.backdateReason
       ]
@@ -7030,7 +7107,7 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
            refund_for_sales_item_id,
            created_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, COALESCE($20::timestamp, ${PHILIPPINE_NOW_SQL}))
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, COALESCE(NULLIF($20::text, '')::timestamp, ${PHILIPPINE_NOW_SQL}))
          RETURNING *`,
         [
           refundTransaction.sales_transaction_id,
@@ -7072,6 +7149,9 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
         originalOfficialInvoiceNumber: originalInvoiceNumber,
         refundNumber,
         refundReason: cleanReason,
+        itemCondition,
+        restockDecision,
+        refundPolicyAcknowledged,
         totalRefundQuantity,
         totalRefundAmount: roundedRefundTotal,
         stockRestoreDetails,
@@ -7263,9 +7343,11 @@ app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) =
         officialInvoiceNumber: saleInvoiceNumber,
         salesNumber: sale.sales_number,
         cancelReason: cleanReason,
+        previousStatus: sale.status,
+        paymentReference: sale.payment_reference,
         totalQuantity: Number(sale.total_quantity || 0),
         totalAmount: Number(sale.total_amount || 0),
-        restoredItemCount: itemsResult.rowCount
+        restoredItemCount: restoredItems.length
       }
     });
 
@@ -7566,7 +7648,7 @@ app.post('/api/purchases', authenticate, async (req, res) => {
          encoded_at,
          backdate_reason
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, $11, $12, $13, 'completed', $14, $15, COALESCE($16::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $17)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, $11, $12, $13, 'completed', $14, $15, COALESCE(NULLIF($16::text, '')::timestamp, ${PHILIPPINE_NOW_SQL}), ${PHILIPPINE_NOW_SQL}, $17)
        RETURNING *`,
       [
         purchaseNumber,
@@ -7609,7 +7691,7 @@ app.post('/api/purchases', authenticate, async (req, res) => {
            new_quantity,
            created_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, COALESCE($13::timestamp, ${PHILIPPINE_NOW_SQL}))
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, COALESCE(NULLIF($13::text, '')::timestamp, ${PHILIPPINE_NOW_SQL}))
          RETURNING *`,
         [
           purchaseTransaction.purchase_transaction_id,
