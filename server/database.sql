@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS sales_transactions (
     payment_confirmed_by INT REFERENCES users(user_id) ON DELETE SET NULL,
     payment_confirmed_by_name TEXT,
     payment_confirmed_at TIMESTAMP,
-    status VARCHAR(20) DEFAULT 'completed' CHECK (status IN ('completed', 'cancelled')),
+    status VARCHAR(20) DEFAULT 'completed' CHECK (status IN ('pending_payment', 'completed', 'cancelled')),
     transaction_type VARCHAR(20) DEFAULT 'sale' CHECK (transaction_type IN ('sale', 'refund')),
     reference_sales_transaction_id INT REFERENCES sales_transactions(sales_transaction_id) ON DELETE SET NULL,
     sold_by INT REFERENCES users(user_id) ON DELETE SET NULL,

@@ -1311,6 +1311,30 @@ export function DataProvider({ children }) {
     }
   };
 
+  const completeBankTransferSale = async (saleId) => {
+    const token = localStorage.getItem("token");
+    try {
+      const res = await axios.post(
+        apiUrl(`/api/sales/${saleId}/complete-payment`),
+        {},
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      await fetchInventory();
+      await fetchArchivedInventory();
+      await fetchStockMovements();
+      await fetchSalesTransactions();
+      await fetchPurchaseTransactions();
+      return mapSalesTransaction(res.data.sale || {});
+    } catch (err) {
+      await fetchInventory();
+      await fetchArchivedInventory();
+      await fetchStockMovements();
+      await fetchSalesTransactions();
+      await fetchPurchaseTransactions();
+      throw err;
+    }
+  };
+
   // Purchase receiving posts supplier document details and line costs together
   // so stock, average costs, supplier payments, and movement history stay aligned.
   const recordPurchase = async ({ supplierName, documentType, documentTypeNote, documentNumber, paymentTerms, creditTermsDays, remarks, items, actualTransactionAt, backdateReason }) => {
@@ -1474,6 +1498,7 @@ export function DataProvider({ children }) {
         batchStockOut,
         recordSale,
         refundSale,
+        completeBankTransferSale,
         recordPurchase,
         updatePurchasePaymentStatus,
         cancelSale,

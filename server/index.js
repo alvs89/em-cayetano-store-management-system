@@ -460,7 +460,7 @@ async function ensureSchema() {
       payment_confirmed_by INT REFERENCES users(user_id) ON DELETE SET NULL,
       payment_confirmed_by_name TEXT,
       payment_confirmed_at TIMESTAMP,
-      status VARCHAR(20) DEFAULT 'completed' CHECK (status IN ('completed', 'cancelled')),
+      status VARCHAR(20) DEFAULT 'completed' CHECK (status IN ('pending_payment', 'completed', 'cancelled')),
       transaction_type VARCHAR(20) DEFAULT 'sale' CHECK (transaction_type IN ('sale', 'refund')),
       reference_sales_transaction_id INT REFERENCES sales_transactions(sales_transaction_id) ON DELETE SET NULL,
       sold_by INT REFERENCES users(user_id) ON DELETE SET NULL,
@@ -1120,28 +1120,15 @@ async function ensureSchema() {
 
   await pool.query(`
     UPDATE sales_transactions
-    SET status = CASE
-      WHEN status IS NULL OR status NOT IN ('completed', 'cancelled') THEN 'cancelled'
-      ELSE 'completed'
-    END,
-        cancel_reason = CASE
-          WHEN (status IS NULL OR status NOT IN ('completed', 'cancelled')) AND (cancel_reason IS NULL OR TRIM(cancel_reason) = '')
-            THEN 'Legacy unfinalized sales workflow retired before completion.'
-          ELSE cancel_reason
-        END,
-        cancelled_at = CASE
-          WHEN (status IS NULL OR status NOT IN ('completed', 'cancelled')) AND cancelled_at IS NULL
-            THEN ${PHILIPPINE_NOW_SQL}
-          ELSE cancelled_at
-        END
+    SET status = 'completed'
     WHERE status IS NULL
-       OR status NOT IN ('completed', 'cancelled');
+       OR status NOT IN ('pending_payment', 'completed', 'cancelled');
   `);
 
   await pool.query(`
     ALTER TABLE sales_transactions
     ADD CONSTRAINT sales_transactions_status_check
-    CHECK (status IN ('completed', 'cancelled'));
+    CHECK (status IN ('pending_payment', 'completed', 'cancelled'));
   `);
 
   await pool.query(`
@@ -2245,6 +2232,24 @@ function calculateSalesLineProfit({ quantitySold, unitCostAtSale, subtotal }) {
     grossProfit,
     profitMarginPercent
   };
+}
+
+async function getPendingReservedQuantity(client, { inventoryId, branch, excludeSalesTransactionId = null }) {
+  const result = await client.query(
+    `SELECT COALESCE(SUM(si.quantity_sold), 0) AS reserved_quantity
+     FROM sales_items si
+     INNER JOIN sales_transactions st
+       ON st.sales_transaction_id = si.sales_transaction_id
+     WHERE si.inventory_id = $1
+       AND st.branch = $2
+       AND st.status = 'pending_payment'
+       AND st.transaction_type = 'sale'
+       AND si.is_inventory_item = true
+       AND si.quantity_sold > 0
+       AND ($3::int IS NULL OR st.sales_transaction_id <> $3::int)`,
+    [inventoryId, branch, excludeSalesTransactionId]
+  );
+  return Number(result.rows[0]?.reserved_quantity || 0);
 }
 
 async function findProductByIdentity(client, { name, category }) {
@@ -5536,9 +5541,24 @@ app.get('/api/inventory', authenticate, async (req, res) => {
          bi.status,
          bi.branch,
          bi.last_updated,
-         0 AS reserved_stock
+         COALESCE(pending_reserved.reserved_stock, 0) AS reserved_stock
        FROM branch_inventory bi
        INNER JOIN products p ON p.product_id = bi.product_id
+       LEFT JOIN (
+         SELECT
+           si.inventory_id,
+           SUM(si.quantity_sold) AS reserved_stock
+         FROM sales_items si
+         INNER JOIN sales_transactions st
+           ON st.sales_transaction_id = si.sales_transaction_id
+         WHERE st.branch = $1
+           AND st.status = 'pending_payment'
+           AND st.transaction_type = 'sale'
+           AND si.is_inventory_item = true
+           AND si.quantity_sold > 0
+         GROUP BY si.inventory_id
+       ) pending_reserved
+         ON pending_reserved.inventory_id = bi.inventory_id
        WHERE bi.branch = $1
          AND NOT EXISTS (
            SELECT 1
@@ -6064,6 +6084,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
   const normalizedPaymentMethod = String(payment_method || 'cash').trim().toLowerCase();
   const allowedPaymentMethods = new Set(['cash', 'gcash', 'bank_transfer', 'credit']);
   const isPaymentConfirmed = payment_confirmed === true || payment_confirmed === 'true';
+  const isPendingBankTransfer = normalizedPaymentMethod === 'bank_transfer' && !isPaymentConfirmed;
   const requiresPaymentConfirmation = normalizedPaymentMethod === 'gcash';
   const cleanPaymentReference = String(payment_reference || '').trim().slice(0, 120) || null;
   const cleanOfficialInvoiceNumber = normalizeOfficialSalesInvoiceNumber(official_invoice_number);
@@ -6140,7 +6161,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
 
   if (normalizedPaymentMethod === 'bank_transfer' && !cleanPaymentReference) {
     return res.status(400).json({
-      error: 'Enter the bank transfer reference number before completing the sale.'
+      error: 'Enter the bank transfer reference number before saving the pending payment.'
     });
   }
 
@@ -6299,11 +6320,16 @@ app.post('/api/sales', authenticate, async (req, res) => {
       const currentItem = currentResult.rows[0];
       const previousQuantity = Number(currentItem.stock_level || 0);
       const quantitySold = Number(line.quantity || 0);
+      const pendingReservedQuantity = await getPendingReservedQuantity(client, {
+        inventoryId,
+        branch: req.user.branch
+      });
+      const availableQuantity = Math.max(0, previousQuantity - pendingReservedQuantity);
 
-      if (quantitySold > previousQuantity) {
+      if (quantitySold > availableQuantity) {
         await client.query('ROLLBACK');
         return res.status(400).json({
-          error: `${currentItem.name} has only ${previousQuantity} unit${previousQuantity === 1 ? '' : 's'} available.`
+          error: `${currentItem.name} has only ${availableQuantity} unit${availableQuantity === 1 ? '' : 's'} available after pending bank-transfer reservations.`
         });
       }
 
@@ -6334,15 +6360,18 @@ app.post('/api/sales', authenticate, async (req, res) => {
       totalQuantity += quantitySold;
       subtotalAmount += subtotal;
 
-      const updatedResult = await client.query(
-        `UPDATE branch_inventory
-         SET stock_level = $1,
-             status = $2,
-             last_updated = ${PHILIPPINE_NOW_SQL}
-         WHERE inventory_id = $3 AND branch = $4
-         RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
-        [newQuantity, nextStatus, inventoryId, req.user.branch]
-      );
+      let updatedResult = { rows: [] };
+      if (!isPendingBankTransfer) {
+        updatedResult = await client.query(
+          `UPDATE branch_inventory
+           SET stock_level = $1,
+               status = $2,
+               last_updated = ${PHILIPPINE_NOW_SQL}
+           WHERE inventory_id = $3 AND branch = $4
+           RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
+          [newQuantity, nextStatus, inventoryId, req.user.branch]
+        );
+      }
 
       saleLines.push({
         inventoryId,
@@ -6359,22 +6388,25 @@ app.post('/api/sales', authenticate, async (req, res) => {
         costSubtotal: lineProfit.costSubtotal,
         grossProfit: lineProfit.grossProfit,
         profitMarginPercent: lineProfit.profitMarginPercent,
-        previousQuantity,
-        newQuantity
+        previousQuantity: isPendingBankTransfer ? null : previousQuantity,
+        newQuantity: isPendingBankTransfer ? null : newQuantity,
+        reservedQuantity: isPendingBankTransfer ? quantitySold : 0
       });
 
-      updatedItems.push({
-        ...updatedResult.rows[0],
-        name: currentItem.name,
-        category: currentItem.category,
-        category_note: currentItem.category_note,
-        supplier_name: currentItem.supplier_name,
-        default_selling_price: currentItem.default_selling_price,
-        cost_price: currentItem.cost_price,
-        lead_time_days: currentItem.lead_time_days,
-        safety_stock: currentItem.safety_stock,
-        average_daily_sales: currentItem.average_daily_sales
-      });
+      if (!isPendingBankTransfer) {
+        updatedItems.push({
+          ...updatedResult.rows[0],
+          name: currentItem.name,
+          category: currentItem.category,
+          category_note: currentItem.category_note,
+          supplier_name: currentItem.supplier_name,
+          default_selling_price: currentItem.default_selling_price,
+          cost_price: currentItem.cost_price,
+          lead_time_days: currentItem.lead_time_days,
+          safety_stock: currentItem.safety_stock,
+          average_daily_sales: currentItem.average_daily_sales
+        });
+      }
     }
 
     manualItems.forEach(line => {
@@ -6433,7 +6465,9 @@ app.post('/api/sales', authenticate, async (req, res) => {
       : parseNonNegativeDecimal(amount_received, 'Amount received', { max: 100000000 });
     const effectiveAmountReceived = normalizedPaymentMethod === 'cash'
       ? Number((parsedAmountReceived || 0).toFixed(2))
-      : netTotalAmount;
+      : isPendingBankTransfer
+        ? null
+        : netTotalAmount;
 
     if (normalizedPaymentMethod === 'cash' && effectiveAmountReceived < netTotalAmount) {
       await client.query('ROLLBACK');
@@ -6443,8 +6477,8 @@ app.post('/api/sales', authenticate, async (req, res) => {
     const changeAmount = normalizedPaymentMethod === 'cash'
       ? Number((effectiveAmountReceived - netTotalAmount).toFixed(2))
       : 0;
-    const transactionStatus = 'completed';
-    const transactionPaymentConfirmed = true;
+    const transactionStatus = isPendingBankTransfer ? 'pending_payment' : 'completed';
+    const transactionPaymentConfirmed = !isPendingBankTransfer;
 
     const transactionResult = await client.query(
       `INSERT INTO sales_transactions (
@@ -6576,6 +6610,10 @@ app.post('/api/sales', authenticate, async (req, res) => {
         continue;
       }
 
+      if (isPendingBankTransfer) {
+        continue;
+      }
+
       await recordStockMovement(client, {
         inventoryId: line.inventoryId,
         productId: line.productId,
@@ -6601,8 +6639,8 @@ app.post('/api/sales', authenticate, async (req, res) => {
       targetId: salesTransaction.sales_transaction_id,
       targetName: officialInvoiceNumber,
       targetType: 'sales_transaction',
-      action: 'CREATE_SALES_INVOICE',
-      reason: 'Sales Recording',
+      action: isPendingBankTransfer ? 'CREATE_PENDING_BANK_TRANSFER_SALE' : 'CREATE_SALES_INVOICE',
+      reason: isPendingBankTransfer ? 'Pending Bank Transfer Verification' : 'Sales Recording',
       details: {
         branch: req.user.branch,
         officialInvoiceNumber,
@@ -6636,6 +6674,7 @@ app.post('/api/sales', authenticate, async (req, res) => {
         paymentConfirmed: transactionPaymentConfirmed,
         paymentConfirmedBy: transactionPaymentConfirmed ? soldByName : null,
         itemCount: insertedItems.length,
+        reservedItemCount: isPendingBankTransfer ? saleLines.filter(line => line.isInventoryItem).length : 0,
         salePriceOverrides,
         remarks: cleanRemarks,
         actualTransactionAt: salesTransaction.created_at,
@@ -6671,6 +6710,210 @@ app.post('/api/sales', authenticate, async (req, res) => {
     return res.status(500).json({
       error: 'The sale could not be saved because the database rejected part of the transaction. No inventory was deducted. Please refresh and try again, then check the server console if it repeats.'
     });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/sales/:id/complete-payment', authenticate, async (req, res) => {
+  const salesTransactionId = Number(req.params.id);
+
+  if (!Number.isInteger(salesTransactionId) || salesTransactionId <= 0) {
+    return res.status(400).json({ error: 'Please select a valid pending payment.' });
+  }
+
+  if (!canRecordSales(req.user)) {
+    return res.status(403).json({
+      error: 'Bank transfer verification is available only to authorized sales accounts.'
+    });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const saleResult = await client.query(
+      `SELECT *
+       FROM sales_transactions
+       WHERE sales_transaction_id = $1
+         AND branch = $2
+       FOR UPDATE`,
+      [salesTransactionId, req.user.branch]
+    );
+
+    if (saleResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Pending payment was not found for this branch.' });
+    }
+
+    const sale = saleResult.rows[0];
+    if (sale.status !== 'pending_payment' || sale.payment_method !== 'bank_transfer') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only pending bank-transfer sales can be completed through payment verification.' });
+    }
+
+    const saleInvoiceNumber = resolveOfficialSalesInvoiceNumber(
+      sale.official_invoice_number,
+      sale.sales_number
+    ) || sale.sales_number;
+    const itemsResult = await client.query(
+      `SELECT *
+       FROM sales_items
+       WHERE sales_transaction_id = $1
+       ORDER BY sales_item_id ASC`,
+      [salesTransactionId]
+    );
+
+    if (itemsResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'This pending sale has no item lines to complete.' });
+    }
+
+    const updatedItems = [];
+    const completedItems = [];
+
+    for (const saleItem of itemsResult.rows) {
+      if (saleItem.is_inventory_item === false || !saleItem.inventory_id) {
+        completedItems.push(saleItem);
+        continue;
+      }
+
+      const currentItem = await findActiveInventoryForSalesRestore(client, saleItem, req.user.branch);
+      if (!currentItem) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: `${saleItem.item_name} is not available in active inventory. Restore the item from Archive first, then try again.` });
+      }
+
+      const pendingReservedQuantity = await getPendingReservedQuantity(client, {
+        inventoryId: currentItem.inventory_id,
+        branch: req.user.branch,
+        excludeSalesTransactionId: salesTransactionId
+      });
+      const previousQuantity = Number(currentItem.stock_level || 0);
+      const quantitySold = Number(saleItem.quantity_sold || 0);
+      const availableQuantity = Math.max(0, previousQuantity - pendingReservedQuantity);
+
+      if (quantitySold > availableQuantity) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: `${saleItem.item_name} has only ${availableQuantity} unit${availableQuantity === 1 ? '' : 's'} available after other pending bank-transfer reservations.`
+        });
+      }
+
+      const newQuantity = previousQuantity - quantitySold;
+      const nextStatus = computeInventoryStatus(newQuantity, getEffectiveReorderThreshold(currentItem));
+      const updatedResult = await client.query(
+        `UPDATE branch_inventory
+         SET stock_level = $1,
+             status = $2,
+             last_updated = ${PHILIPPINE_NOW_SQL}
+         WHERE inventory_id = $3
+           AND branch = $4
+         RETURNING inventory_id, product_id, branch, stock_level, min_stock_level, lead_time_days, safety_stock, average_daily_sales, status, last_updated`,
+        [newQuantity, nextStatus, currentItem.inventory_id, req.user.branch]
+      );
+
+      const updatedSaleItemResult = await client.query(
+        `UPDATE sales_items
+         SET previous_quantity = $1,
+             new_quantity = $2
+         WHERE sales_item_id = $3
+         RETURNING *`,
+        [previousQuantity, newQuantity, saleItem.sales_item_id]
+      );
+      completedItems.push(updatedSaleItemResult.rows[0]);
+
+      await recordStockMovement(client, {
+        inventoryId: currentItem.inventory_id,
+        productId: currentItem.product_id || saleItem.product_id,
+        itemName: saleItem.item_name,
+        category: saleItem.category,
+        branch: saleItem.branch,
+        action: 'stock_out',
+        quantityChanged: quantitySold,
+        previousQuantity,
+        newQuantity,
+        reason: 'sales',
+        note: `Bank transfer payment verified for Sales Invoice ${saleInvoiceNumber}. System ref ${sale.sales_number}.`,
+        actorId: req.user.id,
+        actualTransactionAt: null,
+        backdateReason: null
+      });
+
+      await refreshAverageDailySalesForInventory(client, currentItem.inventory_id);
+
+      updatedItems.push({
+        ...updatedResult.rows[0],
+        name: currentItem.name,
+        category: currentItem.category,
+        category_note: currentItem.category_note,
+        supplier_name: currentItem.supplier_name,
+        default_selling_price: currentItem.default_selling_price,
+        lead_time_days: currentItem.lead_time_days,
+        safety_stock: currentItem.safety_stock,
+        average_daily_sales: currentItem.average_daily_sales
+      });
+    }
+
+    const verifierName = req.user.fullName || req.user.username || 'Authorized Sales User';
+    const completedSaleResult = await client.query(
+      `UPDATE sales_transactions
+       SET status = 'completed',
+           payment_confirmed = true,
+           payment_confirmed_by = $1,
+           payment_confirmed_by_name = $2,
+           payment_confirmed_at = ${PHILIPPINE_NOW_SQL},
+           amount_received = total_amount,
+           change_amount = 0,
+           created_at = ${PHILIPPINE_NOW_SQL}
+       WHERE sales_transaction_id = $3
+       RETURNING *`,
+      [req.user.id, verifierName, salesTransactionId]
+    );
+
+    await recordAuditLog(client, {
+      actorId: req.user.id,
+      targetId: salesTransactionId,
+      targetName: saleInvoiceNumber,
+      targetType: 'sales_transaction',
+      action: 'COMPLETE_BANK_TRANSFER_SALE',
+      reason: 'Bank transfer verified',
+      details: {
+        branch: req.user.branch,
+        officialInvoiceNumber: saleInvoiceNumber,
+        salesNumber: sale.sales_number,
+        paymentReference: sale.payment_reference,
+        verifiedBy: verifierName,
+        totalQuantity: Number(sale.total_quantity || 0),
+        totalAmount: Number(sale.total_amount || 0)
+      }
+    });
+
+    await client.query('COMMIT');
+
+    return res.json({
+      sale: mapSalesTransactionRow({
+        ...completedSaleResult.rows[0],
+        items: completedItems.map(mapSalesItemRow)
+      }),
+      products: updatedItems.map(mapInventoryRow)
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.code === '23503') {
+      return res.status(400).json({ error: 'This pending sale references an inventory, product, or user record that no longer exists. Refresh Sales History and try again.' });
+    }
+    if (err.code === '23514') {
+      return res.status(400).json({ error: 'The payment could not be completed because one sale detail no longer satisfies a system rule. Review the item stock and payment details, then try again.' });
+    }
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'This payment appears to have already been completed or conflicts with an existing sales record. Refresh Sales History.' });
+    }
+    if (err.code === '22007') {
+      return res.status(400).json({ error: 'The payment completion date was invalid. Refresh Sales History and try again.' });
+    }
+    console.error('Complete bank transfer sale error:', err);
+    return res.status(500).json({ error: 'Failed to complete bank transfer sale. Inventory was not deducted.' });
   } finally {
     client.release();
   }
@@ -6816,7 +7059,7 @@ app.post('/api/sales/:id/refund', authenticate, async (req, res) => {
 
     if (originalSale.status !== 'completed') {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Only completed sales can be refunded.' });
+      return res.status(400).json({ error: 'Only completed sales can be refunded. Pending bank-transfer sales must be completed or cancelled first.' });
     }
 
     if ((originalSale.transaction_type || 'sale') === 'refund') {
@@ -7229,6 +7472,8 @@ app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) =
       return res.status(400).json({ error: 'Refund records cannot be cancelled. Review the original sales record instead.' });
     }
 
+    const isPendingPaymentCancellation = sale.status === 'pending_payment';
+
     const refundActivityResult = await client.query(
       `SELECT 1
        FROM sales_transactions
@@ -7261,6 +7506,10 @@ app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) =
     const restoredItems = [];
 
     for (const saleItem of itemsResult.rows) {
+      if (isPendingPaymentCancellation) {
+        continue;
+      }
+
       if (saleItem.is_inventory_item === false || !saleItem.inventory_id) {
         continue;
       }
@@ -7336,8 +7585,8 @@ app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) =
       targetId: salesTransactionId,
       targetName: saleInvoiceNumber,
       targetType: 'sales_transaction',
-      action: 'CANCEL_SALES_INVOICE',
-      reason: 'Sales Cancellation',
+      action: isPendingPaymentCancellation ? 'CANCEL_PENDING_BANK_TRANSFER_SALE' : 'CANCEL_SALES_INVOICE',
+      reason: isPendingPaymentCancellation ? 'Pending Bank Transfer Cancelled' : 'Sales Cancellation',
       details: {
         branch: req.user.branch,
         officialInvoiceNumber: saleInvoiceNumber,
@@ -7347,7 +7596,7 @@ app.post('/api/sales/:id/cancel', authenticate, requireAdmin, async (req, res) =
         paymentReference: sale.payment_reference,
         totalQuantity: Number(sale.total_quantity || 0),
         totalAmount: Number(sale.total_amount || 0),
-        restoredItemCount: restoredItems.length
+        restoredItemCount: isPendingPaymentCancellation ? 0 : restoredItems.length
       }
     });
 
@@ -10082,7 +10331,7 @@ app.post('/api/maintenance/integrity-check', authenticate, requireAdmin, async (
              OR change_amount < 0
              OR (transaction_type <> 'refund' AND discount_amount > subtotal_amount)
              OR payment_method NOT IN ('cash', 'gcash', 'bank_transfer', 'credit')
-             OR status NOT IN ('completed', 'cancelled')
+             OR status NOT IN ('pending_payment', 'completed', 'cancelled')
              OR transaction_type NOT IN ('sale', 'refund')
              OR sales_number IS NULL
              OR TRIM(sales_number) = ''

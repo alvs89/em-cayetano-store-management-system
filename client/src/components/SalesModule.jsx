@@ -148,6 +148,7 @@ const getSaleRemarksText = sale =>
 
 const requiresPaymentConfirmation = paymentMethod => paymentMethod === 'gcash';
 const requiresPaymentReference = paymentMethod => paymentMethod === 'gcash' || paymentMethod === 'bank_transfer';
+const createsPendingBankTransfer = paymentMethod => paymentMethod === 'bank_transfer';
 const VAT_RATE = 0.12;
 
 // VAT is treated as inclusive in the sale amount. The breakdown is displayed on
@@ -978,27 +979,20 @@ const getRemainingRefundAmount = item =>
 const hasRefundedSaleItems = sale =>
   (sale?.items || []).some(item => Number(item?.refundedQuantity || 0) > 0 || Number(item?.refundedAmount || 0) > 0);
 
-const isFullyRefundedSale = sale =>
-  !isRefundSalesRecord(sale) &&
-  hasRefundedSaleItems(sale) &&
-  (sale?.items || [])
-    .filter(item => Number(item?.quantitySold || 0) > 0)
-    .every(item => getRemainingRefundQuantity(item) <= 0);
-
 const getSalesHistoryStatusFilterValue = sale => {
   if (isRefundSalesRecord(sale)) return 'refund_records';
+  if (sale?.status === 'pending_payment') return 'pending_payment';
   if (sale?.status === 'cancelled') return 'cancelled';
-  if (isFullyRefundedSale(sale)) return 'refunded';
-  if (hasRefundedSaleItems(sale)) return 'partially_refunded';
+  if (hasRefundedSaleItems(sale)) return 'refunded_sales';
   return 'completed';
 };
 
 const SALES_HISTORY_STATUS_FILTERS = [
-  { value: 'all', label: 'All Sales' },
-  { value: 'completed', label: 'Completed' },
-  { value: 'partially_refunded', label: 'Partially Refunded' },
-  { value: 'refunded', label: 'Refunded' },
-  { value: 'cancelled', label: 'Cancelled' },
+  { value: 'all', label: 'All Records' },
+  { value: 'pending_payment', label: 'Pending Bank Transfers' },
+  { value: 'completed', label: 'Completed Sales' },
+  { value: 'refunded_sales', label: 'Refunded Sales' },
+  { value: 'cancelled', label: 'Cancelled Sales' },
   { value: 'refund_records', label: 'Refund Records' }
 ];
 
@@ -1027,11 +1021,6 @@ const REFUND_ITEM_CONDITION_OPTIONS = [
   { value: 'damaged', label: 'Damaged' },
   { value: 'used_or_installed', label: 'Used / Installed' },
   { value: 'missing_parts', label: 'Missing Parts or Packaging' }
-];
-
-const REFUND_RESTOCK_OPTIONS = [
-  { value: 'return_to_stock', label: 'Return to Sellable Stock' },
-  { value: 'do_not_restock', label: 'Do Not Restock' }
 ];
 
 const normalizeRefundReasonText = value =>
@@ -1160,7 +1149,7 @@ const getSaleProductSearchText = item =>
  * after the whole sale passes validation.
  */
 export function SalesModule({ user }) {
-  const { inventory, salesTransactions, recordSale, refundSale, cancelSale, getNextSalesInvoiceNumber } = useData();
+  const { inventory, salesTransactions, recordSale, refundSale, completeBankTransferSale, cancelSale, getNextSalesInvoiceNumber } = useData();
   const [officialInvoiceNumber, setOfficialInvoiceNumber] = useState('');
   const [invoiceSequenceExceptionReason, setInvoiceSequenceExceptionReason] = useState('');
   const [suggestedOfficialInvoiceNumber, setSuggestedOfficialInvoiceNumber] = useState('');
@@ -1205,6 +1194,7 @@ export function SalesModule({ user }) {
   const [cancelReason, setCancelReason] = useState('');
   const [isCancellingSale, setIsCancellingSale] = useState(false);
   const [isRefundingSale, setIsRefundingSale] = useState(false);
+  const [isCompletingBankTransfer, setIsCompletingBankTransfer] = useState(false);
   const [productSearch, setProductSearch] = useState('');
   const [productCategory, setProductCategory] = useState('all');
   const [productSort, setProductSort] = useState('name_az');
@@ -2476,7 +2466,7 @@ export function SalesModule({ user }) {
     }
 
     if (paymentMethod === 'bank_transfer' && paymentReference.trim().length < 3) {
-      toast.error('Enter the bank transfer reference number before completing the sale.');
+      toast.error('Enter the bank transfer reference number before saving the pending payment.');
       return false;
     }
 
@@ -2521,7 +2511,7 @@ export function SalesModule({ user }) {
         deliveryCharge: safeDeliveryCharge,
         amountReceived: paymentMethod === 'cash' ? safeAmountReceived : totalAmount,
         paymentReference: requiresPaymentReference(paymentMethod) ? paymentReference.trim() : '',
-        paymentConfirmed: needsPaymentConfirmation || paymentMethod === 'cash' || paymentMethod === 'bank_transfer',
+        paymentConfirmed: needsPaymentConfirmation || paymentMethod === 'cash',
         actualTransactionAt: actualTransactionAt || '',
         backdateReason: isPastTransactionDate(actualTransactionAt) ? backdateReason.trim() : '',
         items: selectedLineDetails.map(line => ({
@@ -2534,15 +2524,21 @@ export function SalesModule({ user }) {
           unitPrice: line.unitPrice
         }))
       });
-      toast.success('Sale recorded successfully.', {
-        description: `${getPrimaryDocumentNumber(sale)} saved and inventory was updated.`
+      const isPendingBankTransferSale = sale.status === 'pending_payment';
+      toast.success(isPendingBankTransferSale ? 'Bank transfer sale saved for verification.' : 'Sale recorded successfully.', {
+        description: isPendingBankTransferSale
+          ? `${getPrimaryDocumentNumber(sale)} is pending payment verification. Inventory is reserved, not deducted.`
+          : `${getPrimaryDocumentNumber(sale)} saved and inventory was updated.`
       });
-      const printStarted = printSaleTransactionReceipt(sale, receiptPrintWindow);
-      if (!printStarted) {
+      const printStarted = isPendingBankTransferSale ? false : printSaleTransactionReceipt(sale, receiptPrintWindow);
+      if (isPendingBankTransferSale) {
+        receiptPrintWindow?.close();
+        setCompletedSale(sale);
+      } else if (!printStarted) {
         setCompletedSale(sale);
       }
       clearFormDraft(salesDraftScope);
-      setSalesDraftStatus('Transaction completed');
+      setSalesDraftStatus(isPendingBankTransferSale ? 'Pending bank transfer saved' : 'Transaction completed');
       resetForm();
     } catch (err) {
       receiptPrintWindow?.close();
@@ -2581,6 +2577,23 @@ export function SalesModule({ user }) {
   const handleDownloadSaleSummary = sale => {
     downloadSaleTransactionSummary(sale);
     toast.success('Transaction receipt downloaded.');
+  };
+
+  const handleCompleteBankTransferSale = async sale => {
+    if (!sale || isCompletingBankTransfer) return;
+    setIsCompletingBankTransfer(true);
+    try {
+      const completedSale = await completeBankTransferSale(sale.id);
+      toast.success('Bank transfer verified and sale completed.', {
+        description: `${getPrimaryDocumentNumber(completedSale || sale)} is now included in sales reports and inventory was deducted.`
+      });
+    } catch (err) {
+      toast.error('Failed to complete bank transfer', {
+        description: err?.response?.data?.error || err.message || 'Inventory was not deducted.'
+      });
+    } finally {
+      setIsCompletingBankTransfer(false);
+    }
   };
 
   const openCancelSaleDialog = sale => {
@@ -4175,6 +4188,46 @@ export function SalesModule({ user }) {
           color: #111827;
           font-size: 0.76rem;
           line-height: 1.45;
+        }
+
+        .sales-refund-stock-result {
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+          border: 1px solid #cbd5e1;
+          border-radius: 0.75rem;
+          background: #f8fafc;
+          padding: 0.85rem 0.95rem;
+          color: #0f172a;
+          font-size: 0.86rem;
+          line-height: 1.4;
+        }
+
+        .sales-refund-stock-result strong {
+          font-weight: 800;
+        }
+
+        .sales-refund-stock-result span {
+          color: #475569;
+          font-size: 0.78rem;
+        }
+
+        .sales-refund-stock-result-restock {
+          border-color: #bbf7d0;
+          background: #f0fdf4;
+        }
+
+        .sales-refund-stock-result-restock strong {
+          color: #166534;
+        }
+
+        .sales-refund-stock-result-hold {
+          border-color: #fed7aa;
+          background: #fff7ed;
+        }
+
+        .sales-refund-stock-result-hold strong {
+          color: #9a3412;
         }
 
         .sales-refund-date-grid {
@@ -8571,11 +8624,6 @@ export function SalesModule({ user }) {
                             disabled={isSaving}
                             maxLength={120}
                           />
-                          {paymentMethod === 'bank_transfer' && (
-                            <p className="sales-payment-helper text-slate-600">
-                              Record the bank transaction reference as payment proof for audit and receipt lookup.
-                            </p>
-                          )}
                         </div>
                         {needsPaymentConfirmation && (
                           <div className="sales-payment-field">
@@ -8659,7 +8707,9 @@ export function SalesModule({ user }) {
                   >
                     {isSaving
                       ? 'Saving Sale...'
-                      : needsPaymentConfirmation
+                      : createsPendingBankTransfer(paymentMethod)
+                        ? 'Save Pending Payment'
+                        : needsPaymentConfirmation
                         ? 'Confirm Payment and Complete Sale'
                         : 'Save Sale'}
                   </Button>
@@ -8707,8 +8757,10 @@ export function SalesModule({ user }) {
         onDownloadSummary={handleDownloadSaleSummary}
         onRefundSale={openRefundSaleDialog}
         onCancelSale={openCancelSaleDialog}
+        onCompleteBankTransfer={handleCompleteBankTransferSale}
         canRefundSales={canRefundSales}
         canCancelSales={canCancelSales}
+        isCompletingBankTransfer={isCompletingBankTransfer}
       />
 
       <ClearSalesFormDialog
@@ -8774,7 +8826,7 @@ export function SalesModule({ user }) {
         onReasonChange={setRefundReason}
         onItemConditionChange={value => {
           setRefundItemCondition(value);
-          if (value !== 'resalable') setRefundRestockDecision('do_not_restock');
+          setRefundRestockDecision(value === 'resalable' ? 'return_to_stock' : 'do_not_restock');
         }}
         onRestockDecisionChange={setRefundRestockDecision}
         onPolicyAcceptedChange={setRefundPolicyAccepted}
@@ -9049,6 +9101,7 @@ function NonInventoryItemDialog({
 function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownload, onStartNewSale }) {
   const items = sale?.items || [];
   const receiptVat = getReceiptVatBreakdown(sale);
+  const isPendingPayment = sale?.status === 'pending_payment';
   const hasTrackedItems = items.some(item => !isNonInventorySaleItem(item));
   const hasNonInventoryItems = items.some(isNonInventorySaleItem);
   const branchAddress = getReceiptBranchAddress(sale?.branch);
@@ -9068,15 +9121,17 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
           </button>
           <DialogHeader className="text-left">
             <div className="sales-receipt-preview-title-row pr-10">
-              <span className="sales-receipt-preview-status-icon bg-green-50 text-green-700">
-                <CheckCircle className="h-5 w-5" />
+              <span className={`sales-receipt-preview-status-icon ${isPendingPayment ? 'bg-amber-50 text-amber-700' : 'bg-green-50 text-green-700'}`}>
+                {isPendingPayment ? <Clock className="h-5 w-5" /> : <CheckCircle className="h-5 w-5" />}
               </span>
               <div className="min-w-0">
                 <DialogTitle className="text-lg font-bold leading-tight text-slate-950">
-                  Transaction completed
+                  {isPendingPayment ? 'Pending bank transfer saved' : 'Transaction completed'}
                 </DialogTitle>
                 <DialogDescription className="mt-2 text-sm leading-6 text-slate-600">
-                  {hasTrackedItems
+                  {isPendingPayment
+                    ? 'The bank transfer reference was saved for Admin / Owner verification. Inventory is reserved but not deducted yet.'
+                    : hasTrackedItems
                     ? `The sale was saved${hasNonInventoryItems ? ', tracked items were deducted, and non-inventory items were recorded for sales only.' : ' and inventory was deducted.'}`
                     : 'The sale was saved as non-inventory sales only. Printing is optional.'}
                 </DialogDescription>
@@ -9100,8 +9155,8 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
                 <p className="sales-receipt-preview-contact">{RECEIPT_BUSINESS_INFO.contact}</p>
               </div>
               <div className="sales-receipt-preview-invoice">
-                <p className="sales-receipt-preview-sales">SALES</p>
-                <p className="sales-receipt-preview-title">INVOICE</p>
+                <p className="sales-receipt-preview-sales">{isPendingPayment ? 'PENDING' : 'SALES'}</p>
+                <p className="sales-receipt-preview-title">{isPendingPayment ? 'PAYMENT' : 'INVOICE'}</p>
                 <p className="sales-receipt-preview-number">No.: {invoiceNumber}</p>
               </div>
             </div>
@@ -9141,7 +9196,7 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
               <div className="sales-receipt-row"><span>VATable Sales</span><span>{formatCurrency(receiptVat.vatableSales)}</span></div>
               <div className="sales-receipt-row"><span>VAT 12%</span><span>{formatCurrency(receiptVat.vatAmount)}</span></div>
               <div className="sales-receipt-row text-sm font-bold"><span>AMOUNT DUE</span><span>{formatCurrency(sale?.totalAmount)}</span></div>
-              <div className="sales-receipt-row"><span>{`Paid (${paymentMethodLabels[sale?.paymentMethod] || 'Cash'})`}</span><span>{formatCurrency(sale?.amountReceived ?? sale?.totalAmount)}</span></div>
+              <div className="sales-receipt-row"><span>{isPendingPayment ? 'Payment Status' : `Paid (${paymentMethodLabels[sale?.paymentMethod] || 'Cash'})`}</span><span>{isPendingPayment ? 'Pending Verification' : formatCurrency(sale?.amountReceived ?? sale?.totalAmount)}</span></div>
               <div className="sales-receipt-row"><span>Change</span><span>{formatCurrency(sale?.changeAmount)}</span></div>
               {sale?.paymentReference && (
                 <div className="sales-receipt-row"><span>Reference</span><span>{sale.paymentReference}</span></div>
@@ -9165,16 +9220,18 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
               onClick={() => onDownload?.(sale)}
             >
               <Download className="h-4 w-4" />
-              Download Receipt
+              {isPendingPayment ? 'Download Slip' : 'Download Receipt'}
             </Button>
-            <Button
-              type="button"
-              className="sales-action-button bg-[#FF0000] text-white hover:bg-red-700"
-              onClick={() => onPrint?.(sale)}
-            >
-              <ReceiptText className="h-4 w-4" />
-              Print Receipt
-            </Button>
+            {!isPendingPayment && (
+              <Button
+                type="button"
+                className="sales-action-button bg-[#FF0000] text-white hover:bg-red-700"
+                onClick={() => onPrint?.(sale)}
+              >
+                <ReceiptText className="h-4 w-4" />
+                Print Receipt
+              </Button>
+            )}
           </div>
         </div>
       </DialogContent>
@@ -9248,6 +9305,7 @@ function ClearSalesFormDialog({
 }
 
 function CancelSaleDialog({ open, sale, reason, onReasonChange, onOpenChange, onConfirm, isSubmitting }) {
+  const isPendingPayment = sale?.status === 'pending_payment';
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sales-cancel-dialog border border-amber-300 bg-white p-0 shadow-2xl">
@@ -9259,10 +9317,12 @@ function CancelSaleDialog({ open, sale, reason, onReasonChange, onOpenChange, on
               </span>
               <div className="sales-cancel-copy">
                 <DialogTitle className="text-lg font-bold leading-tight text-slate-950">
-                  Cancel entire sale?
+                  {isPendingPayment ? 'Cancel pending payment?' : 'Cancel entire sale?'}
                 </DialogTitle>
                 <DialogDescription className="sales-cancel-description text-sm leading-6">
-                  This admin action voids <span className="sales-cancel-sale-number">{getPrimaryDocumentNumber(sale)}</span> and restores all tracked inventory from the original sale. Use Refund Items instead when a customer returns only selected items.
+                  {isPendingPayment
+                    ? <>This admin action cancels <span className="sales-cancel-sale-number">{getPrimaryDocumentNumber(sale)}</span> and releases the reserved inventory. No completed sale or refund record will be created.</>
+                    : <>This admin action voids <span className="sales-cancel-sale-number">{getPrimaryDocumentNumber(sale)}</span> and restores all tracked inventory from the original sale. Use Refund Items instead when a customer returns only selected items.</>}
                 </DialogDescription>
               </div>
             </div>
@@ -9273,7 +9333,7 @@ function CancelSaleDialog({ open, sale, reason, onReasonChange, onOpenChange, on
               id="sale-cancel-reason"
               value={reason}
               onChange={event => onReasonChange(event.target.value.slice(0, 500))}
-              placeholder="Example: Wrong item or quantity was encoded."
+              placeholder={isPendingPayment ? 'Example: Bank transfer was not received.' : 'Example: Wrong item or quantity was encoded.'}
               disabled={isSubmitting}
               className="sales-cancel-reason-input resize-none"
             />
@@ -9296,7 +9356,7 @@ function CancelSaleDialog({ open, sale, reason, onReasonChange, onOpenChange, on
               onClick={onConfirm}
               disabled={isSubmitting}
             >
-              {isSubmitting ? 'Cancelling...' : 'Cancel Entire Sale'}
+              {isSubmitting ? 'Cancelling...' : isPendingPayment ? 'Cancel Pending Payment' : 'Cancel Entire Sale'}
             </Button>
           </DialogFooter>
         </div>
@@ -9511,7 +9571,7 @@ function RefundSaleDialog({
               <div className="sales-refund-side-form">
                 <div className="sales-refund-policy-note" role="note">
                   <strong>Refund policy reminder</strong>
-                  <span>Verify the original invoice, sale date, returned quantity, item condition, and refund reason before saving. Return eligibility depends on the reason and condition; only unused, resalable items may return to sellable stock.</span>
+                  <span>Check the invoice, item condition, and refund reason. Only unused and resalable items should return to stock.</span>
                 </div>
                 <div className="sales-refund-field">
                   <Label htmlFor="refund-item-condition">Returned Item Condition <RequiredMark /></Label>
@@ -9526,30 +9586,17 @@ function RefundSaleDialog({
                     </SelectContent>
                   </Select>
                   <p className="sales-refund-helper">
-                    Items used, damaged by the customer, defective, or missing parts should not return to sellable inventory.
+                    Choose Resalable / Unused only when the item can be sold again.
                   </p>
                 </div>
                 <div className="sales-refund-field">
-                  <Label htmlFor="refund-restock-decision">Inventory Action <RequiredMark /></Label>
-                  <Select value={restockDecision} onValueChange={onRestockDecisionChange} disabled={isSubmitting}>
-                    <SelectTrigger id="refund-restock-decision" className="sales-refund-input">
-                      <SelectValue placeholder="Select inventory action" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {REFUND_RESTOCK_OPTIONS.map(option => (
-                        <SelectItem
-                          key={option.value}
-                          value={option.value}
-                          disabled={option.value === 'return_to_stock' && itemCondition !== 'resalable'}
-                        >
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="sales-refund-helper">
-                    This controls whether stock is restored. Financial refund records are still saved either way.
-                  </p>
+                  <Label>Stock Result</Label>
+                  <div className={`sales-refund-stock-result ${restockDecision === 'return_to_stock' ? 'sales-refund-stock-result-restock' : 'sales-refund-stock-result-hold'}`}>
+                    <strong>{restockDecision === 'return_to_stock' ? 'Will return to sellable stock' : 'Will not return to stock'}</strong>
+                    <span>{restockDecision === 'return_to_stock'
+                      ? 'The refunded quantity will be added back to inventory.'
+                      : 'The refund will be recorded, but inventory quantity will not increase.'}</span>
+                  </div>
                 </div>
                 <div className="sales-refund-field">
                   <Label htmlFor="refund-reason">Refund Reason <RequiredMark /></Label>
@@ -9711,8 +9758,10 @@ function SalesHistoryDialog({
   onDownloadSummary,
   onRefundSale,
   onCancelSale,
+  onCompleteBankTransfer,
   canRefundSales,
-  canCancelSales
+  canCancelSales,
+  isCompletingBankTransfer
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -9813,6 +9862,7 @@ function SalesHistoryDialog({
                 {sales.map(sale => {
                   const isSelected = selectedSale?.id === sale.id;
                   const isRefund = isRefundSalesRecord(sale);
+                  const isPendingPayment = sale.status === 'pending_payment';
                   const displayNumber = getSalesHistoryTitleNumber(sale);
                   const systemReferenceNumber = getSystemReferenceNumber(sale);
                   const originalInvoiceNumber = getReferenceOfficialInvoiceNumber(sale);
@@ -9842,6 +9892,13 @@ function SalesHistoryDialog({
                                   for {originalInvoiceNumber || originalSystemNumber}
                                 </span>
                               )}
+                            </p>
+                          )}
+                          {isPendingPayment && (
+                            <p className="mt-1 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-700">
+                              <Clock className="h-3.5 w-3.5" />
+                              <span>Pending verification</span>
+                              <span className="normal-case tracking-normal text-slate-600">bank transfer</span>
                             </p>
                           )}
                           <p className="sales-history-meta mt-2 text-sm leading-5 text-slate-700">
@@ -9887,8 +9944,10 @@ function SalesHistoryDialog({
                             onDownloadSummary={onDownloadSummary}
                             onRefundSale={onRefundSale}
                             onCancelSale={onCancelSale}
+                            onCompleteBankTransfer={onCompleteBankTransfer}
                             canRefundSales={canRefundSales}
                             canCancelSales={canCancelSales}
+                            isCompletingBankTransfer={isCompletingBankTransfer}
                           />
                         </div>
                       )}
@@ -9904,8 +9963,10 @@ function SalesHistoryDialog({
                     onDownloadSummary={onDownloadSummary}
                     onRefundSale={onRefundSale}
                     onCancelSale={onCancelSale}
+                    onCompleteBankTransfer={onCompleteBankTransfer}
                     canRefundSales={canRefundSales}
                     canCancelSales={canCancelSales}
+                    isCompletingBankTransfer={isCompletingBankTransfer}
                   />
                 ) : (
                   <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-600">
@@ -9936,19 +9997,25 @@ function HistoryDetail({ icon, label, value }) {
   );
 }
 
-function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCancelSale, canRefundSales, canCancelSales }) {
+function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCancelSale, onCompleteBankTransfer, canRefundSales, canCancelSales, isCompletingBankTransfer }) {
   const isCancelled = sale.status === 'cancelled';
+  const isPendingPayment = sale.status === 'pending_payment';
   const isRefund = isRefundSalesRecord(sale);
   const hasRefundActivity = hasRefundedSaleItems(sale);
-  const hasRefundableItems = !isRefund && !isCancelled && (sale.items || []).some(item => getRemainingRefundQuantity(item) > 0);
+  const hasRefundableItems = !isRefund && !isCancelled && !isPendingPayment && (sale.items || []).some(item => getRemainingRefundQuantity(item) > 0);
+  const canCompleteBankTransfer = canRefundSales && isPendingPayment && sale.paymentMethod === 'bank_transfer';
   const canCancelThisSale = canCancelSales && !isCancelled && !isRefund && !hasRefundActivity;
   const refundUnavailableText = isRefund
     ? 'This record is already a refund'
     : isCancelled
       ? 'Cancelled sales cannot be refunded'
-      : 'No refundable quantity remains.';
+      : isPendingPayment
+        ? 'Pending bank transfers must be completed before refunding'
+        : 'No refundable quantity remains.';
   const cancelHelpText = canCancelThisSale
-    ? 'Cancel Entire Sale is for voiding an incorrectly encoded sale. Use Refund for customer returns.'
+    ? isPendingPayment
+      ? 'Cancel Pending Payment releases reserved inventory when the bank transfer was not received or should no longer proceed.'
+      : 'Cancel Entire Sale is for voiding an incorrectly encoded sale. Use Refund for customer returns.'
     : isRefund
       ? 'Refund records are kept for audit and cannot be cancelled here.'
       : hasRefundActivity
@@ -9980,9 +10047,9 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
               <p className="mt-1 text-sm font-medium text-slate-600">Original invoice: {originalDisplayNumber}</p>
             )}
           </div>
-          <Badge className={`sales-history-status-badge capitalize ${isCancelled ? 'bg-red-100 text-red-700 hover:bg-red-100' : isRefund ? 'bg-amber-100 text-amber-700 hover:bg-amber-100' : 'bg-green-100 text-green-700 hover:bg-green-100'}`}>
-            {isCancelled ? <X className="h-4 w-4" /> : isRefund ? <RotateCcw className="h-4 w-4" /> : <CheckCircle className="h-4 w-4" />}
-            {isRefund ? 'refund' : sale.status || 'completed'}
+          <Badge className={`sales-history-status-badge capitalize ${isCancelled ? 'bg-red-100 text-red-700 hover:bg-red-100' : isPendingPayment ? 'bg-amber-100 text-amber-800 hover:bg-amber-100' : isRefund ? 'bg-amber-100 text-amber-700 hover:bg-amber-100' : 'bg-green-100 text-green-700 hover:bg-green-100'}`}>
+            {isCancelled ? <X className="h-4 w-4" /> : isPendingPayment ? <Clock className="h-4 w-4" /> : isRefund ? <RotateCcw className="h-4 w-4" /> : <CheckCircle className="h-4 w-4" />}
+            {isPendingPayment ? 'Pending Verification' : isRefund ? 'refund' : sale.status || 'completed'}
           </Badge>
         </div>
 
@@ -10018,6 +10085,20 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
             <Download className="h-4 w-4" />
               {documentName}
           </Button>
+          {canCompleteBankTransfer && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="sales-history-action-button border-green-200 text-green-700 hover:bg-green-50"
+              onClick={() => onCompleteBankTransfer?.(sale)}
+              disabled={isCompletingBankTransfer}
+              title="Verify the bank transfer and complete this sale."
+            >
+              <CheckCircle className="h-4 w-4" />
+              {isCompletingBankTransfer ? 'Completing...' : 'Complete Payment'}
+            </Button>
+          )}
           {canRefundSales && hasRefundableItems ? (
             <Button
               type="button"
@@ -10038,10 +10119,10 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
               size="sm"
               className="sales-history-action-button sales-history-cancel-button"
               onClick={() => onCancelSale?.(sale)}
-              title="Cancel the entire sale and restore all tracked inventory from this transaction."
+              title={isPendingPayment ? 'Cancel this pending bank transfer and release reserved inventory.' : 'Cancel the entire sale and restore all tracked inventory from this transaction.'}
             >
               <X className="h-4 w-4" />
-              Cancel Sale
+              {isPendingPayment ? 'Cancel Pending' : 'Cancel Sale'}
             </Button>
           )}
         </div>
@@ -10051,7 +10132,9 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
           <span>
             {isRefund && originalDisplayNumber
               ? `This refund record is linked to original invoice ${originalDisplayNumber}.`
-              : hasRefundableItems
+              : isPendingPayment
+                ? 'This bank transfer is pending verification. Inventory is reserved and official reports are updated only after completion.'
+                : hasRefundableItems
                 ? 'Refund Items handles returned items and creates a separate refund record.'
                 : refundUnavailableText}
             {' '}
@@ -10096,12 +10179,16 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
         <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="VAT 12%" value={formatCurrency(sale.vatAmount)} />
         <HistoryDetail icon={<Wallet className="h-5 w-5" />} label={isRefund ? 'Refund Amount' : 'Amount Due'} value={formatCurrency(sale.totalAmount)} />
         <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label={isRefund ? 'Refund Method' : 'Payment Method'} value={paymentMethodLabels[sale.paymentMethod] || 'Cash'} />
-        <HistoryDetail icon={<Coins className="h-5 w-5" />} label={isRefund ? 'Refund Released' : 'Amount Received'} value={formatCurrency(sale.amountReceived ?? sale.totalAmount)} />
+        {isPendingPayment ? (
+          <HistoryDetail icon={<Clock className="h-5 w-5" />} label="Payment Status" value="Pending Verification" />
+        ) : (
+          <HistoryDetail icon={<Coins className="h-5 w-5" />} label={isRefund ? 'Refund Released' : 'Amount Received'} value={formatCurrency(sale.amountReceived ?? sale.totalAmount)} />
+        )}
         {!isRefund && <HistoryDetail icon={<Coins className="h-5 w-5" />} label="Change" value={formatCurrency(sale.changeAmount)} />}
         {sale.paymentReference && (
           <HistoryDetail icon={<ClipboardList className="h-5 w-5" />} label="Payment Reference" value={sale.paymentReference} />
         )}
-        {(requiresPaymentConfirmation(sale.paymentMethod) || sale.paymentMethod === 'bank_transfer') && (
+        {(requiresPaymentConfirmation(sale.paymentMethod) || sale.paymentMethod === 'bank_transfer') && !isPendingPayment && (
           <HistoryDetail icon={<CheckCircle className="h-5 w-5" />} label="Payment Confirmation" value={sale.paymentConfirmedBy ? `Confirmed by ${sale.paymentConfirmedBy}` : 'Confirmed'} />
         )}
         {sale.backdateReason && (
