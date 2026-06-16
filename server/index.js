@@ -75,6 +75,7 @@ const CORS_ALLOWED_ORIGINS = (process.env.CORS_ORIGIN || process.env.CLIENT_URL 
   .split(',')
   .map(origin => origin.trim())
   .filter(Boolean);
+const VERCEL_PROJECT_ORIGIN_PATTERN = /^https:\/\/em-cayetano-store-management-system(?:-[a-z0-9-]+)*\.vercel\.app$/i;
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const ALLOWED_ROLES = ['Admin', 'Sales Encoder', 'Inventory Staff', 'Sales Encoder + Inventory Staff'];
 const ALLOWED_BRANCHES = ['Manggahan', 'San Rafael'];
@@ -222,6 +223,7 @@ function isLocalDevelopmentOrigin(origin) {
 function isTrustedRequestOrigin(origin) {
   if (!origin) return true;
   if (CORS_ALLOWED_ORIGINS.includes(origin)) return true;
+  if (VERCEL_PROJECT_ORIGIN_PATTERN.test(origin)) return true;
   return isLocalDevelopmentOrigin(origin);
 }
 
@@ -234,6 +236,12 @@ app.use((req, res, next) => {
   const origin = req.get('origin');
   const isStateChangingRequest = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
   if (isStateChangingRequest && !isTrustedRequestOrigin(origin)) {
+    console.warn('Blocked request origin:', {
+      origin: origin || 'none',
+      method: req.method,
+      path: req.originalUrl,
+      configuredOrigins: CORS_ALLOWED_ORIGINS
+    });
     return res.status(403).json({ error: 'Request origin is not allowed' });
   }
 
@@ -1609,6 +1617,9 @@ function createTransporter() {
   if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
     return nodemailer.createTransport({
       service: 'gmail',
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 20000,
       auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
@@ -4044,7 +4055,7 @@ async function sendBranchTransferEmail(toEmail, fullName, oldBranch, newBranch) 
 }
 
 async function sendOtpEmail(user, otp, subject, intro) {
-  await sendMail({
+  return sendMail({
     from: emailFrom('E.M. Cayetano Trading - Security'),
     to: user.email,
     subject,
@@ -4630,7 +4641,17 @@ app.post('/api/auth/send-otp', async (req, res) => {
       [otp, toPhilippineTimestamp(expiresAt), user.user_id]
     );
 
-    await sendOtpEmail(user, otp, '2FA Login Verification', 'Use this code to complete your login.');
+    const emailSent = await sendOtpEmail(user, otp, '2FA Login Verification', 'Use this code to complete your login.');
+    if (!emailSent) {
+      await pool.query(
+        'UPDATE users SET login_otp_code = NULL, login_otp_expires = NULL WHERE user_id = $1',
+        [user.user_id]
+      );
+      return res.status(502).json({
+        error: 'Unable to send the verification code. Please check the system email settings and try again.'
+      });
+    }
+
     const { remainingAttempts, retryAfterSeconds } = recordOtpRequest(rateLimitKey);
     const attemptText = remainingAttempts === 1 ? 'attempt' : 'attempts';
     const message = remainingAttempts === 0
