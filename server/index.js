@@ -4739,10 +4739,11 @@ app.post('/api/auth/send-otp', async (req, res) => {
         [user.user_id]
       );
       const providerMessage = String(emailResult?.error || '').slice(0, 500);
+      if (providerMessage) {
+        console.error(`OTP email provider rejected delivery for ${user.email || user.username}: ${providerMessage}`);
+      }
       return res.status(502).json({
-        error: providerMessage
-          ? `Unable to send the verification code. Email provider response: ${providerMessage}`
-          : 'Unable to send the verification code. Please check the system email settings and try again.'
+        error: 'Unable to send the verification code. Please use the approved demo email account or contact the system administrator.'
       });
     }
 
