@@ -1677,10 +1677,13 @@ async function sendMail(mailOptions) {
     } else {
       await transporter.sendMail(mailOptions);
     }
-    return true;
+    return { ok: true };
   } catch (err) {
     console.error('Email send failed:', err.message);
-    return false;
+    return {
+      ok: false,
+      error: err.message
+    };
   }
 }
 
@@ -4729,14 +4732,17 @@ app.post('/api/auth/send-otp', async (req, res) => {
       [otp, toPhilippineTimestamp(expiresAt), user.user_id]
     );
 
-    const emailSent = await sendOtpEmail(user, otp, '2FA Login Verification', 'Use this code to complete your login.');
-    if (!emailSent) {
+    const emailResult = await sendOtpEmail(user, otp, '2FA Login Verification', 'Use this code to complete your login.');
+    if (!emailResult?.ok) {
       await pool.query(
         'UPDATE users SET login_otp_code = NULL, login_otp_expires = NULL WHERE user_id = $1',
         [user.user_id]
       );
+      const providerMessage = String(emailResult?.error || '').slice(0, 500);
       return res.status(502).json({
-        error: 'Unable to send the verification code. Please check the system email settings and try again.'
+        error: providerMessage
+          ? `Unable to send the verification code. Email provider response: ${providerMessage}`
+          : 'Unable to send the verification code. Please check the system email settings and try again.'
       });
     }
 
