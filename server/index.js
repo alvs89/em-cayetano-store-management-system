@@ -199,6 +199,13 @@ if (IS_PRODUCTION && CORS_ALLOWED_ORIGINS.length === 0) {
 }
 
 app.disable('x-powered-by');
+if (IS_PRODUCTION) {
+  app.set('trust proxy', 1);
+}
+
+if (IS_PRODUCTION && !process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL must be configured in production.');
+}
 
 function isLocalDevelopmentOrigin(origin) {
   if (!origin || IS_PRODUCTION) return false;
@@ -4360,6 +4367,15 @@ function requireAdmin(req, res, next) {
 
 app.get('/', (req, res) => {
   res.send('E.M. Cayetano Trading API is Running');
+});
+
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'em-cayetano-api',
+    environment: IS_PRODUCTION ? 'production' : 'development',
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.post('/api/auth/register', async (req, res) => {

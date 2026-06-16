@@ -109,6 +109,7 @@ npm install
 Create `server/.env`:
 
 ```env
+NODE_ENV=development
 PORT=5000
 DATABASE_URL=your_postgresql_connection_string
 JWT_SECRET=your_secure_jwt_secret
@@ -141,7 +142,78 @@ VITE_APP_VERSION=1.0.0
 VITE_APP_ENV=Development
 ```
 
-Some authentication screens currently target the local backend during development, so run the backend on port `5000` unless those API URLs are updated.
+All frontend API calls use `VITE_API_BASE_URL`, so update that value when the backend is deployed.
+
+## Deployment Readiness
+
+The project is a two-service web system:
+
+- `client/`: React + Vite static frontend.
+- `server/`: Express.js API connected to PostgreSQL.
+
+For the fastest deployment with minimal server administration, use this setup:
+
+```text
+Frontend: Vercel or Netlify
+Backend: Render Web Service
+Database: Render PostgreSQL, Neon, Supabase PostgreSQL, or another managed PostgreSQL service
+```
+
+Production backend environment variables:
+
+```env
+NODE_ENV=production
+DATABASE_URL=postgresql://username:password@host:5432/database?sslmode=require
+JWT_SECRET=use-a-long-random-production-secret
+CORS_ORIGIN=https://your-frontend-domain.example
+EMAIL_USER=your-email@example.com
+EMAIL_PASS=your-email-app-password
+SYSTEM_LOG_RETENTION_DAYS=30
+```
+
+Production frontend environment variables:
+
+```env
+VITE_API_BASE_URL=https://your-backend-domain.example
+VITE_APP_ENV=Production
+VITE_APP_VERSION=1.0.0
+```
+
+Backend hosting settings:
+
+```text
+Root directory: server
+Build command: npm install
+Start command: npm start
+Health check path: /api/health
+```
+
+Frontend hosting settings:
+
+```text
+Root directory: client
+Build command: npm install && npm run build
+Output directory: build
+```
+
+Before deployment, run:
+
+```bash
+cd client
+npm run build
+
+cd ../server
+npm run check
+```
+
+After the production database is prepared, run:
+
+```bash
+cd server
+npm run deploy:verify
+```
+
+Maintenance backup and restore use PostgreSQL command-line tools. If the backend host does not provide `pg_dump` and `psql` on `PATH`, set `PG_DUMP_PATH` and `PSQL_PATH`, or use the database provider's managed backup tools instead.
 
 ## Database Setup
 
