@@ -76,6 +76,7 @@ const CORS_ALLOWED_ORIGINS = (process.env.CORS_ORIGIN || process.env.CLIENT_URL 
   .map(origin => origin.trim())
   .filter(Boolean);
 const VERCEL_PROJECT_ORIGIN_PATTERN = /^https:\/\/em-cayetano-store-management-system(?:-[a-z0-9-]+)*\.vercel\.app$/i;
+const LOGIN_OTP_REQUIRED = process.env.REQUIRE_LOGIN_OTP !== 'false';
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const ALLOWED_ROLES = ['Admin', 'Sales Encoder', 'Inventory Staff', 'Sales Encoder + Inventory Staff'];
 const ALLOWED_BRANCHES = ['Manggahan', 'San Rafael'];
@@ -4521,6 +4522,53 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     clearFailedLoginAttempts(cleanLoginUsername, req);
+    if (!LOGIN_OTP_REQUIRED) {
+      const sessionBranch = isAdmin(user) && selectedBranch ? selectedBranch : user.branch;
+      const token = signToken(user, sessionBranch);
+      await pool.query(
+        'UPDATE users SET login_otp_code = NULL, login_otp_expires = NULL WHERE user_id = $1',
+        [user.user_id]
+      );
+      await Promise.allSettled([
+        recordAuditLog(pool, {
+          actorId: user.user_id,
+          targetName: user.username,
+          targetType: 'auth_session',
+          action: 'AUTH_LOGIN_SUCCESS',
+          reason: 'Password login completed. Login OTP verification is disabled by deployment configuration.',
+          details: {
+            branch: sessionBranch,
+            role: user.role,
+            ip: getClientIp(req),
+            otpRequired: false
+          }
+        }),
+        recordSystemLog(pool, {
+          eventType: 'AUTH_LOGIN_SUCCESS',
+          severity: 'warning',
+          message: 'User logged in while login OTP verification is disabled by deployment configuration.',
+          context: {
+            username: user.username,
+            branch: sessionBranch,
+            role: user.role,
+            ip: getClientIp(req),
+            otpRequired: false
+          },
+          actorId: user.user_id,
+          isSecurity: true
+        })
+      ]);
+
+      return res.json({
+        message: 'Login Successful',
+        token,
+        user: {
+          ...user,
+          branch: sessionBranch
+        }
+      });
+    }
+
     return res.json({
       message: '2FA Required',
       require2fa: true,
