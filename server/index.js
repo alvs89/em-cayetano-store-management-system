@@ -1639,9 +1639,44 @@ function createTransporter() {
 
 const transporter = createTransporter();
 
+function shouldUseResendApi() {
+  return String(process.env.EMAIL_HOST || '').trim().toLowerCase() === 'smtp.resend.com'
+    && String(process.env.EMAIL_USER || '').trim().toLowerCase() === 'resend'
+    && Boolean(process.env.EMAIL_PASS);
+}
+
+async function sendMailWithResendApi(mailOptions) {
+  if (typeof fetch !== 'function') {
+    throw new Error('Fetch API is unavailable in this Node runtime.');
+  }
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.EMAIL_PASS}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      from: mailOptions.from,
+      to: Array.isArray(mailOptions.to) ? mailOptions.to : [mailOptions.to],
+      subject: mailOptions.subject,
+      html: mailOptions.html
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Resend API ${response.status}: ${errorText}`);
+  }
+}
+
 async function sendMail(mailOptions) {
   try {
-    await transporter.sendMail(mailOptions);
+    if (shouldUseResendApi()) {
+      await sendMailWithResendApi(mailOptions);
+    } else {
+      await transporter.sendMail(mailOptions);
+    }
     return true;
   } catch (err) {
     console.error('Email send failed:', err.message);

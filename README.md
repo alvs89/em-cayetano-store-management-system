@@ -179,6 +179,10 @@ REQUIRE_LOGIN_OTP=true
 SYSTEM_LOG_RETENTION_DAYS=30
 ```
 
+When `EMAIL_HOST=smtp.resend.com` and `EMAIL_USER=resend`, the backend sends
+through Resend's HTTPS API using `EMAIL_PASS` as the Resend API key. This avoids
+SMTP port timeouts on hosted platforms while keeping the same email variables.
+
 Production frontend environment variables:
 
 ```env
