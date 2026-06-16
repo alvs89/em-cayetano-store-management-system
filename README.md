@@ -115,6 +115,7 @@ DATABASE_URL=your_postgresql_connection_string
 JWT_SECRET=your_secure_jwt_secret
 EMAIL_USER=your_email_address
 EMAIL_PASS=your_email_app_password
+EMAIL_FROM=notifications@example.com
 REQUIRE_LOGIN_OTP=true
 # Production only: set the deployed frontend origin, for example https://your-site.example
 CORS_ORIGIN=
@@ -125,6 +126,7 @@ Notes:
 - `DATABASE_URL` is required.
 - `JWT_SECRET` should be a strong random string.
 - `EMAIL_USER` and `EMAIL_PASS` are required for OTP and email notifications.
+- `EMAIL_FROM` is the verified sender address shown to users. This can be different from the SMTP username.
 - `REQUIRE_LOGIN_OTP` defaults to `true`. Set it to `false` only for an approved deployment fallback while email delivery is unavailable.
 - Local development accepts `localhost` and `127.0.0.1` frontend origins automatically. Set `CORS_ORIGIN` only for production or a specific shared frontend URL.
 - Do not commit `.env` files.
@@ -168,8 +170,11 @@ NODE_ENV=production
 DATABASE_URL=postgresql://username:password@host:5432/database?sslmode=require
 JWT_SECRET=use-a-long-random-production-secret
 CORS_ORIGIN=https://your-frontend-domain.example
+EMAIL_HOST=smtp.resend.com
+EMAIL_PORT=587
 EMAIL_USER=your-email@example.com
 EMAIL_PASS=your-email-app-password
+EMAIL_FROM=notifications@example.com
 REQUIRE_LOGIN_OTP=true
 SYSTEM_LOG_RETENTION_DAYS=30
 ```

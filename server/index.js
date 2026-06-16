@@ -1650,8 +1650,9 @@ async function sendMail(mailOptions) {
 }
 
 function emailFrom(label) {
-  return process.env.EMAIL_USER
-    ? `"${label}" <${process.env.EMAIL_USER}>`
+  const senderEmail = process.env.EMAIL_FROM || process.env.EMAIL_USER;
+  return senderEmail
+    ? `"${label}" <${senderEmail}>`
     : `"${label}" <no-reply@localhost>`;
 }
 
