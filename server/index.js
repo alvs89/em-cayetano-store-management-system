@@ -1615,8 +1615,12 @@ async function migrateTimestampStorageToPhilippineTime() {
 
 function createTransporter() {
   if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+    const emailPort = Number.parseInt(process.env.EMAIL_PORT || '587', 10);
     return nodemailer.createTransport({
-      service: 'gmail',
+      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+      port: emailPort,
+      secure: emailPort === 465,
+      requireTLS: emailPort !== 465,
       connectionTimeout: 15000,
       greetingTimeout: 15000,
       socketTimeout: 20000,
