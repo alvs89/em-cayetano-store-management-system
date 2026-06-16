@@ -991,9 +991,9 @@ const SALES_HISTORY_STATUS_FILTERS = [
   { value: 'all', label: 'All Records' },
   { value: 'pending_payment', label: 'Pending Bank Transfers' },
   { value: 'completed', label: 'Completed Sales' },
-  { value: 'refunded_sales', label: 'Refunded Sales' },
+  { value: 'refunded_sales', label: 'Sales with Refunds' },
   { value: 'cancelled', label: 'Cancelled Sales' },
-  { value: 'refund_records', label: 'Refund Records' }
+  { value: 'refund_records', label: 'Refund Transactions' }
 ];
 
 // Centralizes refund limit wording so real-time validation and final checks stay consistent.
@@ -1207,7 +1207,9 @@ export function SalesModule({ user }) {
   const [recoverableSalesDraft, setRecoverableSalesDraft] = useState(null);
   const [salesDraftStatus, setSalesDraftStatus] = useState('');
   const canCancelSales = isAdminRole(user?.role);
-  const canRefundSales = canRecordSales(user?.role);
+  const canProcessSales = canRecordSales(user?.role);
+  const canRefundSales = canProcessSales;
+  const canVerifyBankTransferPayments = canProcessSales;
   const salesDraftScope = useMemo(() => ({
     module: 'sales-recording',
     userId: user?.id || user?.user_id || user?.username || 'current-user',
@@ -1232,28 +1234,33 @@ export function SalesModule({ user }) {
   };
 
   useEffect(() => {
-    const applyHistoryTarget = ({ period, saleId, salesNumber, officialInvoiceNumber, search } = {}) => {
+    const applyHistoryTarget = ({ period, status, saleId, salesNumber, officialInvoiceNumber, search } = {}) => {
       const safePeriod = ['all', 'today', 'week', 'month'].includes(period) ? period : 'all';
+      const safeStatus = SALES_HISTORY_STATUS_FILTERS.some(option => option.value === status) ? status : 'all';
       const targetSaleId = String(saleId || '').trim();
       const targetSearch = String(search || officialInvoiceNumber || salesNumber || '').trim();
       setHistoryPeriod(safePeriod);
+      setHistoryStatusFilter(safeStatus);
       setHistorySearch(targetSearch);
       setSelectedHistorySaleId(targetSaleId);
       setIsHistoryOpen(true);
     };
 
     const storedPeriod = localStorage.getItem('sales_history_target_period');
+    const storedStatus = localStorage.getItem('sales_history_target_status');
     const storedSaleId = localStorage.getItem('sales_history_target_sale_id');
     const storedSalesNumber = localStorage.getItem('sales_history_target_sales_number');
     const storedOfficialInvoiceNumber = localStorage.getItem('sales_history_target_official_invoice_number');
-    if (storedPeriod || storedSaleId || storedSalesNumber || storedOfficialInvoiceNumber) {
+    if (storedPeriod || storedStatus || storedSaleId || storedSalesNumber || storedOfficialInvoiceNumber) {
       applyHistoryTarget({
         period: storedPeriod,
+        status: storedStatus,
         saleId: storedSaleId,
         salesNumber: storedSalesNumber,
         officialInvoiceNumber: storedOfficialInvoiceNumber
       });
       localStorage.removeItem('sales_history_target_period');
+      localStorage.removeItem('sales_history_target_status');
       localStorage.removeItem('sales_history_target_sale_id');
       localStorage.removeItem('sales_history_target_sales_number');
       localStorage.removeItem('sales_history_target_official_invoice_number');
@@ -1262,6 +1269,7 @@ export function SalesModule({ user }) {
     const handleHistoryTarget = event => {
       applyHistoryTarget(event.detail || {});
       localStorage.removeItem('sales_history_target_period');
+      localStorage.removeItem('sales_history_target_status');
       localStorage.removeItem('sales_history_target_sale_id');
       localStorage.removeItem('sales_history_target_sales_number');
       localStorage.removeItem('sales_history_target_official_invoice_number');
@@ -1274,8 +1282,10 @@ export function SalesModule({ user }) {
   useEffect(() => {
     const applyEntryTarget = () => {
       localStorage.removeItem('sales_history_target_period');
+      localStorage.removeItem('sales_history_target_status');
       setIsHistoryOpen(false);
       setHistorySearch('');
+      setHistoryStatusFilter('all');
       setSelectedHistorySaleId('');
     };
 
@@ -2198,11 +2208,33 @@ export function SalesModule({ user }) {
   };
 
   const removeLine = index => {
+    const removedLine = saleLines[index];
+    const removedDetail = selectedLineDetails[index] || {};
+    const removedItemName = removedDetail.itemName || removedDetail.item?.name || 'Selected item';
     setSaleLines(prev => {
       if (prev.length === 1) {
         return [emptySaleLine()];
       }
       return prev.filter((_, lineIndex) => lineIndex !== index);
+    });
+    toast.success(`${removedItemName} removed from selected items.`, {
+      className: 'remove-success-toast',
+      action: removedLine ? {
+        label: 'Undo',
+        onClick: () => {
+          setSaleLines(prev => {
+            const restored = [...prev];
+            restored.splice(Math.min(index, restored.length), 0, removedLine);
+            return restored;
+          });
+        }
+      } : undefined,
+      actionButtonStyle: {
+        background: '#92400e',
+        border: '1px solid #92400e',
+        color: '#ffffff',
+        fontWeight: 800
+      }
     });
   };
 
@@ -8759,6 +8791,7 @@ export function SalesModule({ user }) {
         onCancelSale={openCancelSaleDialog}
         onCompleteBankTransfer={handleCompleteBankTransferSale}
         canRefundSales={canRefundSales}
+        canVerifyBankTransferPayments={canVerifyBankTransferPayments}
         canCancelSales={canCancelSales}
         isCompletingBankTransfer={isCompletingBankTransfer}
       />
@@ -9130,7 +9163,7 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
                 </DialogTitle>
                 <DialogDescription className="mt-2 text-sm leading-6 text-slate-600">
                   {isPendingPayment
-                    ? 'The bank transfer reference was saved for Admin / Owner verification. Inventory is reserved but not deducted yet.'
+                    ? 'The bank transfer reference was saved for payment verification. Inventory is reserved but not deducted yet.'
                     : hasTrackedItems
                     ? `The sale was saved${hasNonInventoryItems ? ', tracked items were deducted, and non-inventory items were recorded for sales only.' : ' and inventory was deducted.'}`
                     : 'The sale was saved as non-inventory sales only. Printing is optional.'}
@@ -9760,6 +9793,7 @@ function SalesHistoryDialog({
   onCancelSale,
   onCompleteBankTransfer,
   canRefundSales,
+  canVerifyBankTransferPayments,
   canCancelSales,
   isCompletingBankTransfer
 }) {
@@ -9946,6 +9980,7 @@ function SalesHistoryDialog({
                             onCancelSale={onCancelSale}
                             onCompleteBankTransfer={onCompleteBankTransfer}
                             canRefundSales={canRefundSales}
+                            canVerifyBankTransferPayments={canVerifyBankTransferPayments}
                             canCancelSales={canCancelSales}
                             isCompletingBankTransfer={isCompletingBankTransfer}
                           />
@@ -9965,6 +10000,7 @@ function SalesHistoryDialog({
                     onCancelSale={onCancelSale}
                     onCompleteBankTransfer={onCompleteBankTransfer}
                     canRefundSales={canRefundSales}
+                    canVerifyBankTransferPayments={canVerifyBankTransferPayments}
                     canCancelSales={canCancelSales}
                     isCompletingBankTransfer={isCompletingBankTransfer}
                   />
@@ -9997,13 +10033,13 @@ function HistoryDetail({ icon, label, value }) {
   );
 }
 
-function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCancelSale, onCompleteBankTransfer, canRefundSales, canCancelSales, isCompletingBankTransfer }) {
+function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCancelSale, onCompleteBankTransfer, canRefundSales, canVerifyBankTransferPayments, canCancelSales, isCompletingBankTransfer }) {
   const isCancelled = sale.status === 'cancelled';
   const isPendingPayment = sale.status === 'pending_payment';
   const isRefund = isRefundSalesRecord(sale);
   const hasRefundActivity = hasRefundedSaleItems(sale);
   const hasRefundableItems = !isRefund && !isCancelled && !isPendingPayment && (sale.items || []).some(item => getRemainingRefundQuantity(item) > 0);
-  const canCompleteBankTransfer = canRefundSales && isPendingPayment && sale.paymentMethod === 'bank_transfer';
+  const canCompleteBankTransfer = canVerifyBankTransferPayments && isPendingPayment && sale.paymentMethod === 'bank_transfer';
   const canCancelThisSale = canCancelSales && !isCancelled && !isRefund && !hasRefundActivity;
   const refundUnavailableText = isRefund
     ? 'This record is already a refund'
@@ -10014,7 +10050,7 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
         : 'No refundable quantity remains.';
   const cancelHelpText = canCancelThisSale
     ? isPendingPayment
-      ? 'Cancel Pending Payment releases reserved inventory when the bank transfer was not received or should no longer proceed.'
+      ? ''
       : 'Cancel Entire Sale is for voiding an incorrectly encoded sale. Use Refund for customer returns.'
     : isRefund
       ? 'Refund records are kept for audit and cannot be cancelled here.'
@@ -10130,15 +10166,19 @@ function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCa
         <div className="sales-history-action-note">
           <Info className="h-4 w-4" />
           <span>
-            {isRefund && originalDisplayNumber
-              ? `This refund record is linked to original invoice ${originalDisplayNumber}.`
-              : isPendingPayment
-                ? 'This bank transfer is pending verification. Inventory is reserved and official reports are updated only after completion.'
-                : hasRefundableItems
-                ? 'Refund Items handles returned items and creates a separate refund record.'
-                : refundUnavailableText}
-            {' '}
-            {cancelHelpText}
+            {isPendingPayment
+              ? 'This bank transfer is pending verification. Inventory and reports will be updated once payment is confirmed. Canceling the pending payment will release the reserved inventory.'
+              : (
+                <>
+                  {isRefund && originalDisplayNumber
+                    ? `This refund record is linked to original invoice ${originalDisplayNumber}.`
+                    : hasRefundableItems
+                    ? 'Refund Items handles returned items and creates a separate refund record.'
+                    : refundUnavailableText}
+                  {' '}
+                  {cancelHelpText}
+                </>
+              )}
           </span>
         </div>
       </div>

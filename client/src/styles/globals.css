@@ -1393,7 +1393,7 @@ input.actual-transaction-part-input[data-slot="input"]:focus-visible {
   color: #047857 !important;
 }
 
-[data-sonner-toast][data-front="true"].purchase-remove-toast {
+[data-sonner-toast][data-front="true"].remove-success-toast {
   border-color: #fed7aa !important;
   background: #fff7ed !important;
   box-shadow: 0 16px 32px rgba(154, 52, 18, 0.14) !important;

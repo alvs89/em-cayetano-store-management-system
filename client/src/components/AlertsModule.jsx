@@ -88,6 +88,7 @@ const ALERT_FILTER_OPTIONS = [
   { value: 'out-of-stock', label: 'Out of Stock' },
   { value: 'low-stock', label: 'Low Stock' },
   { value: 'inventory-requests', label: 'Inventory Requests' },
+  { value: 'pending-payments', label: 'Pending Payments' },
   { value: 'supplier-payments', label: 'Supplier Payments' },
   { value: 'user-management', label: 'User Accounts' },
   { value: 'maintenance', label: 'Maintenance' }
@@ -103,6 +104,7 @@ const getAlertFilterKey = alert => {
   if (alert.alertCategory) return alert.alertCategory;
   if (alert.title === 'Out of Stock') return 'out-of-stock';
   if (alert.title === 'Low Stock Alert') return 'low-stock';
+  if (alert.relatedModule === 'sales' && alert.alertCategory === 'pending-payments') return 'pending-payments';
   if (alert.relatedModule === 'purchases') return 'supplier-payments';
   if (alert.relatedModule === 'user-management') return 'user-management';
   if (alert.relatedModule === 'maintenance') return 'maintenance';
@@ -358,6 +360,24 @@ export function AlertsModule({ user, onNavigate }) {
       if (target.purchaseNumber) localStorage.setItem('purchases_target_purchase_number', String(target.purchaseNumber));
       localStorage.setItem('purchases_open_history', 'true');
       window.dispatchEvent(new CustomEvent('purchases-target-view', { detail: target }));
+    }
+
+    if (alert.relatedModule === 'sales' && alert.alertCategory === 'pending-payments') {
+      const target = {
+        period: 'all',
+        status: 'pending_payment',
+        saleId: alert.saleId || '',
+        salesNumber: alert.salesNumber || '',
+        officialInvoiceNumber: alert.officialInvoiceNumber || ''
+      };
+      localStorage.setItem('sales_history_target_period', target.period);
+      localStorage.setItem('sales_history_target_status', target.status);
+      if (target.saleId) localStorage.setItem('sales_history_target_sale_id', String(target.saleId));
+      if (target.salesNumber) localStorage.setItem('sales_history_target_sales_number', String(target.salesNumber));
+      if (target.officialInvoiceNumber) localStorage.setItem('sales_history_target_official_invoice_number', String(target.officialInvoiceNumber));
+      window.dispatchEvent(new CustomEvent('sales-history-target-view', { detail: target }));
+      onNavigate('sales');
+      return;
     }
 
     if (alert.relatedModule === 'inventory' && alert.inventoryId) {

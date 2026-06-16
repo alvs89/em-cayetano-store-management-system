@@ -4000,10 +4000,15 @@ export function InventoryModule({
   };
 
   const removeBatchStockAdjustmentRow = index => {
+    const removedRow = batchStockAdjustmentRows[index];
+    const removedItem = getBatchAdjustmentRowItem(removedRow?.inventoryId);
     setBatchStockAdjustmentRows(rows => {
       const nextRows = rows.length === 1 ? [{ inventoryId: "", quantity: "" }] : rows.filter((_, rowIndex) => rowIndex !== index);
       persistBatchStockAdjustmentDraft({ rows: nextRows });
       return nextRows;
+    });
+    toast.success(`${removedItem?.name || "Batch stock adjustment line"} removed.`, {
+      className: "remove-success-toast"
     });
   };
 
@@ -4105,10 +4110,15 @@ export function InventoryModule({
   };
 
   const removeBatchStockOutRow = index => {
+    const removedRow = batchStockOutRows[index];
+    const removedItem = getBatchRowItem(removedRow?.inventoryId);
     setBatchStockOutRows(rows => {
       const nextRows = rows.length === 1 ? [{ inventoryId: "", quantity: "" }] : rows.filter((_, rowIndex) => rowIndex !== index);
       persistBatchStockOutDraft({ rows: nextRows });
       return nextRows;
+    });
+    toast.success(`${removedItem?.name || "Batch stock-out line"} removed.`, {
+      className: "remove-success-toast"
     });
   };
 

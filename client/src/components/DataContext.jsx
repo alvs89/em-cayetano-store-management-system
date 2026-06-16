@@ -4,7 +4,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo } 
 import axios from "axios";
 import { apiUrl } from "../utils/api";
 import { formatArchiveReferenceId, formatItemCode } from "../utils/itemCodes";
-import { canPerformInventoryMovement, isAdminRole } from "../utils/roles";
+import { canPerformInventoryMovement, canRecordSales, isAdminRole } from "../utils/roles";
 
 const DataContext = createContext(undefined);
 
@@ -277,6 +277,34 @@ const generateSupplierPaymentAlerts = (purchases, role) => {
       };
     })
     .filter(Boolean);
+};
+
+// Pending bank-transfer alerts are shown only to sales-authorized roles because
+// they can verify the payment and complete the sale from Sales History.
+const generatePendingBankTransferAlerts = (sales, role) => {
+  if (!canRecordSales(role)) return [];
+
+  return (sales || [])
+    .filter(sale => sale.status === 'pending_payment' && sale.paymentMethod === 'bank_transfer')
+    .map(sale => {
+      const invoiceNumber = sale.officialInvoiceNumber || sale.salesNumber || sale.id;
+      const referenceText = sale.paymentReference ? ` Reference: ${sale.paymentReference}.` : '';
+      return {
+        id: `pending-bank-transfer-${sale.id}`,
+        type: 'warning',
+        title: 'Pending Bank Transfer',
+        message: `Invoice ${invoiceNumber} is waiting for payment confirmation. Amount due: ${formatCurrencyForAlert(sale.totalAmount)}.${referenceText}`,
+        timestampRaw: sale.createdAt || new Date().toISOString(),
+        read: false,
+        actionable: true,
+        relatedModule: 'sales',
+        alertCategory: 'pending-payments',
+        actionLabel: 'Review Payment',
+        saleId: sale.id,
+        salesNumber: sale.salesNumber,
+        officialInvoiceNumber: sale.officialInvoiceNumber
+      };
+    });
 };
 
 const formatCurrencyForAlert = value =>
@@ -956,8 +984,9 @@ export function DataProvider({ children }) {
     const inventoryAlerts = generateInventoryAlerts(inventory);
     const systemAlerts = generateSystemAlerts(systemSummary, activeUserRole);
     const supplierPaymentAlerts = generateSupplierPaymentAlerts(purchaseTransactions, activeUserRole);
+    const pendingBankTransferAlerts = generatePendingBankTransferAlerts(salesTransactions, activeUserRole);
     const reviewedRequestAlerts = generateReviewedInventoryRequestAlerts(inventoryChangeRequests, inventory, activeUserRole);
-    return [...inventoryAlerts, ...systemAlerts, ...supplierPaymentAlerts, ...reviewedRequestAlerts]
+    return [...inventoryAlerts, ...systemAlerts, ...supplierPaymentAlerts, ...pendingBankTransferAlerts, ...reviewedRequestAlerts]
       .filter(alert => !dismissedAlertIds.includes(alert.id))
       .map(alert => ({
         ...alert,
@@ -969,7 +998,7 @@ export function DataProvider({ children }) {
         const bTime = new Date(b.timestampRaw || b.timestamp || 0).getTime();
         return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
       });
-  }, [activeUserRole, dismissedAlertIds, inventory, inventoryChangeRequests, purchaseTransactions, readAlertIds, systemSummary]);
+  }, [activeUserRole, dismissedAlertIds, inventory, inventoryChangeRequests, purchaseTransactions, readAlertIds, salesTransactions, systemSummary]);
 
   const unreadAlertCount = alerts.filter(alert => !alert.read).length;
   const warningAlertCount = alerts.filter(alert => alert.type === "warning").length;

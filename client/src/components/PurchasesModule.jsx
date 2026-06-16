@@ -948,8 +948,8 @@ export function PurchasesModule({ user, onNavigate }) {
     const removedLine = purchaseLines[index];
     const removedItemName = lineDetails[index]?.item?.name || 'Purchase line';
     setPurchaseLines(prev => prev.length === 1 ? [emptyPurchaseLine()] : prev.filter((_, lineIndex) => lineIndex !== index));
-    toast.warning(`${removedItemName} removed from current purchase.`, {
-      className: 'purchase-remove-toast',
+    toast.success(`${removedItemName} removed from current purchase.`, {
+      className: 'remove-success-toast',
       action: removedLine ? {
         label: 'Undo',
         onClick: () => {
@@ -4376,25 +4376,6 @@ function PurchaseHistoryDetail({ purchase, onUpdatePaymentStatus }) {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <HistoryDetail icon={<Truck className="h-5 w-5" />} label="Supplier" value={purchase.supplierName || 'No supplier'} />
-        <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Document" value={formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber, purchase.documentTypeNote)} />
-        <HistoryDetail icon={<PackagePlus className="h-5 w-5" />} label="Line Items" value={`${getPurchaseLineCount(purchase)} line${getPurchaseLineCount(purchase) === 1 ? '' : 's'}`} />
-        <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="Quantity Added" value={`${getPurchaseQuantity(purchase)} unit${getPurchaseQuantity(purchase) === 1 ? '' : 's'}`} />
-        <HistoryDetail icon={<Wallet className="h-5 w-5" />} label="Total Purchase" value={formatCurrency(purchase.subtotalAmount)} />
-        <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Terms" value={formatPurchasePaymentTerms(purchase.paymentTerms, purchase.creditTermsDays)} />
-        {isCreditPurchase && (
-          <HistoryDetail icon={<CalendarDays className="h-5 w-5" />} label="Payment Due" value={formatDateOnly(purchase.paymentDueDate)} />
-        )}
-        {isCreditPurchase && (
-          <HistoryDetail icon={<CheckCircle className="h-5 w-5" />} label="Payment Status" value={isSupplierPaymentPaid ? `Paid${purchase.paymentPaidAt ? ` on ${formatDateOnly(purchase.paymentPaidAt)}` : ''}` : 'Unpaid'} />
-        )}
-        {purchase.backdateReason && (
-          <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Backdate Reason" value={purchase.backdateReason} />
-        )}
-        <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Remarks" value={remarksText} />
-      </div>
-
       {isCreditPurchase && (
         <div className="purchase-payment-followup">
           <div className="purchase-payment-followup-inner">
@@ -4421,6 +4402,25 @@ function PurchaseHistoryDetail({ purchase, onUpdatePaymentStatus }) {
           </div>
         </div>
       )}
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <HistoryDetail icon={<Truck className="h-5 w-5" />} label="Supplier" value={purchase.supplierName || 'No supplier'} />
+        <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Document" value={formatPurchaseDocumentLabel(purchase.documentType, purchase.documentNumber, purchase.documentTypeNote)} />
+        <HistoryDetail icon={<PackagePlus className="h-5 w-5" />} label="Line Items" value={`${getPurchaseLineCount(purchase)} line${getPurchaseLineCount(purchase) === 1 ? '' : 's'}`} />
+        <HistoryDetail icon={<ReceiptText className="h-5 w-5" />} label="Quantity Added" value={`${getPurchaseQuantity(purchase)} unit${getPurchaseQuantity(purchase) === 1 ? '' : 's'}`} />
+        <HistoryDetail icon={<Wallet className="h-5 w-5" />} label="Total Purchase" value={formatCurrency(purchase.subtotalAmount)} />
+        <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Terms" value={formatPurchasePaymentTerms(purchase.paymentTerms, purchase.creditTermsDays)} />
+        {isCreditPurchase && (
+          <HistoryDetail icon={<CalendarDays className="h-5 w-5" />} label="Payment Due" value={formatDateOnly(purchase.paymentDueDate)} />
+        )}
+        {isCreditPurchase && (
+          <HistoryDetail icon={<CheckCircle className="h-5 w-5" />} label="Payment Status" value={isSupplierPaymentPaid ? `Paid${purchase.paymentPaidAt ? ` on ${formatDateOnly(purchase.paymentPaidAt)}` : ''}` : 'Unpaid'} />
+        )}
+        {purchase.backdateReason && (
+          <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Backdate Reason" value={purchase.backdateReason} />
+        )}
+        <HistoryDetail icon={<FileText className="h-5 w-5" />} label="Remarks" value={remarksText} />
+      </div>
 
       <div>
         <div className="mb-2 flex items-center justify-between gap-3 py-1">
