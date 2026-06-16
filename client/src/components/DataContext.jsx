@@ -5,6 +5,7 @@ import axios from "axios";
 import { apiUrl } from "../utils/api";
 import { formatArchiveReferenceId, formatItemCode } from "../utils/itemCodes";
 import { canPerformInventoryMovement, canRecordSales, isAdminRole } from "../utils/roles";
+import { isPendingPaymentSale } from "../utils/salesTransactionStatus";
 
 const DataContext = createContext(undefined);
 
@@ -285,7 +286,7 @@ const generatePendingBankTransferAlerts = (sales, role) => {
   if (!canRecordSales(role)) return [];
 
   return (sales || [])
-    .filter(sale => sale.status === 'pending_payment' && sale.paymentMethod === 'bank_transfer')
+    .filter(sale => isPendingPaymentSale(sale) && sale.paymentMethod === 'bank_transfer')
     .map(sale => {
       const invoiceNumber = sale.officialInvoiceNumber || sale.salesNumber || sale.id;
       const referenceText = sale.paymentReference ? ` Reference: ${sale.paymentReference}.` : '';

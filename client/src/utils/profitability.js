@@ -6,6 +6,7 @@
  * making slightly different assumptions about discounts, delivery charges, and
  * historical item costs.
  */
+import { isCancelledSale } from './salesTransactionStatus';
 
 const toNumber = value => {
   const numberValue = Number(value || 0);
@@ -47,7 +48,7 @@ export const getSaleLineProfit = (sale, item) => {
 
 export const getProfitabilitySummary = (sales = []) =>
   (sales || []).reduce((summary, sale) => {
-    if (!sale || sale.status === 'cancelled') return summary;
+    if (!sale || isCancelledSale(sale)) return summary;
 
     const deliveryCharge = roundMoney(sale?.deliveryCharge ?? sale?.delivery_charge);
     (sale.items || []).forEach(item => {
@@ -83,7 +84,7 @@ export const getProductProfitability = (sales = []) => {
   const groupedProducts = new Map();
 
   (sales || []).forEach(sale => {
-    if (!sale || sale.status === 'cancelled') return;
+    if (!sale || isCancelledSale(sale)) return;
 
     (sale.items || []).forEach(item => {
       const itemName = String(item.itemName || item.item_name || '').trim();

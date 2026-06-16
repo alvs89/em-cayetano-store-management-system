@@ -23,6 +23,7 @@ import { formatDateTime, formatPurchaseDocumentLabel, formatPurchasePaymentTerms
 import { getStockMovementReasonLabel } from '../utils/stockMovementReasons';
 import { canAccessReportType, getDefaultReportTypeForRole, getReportTypeOptionsForRole, isAdminRole } from '../utils/roles';
 import { getProductProfitability, getProfitabilitySummary } from '../utils/profitability';
+import { isCompletedSaleTransaction, isCancelledSale } from '../utils/salesTransactionStatus';
 import {
   HARDWARE_SUPPLIER_OPTIONS,
   SUPPLIER_CUSTOM_VALUE,
@@ -826,7 +827,7 @@ export function ReportsModule({
     (salesTransactions || []).filter(sale => {
       const saleDate = new Date(sale.createdAt);
       if (Number.isNaN(saleDate.getTime()) || saleDate < start || saleDate > end) return false;
-      if (sale.status === 'cancelled') return false;
+      if (isCancelledSale(sale)) return false;
       if (selectedCategory === 'all') return true;
       return (sale.items || []).some(item => item.category === selectedCategory);
     });
@@ -834,8 +835,11 @@ export function ReportsModule({
   const getFilteredSalesTransactions = () =>
     getSalesTransactionsForBounds(getReportPeriodBounds());
 
+  const getFilteredCompletedSaleTransactions = () =>
+    getFilteredSalesTransactions().filter(isCompletedSaleTransaction);
+
   const getSalesMovementRows = () =>
-    getFilteredSalesTransactions().flatMap(sale =>
+    getFilteredCompletedSaleTransactions().flatMap(sale =>
       getTrackedSaleItemsForReport(sale)
         .map(item => ({
           id: `${sale.id}-${item.id}`,
@@ -863,8 +867,10 @@ export function ReportsModule({
   const getSalesMovementUnits = () =>
     getSalesMovementRows().reduce((sum, movement) => sum + Number(movement.quantityChanged || 0), 0);
 
-  const getSalesFinancialSummary = (sourceSales = getFilteredSalesTransactions()) => {
-    const sales = sourceSales.filter(sale => getTrackedSaleItemsForReport(sale).length > 0);
+  const getSalesFinancialSummary = (sourceSales = getFilteredCompletedSaleTransactions()) => {
+    const sales = sourceSales
+      .filter(isCompletedSaleTransaction)
+      .filter(sale => getTrackedSaleItemsForReport(sale).length > 0);
 
     return sales.reduce((summary, sale) => {
       const saleSubtotal = Number(sale.subtotalAmount ?? sale.totalAmount ?? 0);
@@ -900,8 +906,8 @@ export function ReportsModule({
     });
   };
 
-  const getSalesUnitsForTransactions = (sourceSales = getFilteredSalesTransactions()) =>
-    sourceSales.reduce((sum, sale) => (
+  const getSalesUnitsForTransactions = (sourceSales = getFilteredCompletedSaleTransactions()) =>
+    sourceSales.filter(isCompletedSaleTransaction).reduce((sum, sale) => (
       sum + getTrackedSaleItemsForReport(sale).reduce((itemSum, item) => (
         itemSum + Number(item.quantitySold || item.quantity || 0)
       ), 0)
@@ -1025,7 +1031,7 @@ export function ReportsModule({
   const getTopSellingProducts = (limit = 10) => {
     const groupedProducts = new Map();
 
-    getFilteredSalesTransactions().forEach(sale => {
+    getFilteredCompletedSaleTransactions().forEach(sale => {
       getTrackedSaleItemsForReport(sale).forEach(item => {
         const quantity = Number(item.quantitySold || item.quantity || 0);
         const revenue = Number(item.subtotal || 0);
@@ -1059,7 +1065,7 @@ export function ReportsModule({
   };
 
   const getEarningsSalesTransactions = () =>
-    getFilteredSalesTransactions().filter(sale => sale.status === 'completed');
+    getFilteredCompletedSaleTransactions();
 
   // Actual earnings reports use sold-item cost snapshots captured at sale time,
   // so later inventory cost edits do not rewrite historical profit.
@@ -1292,7 +1298,7 @@ export function ReportsModule({
   };
 
   const getUntrackedSalesItems = () => {
-    const grouped = getFilteredSalesTransactions()
+    const grouped = getFilteredCompletedSaleTransactions()
       .flatMap(sale => (sale.items || []).map(item => ({ ...item, sale })))
       .filter(item => item.isInventoryItem === false || item.itemType === 'non_inventory')
       .reduce((acc, item) => {

@@ -33,6 +33,7 @@ import { useData } from './DataContext';
 import { PageHeader } from './PageHeader';
 import { ROLE_VALUES, canAccessScreen, canPerformInventoryMovement, canRecordSales, isAdminRole, normalizeRole } from '../utils/roles';
 import { getProfitabilitySummary } from '../utils/profitability';
+import { isCompletedSaleTransaction } from '../utils/salesTransactionStatus';
 
 const formatCurrency = value =>
   new Intl.NumberFormat(undefined, {
@@ -388,9 +389,9 @@ export function Dashboard({
     return saleDate >= start && saleDate <= end;
   };
 
-  const salesToday = (salesTransactions || []).filter(sale => sale.status === 'completed' && isToday(sale.createdAt, todayKey));
+  const salesToday = (salesTransactions || []).filter(sale => isCompletedSaleTransaction(sale) && isToday(sale.createdAt, todayKey));
   const stockMovementsToday = (stockMovements || []).filter(movement => isToday(movement.createdAt, todayKey));
-  const completedSales = (salesTransactions || []).filter(sale => sale.status === 'completed');
+  const completedSales = (salesTransactions || []).filter(isCompletedSaleTransaction);
   const dashboardSales = completedSales.filter(isSaleInDashboardPeriod);
   const previousDashboardSales = completedSales.filter(isSaleInPreviousDashboardPeriod);
   const topSellingDashboardPeriod = getTopSellingItem(dashboardSales);

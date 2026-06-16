@@ -18,6 +18,7 @@ import { binarySearch, mergeSort } from '../utils/algorithms';
 import { createNumericInputGuards } from '../utils/numericInputGuards';
 import { canRecordSales, isAdminRole } from '../utils/roles';
 import { clearFormDraft, formatDraftSavedAt, loadFormDraft, saveFormDraft } from '../utils/formDrafts';
+import { isCancelledSale, isPendingPaymentSale, isRefundSalesRecord } from '../utils/salesTransactionStatus';
 
 const emptySaleLine = () => ({
   inventoryId: '',
@@ -255,12 +256,6 @@ const getReceiptCustomerTin = sale => normalizeReceiptCustomerText(sale?.custome
 const getReceiptCustomerAddress = sale => normalizeReceiptCustomerText(sale?.customerAddress) || 'C';
 const getReceiptAddressLines = address => String(address || '').split(/\n+/).map(line => line.trim()).filter(Boolean);
 const formatReceiptAddressHtml = address => getReceiptAddressLines(address).map(escapeReceiptText).join('<br>');
-function isRefundSalesRecord(sale) {
-  return sale?.transactionType === 'refund'
-    || Number(sale?.totalAmount || 0) < 0
-    || Number(sale?.totalQuantity || 0) < 0
-    || (sale?.items || []).some(item => Number(item?.quantitySold || 0) < 0);
-}
 const getTransactionRecordLabel = sale => (isRefundSalesRecord(sale) ? 'Refund Record' : 'Sales Record');
 const getTransactionDocumentName = sale => (isRefundSalesRecord(sale) ? 'Refund Receipt' : 'Receipt');
 const OFFICIAL_INVOICE_NUMBER_PATTERN = /^\d{6}$/;
@@ -981,8 +976,8 @@ const hasRefundedSaleItems = sale =>
 
 const getSalesHistoryStatusFilterValue = sale => {
   if (isRefundSalesRecord(sale)) return 'refund_records';
-  if (sale?.status === 'pending_payment') return 'pending_payment';
-  if (sale?.status === 'cancelled') return 'cancelled';
+  if (isPendingPaymentSale(sale)) return 'pending_payment';
+  if (isCancelledSale(sale)) return 'cancelled';
   if (hasRefundedSaleItems(sale)) return 'refunded_sales';
   return 'completed';
 };
@@ -1564,7 +1559,7 @@ export function SalesModule({ user }) {
   const duplicateOfficialInvoiceSale = useMemo(() => {
     if (!OFFICIAL_INVOICE_NUMBER_PATTERN.test(cleanOfficialInvoiceNumber)) return null;
     return (salesTransactions || []).find(sale =>
-      sale.transactionType !== 'refund' &&
+      !isRefundSalesRecord(sale) &&
       String(sale.officialInvoiceNumber || '').trim() === cleanOfficialInvoiceNumber
     ) || null;
   }, [cleanOfficialInvoiceNumber, salesTransactions]);
@@ -2556,7 +2551,7 @@ export function SalesModule({ user }) {
           unitPrice: line.unitPrice
         }))
       });
-      const isPendingBankTransferSale = sale.status === 'pending_payment';
+      const isPendingBankTransferSale = isPendingPaymentSale(sale);
       toast.success(isPendingBankTransferSale ? 'Bank transfer sale saved for verification.' : 'Sale recorded successfully.', {
         description: isPendingBankTransferSale
           ? `${getPrimaryDocumentNumber(sale)} is pending payment verification. Inventory is reserved, not deducted.`
@@ -9896,7 +9891,7 @@ function SalesHistoryDialog({
                 {sales.map(sale => {
                   const isSelected = selectedSale?.id === sale.id;
                   const isRefund = isRefundSalesRecord(sale);
-                  const isPendingPayment = sale.status === 'pending_payment';
+                  const isPendingPayment = isPendingPaymentSale(sale);
                   const displayNumber = getSalesHistoryTitleNumber(sale);
                   const systemReferenceNumber = getSystemReferenceNumber(sale);
                   const originalInvoiceNumber = getReferenceOfficialInvoiceNumber(sale);
@@ -10034,8 +10029,8 @@ function HistoryDetail({ icon, label, value }) {
 }
 
 function SalesHistoryDetailContent({ sale, onDownloadSummary, onRefundSale, onCancelSale, onCompleteBankTransfer, canRefundSales, canVerifyBankTransferPayments, canCancelSales, isCompletingBankTransfer }) {
-  const isCancelled = sale.status === 'cancelled';
-  const isPendingPayment = sale.status === 'pending_payment';
+  const isCancelled = isCancelledSale(sale);
+  const isPendingPayment = isPendingPaymentSale(sale);
   const isRefund = isRefundSalesRecord(sale);
   const hasRefundActivity = hasRefundedSaleItems(sale);
   const hasRefundableItems = !isRefund && !isCancelled && !isPendingPayment && (sale.items || []).some(item => getRemainingRefundQuantity(item) > 0);

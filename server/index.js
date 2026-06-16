@@ -4750,6 +4750,13 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   try {
     const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     if (userResult.rowCount === 0) {
+      await recordSecurityEvidence({
+        action: 'PASSWORD_RESET_EMAIL_NOT_FOUND',
+        message: 'Password reset was requested for an unknown email address.',
+        username: email,
+        req,
+        reason: 'No active account was found for the submitted email address.'
+      });
       return res.status(404).json({ error: 'Email not found' });
     }
 
@@ -4757,6 +4764,17 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const rateLimitKey = normalizeOtpRateLimitIdentifier('email', user.email || email);
     const rateLimit = checkOtpRateLimit(rateLimitKey);
     if (!rateLimit.allowed) {
+      await recordSecurityEvidence({
+        action: 'PASSWORD_RESET_RATE_LIMITED',
+        message: 'Password reset code request was rate-limited.',
+        username: user.username || email,
+        req,
+        reason: 'Password reset code request exceeded the allowed resend limit.',
+        details: {
+          email: user.email,
+          retryAfterSeconds: rateLimit.retryAfterSeconds
+        }
+      });
       return res.status(429).json(rateLimit);
     }
 
@@ -4771,6 +4789,21 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 
     await sendOtpEmail(user, otp, 'Password Reset Verification', 'Use this code to reset your password.');
     const { remainingAttempts, retryAfterSeconds } = recordOtpRequest(rateLimitKey);
+    await recordSecurityEvidence({
+      action: 'PASSWORD_RESET_CODE_SENT',
+      message: 'Password reset verification code was sent.',
+      username: user.username || email,
+      req,
+      severity: 'info',
+      reason: 'User requested a password reset verification code.',
+      details: {
+        email: user.email,
+        branch: user.branch,
+        role: user.role,
+        remainingAttempts,
+        retryAfterSeconds
+      }
+    });
     const attemptText = remainingAttempts === 1 ? 'attempt' : 'attempts';
     const message = remainingAttempts === 0
       ? `Verification code sent. This was your last resend attempt for now. Please enter it before it expires. You can request another code in ${formatRetryAfter(retryAfterSeconds)}.`
@@ -4806,6 +4839,13 @@ app.post('/api/auth/reset-password', async (req, res) => {
   try {
     const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     if (userResult.rowCount === 0) {
+      await recordSecurityEvidence({
+        action: 'PASSWORD_RESET_USER_NOT_FOUND',
+        message: 'Password reset was submitted for an unknown email address.',
+        username: email,
+        req,
+        reason: 'No account was found while attempting to reset a password.'
+      });
       return res.status(404).json({ error: 'User not found' });
     }
 
@@ -4813,6 +4853,18 @@ app.post('/api/auth/reset-password', async (req, res) => {
     const expiresMs = user.reset_otp_expires ? new Date(user.reset_otp_expires).getTime() : 0;
 
     if (user.reset_otp_code !== otp || Date.now() - expiresMs > 15000) {
+      await recordSecurityEvidence({
+        action: 'PASSWORD_RESET_INVALID_OTP',
+        message: 'Invalid or expired password reset code was submitted.',
+        username: user.username || email,
+        req,
+        reason: 'Submitted password reset OTP was invalid or expired.',
+        details: {
+          email: user.email,
+          branch: user.branch,
+          role: user.role
+        }
+      });
       return res.status(400).json({ error: 'Invalid or expired code' });
     }
 
@@ -4837,6 +4889,37 @@ app.post('/api/auth/reset-password', async (req, res) => {
        WHERE user_id = $2`,
       [newHash, user.user_id]
     );
+
+    await Promise.allSettled([
+      recordAuditLog(pool, {
+        actorId: user.user_id,
+        targetId: user.user_id,
+        targetName: user.full_name,
+        targetType: 'user_account',
+        action: 'PASSWORD_RESET_COMPLETED',
+        reason: 'User completed password reset using email verification.',
+        details: {
+          branch: user.branch,
+          role: user.role,
+          email: user.email,
+          tokenVersionIncremented: true,
+          ip: getClientIp(req)
+        }
+      }),
+      recordSystemLog(pool, {
+        eventType: 'PASSWORD_RESET_COMPLETED',
+        severity: 'info',
+        message: 'User password was reset after email verification.',
+        context: {
+          username: user.username,
+          branch: user.branch,
+          role: user.role,
+          ip: getClientIp(req)
+        },
+        actorId: user.user_id,
+        isSecurity: true
+      })
+    ]);
 
     return res.json({ message: 'Password updated successfully' });
   } catch (err) {
@@ -8722,7 +8805,7 @@ app.post('/api/inventory/batch-stock-adjustment', authenticate, async (req, res)
         targetId: inventoryId,
         targetName: currentItem.name,
         targetType: 'inventory_item',
-        action: `BATCH_STOCK_ADJUSTMENT: ${getStockMovementReasonLabel(normalizedMovementReason, 'stock_in')}`,
+        action: `BATCH_STOCK_IN: ${getStockMovementReasonLabel(normalizedMovementReason, 'stock_in')}`,
         reason: getStockMovementReasonLabel(normalizedMovementReason, 'stock_in'),
         details: {
           branch: currentItem.branch,

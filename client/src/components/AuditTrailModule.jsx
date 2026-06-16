@@ -47,7 +47,14 @@ const DEFAULT_VISIBLE_RECORDS = 5;
  */
 const getActionGroup = action => {
   const normalized = String(action || '').toUpperCase();
-  if (normalized.startsWith('AUTH_') || normalized.includes('LOGIN') || normalized.includes('OTP') || normalized.includes('SESSION')) return 'security';
+  if (
+    normalized.startsWith('AUTH_') ||
+    normalized.includes('LOGIN') ||
+    normalized.includes('OTP') ||
+    normalized.includes('SESSION') ||
+    normalized.includes('PASSWORD') ||
+    normalized.includes('RESET')
+  ) return 'security';
   if (normalized.includes('STOCK') || normalized.includes('ITEM') || normalized.includes('DUPLICATE')) return 'inventory';
   if (normalized.includes('ARCHIVE') || normalized.includes('RESTORE_ITEM')) return 'archive';
   if (normalized.includes('USER') || normalized.includes('ROLE') || normalized.includes('BRANCH') || normalized.includes('APPROVE') || normalized.includes('DEACTIVATE')) return 'users';
@@ -82,7 +89,13 @@ const getActionBadgeClass = group => {
 const formatActionLabel = action => {
   const value = String(action || 'UNKNOWN_ACTION');
   const [base, detail] = value.split(':').map(part => part.trim());
-  const label = base
+  const normalizedBase = base.toUpperCase();
+  const explicitLabels = {
+    BATCH_STOCK_ADJUSTMENT: 'Batch Stock In',
+    BATCH_STOCK_IN: 'Batch Stock In',
+    BATCH_STOCK_OUT: 'Batch Stock Out'
+  };
+  const label = explicitLabels[normalizedBase] || base
     .toLowerCase()
     .split('_')
     .filter(Boolean)
