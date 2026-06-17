@@ -358,6 +358,11 @@ const downloadSaleTransactionSummary = sale => {
       .replace(/\u00a0/g, ' ')
       .replace(/[ \t]{2,}/g, ' ')
       .trim();
+  const splitPdfText = (text, maxWidth) => {
+    const normalized = normalizePdfText(text);
+    if (!normalized) return [''];
+    return doc.splitTextToSize(normalized, maxWidth);
+  };
   const drawText = (text, x, y, options = {}) => {
     if (typeof doc.setCharSpace === 'function') doc.setCharSpace(0);
     doc.text(normalizePdfText(text), x, y, options);
@@ -451,21 +456,37 @@ const downloadSaleTransactionSummary = sale => {
   }
 
   y = headerBottomY + 21;
-  drawBox(margin, y, contentWidth, 27);
+  const soldToLabelX = margin + 8;
+  const soldToValueX = margin + 52;
+  const soldToValueWidth = Math.max(30, contentWidth - (soldToValueX - margin) - 3);
+  const soldToLineHeight = 4.2;
+  const soldToRowGap = 2.4;
+  const soldToRows = [
+    ['Registered Name :', splitPdfText(customerName, soldToValueWidth)],
+    ['TIN             :', splitPdfText(getReceiptCustomerTin(sale), soldToValueWidth)],
+    ['Business Address:', splitPdfText(getReceiptCustomerAddress(sale), soldToValueWidth)]
+  ];
+  const soldToBodyHeight = soldToRows.reduce((total, [, lines], index) => (
+    total + Math.max(1, lines.length) * soldToLineHeight + (index < soldToRows.length - 1 ? soldToRowGap : 0)
+  ), 0);
+  const soldToHeight = 8 + soldToBodyHeight + 6;
+  drawBox(margin, y, contentWidth, soldToHeight);
   doc.setFillColor(243, 244, 246);
   doc.rect(margin, y, contentWidth, 6, 'F');
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   drawText('SOLD TO:', margin + 2, y + 4.2);
   doc.setFont('helvetica', 'normal');
-  drawText('Registered Name :', margin + 8, y + 12);
-  drawText(customerName, margin + 52, y + 12);
-  drawText('TIN             :', margin + 8, y + 18);
-  drawText(getReceiptCustomerTin(sale), margin + 52, y + 18);
-  drawText('Business Address:', margin + 8, y + 24);
-  drawText(getReceiptCustomerAddress(sale), margin + 52, y + 24);
+  let soldToCurrentY = y + 12;
+  soldToRows.forEach(([label, lines]) => {
+    drawText(label, soldToLabelX, soldToCurrentY);
+    lines.forEach((line, lineIndex) => {
+      drawText(line, soldToValueX, soldToCurrentY + (lineIndex * soldToLineHeight));
+    });
+    soldToCurrentY += Math.max(1, lines.length) * soldToLineHeight + soldToRowGap;
+  });
 
-  y += 38;
+  y += soldToHeight + 11;
   const tableX = margin;
   const tableWidth = contentWidth;
   const colWidths = [108, 28, 35, tableWidth - 108 - 28 - 35];
@@ -804,9 +825,17 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
           }
           .sold-line {
             display: grid;
-            grid-template-columns: 132px 1fr;
+            grid-template-columns: 132px minmax(0, 1fr);
             gap: 10px;
             margin: 7px 0;
+            align-items: start;
+          }
+          .sold-line span,
+          .sold-line strong {
+            min-width: 0;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            line-height: 1.35;
           }
           /* Line-item table keeps sales, refunds, and non-inventory entries aligned for review. */
           table {
@@ -4870,6 +4899,30 @@ export function SalesModule({ user }) {
           margin: 0.75rem 0;
         }
 
+        .sales-receipt-detail-list {
+          display: grid;
+          gap: 0.16rem;
+        }
+
+        .sales-receipt-detail-row {
+          display: grid;
+          grid-template-columns: 6.6rem minmax(0, 1fr);
+          gap: 0.55rem;
+          align-items: start;
+          font-size: 0.78rem;
+          line-height: 1.35rem;
+        }
+
+        .sales-receipt-detail-label {
+          color: #334155;
+        }
+
+        .sales-receipt-detail-value {
+          min-width: 0;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+        }
+
         .sales-receipt-row {
           display: flex;
           justify-content: space-between;
@@ -4880,6 +4933,14 @@ export function SalesModule({ user }) {
 
         .sales-receipt-row span:last-child {
           flex-shrink: 0;
+          text-align: right;
+        }
+
+        .sales-receipt-row-wrap span:last-child {
+          min-width: 0;
+          flex: 1 1 auto;
+          overflow-wrap: anywhere;
+          word-break: break-word;
           text-align: right;
         }
 
@@ -5090,6 +5151,13 @@ export function SalesModule({ user }) {
 
           .sales-receipt-divider {
             margin: 0.55rem 0;
+          }
+
+          .sales-receipt-detail-row {
+            grid-template-columns: 5.9rem minmax(0, 1fr);
+            gap: 0.45rem;
+            font-size: 0.68rem;
+            line-height: 1.1rem;
           }
 
           .sales-receipt-row {
@@ -5969,7 +6037,7 @@ export function SalesModule({ user }) {
 
         .sales-product-list {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(min(100%, 17.5rem), 1fr));
           gap: 0.75rem;
           align-content: start;
           align-items: start;
@@ -6326,16 +6394,16 @@ export function SalesModule({ user }) {
 
         .sales-product-card {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(6.35rem, auto);
-          grid-template-rows: 3.9rem minmax(2.5rem, 1fr);
+          grid-template-columns: minmax(0, 1fr) 6rem;
+          grid-template-rows: minmax(4.25rem, auto) minmax(2.8rem, auto);
           column-gap: 0.8rem;
           row-gap: 0.55rem;
           align-items: start;
           border: 1px solid #e2e8f0;
           border-radius: 0.95rem;
           background: #ffffff;
-          height: 9.15rem;
-          min-height: 9.15rem;
+          height: auto;
+          min-height: 9.65rem;
           padding: 0.9rem;
           text-align: left;
           transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
@@ -6346,16 +6414,18 @@ export function SalesModule({ user }) {
         }
 
         .sales-product-name {
-          display: block;
+          display: -webkit-box;
           grid-column: 1;
           grid-row: 1;
-          min-height: 3.9rem;
-          max-height: 3.9rem;
+          min-height: 0;
+          max-height: calc(1.3rem * 3);
           overflow: hidden;
           color: #0f172a;
           font-size: 0.9rem;
           font-weight: 800;
           line-height: 1.3rem;
+          -webkit-box-orient: vertical;
+          -webkit-line-clamp: 3;
           overflow-wrap: break-word;
           word-break: normal;
           white-space: normal;
@@ -6377,7 +6447,7 @@ export function SalesModule({ user }) {
           grid-row: 2;
           min-width: 0;
           gap: 0.35rem;
-          align-self: center;
+          align-self: start;
         }
 
         .sales-product-card:hover,
@@ -6445,6 +6515,7 @@ export function SalesModule({ user }) {
           color: #111827;
           font-size: 0.76rem;
           line-height: 1.1rem;
+          overflow-wrap: anywhere;
         }
 
         .sales-product-actions {
@@ -6488,7 +6559,7 @@ export function SalesModule({ user }) {
 
         .sales-product-card-action {
           display: contents;
-          width: 6.7rem;
+          width: 6rem;
           height: 100%;
         }
 
@@ -9189,16 +9260,37 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
               </div>
             </div>
             <div className="sales-receipt-divider" />
-            <div className="space-y-1 text-xs leading-5 text-slate-700">
-              <p>Date: {formatDateTime(sale?.createdAt)}</p>
+            <div className="sales-receipt-detail-list text-xs leading-5 text-slate-700">
+              <div className="sales-receipt-detail-row">
+                <span className="sales-receipt-detail-label">Date</span>
+                <span className="sales-receipt-detail-value">{formatDateTime(sale?.createdAt)}</span>
+              </div>
               {isBackdatedRecord(sale) && (
-                <p>Encoded Date: {formatDateTime(sale?.encodedAt)}</p>
+                <div className="sales-receipt-detail-row">
+                  <span className="sales-receipt-detail-label">Encoded Date</span>
+                  <span className="sales-receipt-detail-value">{formatDateTime(sale?.encodedAt)}</span>
+                </div>
               )}
-              <p>Sales Encoder: {sale?.soldByName || 'System'}</p>
-              <p>Customer: {customerTypeLabels[sale?.customerType] || 'Walk-in Customer'}</p>
-              <p>Registered Name: {getReceiptCustomerName(sale)}</p>
-              <p>TIN: {getReceiptCustomerTin(sale)}</p>
-              <p>Business Address: {getReceiptCustomerAddress(sale)}</p>
+              <div className="sales-receipt-detail-row">
+                <span className="sales-receipt-detail-label">Sales Encoder</span>
+                <span className="sales-receipt-detail-value">{sale?.soldByName || 'System'}</span>
+              </div>
+              <div className="sales-receipt-detail-row">
+                <span className="sales-receipt-detail-label">Customer</span>
+                <span className="sales-receipt-detail-value">{customerTypeLabels[sale?.customerType] || 'Walk-in Customer'}</span>
+              </div>
+              <div className="sales-receipt-detail-row">
+                <span className="sales-receipt-detail-label">Registered Name</span>
+                <span className="sales-receipt-detail-value">{getReceiptCustomerName(sale)}</span>
+              </div>
+              <div className="sales-receipt-detail-row">
+                <span className="sales-receipt-detail-label">TIN</span>
+                <span className="sales-receipt-detail-value">{getReceiptCustomerTin(sale)}</span>
+              </div>
+              <div className="sales-receipt-detail-row">
+                <span className="sales-receipt-detail-label">Business Address</span>
+                <span className="sales-receipt-detail-value">{getReceiptCustomerAddress(sale)}</span>
+              </div>
             </div>
             <div className="sales-receipt-divider" />
             <div>
@@ -9227,7 +9319,7 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
               <div className="sales-receipt-row"><span>{isPendingPayment ? 'Payment Status' : `Paid (${paymentMethodLabels[sale?.paymentMethod] || 'Cash'})`}</span><span>{isPendingPayment ? 'Pending Verification' : formatCurrency(sale?.amountReceived ?? sale?.totalAmount)}</span></div>
               <div className="sales-receipt-row"><span>Change</span><span>{formatCurrency(sale?.changeAmount)}</span></div>
               {sale?.paymentReference && (
-                <div className="sales-receipt-row"><span>Reference</span><span>{sale.paymentReference}</span></div>
+                <div className="sales-receipt-row sales-receipt-row-wrap"><span>Reference</span><span>{sale.paymentReference}</span></div>
               )}
             </div>
           </div>
