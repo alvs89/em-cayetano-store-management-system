@@ -34,6 +34,9 @@ const APP_TIME_ZONE = 'Asia/Manila';
 const APP_TIMESTAMP_OFFSET = '+08:00';
 const PASSWORD_MIN_LENGTH = 8;
 const PASSWORD_MAX_LENGTH = 64;
+const SALES_CUSTOMER_NAME_MAX_LENGTH = 70;
+const SALES_CUSTOMER_TIN_MAX_LENGTH = 20;
+const SALES_CUSTOMER_ADDRESS_MAX_LENGTH = 200;
 const COMMON_PASSWORDS = new Set([
   '12345678',
   '123456789',
@@ -456,9 +459,9 @@ async function ensureSchema() {
       official_invoice_exception_reason TEXT,
       branch VARCHAR(50) NOT NULL,
       customer_type VARCHAR(40) DEFAULT 'walk_in' CHECK (customer_type IN ('walk_in', 'sister_company', 'hardware_reseller', 'regular', 'contractor')),
-      customer_name VARCHAR(160) NOT NULL DEFAULT 'C',
-      customer_tin VARCHAR(80),
-      customer_address VARCHAR(240) NOT NULL DEFAULT 'C',
+      customer_name VARCHAR(70) NOT NULL DEFAULT 'C',
+      customer_tin VARCHAR(20),
+      customer_address VARCHAR(200) NOT NULL DEFAULT 'C',
       total_quantity INTEGER NOT NULL DEFAULT 0,
       subtotal_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
       discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -1012,15 +1015,33 @@ async function ensureSchema() {
   `);
   await pool.query(`
     ALTER TABLE sales_transactions
-    ADD COLUMN IF NOT EXISTS customer_name VARCHAR(160) NOT NULL DEFAULT 'C';
+    ADD COLUMN IF NOT EXISTS customer_name VARCHAR(70) NOT NULL DEFAULT 'C';
   `);
   await pool.query(`
     ALTER TABLE sales_transactions
-    ADD COLUMN IF NOT EXISTS customer_tin VARCHAR(80);
+    ADD COLUMN IF NOT EXISTS customer_tin VARCHAR(20);
   `);
   await pool.query(`
     ALTER TABLE sales_transactions
-    ADD COLUMN IF NOT EXISTS customer_address VARCHAR(240) NOT NULL DEFAULT 'C';
+    ADD COLUMN IF NOT EXISTS customer_address VARCHAR(200) NOT NULL DEFAULT 'C';
+  `);
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ALTER COLUMN customer_name TYPE VARCHAR(70)
+    USING LEFT(COALESCE(NULLIF(TRIM(customer_name), ''), 'C'), 70);
+  `);
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ALTER COLUMN customer_tin TYPE VARCHAR(20)
+    USING CASE
+      WHEN customer_tin IS NULL OR TRIM(customer_tin) = '' THEN NULL
+      ELSE LEFT(TRIM(customer_tin), 20)
+    END;
+  `);
+  await pool.query(`
+    ALTER TABLE sales_transactions
+    ALTER COLUMN customer_address TYPE VARCHAR(200)
+    USING LEFT(COALESCE(NULLIF(TRIM(customer_address), ''), 'C'), 200);
   `);
   await pool.query(`
     UPDATE sales_transactions
@@ -6321,6 +6342,18 @@ app.post('/api/sales', authenticate, async (req, res) => {
     return res.status(400).json({ error: 'Please select a valid customer type.' });
   }
 
+  if (cleanCustomerName.length > SALES_CUSTOMER_NAME_MAX_LENGTH) {
+    return res.status(400).json({ error: `Registered name must be ${SALES_CUSTOMER_NAME_MAX_LENGTH} characters or fewer.` });
+  }
+
+  if (cleanCustomerTin && cleanCustomerTin.length > SALES_CUSTOMER_TIN_MAX_LENGTH) {
+    return res.status(400).json({ error: `TIN must be ${SALES_CUSTOMER_TIN_MAX_LENGTH} characters or fewer.` });
+  }
+
+  if (cleanCustomerAddress.length > SALES_CUSTOMER_ADDRESS_MAX_LENGTH) {
+    return res.status(400).json({ error: `Business address must be ${SALES_CUSTOMER_ADDRESS_MAX_LENGTH} characters or fewer.` });
+  }
+
   if (String(official_invoice_number || '').trim() && cleanOfficialInvoiceNumber !== String(official_invoice_number || '').trim()) {
     return res.status(400).json({ error: 'Sales Invoice Number must contain numbers only.' });
   }
@@ -6348,20 +6381,8 @@ app.post('/api/sales', authenticate, async (req, res) => {
     });
   }
 
-  if (cleanCustomerName.length > 160) {
-    return res.status(400).json({ error: 'Registered name must be 160 characters or fewer.' });
-  }
-
-  if (cleanCustomerTin && cleanCustomerTin.length > 80) {
-    return res.status(400).json({ error: 'TIN must be 80 characters or fewer.' });
-  }
-
   if (cleanCustomerTin && !/^[0-9-]+$/.test(cleanCustomerTin)) {
     return res.status(400).json({ error: 'TIN must contain numbers and dashes only.' });
-  }
-
-  if (cleanCustomerAddress.length > 240) {
-    return res.status(400).json({ error: 'Business address must be 240 characters or fewer.' });
   }
 
   if (!allowedPaymentMethods.has(normalizedPaymentMethod)) {

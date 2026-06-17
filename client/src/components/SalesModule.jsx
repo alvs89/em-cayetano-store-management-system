@@ -250,10 +250,22 @@ const getReceiptBranchAddress = branch => {
   return RECEIPT_BUSINESS_INFO.addresses.manggahan;
 };
 
+const SALES_CUSTOMER_NAME_MAX_LENGTH = 70;
+const SALES_CUSTOMER_TIN_MAX_LENGTH = 20;
+const SALES_CUSTOMER_ADDRESS_MAX_LENGTH = 200;
+
 const normalizeReceiptCustomerText = value => String(value || '').trim().replace(/\s+/g, ' ');
+const truncateReceiptCustomerText = (value, maxLength) => {
+  const normalized = normalizeReceiptCustomerText(value);
+  if (!normalized || normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`;
+};
 const getReceiptCustomerName = sale => normalizeReceiptCustomerText(sale?.customerName) || 'C';
 const getReceiptCustomerTin = sale => normalizeReceiptCustomerText(sale?.customerTin);
 const getReceiptCustomerAddress = sale => normalizeReceiptCustomerText(sale?.customerAddress) || 'C';
+const getReceiptCustomerNameDisplay = sale => truncateReceiptCustomerText(getReceiptCustomerName(sale), SALES_CUSTOMER_NAME_MAX_LENGTH) || 'C';
+const getReceiptCustomerTinDisplay = sale => truncateReceiptCustomerText(getReceiptCustomerTin(sale), SALES_CUSTOMER_TIN_MAX_LENGTH);
+const getReceiptCustomerAddressDisplay = sale => truncateReceiptCustomerText(getReceiptCustomerAddress(sale), SALES_CUSTOMER_ADDRESS_MAX_LENGTH) || 'C';
 const getReceiptAddressLines = address => String(address || '').split(/\n+/).map(line => line.trim()).filter(Boolean);
 const formatReceiptAddressHtml = address => getReceiptAddressLines(address).map(escapeReceiptText).join('<br>');
 const getTransactionRecordLabel = sale => (isRefundSalesRecord(sale) ? 'Refund Record' : 'Sales Record');
@@ -305,9 +317,10 @@ const getSalesHistoryTitleNumber = sale =>
     ? getSystemReferenceNumber(sale) || getTransactionRecordLabel(sale)
     : getOfficialInvoiceNumber(sale) || getSystemReferenceNumber(sale) || getTransactionRecordLabel(sale);
 const getDisplayQuantity = value => Math.abs(Number(value || 0));
+const normalizeTinInput = value => String(value || '').replace(/[^0-9-]/g, '');
 const sanitizeTinInput = value => {
   const rawValue = String(value || '');
-  const cleaned = rawValue.replace(/[^0-9-]/g, '');
+  const cleaned = normalizeTinInput(rawValue);
   if (rawValue !== cleaned) {
     toast.warning('TIN must contain numbers and dashes only.', {
       id: 'sales-tin-numbers-dashes-only',
@@ -316,6 +329,56 @@ const sanitizeTinInput = value => {
     });
   }
   return cleaned;
+};
+const enforceSalesTextLimit = (value, maxLength, fieldLabel, toastId) => {
+  const rawValue = String(value || '');
+  if (rawValue.length > maxLength) {
+    toast.info(`${fieldLabel} is limited to ${maxLength} characters.`, {
+      id: toastId,
+      duration: 2600
+    });
+  }
+  return rawValue.slice(0, maxLength);
+};
+const notifySalesTextLimitReached = (fieldLabel, maxLength, toastId) => {
+  toast.info(`${fieldLabel} is limited to ${maxLength} characters.`, {
+    id: toastId,
+    duration: 2600
+  });
+};
+const willExceedSalesTextLimit = (currentValue, incomingValue, selectionStart, selectionEnd, maxLength) => {
+  if (!incomingValue) return false;
+  const current = String(currentValue || '');
+  const start = Number.isInteger(selectionStart) ? selectionStart : current.length;
+  const end = Number.isInteger(selectionEnd) ? selectionEnd : current.length;
+  const replacedLength = Math.max(0, end - start);
+  const nextLength = current.length - replacedLength + String(incomingValue).length;
+  return nextLength > maxLength;
+};
+const handleSalesTextLimitBeforeInput = (event, currentValue, maxLength, fieldLabel, toastId) => {
+  const insertedValue = event?.nativeEvent?.data;
+  if (willExceedSalesTextLimit(
+    currentValue,
+    insertedValue,
+    event?.currentTarget?.selectionStart,
+    event?.currentTarget?.selectionEnd,
+    maxLength
+  )) {
+    notifySalesTextLimitReached(fieldLabel, maxLength, toastId);
+  }
+};
+const handleSalesTextLimitPaste = (event, currentValue, maxLength, fieldLabel, toastId, normalizer) => {
+  const pastedText = event?.clipboardData?.getData('text') || '';
+  const normalizedPastedText = typeof normalizer === 'function' ? normalizer(pastedText) : pastedText;
+  if (willExceedSalesTextLimit(
+    currentValue,
+    normalizedPastedText,
+    event?.currentTarget?.selectionStart,
+    event?.currentTarget?.selectionEnd,
+    maxLength
+  )) {
+    notifySalesTextLimitReached(fieldLabel, maxLength, toastId);
+  }
 };
 
 const downloadSaleTransactionSummary = sale => {
@@ -343,7 +406,7 @@ const downloadSaleTransactionSummary = sale => {
     maximumFractionDigits: 2
   })}`;
   const paymentLabel = paymentMethodLabels[sale.paymentMethod] || 'Cash';
-  const customerName = getReceiptCustomerName(sale);
+  const customerName = getReceiptCustomerNameDisplay(sale);
   const branchAddress = getReceiptBranchAddress(sale.branch);
   const receiptVat = getReceiptVatBreakdown(sale);
   const saleDate = sale.createdAt ? new Date(sale.createdAt) : new Date();
@@ -463,8 +526,8 @@ const downloadSaleTransactionSummary = sale => {
   const soldToRowGap = 2.4;
   const soldToRows = [
     ['Registered Name :', splitPdfText(customerName, soldToValueWidth)],
-    ['TIN             :', splitPdfText(getReceiptCustomerTin(sale), soldToValueWidth)],
-    ['Business Address:', splitPdfText(getReceiptCustomerAddress(sale), soldToValueWidth)]
+    ['TIN             :', splitPdfText(getReceiptCustomerTinDisplay(sale), soldToValueWidth)],
+    ['Business Address:', splitPdfText(getReceiptCustomerAddressDisplay(sale), soldToValueWidth)]
   ];
   const soldToBodyHeight = soldToRows.reduce((total, [, lines], index) => (
     total + Math.max(1, lines.length) * soldToLineHeight + (index < soldToRows.length - 1 ? soldToRowGap : 0)
@@ -653,7 +716,7 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
       </tr>
     `)
   ].join('');
-  const customerName = escapeReceiptText(getReceiptCustomerName(sale));
+  const customerName = escapeReceiptText(getReceiptCustomerNameDisplay(sale));
   const branchAddress = formatReceiptAddressHtml(getReceiptBranchAddress(sale.branch));
   const receiptVat = getReceiptVatBreakdown(sale);
   const taxableSalesAmount = getTaxableSalesAmount(sale);
@@ -927,8 +990,8 @@ const printSaleTransactionReceipt = (sale, existingWindow = null) => {
             <div class="sold-to-title">SOLD TO:</div>
             <div class="sold-to-body">
               <div class="sold-line"><span>Registered Name :</span><strong>${customerName}</strong></div>
-              <div class="sold-line"><span>TIN :</span><span>${escapeReceiptText(getReceiptCustomerTin(sale))}</span></div>
-              <div class="sold-line"><span>Business Address :</span><span>${escapeReceiptText(getReceiptCustomerAddress(sale))}</span></div>
+              <div class="sold-line"><span>TIN :</span><span>${escapeReceiptText(getReceiptCustomerTinDisplay(sale))}</span></div>
+              <div class="sold-line"><span>Business Address :</span><span>${escapeReceiptText(getReceiptCustomerAddressDisplay(sale))}</span></div>
             </div>
           </section>
 
@@ -1731,9 +1794,9 @@ export function SalesModule({ user }) {
     setAutoFilledInvoiceNumber('');
     setInvoiceSequenceExceptionReason(String(data.invoiceSequenceExceptionReason || '').slice(0, 240));
     setCustomerType(data.customerType || 'walk_in');
-    setCustomerName(String(data.customerName || '').slice(0, 160));
-    setCustomerTin(String(data.customerTin || '').slice(0, 80));
-    setCustomerAddress(String(data.customerAddress || '').slice(0, 240));
+    setCustomerName(String(data.customerName || '').slice(0, SALES_CUSTOMER_NAME_MAX_LENGTH));
+    setCustomerTin(String(data.customerTin || '').slice(0, SALES_CUSTOMER_TIN_MAX_LENGTH));
+    setCustomerAddress(String(data.customerAddress || '').slice(0, SALES_CUSTOMER_ADDRESS_MAX_LENGTH));
     setPaymentMethod(data.paymentMethod || 'cash');
     setDiscountType(data.discountType || 'none');
     setDiscountAmount(String(data.discountAmount || ''));
@@ -2441,13 +2504,13 @@ export function SalesModule({ user }) {
       }
     }
 
-    if (customerName.trim().length > 160) {
-      toast.error('Registered name must be 160 characters or fewer.');
+    if (customerName.trim().length > SALES_CUSTOMER_NAME_MAX_LENGTH) {
+      toast.error(`Registered name must be ${SALES_CUSTOMER_NAME_MAX_LENGTH} characters or fewer.`);
       return false;
     }
 
-    if (customerTin.trim().length > 80) {
-      toast.error('TIN must be 80 characters or fewer.');
+    if (customerTin.trim().length > SALES_CUSTOMER_TIN_MAX_LENGTH) {
+      toast.error(`TIN must be ${SALES_CUSTOMER_TIN_MAX_LENGTH} characters or fewer.`);
       return false;
     }
 
@@ -2456,8 +2519,8 @@ export function SalesModule({ user }) {
       return false;
     }
 
-    if (customerAddress.trim().length > 240) {
-      toast.error('Business address must be 240 characters or fewer.');
+    if (customerAddress.trim().length > SALES_CUSTOMER_ADDRESS_MAX_LENGTH) {
+      toast.error(`Business address must be ${SALES_CUSTOMER_ADDRESS_MAX_LENGTH} characters or fewer.`);
       return false;
     }
 
@@ -8345,38 +8408,114 @@ export function SalesModule({ user }) {
                       <Input
                         id="sale-customer-name"
                         value={customerName}
-                        maxLength={160}
+                        maxLength={SALES_CUSTOMER_NAME_MAX_LENGTH}
                         disabled={isSaving}
-                        onChange={event => setCustomerName(event.target.value)}
+                        onBeforeInput={event => handleSalesTextLimitBeforeInput(
+                          event,
+                          customerName,
+                          SALES_CUSTOMER_NAME_MAX_LENGTH,
+                          'Registered Name',
+                          'sales-customer-name-limit'
+                        )}
+                        onPaste={event => handleSalesTextLimitPaste(
+                          event,
+                          customerName,
+                          SALES_CUSTOMER_NAME_MAX_LENGTH,
+                          'Registered Name',
+                          'sales-customer-name-limit'
+                        )}
+                        onChange={event => setCustomerName(
+                          enforceSalesTextLimit(
+                            event.target.value,
+                            SALES_CUSTOMER_NAME_MAX_LENGTH,
+                            'Registered Name',
+                            'sales-customer-name-limit'
+                          )
+                        )}
                         placeholder="Leave blank to print C"
                         className="sales-invoice-input"
                       />
+                      <p className="sales-invoice-helper">
+                        <Info />
+                        <span>Maximum {SALES_CUSTOMER_NAME_MAX_LENGTH} characters.</span>
+                      </p>
                     </div>
                     <div className="sales-pos-field">
                       <Label htmlFor="sale-customer-tin">TIN, optional</Label>
                       <Input
                         id="sale-customer-tin"
                         value={customerTin}
-                        maxLength={80}
+                        maxLength={SALES_CUSTOMER_TIN_MAX_LENGTH}
                         inputMode="numeric"
                         pattern="[0-9-]*"
                         disabled={isSaving}
-                        onChange={event => setCustomerTin(sanitizeTinInput(event.target.value))}
+                        onBeforeInput={event => handleSalesTextLimitBeforeInput(
+                          event,
+                          customerTin,
+                          SALES_CUSTOMER_TIN_MAX_LENGTH,
+                          'TIN',
+                          'sales-customer-tin-limit'
+                        )}
+                        onPaste={event => handleSalesTextLimitPaste(
+                          event,
+                          customerTin,
+                          SALES_CUSTOMER_TIN_MAX_LENGTH,
+                          'TIN',
+                          'sales-customer-tin-limit',
+                          normalizeTinInput
+                        )}
+                        onChange={event => setCustomerTin(
+                          enforceSalesTextLimit(
+                            sanitizeTinInput(event.target.value),
+                            SALES_CUSTOMER_TIN_MAX_LENGTH,
+                            'TIN',
+                            'sales-customer-tin-limit'
+                          )
+                        )}
                         placeholder="000-000-000-000"
                         className="sales-invoice-input"
                       />
+                      <p className="sales-invoice-helper">
+                        <Info />
+                        <span>Maximum {SALES_CUSTOMER_TIN_MAX_LENGTH} characters.</span>
+                      </p>
                     </div>
                     <div className="sales-pos-field sales-invoice-address-field">
                       <Label htmlFor="sale-customer-address">Business Address, optional</Label>
                       <Input
                         id="sale-customer-address"
                         value={customerAddress}
-                        maxLength={240}
+                        maxLength={SALES_CUSTOMER_ADDRESS_MAX_LENGTH}
                         disabled={isSaving}
-                        onChange={event => setCustomerAddress(event.target.value)}
+                        onBeforeInput={event => handleSalesTextLimitBeforeInput(
+                          event,
+                          customerAddress,
+                          SALES_CUSTOMER_ADDRESS_MAX_LENGTH,
+                          'Business Address',
+                          'sales-customer-address-limit'
+                        )}
+                        onPaste={event => handleSalesTextLimitPaste(
+                          event,
+                          customerAddress,
+                          SALES_CUSTOMER_ADDRESS_MAX_LENGTH,
+                          'Business Address',
+                          'sales-customer-address-limit'
+                        )}
+                        onChange={event => setCustomerAddress(
+                          enforceSalesTextLimit(
+                            event.target.value,
+                            SALES_CUSTOMER_ADDRESS_MAX_LENGTH,
+                            'Business Address',
+                            'sales-customer-address-limit'
+                          )
+                        )}
                         placeholder="Leave blank to print C"
                         className="sales-invoice-input"
                       />
+                      <p className="sales-invoice-helper">
+                        <Info />
+                        <span>Maximum {SALES_CUSTOMER_ADDRESS_MAX_LENGTH} characters.</span>
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -9281,15 +9420,15 @@ function CompletedSaleReceiptDialog({ open, sale, onOpenChange, onPrint, onDownl
               </div>
               <div className="sales-receipt-detail-row">
                 <span className="sales-receipt-detail-label">Registered Name</span>
-                <span className="sales-receipt-detail-value">{getReceiptCustomerName(sale)}</span>
+                <span className="sales-receipt-detail-value" title={getReceiptCustomerName(sale)}>{getReceiptCustomerNameDisplay(sale)}</span>
               </div>
               <div className="sales-receipt-detail-row">
                 <span className="sales-receipt-detail-label">TIN</span>
-                <span className="sales-receipt-detail-value">{getReceiptCustomerTin(sale)}</span>
+                <span className="sales-receipt-detail-value" title={getReceiptCustomerTin(sale)}>{getReceiptCustomerTinDisplay(sale)}</span>
               </div>
               <div className="sales-receipt-detail-row">
                 <span className="sales-receipt-detail-label">Business Address</span>
-                <span className="sales-receipt-detail-value">{getReceiptCustomerAddress(sale)}</span>
+                <span className="sales-receipt-detail-value" title={getReceiptCustomerAddress(sale)}>{getReceiptCustomerAddressDisplay(sale)}</span>
               </div>
             </div>
             <div className="sales-receipt-divider" />
