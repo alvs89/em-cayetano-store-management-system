@@ -4677,14 +4677,12 @@ app.post('/api/auth/assigned-branch', async (req, res) => {
       [username]
     );
     if (userResult.rowCount === 0) {
-      await recordFailedLoginAttempt(username, req, 'Assigned branch lookup username was not found.');
       return res.status(401).json({ error: 'Invalid username or password' });
     }
 
     const user = userResult.rows[0];
     const validPassword = await bcrypt.compare(password, user.password_hash);
     if (!validPassword) {
-      await recordFailedLoginAttempt(username, req, 'Assigned branch password verification failed.');
       return res.status(401).json({ error: 'Invalid username or password' });
     }
 
@@ -4700,7 +4698,8 @@ app.post('/api/auth/assigned-branch', async (req, res) => {
       return res.status(403).json({ error: 'Your account does not have access. Please contact an administrator.' });
     }
 
-    clearFailedLoginAttempts(username, req);
+    // Branch lookup is a read-only login aid used while staff complete the form.
+    // Only the explicit /api/auth/login submission mutates failed-attempt state.
     return res.json({
       branch: isAdmin(user) ? '' : normalizeBranch(user.branch),
       branchLocked: !isAdmin(user),

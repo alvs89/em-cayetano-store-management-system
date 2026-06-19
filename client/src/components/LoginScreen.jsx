@@ -228,6 +228,7 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
 
     try {
       let loginBranch = "";
+      let shouldSubmitWithoutResolvedBranch = false;
       try {
         setIsCheckingAssignedBranch(true);
         const assigned = await fetchAssignedBranchForCredentials(username.trim(), password);
@@ -245,21 +246,27 @@ export function LoginScreen({ onLogin, onNavigateTo2FA, onForgotPassword }) {
           setAssignedBranchNotice("Select the branch you want to use.");
         }
       } catch (branchError) {
+        const branchLookupStatus = branchError.response?.status;
         setBranch("");
         setAutoSelectedBranch("");
         setIsBranchSelectionReady(false);
         setIsAssignedBranchLocked(false);
-        toast.error(branchError.response?.data?.error || "Unable to verify your branch. Please check your login details.", {
-          classNames: {
-            toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
-          },
-        });
-        return;
+        if (branchLookupStatus === 401 || branchLookupStatus === 403) {
+          shouldSubmitWithoutResolvedBranch = true;
+          loginBranch = branch;
+        } else {
+          toast.error(branchError.response?.data?.error || "Unable to verify your branch. Please check your login details.", {
+            classNames: {
+              toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
+            },
+          });
+          return;
+        }
       } finally {
         setIsCheckingAssignedBranch(false);
       }
 
-      if (!loginBranch) {
+      if (!loginBranch && !shouldSubmitWithoutResolvedBranch) {
         toast.error("Please select your branch.", {
           classNames: {
             toast: "rounded-2xl border border-gray-200 shadow-2xl bg-white/95 text-gray-900",
